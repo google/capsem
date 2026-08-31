@@ -31,10 +31,7 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     .unwrap();
 
     let shutdown_claimed = claim_shutdown_instance(&state, "code-1");
-    assert!(
-        !shutdown_claimed,
-        "a stale snapshot is not shutdown ownership"
-    );
+    assert!(!shutdown_claimed, "a stale snapshot is not shutdown ownership");
     let result = preserve_failed_run_shutdown_result(
         Arc::clone(&state),
         "code-1".to_string(),
@@ -49,15 +46,12 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
         Some(watcher_result.clone())
     );
     assert_eq!(
-        std::fs::read_dir(state.run_dir.join("sessions"))
-            .unwrap()
-            .count(),
+        std::fs::read_dir(state.run_dir.join("sessions")).unwrap().count(),
         1,
         "the provisioning owner must not create a second preservation result"
     );
     assert_eq!(
-        capsem_foundation::telemetry::read_log_tail(&watcher_result.join("process.log"), usize::MAX)
-            .unwrap(),
+        capsem_foundation::telemetry::read_log_tail(&watcher_result.join("process.log"), usize::MAX).unwrap(),
         "child exited with code 1"
     );
 }
@@ -97,11 +91,7 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
     let id = "code-doctor-ipc";
     let session_dir = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    std::fs::write(
-        session_dir.join("process.log"),
-        b"process channel closed during doctor",
-    )
-    .unwrap();
+    std::fs::write(session_dir.join("process.log"), b"process channel closed during doctor").unwrap();
     insert_fake_instance_with_session_dir(&state, id, 0, session_dir.clone());
 
     let (status, body) = route_request(
@@ -140,10 +130,7 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     )
     .await
     .unwrap();
-    assert!(
-        !clean_dir.exists(),
-        "successful one-shot state must be deleted"
-    );
+    assert!(!clean_dir.exists(), "successful one-shot state must be deleted");
 
     let failed_id = "code-run-ipc";
     let failed_dir = state.run_dir.join("sessions").join(failed_id);

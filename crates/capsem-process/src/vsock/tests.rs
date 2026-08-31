@@ -98,10 +98,7 @@ fn classify_sni_proxy_port() {
 
 #[test]
 fn classify_exec_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_core::VSOCK_PORT_EXEC),
-        VsockPortKind::Exec
-    );
+    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_EXEC), VsockPortKind::Exec);
 }
 
 #[test]
@@ -190,19 +187,15 @@ fn make_conn(port: u32) -> VsockConnection {
 }
 
 fn empty_plugin_policy() -> PluginPolicyHandle {
-    Arc::new(std::sync::RwLock::new(
-        std::collections::BTreeMap::new().into(),
-    ))
+    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new().into()))
 }
 
 fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {
-    capsem_core::security_engine::SecurityEvent::new(
-        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
-    )
-    .with_file(capsem_core::security_engine::FileSecurityEvent {
-        import_content: Some(content.to_string()),
-        ..Default::default()
-    })
+    capsem_core::security_engine::SecurityEvent::new(capsem_core::security_engine::RuntimeSecurityEventType::FileImport)
+        .with_file(capsem_core::security_engine::FileSecurityEvent {
+            import_content: Some(content.to_string()),
+            ..Default::default()
+        })
 }
 
 fn add_plugin_rewrite_marker(
@@ -323,8 +316,7 @@ fn not_found_not_retryable() {
 async fn collect_returns_terminal_and_control_in_any_order() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
-        .unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
 
     let mut deferred = Vec::new();
     let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
@@ -338,11 +330,9 @@ async fn collect_returns_terminal_and_control_in_any_order() {
 #[tokio::test]
 async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_SNI_PROXY))
-        .unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_SNI_PROXY)).unwrap();
     tx.send(make_conn(5003)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
-        .unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
     tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
 
     let mut deferred = Vec::new();
@@ -357,8 +347,7 @@ async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
 #[tokio::test]
 async fn collect_errors_when_channel_closes_early() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL))
-        .unwrap();
+    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
     drop(tx); // close before control arrives
 
     let mut deferred = Vec::new();
@@ -424,13 +413,8 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 
     let result = rx.await.expect("job oneshot must resolve");
     match result {
-        JobResult::Exec {
-            stdout, exit_code, ..
-        } => {
-            assert!(
-                stdout.is_empty(),
-                "no-output command should return empty stdout"
-            );
+        JobResult::Exec { stdout, exit_code, .. } => {
+            assert!(stdout.is_empty(), "no-output command should return empty stdout");
             assert_eq!(exit_code, 0);
         }
         other => panic!("expected Exec result, got {other:?}"),
@@ -487,9 +471,7 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
     deposit.await.unwrap();
 
     match rx.await.expect("job oneshot must resolve") {
-        JobResult::Exec {
-            stdout, exit_code, ..
-        } => {
+        JobResult::Exec { stdout, exit_code, .. } => {
             assert_eq!(stdout, b"/run/capsem-venv\n");
             assert_eq!(exit_code, 0);
         }
@@ -612,9 +594,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
 
     let result = rx.await.expect("read job must resolve");
     match result {
-        JobResult::ReadFile {
-            data: Some(data), ..
-        } => assert_eq!(data, b"guest export bytes"),
+        JobResult::ReadFile { data: Some(data), .. } => assert_eq!(data, b"guest export bytes"),
         other => panic!("expected read file result with data, got {other:?}"),
     }
     db.shutdown_blocking();
@@ -782,13 +762,7 @@ fn control_chatter_is_not_ack_eligible() {
 #[test]
 fn every_guest_to_host_completion_is_ack_eligible() {
     let cases: Vec<(GuestToHost, u64)> = vec![
-        (
-            GuestToHost::ExecDone {
-                id: 10,
-                exit_code: 0,
-            },
-            10,
-        ),
+        (GuestToHost::ExecDone { id: 10, exit_code: 0 }, 10),
         (GuestToHost::FileOpDone { id: 11 }, 11),
         (
             GuestToHost::FileContent {
@@ -818,12 +792,7 @@ fn every_guest_to_host_completion_is_ack_eligible() {
 
 #[test]
 fn guest_liveness_messages_are_not_ack_eligible() {
-    for msg in [
-        GuestToHost::Pong,
-        GuestToHost::Ready {
-            version: "1.0".into(),
-        },
-    ] {
+    for msg in [GuestToHost::Pong, GuestToHost::Ready { version: "1.0".into() }] {
         assert_eq!(
             ackable_response_id(&msg),
             None,

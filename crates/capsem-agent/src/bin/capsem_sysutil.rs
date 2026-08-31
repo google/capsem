@@ -90,10 +90,7 @@ fn main() {
     let cmd = command_name(&args[0]);
 
     // Handle --help for any command
-    if args
-        .iter()
-        .any(|a| a == "--help" || (a == "-h" && cmd != "shutdown"))
-    {
+    if args.iter().any(|a| a == "--help" || (a == "-h" && cmd != "shutdown")) {
         print_help(cmd);
         process::exit(0);
     }

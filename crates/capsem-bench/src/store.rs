@@ -83,11 +83,10 @@ CREATE INDEX IF NOT EXISTS runs_by_subject
 /// Open or create the store at `path`.
 pub fn open(path: &Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
     }
-    let connection = Connection::open(path)
-        .with_context(|| format!("cannot open benchmark store {}", path.display()))?;
+    let connection =
+        Connection::open(path).with_context(|| format!("cannot open benchmark store {}", path.display()))?;
     connection.execute_batch(CREATE)?;
 
     let found: Option<i64> = connection
@@ -183,12 +182,7 @@ pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
 /// Architecture and profile must match: comparing arm64 against x86_64, or
 /// `code` against `co-work`, measures the difference between them rather than
 /// a change in Capsem. A quick run is never evidence.
-pub fn latest(
-    connection: &Connection,
-    dimension: Dimension,
-    arch: &str,
-    profile: &str,
-) -> Result<Option<Record>> {
+pub fn latest(connection: &Connection, dimension: Dimension, arch: &str, profile: &str) -> Result<Option<Record>> {
     let run = connection
         .query_row(
             "SELECT id, recorded_at, version, channel, commit_sha, os, cpu_count,
@@ -336,21 +330,13 @@ pub fn prune(connection: &mut Connection, current: &str) -> Result<usize> {
     // `ON DELETE CASCADE` is only honoured with foreign keys enabled, and the
     // pragma is per-connection rather than stored in the schema, so the sweep
     // is stated here too rather than trusted to whoever opened this handle.
-    transaction.execute(
-        "DELETE FROM metrics WHERE run_id NOT IN (SELECT id FROM runs)",
-        [],
-    )?;
+    transaction.execute("DELETE FROM metrics WHERE run_id NOT IN (SELECT id FROM runs)", [])?;
     transaction.commit()?;
     Ok(removed)
 }
 
 /// One metric's history, oldest first: what a trend line is drawn from.
-pub fn history(
-    connection: &Connection,
-    key: &str,
-    arch: &str,
-    profile: &str,
-) -> Result<Vec<(String, String, f64)>> {
+pub fn history(connection: &Connection, key: &str, arch: &str, profile: &str) -> Result<Vec<(String, String, f64)>> {
     let mut query = connection.prepare(
         "SELECT runs.version, runs.recorded_at, metrics.median
            FROM metrics JOIN runs ON runs.id = metrics.run_id

@@ -214,10 +214,7 @@ impl VirtioBlockDevice {
     }
 
     fn validate_open_backing_file(&self) -> Result<()> {
-        let metadata = self
-            .file
-            .metadata()
-            .context("stat opened virtio-blk backing file")?;
+        let metadata = self.file.metadata().context("stat opened virtio-blk backing file")?;
         ensure!(
             metadata.dev() == self.backing_device && metadata.ino() == self.backing_inode,
             "opened virtio-blk backing file identity changed"
@@ -234,15 +231,10 @@ impl VirtioBlockDevice {
         );
         let flags = unsafe { libc::fcntl(self.file.as_raw_fd(), libc::F_GETFL) };
         if flags < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("read opened virtio-blk backing file access mode");
+            return Err(std::io::Error::last_os_error()).context("read opened virtio-blk backing file access mode");
         }
         let access_mode = flags & libc::O_ACCMODE;
-        let expected_mode = if self.read_only {
-            libc::O_RDONLY
-        } else {
-            libc::O_RDWR
-        };
+        let expected_mode = if self.read_only { libc::O_RDONLY } else { libc::O_RDWR };
         ensure!(
             access_mode == expected_mode,
             "opened virtio-blk backing file access mode drifted"
@@ -250,12 +242,7 @@ impl VirtioBlockDevice {
         Ok(())
     }
 
-    fn activate_inner(
-        &mut self,
-        mem: GuestMemoryRef,
-        queues: &[QueueConfig],
-        fail_closed: bool,
-    ) -> Result<()> {
+    fn activate_inner(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig], fail_closed: bool) -> Result<()> {
         let Some(q) = queues.first().filter(|q| q.size > 0) else {
             if fail_closed {
                 bail!("restored virtio-blk request queue is unavailable");
@@ -295,22 +282,23 @@ impl VirtioBlockDevice {
                     let capacity_sectors = self.capacity_sectors;
                     let device_id = self.device_id;
                     let worker_mem = mem.clone();
-                    let spawn_result = std::thread::Builder::new()
-                        .name("virtio-blk-ioeventfd".into())
-                        .spawn(move || {
-                            block_worker_loop(BlockWorker {
-                                file,
-                                read_only,
-                                capacity_sectors,
-                                device_id,
-                                mem: worker_mem,
-                                queue,
-                                notify_fd: worker_notify_fd,
-                                rx,
-                                irq_fd,
-                                interrupt_status,
-                            })
-                        });
+                    let spawn_result =
+                        std::thread::Builder::new()
+                            .name("virtio-blk-ioeventfd".into())
+                            .spawn(move || {
+                                block_worker_loop(BlockWorker {
+                                    file,
+                                    read_only,
+                                    capacity_sectors,
+                                    device_id,
+                                    mem: worker_mem,
+                                    queue,
+                                    notify_fd: worker_notify_fd,
+                                    rx,
+                                    irq_fd,
+                                    interrupt_status,
+                                })
+                            });
                     let handle = if fail_closed {
                         spawn_result.context("spawn restored virtio-blk ioeventfd worker")?
                     } else {
@@ -344,12 +332,7 @@ impl VirtioBlockDevice {
         Ok(())
     }
 
-    pub fn with_async_notify(
-        mut self,
-        irq_fd: RawFd,
-        interrupt_status: Arc<AtomicU32>,
-        notify_fd: OwnedFd,
-    ) -> Self {
+    pub fn with_async_notify(mut self, irq_fd: RawFd, interrupt_status: Arc<AtomicU32>, notify_fd: OwnedFd) -> Self {
         self.irq_fd = Some(irq_fd);
         self.interrupt_status = Some(interrupt_status);
         self.notify_fd = Some(notify_fd);
@@ -495,12 +478,7 @@ impl VirtioBlockDevice {
         adjusted
     }
 
-    fn preadv_all(
-        fd: std::os::fd::RawFd,
-        iovecs: &[libc::iovec],
-        offset: u64,
-        total_len: u64,
-    ) -> std::io::Result<()> {
+    fn preadv_all(fd: std::os::fd::RawFd, iovecs: &[libc::iovec], offset: u64, total_len: u64) -> std::io::Result<()> {
         let mut done = 0_u64;
         while done < total_len {
             let adjusted = Self::iovecs_after(iovecs, done);
@@ -530,12 +508,7 @@ impl VirtioBlockDevice {
         Ok(())
     }
 
-    fn pwritev_all(
-        fd: std::os::fd::RawFd,
-        iovecs: &[libc::iovec],
-        offset: u64,
-        total_len: u64,
-    ) -> std::io::Result<()> {
+    fn pwritev_all(fd: std::os::fd::RawFd, iovecs: &[libc::iovec], offset: u64, total_len: u64) -> std::io::Result<()> {
         let mut done = 0_u64;
         while done < total_len {
             let adjusted = Self::iovecs_after(iovecs, done);
@@ -566,11 +539,7 @@ impl VirtioBlockDevice {
     }
 
     /// Process a get-ID request: copy device_id to guest buffer.
-    fn process_get_id(
-        mem: &GuestMemoryRef,
-        device_id: &[u8; VIRTIO_BLK_ID_LEN],
-        data_descs: &[(u64, u32)],
-    ) -> u8 {
+    fn process_get_id(mem: &GuestMemoryRef, device_id: &[u8; VIRTIO_BLK_ID_LEN], data_descs: &[(u64, u32)]) -> u8 {
         if let Some(&(gpa, len)) = data_descs.first() {
             let copy_len = (len as usize).min(VIRTIO_BLK_ID_LEN);
             if copy_len == 0 {
@@ -783,10 +752,7 @@ impl VirtioBlockDevice {
                 continue;
             }
 
-            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1]
-                .iter()
-                .map(|d| (d.addr, d.len))
-                .collect();
+            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1].iter().map(|d| (d.addr, d.len)).collect();
             let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
 
             let status = match type_ {
@@ -796,9 +762,9 @@ impl VirtioBlockDevice {
                 VIRTIO_BLK_T_OUT => timed_request(type_, total_data, || {
                     Self::process_write(file, mem, read_only, capacity_sectors, sector, &data_descs)
                 }),
-                VIRTIO_BLK_T_GET_ID => timed_request(type_, total_data, || {
-                    Self::process_get_id(mem, device_id, &data_descs)
-                }),
+                VIRTIO_BLK_T_GET_ID => {
+                    timed_request(type_, total_data, || Self::process_get_id(mem, device_id, &data_descs))
+                }
                 VIRTIO_BLK_T_DISCARD => timed_request(type_, total_data, || {
                     Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
                 }),
@@ -931,10 +897,7 @@ impl VirtioBlockDevice {
                 continue;
             }
 
-            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1]
-                .iter()
-                .map(|d| (d.addr, d.len))
-                .collect();
+            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1].iter().map(|d| (d.addr, d.len)).collect();
             let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
 
             match type_ {
@@ -966,14 +929,7 @@ impl VirtioBlockDevice {
                         };
 
                     if uring
-                        .submit_rw(
-                            chain.head,
-                            type_,
-                            total_data,
-                            status_desc.addr,
-                            offset,
-                            iovecs,
-                        )
+                        .submit_rw(chain.head, type_, total_data, status_desc.addr, offset, iovecs)
                         .is_ok()
                     {
                         result.submitted += 1;
@@ -996,14 +952,7 @@ impl VirtioBlockDevice {
                         })
                     } else {
                         timed_request(type_, total_data, || {
-                            Self::process_write(
-                                file,
-                                mem,
-                                read_only,
-                                capacity_sectors,
-                                sector,
-                                &data_descs,
-                            )
+                            Self::process_write(file, mem, read_only, capacity_sectors, sector, &data_descs)
                         })
                     };
                     Self::write_status(mem, status_desc.addr, status);
@@ -1027,9 +976,7 @@ impl VirtioBlockDevice {
                     }
                 }
                 VIRTIO_BLK_T_GET_ID => {
-                    let status = timed_request(type_, total_data, || {
-                        Self::process_get_id(mem, device_id, &data_descs)
-                    });
+                    let status = timed_request(type_, total_data, || Self::process_get_id(mem, device_id, &data_descs));
                     Self::write_status(mem, status_desc.addr, status);
                     queue.push_used_deferred(chain.head, 1);
                     result.used_entries += 1;
@@ -1110,8 +1057,7 @@ impl BlockIoUring {
     fn new(file_fd: RawFd) -> std::io::Result<Self> {
         let completion_fd = create_eventfd(libc::EFD_CLOEXEC | libc::EFD_NONBLOCK)?;
         let ring = IoUring::new(u32::from(QUEUE_SIZE))?;
-        ring.submitter()
-            .register_eventfd(completion_fd.as_raw_fd())?;
+        ring.submitter().register_eventfd(completion_fd.as_raw_fd())?;
         Ok(Self {
             ring,
             completion_fd,
@@ -1193,16 +1139,11 @@ impl BlockIoUring {
             "operation" => request_operation_label(type_),
         )
         .increment(1);
-        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
-            .record(self.pending.len() as f64);
+        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
         Ok(())
     }
 
-    fn reap_completions(
-        &mut self,
-        mem: &GuestMemoryRef,
-        queue: &mut VirtQueue,
-    ) -> CompletionResult {
+    fn reap_completions(&mut self, mem: &GuestMemoryRef, queue: &mut VirtQueue) -> CompletionResult {
         let mut result = CompletionResult::default();
         let completions: Vec<_> = self
             .ring
@@ -1224,12 +1165,7 @@ impl BlockIoUring {
             } else {
                 VIRTIO_BLK_S_IOERR
             };
-            emit_request_metrics(
-                request.type_,
-                request.total_data,
-                status,
-                request.started.elapsed(),
-            );
+            emit_request_metrics(request.type_, request.total_data, status, request.started.elapsed());
             ::metrics::counter!(
                 METRIC_ASYNC_COMPLETIONS_TOTAL,
                 "operation" => request_operation_label(request.type_),
@@ -1282,8 +1218,7 @@ impl BlockIoUring {
                 .increment(1);
             }
         }
-        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
-            .record(self.pending.len() as f64);
+        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
         result
     }
 }
@@ -1421,15 +1356,12 @@ fn emit_queue_drain_metrics(backend: &'static str, result: &QueueProcessResult) 
             .increment(u64::from(result.processed));
     }
     if result.used_entries > 0 {
-        ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => backend)
-            .increment(u64::from(result.used_entries));
+        ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => backend).increment(u64::from(result.used_entries));
     }
     if result.should_interrupt {
-        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised")
-            .increment(1);
+        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised").increment(1);
     } else if result.processed > 0 {
-        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "suppressed")
-            .increment(1);
+        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "suppressed").increment(1);
     }
     ::metrics::histogram!(METRIC_QUEUE_DRAIN_DURATION_MS, "backend" => backend)
         .record(duration_ms(result.drain_duration));
@@ -1603,18 +1535,14 @@ impl VirtioDevice for VirtioBlockDevice {
 
     fn restore_checkpoint_state(&mut self, encoded: &[u8]) -> Result<()> {
         ensure!(
-            self.queue.is_none()
-                && self.mem.is_none()
-                && self.control_tx.is_none()
-                && self.worker_handle.is_none(),
+            self.queue.is_none() && self.mem.is_none() && self.control_tx.is_none() && self.worker_handle.is_none(),
             "cannot restore virtio-blk checkpoint identity after activation"
         );
         self.restore_identity_validated = false;
         let checkpoint = BlockCheckpointState::decode(encoded)?;
         self.validate_open_backing_file()?;
         ensure!(
-            checkpoint.backing_device == self.backing_device
-                && checkpoint.backing_inode == self.backing_inode,
+            checkpoint.backing_device == self.backing_device && checkpoint.backing_inode == self.backing_inode,
             "virtio-blk backing file identity mismatch"
         );
         ensure!(
@@ -1785,18 +1713,9 @@ fn block_worker_loop_uring(mut worker: BlockWorker, mut uring: BlockIoUring) {
             return;
         }
     };
-    if let Err(error) = epoll_add(
-        epoll_fd.as_raw_fd(),
-        worker.notify_fd.as_raw_fd(),
-        EPOLL_TOKEN_NOTIFY,
-    )
-    .and_then(|_| {
-        epoll_add(
-            epoll_fd.as_raw_fd(),
-            uring.completion_fd(),
-            EPOLL_TOKEN_COMPLETION,
-        )
-    }) {
+    if let Err(error) = epoll_add(epoll_fd.as_raw_fd(), worker.notify_fd.as_raw_fd(), EPOLL_TOKEN_NOTIFY)
+        .and_then(|_| epoll_add(epoll_fd.as_raw_fd(), uring.completion_fd(), EPOLL_TOKEN_COMPLETION))
+    {
         tracing::warn!(
             event_name = "virtio.blk.io_uring_epoll_failed",
             %error,

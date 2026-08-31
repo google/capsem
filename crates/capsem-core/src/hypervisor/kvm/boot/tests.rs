@@ -98,10 +98,7 @@ fn load_kernel_without_magic_uses_default_offset() {
     let mem = GuestMemory::new(64 * 1024 * 1024).unwrap();
     let info = load_kernel(&mem, &kernel_path).unwrap();
 
-    assert_eq!(
-        info.entry_addr,
-        memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET
-    );
+    assert_eq!(info.entry_addr, memory::RAM_BASE + memory::KERNEL_TEXT_OFFSET);
 }
 
 #[test]
@@ -205,10 +202,7 @@ fn load_initrd_overlaps_kernel_fails() {
     let kernel_end = memory::RAM_BASE + 40 * 1024 * 1024;
     let result = load_initrd(&mem, &initrd_path, kernel_end);
 
-    assert!(
-        result.is_err(),
-        "Should reject initrd if it overlaps the kernel"
-    );
+    assert!(result.is_err(), "Should reject initrd if it overlaps the kernel");
     assert!(result.unwrap_err().to_string().contains("too large to fit"));
 }
 

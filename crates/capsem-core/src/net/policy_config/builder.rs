@@ -12,10 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 // ---------------------------------------------------------------------------
 
 fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
-    values
-        .iter()
-        .filter_map(|port| u16::try_from(*port).ok())
-        .collect()
+    values.iter().filter_map(|port| u16::try_from(*port).ok()).collect()
 }
 
 /// Extract guest config from resolved settings.
@@ -217,10 +214,7 @@ impl MergedPolicies {
     }
 }
 
-fn merge_plugin_policy(
-    user: &SettingsFile,
-    corp: &SettingsFile,
-) -> BTreeMap<String, SecurityPluginConfig> {
+fn merge_plugin_policy(user: &SettingsFile, corp: &SettingsFile) -> BTreeMap<String, SecurityPluginConfig> {
     let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
     for (plugin_id, mode) in &user.plugins {
         plugins.insert(plugin_id.clone(), *mode);
@@ -231,33 +225,19 @@ fn merge_plugin_policy(
     plugins
 }
 
-fn compile_model_endpoint_registry(
-    user: &SettingsFile,
-    corp: &SettingsFile,
-) -> Result<ModelEndpointRegistry, String> {
+fn compile_model_endpoint_registry(user: &SettingsFile, corp: &SettingsFile) -> Result<ModelEndpointRegistry, String> {
     let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
-        &ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
+        &ProviderRuleProfile { ai: user.ai.clone() },
+        &ProviderRuleProfile { ai: corp.ai.clone() },
     )?;
     merged.endpoint_registry()
 }
 
-fn compile_merged_security_rules(
-    user: &SettingsFile,
-    corp: &SettingsFile,
-) -> Result<SecurityRuleSet, String> {
+fn compile_merged_security_rules(user: &SettingsFile, corp: &SettingsFile) -> Result<SecurityRuleSet, String> {
     let mut by_rule_id = std::collections::BTreeMap::new();
     let provider_rules = compile_provider_rules_to_security_rule_set(
-        &ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
+        &ProviderRuleProfile { ai: user.ai.clone() },
+        &ProviderRuleProfile { ai: corp.ai.clone() },
     )?;
     for rule in provider_rules.rules() {
         by_rule_id.insert(rule.rule_id.clone(), rule.clone());
@@ -332,12 +312,8 @@ pub fn network_config_from_policy_and_dns(
                     UpstreamOverrideConfig {
                         dial: route.dial.clone(),
                         protocol: match route.protocol {
-                            crate::net::policy::UpstreamOverrideProtocol::Http => {
-                                UpstreamOverrideProtocolConfig::Http
-                            }
-                            crate::net::policy::UpstreamOverrideProtocol::Tls => {
-                                UpstreamOverrideProtocolConfig::Tls
-                            }
+                            crate::net::policy::UpstreamOverrideProtocol::Http => UpstreamOverrideProtocolConfig::Http,
+                            crate::net::policy::UpstreamOverrideProtocol::Tls => UpstreamOverrideProtocolConfig::Tls,
                         },
                     },
                 )
@@ -346,10 +322,7 @@ pub fn network_config_from_policy_and_dns(
     }
 }
 
-pub fn apply_network_config(
-    config: &NetworkConfig,
-    mechanics: &mut crate::net::policy::NetworkMechanics,
-) {
+pub fn apply_network_config(config: &NetworkConfig, mechanics: &mut crate::net::policy::NetworkMechanics) {
     if let Some(log_bodies) = config.log_bodies {
         mechanics.log_bodies = log_bodies;
     }
@@ -369,12 +342,8 @@ pub fn apply_network_config(
                     crate::net::policy::UpstreamOverride {
                         dial: route.dial.clone(),
                         protocol: match route.protocol {
-                            UpstreamOverrideProtocolConfig::Http => {
-                                crate::net::policy::UpstreamOverrideProtocol::Http
-                            }
-                            UpstreamOverrideProtocolConfig::Tls => {
-                                crate::net::policy::UpstreamOverrideProtocol::Tls
-                            }
+                            UpstreamOverrideProtocolConfig::Http => crate::net::policy::UpstreamOverrideProtocol::Http,
+                            UpstreamOverrideProtocolConfig::Tls => crate::net::policy::UpstreamOverrideProtocol::Tls,
                         },
                     },
                 )

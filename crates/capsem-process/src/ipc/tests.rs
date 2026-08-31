@@ -43,10 +43,7 @@ async fn exec_wait_returns_completed_exec_result() {
 
 #[test]
 fn classify_ping() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Ping),
-        IpcAction::HealthCheck
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Ping), IpcAction::HealthCheck);
 }
 
 #[test]
@@ -95,10 +92,7 @@ fn guest_write_ledger_path_strips_guest_root_prefix() {
         "poem.md",
         "session fs_events store guest-root relative paths"
     );
-    assert_eq!(
-        guest_write_ledger_path("/root/nested/poem.md"),
-        "nested/poem.md"
-    );
+    assert_eq!(guest_write_ledger_path("/root/nested/poem.md"), "nested/poem.md");
 }
 
 #[test]
@@ -147,18 +141,12 @@ fn classify_log_file_boundary() {
 
 #[test]
 fn classify_reload_config() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::ReloadConfig),
-        IpcAction::Reload
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::ReloadConfig), IpcAction::Reload);
 }
 
 #[test]
 fn classify_shutdown() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Shutdown),
-        IpcAction::Lifecycle
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Shutdown), IpcAction::Lifecycle);
 }
 
 #[test]
@@ -202,18 +190,12 @@ fn classify_prepare_snapshot_unexpected() {
 
 #[test]
 fn classify_unfreeze_unexpected() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Unfreeze),
-        IpcAction::Unexpected
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Unfreeze), IpcAction::Unexpected);
 }
 
 #[test]
 fn classify_resume_unexpected() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Resume),
-        IpcAction::Unexpected
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Resume), IpcAction::Unexpected);
 }
 
 #[test]

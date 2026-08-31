@@ -115,10 +115,8 @@ fn ensure_blocking(stream: &UnixStream) -> Option<bool> {
 }
 
 fn write_hello(stream: &mut UnixStream, hello: &Hello) -> Result<(), HandshakeError> {
-    let payload = rmp_serde::to_vec_named(hello)
-        .map_err(|e| HandshakeError::Decode(format!("encode Hello: {e}")))?;
-    let len = u32::try_from(payload.len())
-        .map_err(|_| HandshakeError::Decode("Hello payload exceeds u32".into()))?;
+    let payload = rmp_serde::to_vec_named(hello).map_err(|e| HandshakeError::Decode(format!("encode Hello: {e}")))?;
+    let len = u32::try_from(payload.len()).map_err(|_| HandshakeError::Decode("Hello payload exceeds u32".into()))?;
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(&payload)?;
     stream.flush()?;
@@ -133,10 +131,7 @@ fn read_hello(stream: &mut UnixStream, timeout: Duration) -> Result<Hello, Hands
         let mut len_buf = [0u8; 4];
         match stream.read_exact(&mut len_buf) {
             Ok(()) => {}
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
                 return Err(HandshakeError::Timeout {
                     timeout_ms: timeout.as_millis() as u64,
                 });
@@ -153,10 +148,7 @@ fn read_hello(stream: &mut UnixStream, timeout: Duration) -> Result<Hello, Hands
         let mut buf = vec![0u8; len as usize];
         match stream.read_exact(&mut buf) {
             Ok(()) => {}
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
                 return Err(HandshakeError::Timeout {
                     timeout_ms: timeout.as_millis() as u64,
                 });
@@ -164,8 +156,7 @@ fn read_hello(stream: &mut UnixStream, timeout: Duration) -> Result<Hello, Hands
             Err(e) => return Err(HandshakeError::Io(e)),
         }
 
-        rmp_serde::from_slice::<Hello>(&buf)
-            .map_err(|e| HandshakeError::Decode(format!("decode Hello: {e}")))
+        rmp_serde::from_slice::<Hello>(&buf).map_err(|e| HandshakeError::Decode(format!("decode Hello: {e}")))
     })();
 
     // Restore the previous timeout so the bincode channel that takes

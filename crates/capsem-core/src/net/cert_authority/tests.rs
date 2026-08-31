@@ -23,9 +23,7 @@ fn mint_domain_cert_correct_san() {
     let leaf = &key.cert[0];
     let domain_bytes = b"example.com";
     assert!(
-        leaf.as_ref()
-            .windows(domain_bytes.len())
-            .any(|w| w == domain_bytes),
+        leaf.as_ref().windows(domain_bytes.len()).any(|w| w == domain_bytes),
         "leaf cert should contain example.com in DER"
     );
 }
@@ -71,8 +69,7 @@ fn concurrent_minting_safe() {
     for i in 0..10 {
         let ca = Arc::clone(&ca);
         handles.push(std::thread::spawn(move || {
-            ca.certified_key_for_domain(&format!("thread{i}.example.com"))
-                .unwrap();
+            ca.certified_key_for_domain(&format!("thread{i}.example.com")).unwrap();
         }));
     }
     for h in handles {

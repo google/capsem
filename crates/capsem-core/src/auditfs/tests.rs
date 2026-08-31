@@ -30,11 +30,7 @@ fn staging_checked_in_source_into_output_copies_instead_of_linking() {
         fs::metadata(&published).unwrap().ino(),
         "the published artifact is the same file as checked-in source"
     );
-    assert_eq!(
-        fs::metadata(&seed).unwrap().nlink(),
-        1,
-        "the source file gained a link"
-    );
+    assert_eq!(fs::metadata(&seed).unwrap().nlink(), 1, "the source file gained a link");
 }
 
 #[test]

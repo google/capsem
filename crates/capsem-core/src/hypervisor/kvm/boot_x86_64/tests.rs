@@ -67,8 +67,7 @@ fn boot_params_sets_cmdline() {
 
     // Check cmd_line_ptr in boot_params
     let mut ptr_buf = [0u8; 4];
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x228, &mut ptr_buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x228, &mut ptr_buf).unwrap();
     assert_eq!(u32::from_le_bytes(ptr_buf), CMDLINE_ADDR as u32);
 }
 
@@ -84,12 +83,10 @@ fn boot_params_sets_initrd() {
 
     // Check ramdisk_image
     let mut buf = [0u8; 4];
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x218, &mut buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x218, &mut buf).unwrap();
     assert_eq!(u32::from_le_bytes(buf), 0x80_0000);
     // Check ramdisk_size
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x21C, &mut buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x21C, &mut buf).unwrap();
     assert_eq!(u32::from_le_bytes(buf), 1024 * 1024);
 }
 
@@ -105,12 +102,10 @@ fn write_boot_params_preserves_setup_header() {
     write_boot_params(&mem, "test", None, &e820, &fake_header).unwrap();
 
     let mut buf = [0u8; 1];
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x1f1, &mut buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x1f1, &mut buf).unwrap();
     assert_eq!(buf[0], 0xAA, "First byte of setup_header not preserved");
 
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x2b8, &mut buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x2b8, &mut buf).unwrap();
     assert_eq!(buf[0], 0xBB, "Last byte of setup_header not preserved");
 }
 
@@ -121,16 +116,11 @@ fn write_boot_params_sets_loader_and_flags() {
     write_boot_params(&mem, "test", None, &e820, &[]).unwrap();
 
     let mut buf = [0u8; 1];
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x210, &mut buf)
-        .unwrap();
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x210, &mut buf).unwrap();
     assert_eq!(buf[0], 0xFF, "type_of_loader must be 0xFF");
 
-    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x211, &mut buf)
-        .unwrap();
-    assert_eq!(
-        buf[0], 0x81,
-        "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)"
-    );
+    mem.read_at(BOOT_PARAMS_ADDR - RAM_BASE + 0x211, &mut buf).unwrap();
+    assert_eq!(buf[0], 0x81, "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)");
 }
 
 #[test]
@@ -139,8 +129,7 @@ fn acpi_tables_advertise_all_vcpus_in_madt() {
     write_acpi_tables(&mem, 4).unwrap();
 
     let mut rsdp = [0u8; 20];
-    mem.read_at(memory::ACPI_RSDP_ADDR - RAM_BASE, &mut rsdp)
-        .unwrap();
+    mem.read_at(memory::ACPI_RSDP_ADDR - RAM_BASE, &mut rsdp).unwrap();
     assert_eq!(&rsdp[0..8], b"RSD PTR ");
     assert_eq!(checksum(&rsdp), 0);
     assert_eq!(
@@ -151,13 +140,9 @@ fn acpi_tables_advertise_all_vcpus_in_madt() {
     let mut ebda_segment = [0u8; 2];
     mem.read_at(memory::BDA_EBDA_SEGMENT_ADDR - RAM_BASE, &mut ebda_segment)
         .unwrap();
-    assert_eq!(
-        u16::from_le_bytes(ebda_segment),
-        (memory::EBDA_START >> 4) as u16
-    );
+    assert_eq!(u16::from_le_bytes(ebda_segment), (memory::EBDA_START >> 4) as u16);
     let mut bios_rsdp = [0u8; 20];
-    mem.read_at(memory::BIOS_RSDP_ADDR - RAM_BASE, &mut bios_rsdp)
-        .unwrap();
+    mem.read_at(memory::BIOS_RSDP_ADDR - RAM_BASE, &mut bios_rsdp).unwrap();
     assert_eq!(bios_rsdp, rsdp);
 
     let mut rsdt_header = [0u8; 40];
@@ -175,8 +160,7 @@ fn acpi_tables_advertise_all_vcpus_in_madt() {
         .unwrap();
     let madt_len = u32::from_le_bytes(madt_header[4..8].try_into().unwrap()) as usize;
     let mut madt = vec![0u8; madt_len];
-    mem.read_at(memory::ACPI_MADT_ADDR - RAM_BASE, &mut madt)
-        .unwrap();
+    mem.read_at(memory::ACPI_MADT_ADDR - RAM_BASE, &mut madt).unwrap();
     assert_eq!(&madt[0..4], b"APIC");
     assert_eq!(checksum(&madt), 0);
     assert_eq!(

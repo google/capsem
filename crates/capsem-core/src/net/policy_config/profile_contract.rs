@@ -8,14 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use super::provider_profile::{AiProviderProfile, ModelEndpointRegistry, ProviderRuleProfile};
 use super::security_rule_profile::{
-    SecurityPluginConfig, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
-    SecurityRuleManagedOperation, SecurityRuleManagedTarget, SecurityRulePriority,
-    SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+    SecurityPluginConfig, SecurityRule, SecurityRuleAction, SecurityRuleGroup, SecurityRuleManagedOperation,
+    SecurityRuleManagedTarget, SecurityRulePriority, SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSet,
+    SecurityRuleSource,
 };
 use super::types::{NetworkConfig, RuleFileReferences, SettingsFile};
-use super::validation::{
-    validate_identifier_shape, validate_non_empty, validate_profile_target, IdentifierError,
-};
+use super::validation::{validate_identifier_shape, validate_non_empty, validate_profile_target, IdentifierError};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -306,10 +304,9 @@ impl Profile {
     pub fn load_from_dir(profile_dir: impl AsRef<Path>) -> Result<Self, String> {
         let profile_dir = profile_dir.as_ref().to_path_buf();
         let path = profile_dir.join("profile.toml");
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("read profile {}: {error}", path.display()))?;
-        let config: ProfileConfigFile = toml::from_str(&content)
-            .map_err(|error| format!("parse profile {}: {error}", path.display()))?;
+        let content = fs::read_to_string(&path).map_err(|error| format!("read profile {}: {error}", path.display()))?;
+        let config: ProfileConfigFile =
+            toml::from_str(&content).map_err(|error| format!("parse profile {}: {error}", path.display()))?;
         let config_root = profile_dir
             .parent()
             .and_then(Path::parent)
@@ -323,21 +320,14 @@ impl Profile {
         Self::from_config(config_root, profile_dir, config)
     }
 
-    pub fn from_config(
-        config_root: PathBuf,
-        profile_dir: PathBuf,
-        config: ProfileConfigFile,
-    ) -> Result<Self, String> {
+    pub fn from_config(config_root: PathBuf, profile_dir: PathBuf, config: ProfileConfigFile) -> Result<Self, String> {
         config.validate()?;
-        let dir_name = profile_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                format!(
-                    "profile directory {} has no valid directory name",
-                    profile_dir.display()
-                )
-            })?;
+        let dir_name = profile_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+            format!(
+                "profile directory {} has no valid directory name",
+                profile_dir.display()
+            )
+        })?;
         if config.id != dir_name {
             return Err(format!(
                 "profile directory id mismatch: directory is {dir_name}, profile id is {}",
@@ -385,11 +375,7 @@ impl Profile {
         self.build_status(files, assets)
     }
 
-    fn build_status(
-        &self,
-        files: Vec<ProfileFileStatus>,
-        assets: Vec<ProfileAssetStatus>,
-    ) -> ProfileStatus {
+    fn build_status(&self, files: Vec<ProfileFileStatus>, assets: Vec<ProfileAssetStatus>) -> ProfileStatus {
         let mut errors = Vec::new();
         for file in &files {
             if !file.valid {
@@ -398,10 +384,7 @@ impl Profile {
         }
         for asset in &assets {
             if !asset.valid {
-                errors.push(format!(
-                    "profile asset {} is not valid",
-                    asset.path.display()
-                ));
+                errors.push(format!("profile asset {} is not valid", asset.path.display()));
             }
         }
         ProfileStatus {
@@ -423,10 +406,12 @@ impl Profile {
     }
 
     pub fn download_assets(&self, assets_dir: &Path, arch: &str) -> Result<ProfileStatus, String> {
-        let arch_assets =
-            self.config.assets.arch.get(arch).ok_or_else(|| {
-                format!("profile {} has no assets for arch {arch}", self.config.id)
-            })?;
+        let arch_assets = self
+            .config
+            .assets
+            .arch
+            .get(arch)
+            .ok_or_else(|| format!("profile {} has no assets for arch {arch}", self.config.id))?;
         fs::create_dir_all(assets_dir.join(arch))
             .map_err(|error| format!("create asset dir {}: {error}", assets_dir.display()))?;
         for (kind, descriptor) in arch_assets.iter() {
@@ -450,12 +435,7 @@ impl Profile {
                 descriptor.resolved_hash(&format!("profile.assets.arch.{arch}.{kind}"))?,
                 descriptor.resolved_size(&format!("profile.assets.arch.{arch}.{kind}"))?,
             )
-            .map_err(|error| {
-                format!(
-                    "verify downloaded profile asset {}: {error}",
-                    destination.display()
-                )
-            })?;
+            .map_err(|error| format!("verify downloaded profile asset {}: {error}", destination.display()))?;
         }
         self.check(assets_dir, arch)
     }
@@ -477,18 +457,15 @@ impl Profile {
         validate_profile_target("mcp tool", tool)?;
         self.ensure_mcp_server_known(server)?;
 
-        let enforcement_descriptor = self.config.files.enforcement.clone().ok_or_else(|| {
-            "profile.files.enforcement is required before mutating enforcement rules".to_string()
+        let enforcement_descriptor = self
+            .config
+            .files
+            .enforcement
+            .clone()
+            .ok_or_else(|| "profile.files.enforcement is required before mutating enforcement rules".to_string())?;
+        let enforcement_rule_file = self.config.rule_files.enforcement.as_deref().ok_or_else(|| {
+            "profile.rule_files.enforcement is required before mutating enforcement rules".to_string()
         })?;
-        let enforcement_rule_file =
-            self.config
-                .rule_files
-                .enforcement
-                .as_deref()
-                .ok_or_else(|| {
-                    "profile.rule_files.enforcement is required before mutating enforcement rules"
-                        .to_string()
-                })?;
         if enforcement_descriptor.path != enforcement_rule_file {
             return Err(format!(
                 "profile.files.enforcement.path must match rule_files.enforcement: {} != {}",
@@ -502,12 +479,8 @@ impl Profile {
             enforcement_descriptor.resolved_hash("profile.files.enforcement")?,
             enforcement_descriptor.resolved_size("profile.files.enforcement")?,
         )?;
-        let content = fs::read_to_string(&enforcement_path).map_err(|error| {
-            format!(
-                "read enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
+        let content = fs::read_to_string(&enforcement_path)
+            .map_err(|error| format!("read enforcement file {}: {error}", enforcement_path.display()))?;
         let mut rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
             format!(
                 "parse enforcement file {} before mutation: {error}",
@@ -550,27 +523,19 @@ impl Profile {
                 ),
                 enabled: true,
                 detection_level: None,
-                priority: Some(SecurityRulePriority::Named(
-                    SecurityRulePriorityName::Default,
-                )),
+                priority: Some(SecurityRulePriority::Named(SecurityRulePriorityName::Default)),
                 corp_locked: false,
-                reason: Some(format!(
-                    "Profile-managed MCP tool permission for {server}/{tool}."
-                )),
+                reason: Some(format!("Profile-managed MCP tool permission for {server}/{tool}.")),
                 managed: Some(managed.clone()),
                 plugin_config: BTreeMap::new(),
             },
         );
         rules.validate()?;
 
-        let serialized = toml::to_string_pretty(&rules)
-            .map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized).map_err(|error| {
-            format!(
-                "write enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
+        let serialized =
+            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized)
+            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
         let (new_hash, new_size) = file_hash_and_size(&enforcement_path)?;
         self.config.files.enforcement = Some(ProfileFileDescriptor {
             path: enforcement_descriptor.path.clone(),
@@ -591,9 +556,7 @@ impl Profile {
             affected_path: enforcement_descriptor.path,
             target_kind: managed.target_kind().to_string(),
             target_key: managed.target_key(),
-            operation: SecurityRuleManagedOperation::Permission
-                .as_str()
-                .to_string(),
+            operation: SecurityRuleManagedOperation::Permission.as_str().to_string(),
             rule_id: Some(format!("profiles.rules.{rule_key}")),
             old_hash: format!("blake3:{old_hash}"),
             old_size,
@@ -602,11 +565,7 @@ impl Profile {
         })
     }
 
-    pub fn mcp_tool_permission(
-        &self,
-        server: &str,
-        tool: &str,
-    ) -> Result<McpToolPermissionStatus, String> {
+    pub fn mcp_tool_permission(&self, server: &str, tool: &str) -> Result<McpToolPermissionStatus, String> {
         validate_profile_target("mcp server", server)?;
         validate_profile_target("mcp tool", tool)?;
         self.ensure_mcp_server_known(server)?;
@@ -637,9 +596,10 @@ impl Profile {
             });
         }
 
-        let default = rules.default.get("mcp").ok_or_else(|| {
-            "default.mcp rule is required for MCP permission readback".to_string()
-        })?;
+        let default = rules
+            .default
+            .get("mcp")
+            .ok_or_else(|| "default.mcp rule is required for MCP permission readback".to_string())?;
         mcp_permission_action(default.action).map(|action| McpToolPermissionStatus {
             action,
             source: "default".to_string(),
@@ -649,9 +609,10 @@ impl Profile {
 
     pub fn mcp_default_permission(&self) -> Result<McpToolPermissionStatus, String> {
         let (_, _, _, _, rules) = self.load_verified_enforcement_rules()?;
-        let default = rules.default.get("mcp").ok_or_else(|| {
-            "default.mcp rule is required for MCP permission readback".to_string()
-        })?;
+        let default = rules
+            .default
+            .get("mcp")
+            .ok_or_else(|| "default.mcp rule is required for MCP permission readback".to_string())?;
         mcp_permission_action(default.action).map(|action| McpToolPermissionStatus {
             action,
             source: "default".to_string(),
@@ -667,22 +628,18 @@ impl Profile {
         let action = mcp_permission_action(action)?;
         let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
             self.load_verified_enforcement_rules()?;
-        let default = rules.default.get_mut("mcp").ok_or_else(|| {
-            "default.mcp rule is required before mutating MCP default permission".to_string()
-        })?;
+        let default = rules
+            .default
+            .get_mut("mcp")
+            .ok_or_else(|| "default.mcp rule is required before mutating MCP default permission".to_string())?;
         default.action = action;
         rules.validate()?;
 
-        let serialized = toml::to_string_pretty(&rules)
-            .map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized).map_err(|error| {
-            format!(
-                "write enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
-        let (new_hash, new_size) =
-            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        let serialized =
+            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized)
+            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
 
         Ok(ProfileMutationSummary {
@@ -722,19 +679,14 @@ impl Profile {
         let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
             self.load_verified_enforcement_rules()?;
         rules.profiles.rules.insert(rule_id.to_string(), rule);
-        rules.compile(SecurityRuleSource::User).map_err(|error| {
-            format!("compile profile enforcement rules after mutation: {error}")
-        })?;
-        let serialized = toml::to_string_pretty(&rules)
-            .map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized).map_err(|error| {
-            format!(
-                "write enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
-        let (new_hash, new_size) =
-            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        rules
+            .compile(SecurityRuleSource::User)
+            .map_err(|error| format!("compile profile enforcement rules after mutation: {error}"))?;
+        let serialized =
+            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized)
+            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
         Ok(ProfileMutationSummary {
             profile_id: self.config.id.clone(),
@@ -757,11 +709,7 @@ impl Profile {
         })
     }
 
-    pub fn delete_profile_rule(
-        &mut self,
-        rule_id: &str,
-        actor: &str,
-    ) -> Result<ProfileMutationSummary, String> {
+    pub fn delete_profile_rule(&mut self, rule_id: &str, actor: &str) -> Result<ProfileMutationSummary, String> {
         validate_profile_target("profile rule id", rule_id)?;
         let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
             self.load_verified_enforcement_rules()?;
@@ -771,16 +719,11 @@ impl Profile {
         rules
             .compile(SecurityRuleSource::User)
             .map_err(|error| format!("compile profile enforcement rules after delete: {error}"))?;
-        let serialized = toml::to_string_pretty(&rules)
-            .map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized).map_err(|error| {
-            format!(
-                "write enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
-        let (new_hash, new_size) =
-            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        let serialized =
+            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized)
+            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
         Ok(ProfileMutationSummary {
             profile_id: self.config.id.clone(),
@@ -871,11 +814,7 @@ impl Profile {
         })
     }
 
-    pub fn delete_mcp_server(
-        &mut self,
-        server: &str,
-        actor: &str,
-    ) -> Result<ProfileMutationSummary, String> {
+    pub fn delete_mcp_server(&mut self, server: &str, actor: &str) -> Result<ProfileMutationSummary, String> {
         validate_profile_target("MCP server", server)?;
         let profile_path = self.profile_dir.join("profile.toml");
         let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
@@ -911,22 +850,12 @@ impl Profile {
         })
     }
 
-    pub fn add_skill_path(
-        &mut self,
-        path: &str,
-        actor: &str,
-    ) -> Result<ProfileMutationSummary, String> {
+    pub fn add_skill_path(&mut self, path: &str, actor: &str) -> Result<ProfileMutationSummary, String> {
         validate_profile_skill_path(path)?;
         let skill_id = skill_id_for_path(path)?;
         let profile_path = self.profile_dir.join("profile.toml");
         let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
-        if self
-            .config
-            .skills
-            .paths
-            .iter()
-            .any(|existing| existing == path)
-        {
+        if self.config.skills.paths.iter().any(|existing| existing == path) {
             return Err(format!("profile skill already exists: {skill_id}"));
         }
         if self
@@ -992,11 +921,7 @@ impl Profile {
         ))
     }
 
-    pub fn delete_skill(
-        &mut self,
-        skill_id: &str,
-        actor: &str,
-    ) -> Result<ProfileMutationSummary, String> {
+    pub fn delete_skill(&mut self, skill_id: &str, actor: &str) -> Result<ProfileMutationSummary, String> {
         validate_profile_target("skill id", skill_id)?;
         let profile_path = self.profile_dir.join("profile.toml");
         let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
@@ -1018,10 +943,8 @@ impl Profile {
 
     pub fn save(&self) -> Result<(), String> {
         let path = self.profile_dir.join("profile.toml");
-        let content = toml::to_string_pretty(&self.config)
-            .map_err(|error| format!("serialize profile: {error}"))?;
-        fs::write(&path, content)
-            .map_err(|error| format!("write profile {}: {error}", path.display()))
+        let content = toml::to_string_pretty(&self.config).map_err(|error| format!("serialize profile: {error}"))?;
+        fs::write(&path, content).map_err(|error| format!("write profile {}: {error}", path.display()))
     }
 
     fn profile_toml_relative_path(&self) -> String {
@@ -1060,28 +983,16 @@ impl Profile {
 
     fn load_verified_enforcement_rules(
         &self,
-    ) -> Result<
-        (
-            ProfileFileDescriptor,
-            PathBuf,
-            String,
-            u64,
-            SecurityRuleProfile,
-        ),
-        String,
-    > {
-        let enforcement_descriptor = self.config.files.enforcement.clone().ok_or_else(|| {
-            "profile.files.enforcement is required before mutating enforcement rules".to_string()
+    ) -> Result<(ProfileFileDescriptor, PathBuf, String, u64, SecurityRuleProfile), String> {
+        let enforcement_descriptor = self
+            .config
+            .files
+            .enforcement
+            .clone()
+            .ok_or_else(|| "profile.files.enforcement is required before mutating enforcement rules".to_string())?;
+        let enforcement_rule_file = self.config.rule_files.enforcement.as_deref().ok_or_else(|| {
+            "profile.rule_files.enforcement is required before mutating enforcement rules".to_string()
         })?;
-        let enforcement_rule_file =
-            self.config
-                .rule_files
-                .enforcement
-                .as_deref()
-                .ok_or_else(|| {
-                    "profile.rule_files.enforcement is required before mutating enforcement rules"
-                        .to_string()
-                })?;
         if enforcement_descriptor.path != enforcement_rule_file {
             return Err(format!(
                 "profile.files.enforcement.path must match rule_files.enforcement: {} != {}",
@@ -1094,25 +1005,15 @@ impl Profile {
             enforcement_descriptor.resolved_hash("profile.files.enforcement")?,
             enforcement_descriptor.resolved_size("profile.files.enforcement")?,
         )?;
-        let content = fs::read_to_string(&enforcement_path).map_err(|error| {
-            format!(
-                "read enforcement file {}: {error}",
-                enforcement_path.display()
-            )
-        })?;
+        let content = fs::read_to_string(&enforcement_path)
+            .map_err(|error| format!("read enforcement file {}: {error}", enforcement_path.display()))?;
         let rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
             format!(
                 "parse enforcement file {} before mutation: {error}",
                 enforcement_path.display()
             )
         })?;
-        Ok((
-            enforcement_descriptor,
-            enforcement_path,
-            old_hash,
-            old_size,
-            rules,
-        ))
+        Ok((enforcement_descriptor, enforcement_path, old_hash, old_size, rules))
     }
 
     fn update_enforcement_pin(
@@ -1135,10 +1036,7 @@ impl Profile {
             .iter()
             .map(|(kind, descriptor)| {
                 let path = self.config_root.join(&descriptor.path);
-                let expected_hash = descriptor
-                    .hash
-                    .clone()
-                    .unwrap_or_else(|| "unresolved".into());
+                let expected_hash = descriptor.hash.clone().unwrap_or_else(|| "unresolved".into());
                 let expected_size = descriptor.size.unwrap_or(0);
                 match file_hash_and_size(&path) {
                     Ok((hash, size)) => ProfileFileStatus {
@@ -1179,10 +1077,7 @@ impl Profile {
             .map(|(kind, descriptor)| {
                 let path = profile_asset_path(assets_dir, arch, descriptor)
                     .unwrap_or_else(|_| assets_dir.join(arch).join(&descriptor.name));
-                let expected_hash = descriptor
-                    .hash
-                    .clone()
-                    .unwrap_or_else(|| "unresolved".into());
+                let expected_hash = descriptor.hash.clone().unwrap_or_else(|| "unresolved".into());
                 let expected_size = descriptor.size.unwrap_or(0);
                 match file_hash_and_size(&path) {
                     Ok((hash, size)) => ProfileAssetStatus {
@@ -1225,10 +1120,7 @@ impl Profile {
             .map(|(kind, descriptor)| {
                 let path = profile_asset_path(assets_dir, arch, descriptor)
                     .unwrap_or_else(|_| assets_dir.join(arch).join(&descriptor.name));
-                let expected_hash = descriptor
-                    .hash
-                    .clone()
-                    .unwrap_or_else(|| "unresolved".into());
+                let expected_hash = descriptor.hash.clone().unwrap_or_else(|| "unresolved".into());
                 let expected_size = descriptor.size.unwrap_or(0);
                 match fs::metadata(&path) {
                     Ok(metadata) if metadata.is_file() => {
@@ -1281,20 +1173,22 @@ impl Profile {
         {
             return Ok(());
         }
-        let descriptor =
-            self.config.files.mcp.as_ref().ok_or_else(|| {
-                "profile.files.mcp is required to mutate MCP permissions".to_string()
-            })?;
+        let descriptor = self
+            .config
+            .files
+            .mcp
+            .as_ref()
+            .ok_or_else(|| "profile.files.mcp is required to mutate MCP permissions".to_string())?;
         let path = self.config_root.join(&descriptor.path);
         verify_hash_and_size(
             &path,
             descriptor.resolved_hash("profile.files.mcp")?,
             descriptor.resolved_size("profile.files.mcp")?,
         )?;
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("read MCP config {}: {error}", path.display()))?;
-        let config: McpJsonConfig = serde_json::from_str(&content)
-            .map_err(|error| format!("parse MCP config {}: {error}", path.display()))?;
+        let content =
+            fs::read_to_string(&path).map_err(|error| format!("read MCP config {}: {error}", path.display()))?;
+        let config: McpJsonConfig =
+            serde_json::from_str(&content).map_err(|error| format!("parse MCP config {}: {error}", path.display()))?;
         if config.mcp_servers.contains_key(server) {
             Ok(())
         } else {
@@ -1353,12 +1247,8 @@ impl ActiveProfileFile {
             network: corp.network.clone(),
             ..SettingsFile::default()
         };
-        let merged_network =
-            super::builder::MergedPolicies::from_files(&network_profile, &network_corp).network;
-        let mut network = super::builder::network_config_from_policy_and_dns(
-            &merged_network,
-            corp.network.dns.clone(),
-        );
+        let merged_network = super::builder::MergedPolicies::from_files(&network_profile, &network_corp).network;
+        let mut network = super::builder::network_config_from_policy_and_dns(&merged_network, corp.network.dns.clone());
         network.upstream_overrides = corp.network.upstream_overrides.clone();
 
         let active = Self {
@@ -1433,9 +1323,7 @@ impl ActiveProfileFile {
 
 fn mcp_permission_action(action: SecurityRuleAction) -> Result<SecurityRuleAction, String> {
     match action {
-        SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block => {
-            Ok(action)
-        }
+        SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block => Ok(action),
         other => Err(format!(
             "MCP tool permission action must be allow, ask, or block, got {}",
             other.as_str()
@@ -1501,31 +1389,22 @@ impl ProfileConfigFile {
         }
     }
 
-    pub fn security_rule_profile_from_files(
-        &self,
-        base_dir: &Path,
-    ) -> Result<SecurityRuleProfile, String> {
+    pub fn security_rule_profile_from_files(&self, base_dir: &Path) -> Result<SecurityRuleProfile, String> {
         let mut profile = self.inline_security_rule_profile();
         if let Some(enforcement) = self.rule_files.enforcement.as_deref() {
             let path = resolve_profile_rule_file_path(base_dir, enforcement);
-            let content = fs::read_to_string(&path).map_err(|error| {
-                format!("read profile enforcement rules {}: {error}", path.display())
-            })?;
-            let rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
-                format!(
-                    "parse profile enforcement rules {}: {error}",
-                    path.display()
-                )
-            })?;
+            let content = fs::read_to_string(&path)
+                .map_err(|error| format!("read profile enforcement rules {}: {error}", path.display()))?;
+            let rules = SecurityRuleProfile::parse_toml(&content)
+                .map_err(|error| format!("parse profile enforcement rules {}: {error}", path.display()))?;
             merge_profile_rule_file(&mut profile, rules, &path)?;
         }
         if let Some(sigma) = self.rule_files.sigma.as_deref() {
             let path = resolve_profile_rule_file_path(base_dir, sigma);
             let content = fs::read_to_string(&path)
                 .map_err(|error| format!("read profile Sigma rules {}: {error}", path.display()))?;
-            let rules = SecurityRuleProfile::parse_sigma_yaml(&content).map_err(|error| {
-                format!("parse profile Sigma rules {}: {error}", path.display())
-            })?;
+            let rules = SecurityRuleProfile::parse_sigma_yaml(&content)
+                .map_err(|error| format!("parse profile Sigma rules {}: {error}", path.display()))?;
             merge_profile_rule_file(&mut profile, rules, &path)?;
         }
         profile.validate()?;
@@ -1567,29 +1446,12 @@ fn merge_profile_rule_file(
 ) -> Result<(), String> {
     let path = path.display();
     if !source.corp.is_empty() {
-        return Err(format!(
-            "profile rule file {path} must not define corp.rules"
-        ));
+        return Err(format!("profile rule file {path} must not define corp.rules"));
     }
-    merge_rule_map(
-        "default",
-        &mut target.default,
-        source.default,
-        &path.to_string(),
-    )?;
-    merge_security_rule_group(
-        "profiles",
-        &mut target.profiles,
-        source.profiles,
-        &path.to_string(),
-    )?;
+    merge_rule_map("default", &mut target.default, source.default, &path.to_string())?;
+    merge_security_rule_group("profiles", &mut target.profiles, source.profiles, &path.to_string())?;
     merge_map("ai", &mut target.ai, source.ai, &path.to_string())?;
-    merge_map(
-        "plugins",
-        &mut target.plugins,
-        source.plugins,
-        &path.to_string(),
-    )?;
+    merge_map("plugins", &mut target.plugins, source.plugins, &path.to_string())?;
     Ok(())
 }
 
@@ -1661,12 +1523,9 @@ impl ProfileArchAssets {
     }
 
     fn validate(&self, arch: &str) -> Result<(), String> {
-        self.kernel
-            .validate(&format!("profile.assets.arch.{arch}.kernel"))?;
-        self.initrd
-            .validate(&format!("profile.assets.arch.{arch}.initrd"))?;
-        self.rootfs
-            .validate(&format!("profile.assets.arch.{arch}.rootfs"))?;
+        self.kernel.validate(&format!("profile.assets.arch.{arch}.kernel"))?;
+        self.initrd.validate(&format!("profile.assets.arch.{arch}.initrd"))?;
+        self.rootfs.validate(&format!("profile.assets.arch.{arch}.rootfs"))?;
         Ok(())
     }
 }
@@ -1696,13 +1555,8 @@ impl ProfileObomDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.name"), &self.name)?;
         validate_non_empty(&format!("{field}.url"), &self.url)?;
-        if !(self.url.starts_with("https://")
-            || self.url.starts_with("http://")
-            || self.url.starts_with("file://"))
-        {
-            return Err(format!(
-                "{field}.url must use https://, http://, or file://"
-            ));
+        if !(self.url.starts_with("https://") || self.url.starts_with("http://") || self.url.starts_with("file://")) {
+            return Err(format!("{field}.url must use https://, http://, or file://"));
         }
         if self.url.contains("..") || self.url.contains('\\') {
             return Err(format!("{field}.url must not contain path traversal"));
@@ -1712,10 +1566,7 @@ impl ProfileObomDescriptor {
             return Err(format!("{field}.size must be greater than 0"));
         }
         validate_non_empty(&format!("{field}.generator"), &self.generator)?;
-        validate_non_empty(
-            &format!("{field}.generator_version"),
-            &self.generator_version,
-        )?;
+        validate_non_empty(&format!("{field}.generator_version"), &self.generator_version)?;
         Ok(())
     }
 }
@@ -1741,19 +1592,13 @@ impl ProfileFileReferences {
             ("profile.files.detection", self.detection.as_ref()),
             ("profile.files.mcp", self.mcp.as_ref()),
             ("profile.files.apt_packages", self.apt_packages.as_ref()),
-            (
-                "profile.files.python_requirements",
-                self.python_requirements.as_ref(),
-            ),
+            ("profile.files.python_requirements", self.python_requirements.as_ref()),
             (
                 "profile.files.python_requirements_lock",
                 self.python_requirements_lock.as_ref(),
             ),
             ("profile.files.npm_packages", self.npm_packages.as_ref()),
-            (
-                "profile.files.npm_package_lock",
-                self.npm_package_lock.as_ref(),
-            ),
+            ("profile.files.npm_package_lock", self.npm_package_lock.as_ref()),
             ("profile.files.build", self.build.as_ref()),
             ("profile.files.tips", self.tips.as_ref()),
             ("profile.files.root_manifest", self.root_manifest.as_ref()),
@@ -1763,15 +1608,10 @@ impl ProfileFileReferences {
             }
         }
         if self.python_requirements.is_some() != self.python_requirements_lock.is_some() {
-            return Err(
-                "profile.files.python_requirements and python_requirements_lock must be paired"
-                    .to_string(),
-            );
+            return Err("profile.files.python_requirements and python_requirements_lock must be paired".to_string());
         }
         if self.npm_packages.is_some() != self.npm_package_lock.is_some() {
-            return Err(
-                "profile.files.npm_packages and npm_package_lock must be paired".to_string(),
-            );
+            return Err("profile.files.npm_packages and npm_package_lock must be paired".to_string());
         }
         Ok(())
     }
@@ -1783,10 +1623,7 @@ impl ProfileFileReferences {
             ("mcp", self.mcp.as_ref()),
             ("apt_packages", self.apt_packages.as_ref()),
             ("python_requirements", self.python_requirements.as_ref()),
-            (
-                "python_requirements_lock",
-                self.python_requirements_lock.as_ref(),
-            ),
+            ("python_requirements_lock", self.python_requirements_lock.as_ref()),
             ("npm_packages", self.npm_packages.as_ref()),
             ("npm_package_lock", self.npm_package_lock.as_ref()),
             ("build", self.build.as_ref()),
@@ -1820,8 +1657,7 @@ impl ProfileFileDescriptor {
     }
 
     pub fn resolved_size(&self, field: &str) -> Result<u64, String> {
-        self.size
-            .ok_or_else(|| format!("{field}.size is unresolved"))
+        self.size.ok_or_else(|| format!("{field}.size is unresolved"))
     }
 }
 
@@ -1829,13 +1665,8 @@ impl ProfileAssetDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.name"), &self.name)?;
         validate_non_empty(&format!("{field}.url"), &self.url)?;
-        if !(self.url.starts_with("https://")
-            || self.url.starts_with("http://")
-            || self.url.starts_with("file://"))
-        {
-            return Err(format!(
-                "{field}.url must use https://, http://, or file://"
-            ));
+        if !(self.url.starts_with("https://") || self.url.starts_with("http://") || self.url.starts_with("file://")) {
+            return Err(format!("{field}.url must use https://, http://, or file://"));
         }
         if self.url.contains("..") || self.url.contains('\\') {
             return Err(format!("{field}.url must not contain path traversal"));
@@ -1858,8 +1689,7 @@ impl ProfileAssetDescriptor {
     }
 
     pub fn resolved_size(&self, field: &str) -> Result<u64, String> {
-        self.size
-            .ok_or_else(|| format!("{field}.size is unresolved"))
+        self.size.ok_or_else(|| format!("{field}.size is unresolved"))
     }
 }
 
@@ -1901,8 +1731,8 @@ impl ProfileCatalog {
     }
 
     pub fn load_from_dir(path: &Path) -> Result<Self, String> {
-        let entries = fs::read_dir(path)
-            .map_err(|error| format!("read profile directory {}: {error}", path.display()))?;
+        let entries =
+            fs::read_dir(path).map_err(|error| format!("read profile directory {}: {error}", path.display()))?;
         let mut profiles = BTreeMap::new();
         for entry in entries {
             let entry = entry.map_err(|error| format!("read profile directory entry: {error}"))?;
@@ -1914,22 +1744,19 @@ impl ProfileCatalog {
             }
             let profile_dir = entry.path();
             let path = profile_dir.join("profile.toml");
-            let content = fs::read_to_string(&path)
-                .map_err(|error| format!("read profile {}: {error}", path.display()))?;
-            let profile: ProfileConfigFile = toml::from_str(&content)
-                .map_err(|error| format!("parse profile {}: {error}", path.display()))?;
+            let content =
+                fs::read_to_string(&path).map_err(|error| format!("read profile {}: {error}", path.display()))?;
+            let profile: ProfileConfigFile =
+                toml::from_str(&content).map_err(|error| format!("parse profile {}: {error}", path.display()))?;
             profile
                 .validate()
                 .map_err(|error| format!("validate profile {}: {error}", path.display()))?;
-            let dir_name = profile_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| {
-                    format!(
-                        "profile directory {} has no valid directory name",
-                        profile_dir.display()
-                    )
-                })?;
+            let dir_name = profile_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+                format!(
+                    "profile directory {} has no valid directory name",
+                    profile_dir.display()
+                )
+            })?;
             if profile.id != dir_name {
                 return Err(format!(
                     "profile file {} id mismatch: directory is {dir_name}, profile id is {}",
@@ -1984,26 +1811,12 @@ impl ProfileCatalog {
     }
 }
 
-fn overlay_release_manifest_assets(
-    catalog: &mut ProfileCatalog,
-    manifest_path: &Path,
-) -> Result<(), String> {
-    let content = fs::read_to_string(manifest_path).map_err(|error| {
-        format!(
-            "read installed manifest {}: {error}",
-            manifest_path.display()
-        )
-    })?;
-    let document: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
-        format!(
-            "parse installed manifest {}: {error}",
-            manifest_path.display()
-        )
-    })?;
-    let Some(profiles) = document
-        .get("profiles")
-        .and_then(serde_json::Value::as_object)
-    else {
+fn overlay_release_manifest_assets(catalog: &mut ProfileCatalog, manifest_path: &Path) -> Result<(), String> {
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("read installed manifest {}: {error}", manifest_path.display()))?;
+    let document: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("parse installed manifest {}: {error}", manifest_path.display()))?;
+    let Some(profiles) = document.get("profiles").and_then(serde_json::Value::as_object) else {
         return Ok(());
     };
 
@@ -2018,23 +1831,17 @@ fn overlay_release_manifest_assets(
         let revision = profile_value
             .get("revision")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                format!("installed manifest profile {profile_id} is missing revision")
-            })?;
+            .ok_or_else(|| format!("installed manifest profile {profile_id} is missing revision"))?;
         profile.revision = revision.to_string();
         let architectures = profile_value
             .get("architectures")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| {
-                format!("installed manifest profile {profile_id} is missing architectures")
-            })?;
+            .ok_or_else(|| format!("installed manifest profile {profile_id} is missing architectures"))?;
         for architecture in architectures {
             let arch = architecture
                 .get("architecture")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    format!("installed manifest profile {profile_id} has an unnamed architecture")
-                })?;
+                .ok_or_else(|| format!("installed manifest profile {profile_id} has an unnamed architecture"))?;
             let Some(profile_arch) = profile.assets.arch.get_mut(arch) else {
                 continue;
             };
@@ -2042,23 +1849,16 @@ fn overlay_release_manifest_assets(
                 .get("images")
                 .and_then(serde_json::Value::as_array)
                 .ok_or_else(|| {
-                    format!(
-                        "installed manifest profile {profile_id} architecture {arch} is missing images"
-                    )
+                    format!("installed manifest profile {profile_id} architecture {arch} is missing images")
                 })?;
             let mut overlaid = BTreeSet::new();
             for image in images {
                 if image.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
                     continue;
                 }
-                let kind = image
-                    .get("kind")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!(
-                            "installed manifest profile {profile_id} architecture {arch} has an image without kind"
-                        )
-                    })?;
+                let kind = image.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                    format!("installed manifest profile {profile_id} architecture {arch} has an image without kind")
+                })?;
                 let descriptor = match kind {
                     "kernel" => &mut profile_arch.kernel,
                     "initrd" => &mut profile_arch.initrd,
@@ -2068,29 +1868,19 @@ fn overlay_release_manifest_assets(
                 let name = image
                     .get("name")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!("installed manifest {profile_id}/{arch}/{kind} is missing name")
-                    })?;
+                    .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing name"))?;
                 let url = image
                     .get("url")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!("installed manifest {profile_id}/{arch}/{kind} is missing URL")
-                    })?;
+                    .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing URL"))?;
                 let size = image
                     .get("bytes")
                     .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| {
-                        format!(
-                            "installed manifest {profile_id}/{arch}/{kind} is missing byte size"
-                        )
-                    })?;
+                    .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing byte size"))?;
                 let blake3 = image
                     .pointer("/digest/blake3")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        format!("installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3")
-                    })?;
+                    .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3"))?;
                 if blake3.len() != 64 || !blake3.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                     return Err(format!(
                         "installed manifest {profile_id}/{arch}/{kind} has invalid BLAKE3"
@@ -2099,10 +1889,7 @@ fn overlay_release_manifest_assets(
                 descriptor.name = name.to_string();
                 descriptor.url = if url.starts_with('/') {
                     let assets_dir = manifest_path.parent().ok_or_else(|| {
-                        format!(
-                            "installed manifest {} has no asset directory",
-                            manifest_path.display()
-                        )
+                        format!("installed manifest {} has no asset directory", manifest_path.display())
                     })?;
                     format!("file://{}", assets_dir.join(arch).join(name).display())
                 } else {
@@ -2119,22 +1906,14 @@ fn overlay_release_manifest_assets(
                     ));
                 }
             }
-            if let Some(configs) = architecture
-                .get("config")
-                .and_then(serde_json::Value::as_array)
-            {
+            if let Some(configs) = architecture.get("config").and_then(serde_json::Value::as_array) {
                 for config in configs {
                     if config.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
                         continue;
                     }
-                    let kind = config
-                        .get("kind")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| {
-                            format!(
-                                "installed manifest profile {profile_id} architecture {arch} has config without kind"
-                            )
-                        })?;
+                    let kind = config.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                        format!("installed manifest profile {profile_id} architecture {arch} has config without kind")
+                    })?;
                     let slot = match kind {
                         "enforcement" => &mut profile.files.enforcement,
                         "detection" => &mut profile.files.detection,
@@ -2152,25 +1931,15 @@ fn overlay_release_manifest_assets(
                     let path = config
                         .get("path")
                         .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| {
-                            format!("installed manifest {profile_id}/{arch}/{kind} is missing path")
-                        })?;
+                        .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing path"))?;
                     let size = config
                         .get("bytes")
                         .and_then(serde_json::Value::as_u64)
-                        .ok_or_else(|| {
-                            format!(
-                                "installed manifest {profile_id}/{arch}/{kind} is missing byte size"
-                            )
-                        })?;
+                        .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing byte size"))?;
                     let blake3 = config
                         .pointer("/digest/blake3")
                         .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| {
-                            format!(
-                                "installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3"
-                            )
-                        })?;
+                        .ok_or_else(|| format!("installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3"))?;
                     if blake3.len() != 64 || !blake3.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                         return Err(format!(
                             "installed manifest {profile_id}/{arch}/{kind} has invalid BLAKE3"
@@ -2225,9 +1994,7 @@ pub fn validate_profile_id(id: &str) -> Result<(), String> {
     match validate_identifier_shape(id) {
         Ok(()) => Ok(()),
         Err(IdentifierError::Empty) => Err("profile.id must not be empty".to_string()),
-        Err(IdentifierError::TooLong) => {
-            Err("profile.id must be at most 64 characters".to_string())
-        }
+        Err(IdentifierError::TooLong) => Err("profile.id must be at most 64 characters".to_string()),
         Err(IdentifierError::InvalidCharacters) => {
             Err("profile.id must use lowercase ascii, digits, '-' or '_'".to_string())
         }
@@ -2245,9 +2012,7 @@ fn validate_profile_skill_path(value: &str) -> Result<(), String> {
 pub fn skill_id_for_path(path: &str) -> Result<String, String> {
     let path = Path::new(path);
     let id = if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-        path.parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
+        path.parent().and_then(Path::file_name).and_then(|name| name.to_str())
     } else {
         path.file_stem().and_then(|name| name.to_str())
     }
@@ -2311,43 +2076,29 @@ fn validate_blake3_hash(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn profile_asset_path(
-    assets_dir: &Path,
-    arch: &str,
-    descriptor: &ProfileAssetDescriptor,
-) -> Result<PathBuf, String> {
+fn profile_asset_path(assets_dir: &Path, arch: &str, descriptor: &ProfileAssetDescriptor) -> Result<PathBuf, String> {
     let hash = descriptor
         .hash
         .as_deref()
         .ok_or_else(|| format!("profile asset {} hash is unresolved", descriptor.name))?
         .strip_prefix("blake3:")
-        .ok_or_else(|| {
-            format!(
-                "profile asset {} hash must use blake3: prefix",
-                descriptor.name
-            )
-        })?;
+        .ok_or_else(|| format!("profile asset {} hash must use blake3: prefix", descriptor.name))?;
     Ok(assets_dir
         .join(arch)
         .join(capsem_assets::asset_manager::hash_filename(&descriptor.name, hash)))
 }
 
 fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {
-    let metadata =
-        fs::metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
+    let metadata = fs::metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
     if !metadata.is_file() {
         return Err(format!("{} is not a file", path.display()));
     }
-    let hash = capsem_assets::asset_manager::hash_file(path)
-        .map_err(|error| format!("hash {}: {error}", path.display()))?;
+    let hash =
+        capsem_assets::asset_manager::hash_file(path).map_err(|error| format!("hash {}: {error}", path.display()))?;
     Ok((hash, metadata.len()))
 }
 
-fn verify_hash_and_size(
-    path: &Path,
-    expected_hash: &str,
-    expected_size: u64,
-) -> Result<(String, u64), String> {
+fn verify_hash_and_size(path: &Path, expected_hash: &str, expected_size: u64) -> Result<(String, u64), String> {
     let (hash, size) = file_hash_and_size(path)?;
     let expected_hash = expected_hash
         .strip_prefix("blake3:")

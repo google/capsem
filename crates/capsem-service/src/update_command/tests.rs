@@ -41,14 +41,6 @@ fn inherited_systemd_identity_does_not_reparent_the_update() {
         Some(OsStr::new("42")),
         service_pid,
     ));
-    assert!(!direct_systemd_invocation(
-        Some(invocation_id),
-        None,
-        service_pid,
-    ));
-    assert!(!direct_systemd_invocation(
-        None,
-        Some(OsStr::new("42")),
-        service_pid,
-    ));
+    assert!(!direct_systemd_invocation(Some(invocation_id), None, service_pid,));
+    assert!(!direct_systemd_invocation(None, Some(OsStr::new("42")), service_pid,));
 }

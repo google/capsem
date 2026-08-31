@@ -315,10 +315,7 @@ impl PolicyActionId {
     }
 
     pub const fn all() -> &'static [Self] {
-        &[
-            Self::CredentialBrokerCapture,
-            Self::CredentialBrokerSubstitute,
-        ]
+        &[Self::CredentialBrokerCapture, Self::CredentialBrokerSubstitute]
     }
 }
 
@@ -382,16 +379,12 @@ impl PolicySubject for serde_json::Value {
             current = current.get(segment)?;
         }
         match current {
-            serde_json::Value::String(value) => {
-                Some(PolicySubjectValue::String(Cow::Borrowed(value.as_str())))
-            }
+            serde_json::Value::String(value) => Some(PolicySubjectValue::String(Cow::Borrowed(value.as_str()))),
             serde_json::Value::Bool(value) => Some(PolicySubjectValue::Bool(*value)),
-            serde_json::Value::Number(value) => {
-                Some(PolicySubjectValue::String(Cow::Owned(value.to_string())))
+            serde_json::Value::Number(value) => Some(PolicySubjectValue::String(Cow::Owned(value.to_string()))),
+            serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                Some(PolicySubjectValue::Present)
             }
-            serde_json::Value::Null
-            | serde_json::Value::Array(_)
-            | serde_json::Value::Object(_) => Some(PolicySubjectValue::Present),
         }
     }
 }
@@ -506,9 +499,9 @@ pub struct UpstreamOverrideConfig {
 
 impl UpstreamOverrideConfig {
     fn validate(&self, target: &str) -> Result<(), String> {
-        self.dial.parse::<std::net::SocketAddr>().map_err(|error| {
-            format!("network.upstream_overrides.{target}.dial is invalid: {error}")
-        })?;
+        self.dial
+            .parse::<std::net::SocketAddr>()
+            .map_err(|error| format!("network.upstream_overrides.{target}.dial is invalid: {error}"))?;
         Ok(())
     }
 }
@@ -521,21 +514,17 @@ pub enum UpstreamOverrideProtocolConfig {
 }
 
 fn validate_upstream_override_target(target: &str) -> Result<(), String> {
-    let (host, port) = target.rsplit_once(':').ok_or_else(|| {
-        format!("network.upstream_overrides key {target:?} must be exact host:port")
-    })?;
+    let (host, port) = target
+        .rsplit_once(':')
+        .ok_or_else(|| format!("network.upstream_overrides key {target:?} must be exact host:port"))?;
     if host.trim().is_empty() {
-        return Err(format!(
-            "network.upstream_overrides key {target:?} must include a host"
-        ));
+        return Err(format!("network.upstream_overrides key {target:?} must include a host"));
     }
-    let port = port.parse::<u16>().map_err(|error| {
-        format!("network.upstream_overrides key {target:?} has invalid port: {error}")
-    })?;
+    let port = port
+        .parse::<u16>()
+        .map_err(|error| format!("network.upstream_overrides key {target:?} has invalid port: {error}"))?;
     if port == 0 {
-        return Err(format!(
-            "network.upstream_overrides key {target:?} must not use port 0"
-        ));
+        return Err(format!("network.upstream_overrides key {target:?} must not use port 0"));
     }
     Ok(())
 }
@@ -554,9 +543,9 @@ impl DnsNetworkConfig {
 
     pub fn validate(&self) -> Result<(), String> {
         for upstream in &self.upstreams {
-            upstream.parse::<std::net::SocketAddr>().map_err(|error| {
-                format!("network.dns.upstreams entry {upstream:?} is invalid: {error}")
-            })?;
+            upstream
+                .parse::<std::net::SocketAddr>()
+                .map_err(|error| format!("network.dns.upstreams entry {upstream:?} is invalid: {error}"))?;
         }
         Ok(())
     }
@@ -568,9 +557,7 @@ pub fn validate_stored_setting_contract(id: &str, value: &SettingValue) -> Resul
             return Err(format!("{id} must be stored as a broker credential ref"));
         };
         if !value.is_empty() && !crate::is_credential_reference(value) {
-            return Err(format!(
-                "{id} must be empty or stored as a credential:blake3 reference"
-            ));
+            return Err(format!("{id} must be empty or stored as a credential:blake3 reference"));
         }
     }
     Ok(())

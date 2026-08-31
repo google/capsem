@@ -89,10 +89,7 @@ fn list_changed_files_detects_created() {
     let workspace = session.join("workspace");
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
     assert_eq!(changes.len(), 1);
@@ -108,19 +105,12 @@ fn list_changed_files_detects_modified() {
     sched.take_snapshot().unwrap();
 
     // Modify the file.
-    std::fs::write(
-        session.join("workspace/file.txt"),
-        "modified content that is longer",
-    )
-    .unwrap();
+    std::fs::write(session.join("workspace/file.txt"), "modified content that is longer").unwrap();
 
     let workspace = session.join("workspace");
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
     assert_eq!(changes.len(), 1);
@@ -141,10 +131,7 @@ fn list_changed_files_detects_deleted() {
     let workspace = session.join("workspace");
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_changed_files(&args, &sched, &workspace, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
     assert_eq!(changes.len(), 1);
@@ -184,15 +171,8 @@ fn revert_file_roundtrip_content_preserved() {
     );
 
     // Verify success with action and checkpoint fields.
-    assert!(
-        resp.error.is_none(),
-        "snapshots_revert failed: {:?}",
-        resp.error
-    );
-    let result_text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    assert!(resp.error.is_none(), "snapshots_revert failed: {:?}", resp.error);
+    let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let result: Value = serde_json::from_str(&result_text).unwrap();
     assert_eq!(result["reverted"], true);
     assert_eq!(result["action"], "restored");
@@ -200,10 +180,7 @@ fn revert_file_roundtrip_content_preserved() {
 
     // Verify the file is back with exact same content.
     let recovered = std::fs::read_to_string(session.join("workspace/important.txt")).unwrap();
-    assert_eq!(
-        recovered, content,
-        "recovered content must match original exactly"
-    );
+    assert_eq!(recovered, content, "recovered content must match original exactly");
 }
 
 #[tokio::test]
@@ -215,12 +192,8 @@ async fn revert_file_security_event_emits_from_async_runtime() {
     std::fs::write(session.join("workspace/important.txt"), "changed").unwrap();
 
     let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
-    let (resp, file_event) = handle_revert_file_with_security_event(
-        &args,
-        &sched,
-        &session.join("workspace"),
-        Some(serde_json::json!(1)),
-    );
+    let (resp, file_event) =
+        handle_revert_file_with_security_event(&args, &sched, &session.join("workspace"), Some(serde_json::json!(1)));
 
     assert!(resp.error.is_none());
     let file_event = file_event.expect("successful revert must produce file event");
@@ -230,10 +203,9 @@ async fn revert_file_security_event_emits_from_async_runtime() {
     let db_path = session.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
     let rules = crate::net::policy_config::SecurityRuleSet::new(Vec::new());
-    let event_id =
-        crate::security_engine::emit_file_security_write_and_rules(&writer, &rules, file_event)
-            .await
-            .expect("async file event emit must produce event id");
+    let event_id = crate::security_engine::emit_file_security_write_and_rules(&writer, &rules, file_event)
+        .await
+        .expect("async file event emit must produce event id");
     writer.shutdown_blocking();
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
@@ -272,10 +244,7 @@ fn revert_file_deletes_created_file() {
     assert!(!session.join("workspace/new.txt").exists());
 
     // Verify action and checkpoint in response.
-    let result_text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let result: Value = serde_json::from_str(&result_text).unwrap();
     assert_eq!(result["action"], "deleted");
     assert_eq!(result["checkpoint"], "cp-0");
@@ -290,8 +259,7 @@ fn revert_file_rejects_snapshot_parent_symlink_escape() {
     std::fs::write(outside.join("secret.txt"), "external secret").unwrap();
 
     sched.take_snapshot().unwrap();
-    std::os::unix::fs::symlink(&outside, session.join("auto_snapshots/0/workspace/escape"))
-        .unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("auto_snapshots/0/workspace/escape")).unwrap();
 
     let args = serde_json::json!({"path": "escape/secret.txt", "checkpoint": "cp-0"});
     let resp = handle_revert_file(
@@ -304,8 +272,7 @@ fn revert_file_rejects_snapshot_parent_symlink_escape() {
 
     let err = resp.error.expect("symlink escape must be rejected");
     assert!(
-        err.message
-            .contains("snapshot source parent contains symlink"),
+        err.message.contains("snapshot source parent contains symlink"),
         "unexpected error: {}",
         err.message
     );
@@ -375,11 +342,7 @@ fn revert_file_restores_snapshot_symlink_without_pulling_target_bytes() {
     assert!(resp.error.is_none(), "restore failed: {:?}", resp.error);
     let restored = session.join("workspace/link.txt");
     assert!(
-        restored
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink(),
+        restored.symlink_metadata().unwrap().file_type().is_symlink(),
         "snapshot symlink should remain a symlink, not copied target bytes"
     );
     assert_eq!(std::fs::read_link(restored).unwrap(), outside);
@@ -458,16 +421,9 @@ fn revert_three_versions_of_same_file() {
     // Revert to version 1 (cp-0)
     let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-0"});
     let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-    assert!(
-        resp.error.is_none(),
-        "revert to cp-0 failed: {:?}",
-        resp.error
-    );
+    assert!(resp.error.is_none(), "revert to cp-0 failed: {:?}", resp.error);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "version ONE");
-    let result_text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let result: Value = serde_json::from_str(&result_text).unwrap();
     assert_eq!(result["action"], "restored");
     assert_eq!(result["checkpoint"], "cp-0");
@@ -475,11 +431,7 @@ fn revert_three_versions_of_same_file() {
     // Revert to version 2 (cp-1)
     let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-1"});
     let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-    assert!(
-        resp.error.is_none(),
-        "revert to cp-1 failed: {:?}",
-        resp.error
-    );
+    assert!(resp.error.is_none(), "revert to cp-1 failed: {:?}", resp.error);
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "version TWO -- longer content here"
@@ -488,11 +440,7 @@ fn revert_three_versions_of_same_file() {
     // Revert to version 3 (cp-2)
     let args = serde_json::json!({"path": "evolving.txt", "checkpoint": "cp-2"});
     let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-    assert!(
-        resp.error.is_none(),
-        "revert to cp-2 failed: {:?}",
-        resp.error
-    );
+    assert!(resp.error.is_none(), "revert to cp-2 failed: {:?}", resp.error);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "version THREE!!!");
 }
 
@@ -522,16 +470,10 @@ fn delete_then_recover_via_revert() {
 
     // Verify exact content
     let recovered = std::fs::read_to_string(&file).unwrap();
-    assert_eq!(
-        recovered, content,
-        "recovered content must match original exactly"
-    );
+    assert_eq!(recovered, content, "recovered content must match original exactly");
 
     // Verify response fields
-    let result_text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let result: Value = serde_json::from_str(&result_text).unwrap();
     assert_eq!(result["action"], "restored");
     assert_eq!(result["checkpoint"], "cp-0");
@@ -556,30 +498,15 @@ fn list_changed_files_shows_create_modify_delete() {
 
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let changes: Vec<Value> = serde_json::from_str(&text).unwrap();
 
     // Should see: brand_new.txt (created), modify_me.txt (modified), delete_me.txt (deleted)
     // keep.txt should NOT appear (unchanged).
-    let paths: Vec<&str> = changes
-        .iter()
-        .map(|c| c["path"].as_str().unwrap())
-        .collect();
-    assert!(
-        paths.contains(&"brand_new.txt"),
-        "missing created file: {paths:?}"
-    );
-    assert!(
-        paths.contains(&"modify_me.txt"),
-        "missing modified file: {paths:?}"
-    );
-    assert!(
-        paths.contains(&"delete_me.txt"),
-        "missing deleted file: {paths:?}"
-    );
+    let paths: Vec<&str> = changes.iter().map(|c| c["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"brand_new.txt"), "missing created file: {paths:?}");
+    assert!(paths.contains(&"modify_me.txt"), "missing modified file: {paths:?}");
+    assert!(paths.contains(&"delete_me.txt"), "missing deleted file: {paths:?}");
     assert!(
         !paths.contains(&"keep.txt"),
         "unchanged file should not appear: {paths:?}"
@@ -612,24 +539,15 @@ fn list_snapshots_changes_vs_previous() {
 
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let summary: Value = serde_json::from_str(&text).unwrap();
     let entries = summary["snapshots"].as_array().unwrap();
 
     assert_eq!(entries.len(), 2);
     // Newest first: cp-1, cp-0. Full changes are intentionally omitted by
     // default so snapshot internals do not bleed into generic consumers.
-    assert!(
-        entries[0]["changes"].is_null(),
-        "full changes require opt-in"
-    );
-    assert!(
-        entries[1]["changes"].is_null(),
-        "full changes require opt-in"
-    );
+    assert!(entries[0]["changes"].is_null(), "full changes require opt-in");
+    assert!(entries[1]["changes"].is_null(), "full changes require opt-in");
 
     // cp-0: hello.txt is "new" (rendered as created in the summary).
     assert_eq!(entries[1]["changes_summary"]["created"], 1);
@@ -688,10 +606,7 @@ fn list_snapshots_shows_all() {
 
     let args = serde_json::json!({"format": "json"});
     let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let summary: Value = serde_json::from_str(&text).unwrap();
     let entries = summary["snapshots"].as_array().unwrap();
 
@@ -719,16 +634,9 @@ fn revert_file_auto_selects_checkpoint() {
     // Revert without specifying checkpoint -- should pick cp-1 (newest).
     let args = serde_json::json!({"path": "auto.txt"});
     let resp = handle_revert_file(&args, &sched, &ws, Some(serde_json::json!(1)), None);
-    assert!(
-        resp.error.is_none(),
-        "auto-select revert failed: {:?}",
-        resp.error
-    );
+    assert!(resp.error.is_none(), "auto-select revert failed: {:?}", resp.error);
 
-    let result_text = resp.result.unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let result_text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
     let result: Value = serde_json::from_str(&result_text).unwrap();
     assert_eq!(result["action"], "restored");
     assert_eq!(result["checkpoint"], "cp-1");
@@ -820,10 +728,7 @@ fn changes_pagination_truncates_large_output() {
         max_allowed
     );
     // Should indicate pagination is available.
-    assert!(
-        text.contains("start_index="),
-        "missing pagination hint: {text}"
-    );
+    assert!(text.contains("start_index="), "missing pagination hint: {text}");
 }
 
 #[test]
@@ -885,10 +790,7 @@ fn changes_custom_max_length() {
         "response should be short with max_length=200, got {} chars",
         text.len()
     );
-    assert!(
-        text.contains("start_index="),
-        "should paginate at max_length=200"
-    );
+    assert!(text.contains("start_index="), "should paginate at max_length=200");
 }
 
 #[test]
@@ -924,8 +826,7 @@ fn changes_format_json_returns_raw() {
     let text = extract_text(&resp);
 
     // format=json should return valid JSON array.
-    let changes: Vec<Value> =
-        serde_json::from_str(&text).expect("format=json should return valid JSON array");
+    let changes: Vec<Value> = serde_json::from_str(&text).expect("format=json should return valid JSON array");
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0]["path"], "b.txt");
     assert_eq!(changes[0]["op"], "created");
@@ -951,10 +852,7 @@ fn list_returns_text_table() {
         "default response should NOT be JSON"
     );
     assert!(text.contains("Snapshots"), "missing header: {text}");
-    assert!(
-        text.contains("Checkpoint"),
-        "missing Checkpoint column: {text}"
-    );
+    assert!(text.contains("Checkpoint"), "missing Checkpoint column: {text}");
     // Changes should use compact count columns.
     assert!(text.contains("Created"), "missing Created column: {text}");
     assert!(text.contains("Edited"), "missing Edited column: {text}");
@@ -1014,11 +912,7 @@ fn list_format_json_large_payload_is_not_prefixed_with_pagination_text() {
 
     for i in 0..10 {
         for j in 0..80 {
-            std::fs::write(
-                ws.join(format!("large_{i}_{j}.txt")),
-                format!("payload {i} {j}"),
-            )
-            .unwrap();
+            std::fs::write(ws.join(format!("large_{i}_{j}.txt")), format!("payload {i} {j}")).unwrap();
         }
         sched.take_snapshot().unwrap();
     }
@@ -1066,25 +960,17 @@ fn list_format_json_frontend_contract() {
 
     // Response must have result.content[0].text.
     let result = resp.result.as_ref().expect("response must have result");
-    let content = result["content"]
-        .as_array()
-        .expect("result must have content array");
+    let content = result["content"].as_array().expect("result must have content array");
     assert!(!content.is_empty(), "content must not be empty");
-    let text = content[0]["text"]
-        .as_str()
-        .expect("content[0] must have text string");
+    let text = content[0]["text"].as_str().expect("content[0] must have text string");
 
     // text must be valid JSON with the expected shape.
-    let data: Value =
-        serde_json::from_str(text).expect("content text must be valid JSON when format=json");
+    let data: Value = serde_json::from_str(text).expect("content text must be valid JSON when format=json");
 
     // Top-level fields the frontend depends on.
     assert!(data["snapshots"].is_array(), "must have snapshots array");
     assert!(data["auto_max"].is_number(), "must have auto_max number");
-    assert!(
-        data["manual_max"].is_number(),
-        "must have manual_max number"
-    );
+    assert!(data["manual_max"].is_number(), "must have manual_max number");
     assert!(
         data["manual_available"].is_number(),
         "must have manual_available number"
@@ -1094,15 +980,9 @@ fn list_format_json_frontend_contract() {
     let snaps = data["snapshots"].as_array().unwrap();
     assert!(snaps.len() >= 2, "should have at least 2 snapshots");
     for snap in snaps {
-        assert!(
-            snap["checkpoint"].is_string(),
-            "snapshot must have checkpoint: {snap}"
-        );
+        assert!(snap["checkpoint"].is_string(), "snapshot must have checkpoint: {snap}");
         assert!(snap["slot"].is_number(), "snapshot must have slot: {snap}");
-        assert!(
-            snap["origin"].is_string(),
-            "snapshot must have origin: {snap}"
-        );
+        assert!(snap["origin"].is_string(), "snapshot must have origin: {snap}");
         // name and hash can be null.
         assert!(snap["age"].is_string(), "snapshot must have age: {snap}");
         assert!(

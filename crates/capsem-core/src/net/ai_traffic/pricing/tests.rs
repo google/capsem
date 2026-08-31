@@ -34,26 +34,14 @@ fn estimate_cost_known_anthropic_model() {
 #[test]
 fn estimate_cost_known_google_model() {
     let table = PricingTable::load();
-    let cost = table.estimate_cost(
-        "google",
-        Some("gemini-2.0-flash"),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
+    let cost = table.estimate_cost("google", Some("gemini-2.0-flash"), Some(1000), Some(500), &no_details());
     assert!(cost > 0.0, "cost should be positive for known model");
 }
 
 #[test]
 fn estimate_cost_known_openai_model() {
     let table = PricingTable::load();
-    let cost = table.estimate_cost(
-        "openai",
-        Some("gpt-4o"),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
+    let cost = table.estimate_cost("openai", Some("gpt-4o"), Some(1000), Some(500), &no_details());
     assert!(cost > 0.0, "cost should be positive for known model");
 }
 
@@ -73,13 +61,7 @@ fn estimate_cost_unknown_model() {
 #[test]
 fn estimate_cost_unknown_provider() {
     let table = PricingTable::load();
-    let cost = table.estimate_cost(
-        "azure",
-        Some("gpt-4o"),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
+    let cost = table.estimate_cost("azure", Some("gpt-4o"), Some(1000), Some(500), &no_details());
     assert_eq!(cost, 0.0, "unknown provider should return 0");
 }
 
@@ -110,13 +92,7 @@ fn estimate_cost_zero_tokens() {
         0.0
     );
     assert_eq!(
-        table.estimate_cost(
-            "anthropic",
-            Some("claude-sonnet-4-20250514"),
-            None,
-            None,
-            &no_details()
-        ),
+        table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), None, None, &no_details()),
         0.0
     );
 }
@@ -182,13 +158,7 @@ fn tiered_price_uses_base_rate() {
 #[test]
 fn uses_upstream_match_without_suffix_guessing() {
     let table = PricingTable::load();
-    let exact = table.estimate_cost(
-        "openai",
-        Some("gpt-5-nano"),
-        Some(1000),
-        Some(250),
-        &no_details(),
-    );
+    let exact = table.estimate_cost("openai", Some("gpt-5-nano"), Some(1000), Some(250), &no_details());
     let guessed = table.estimate_cost(
         "openai",
         Some("gpt-5-private-fork"),
@@ -213,10 +183,7 @@ fn unknown_model_does_not_prefix_match() {
         Some(500),
         &no_details(),
     );
-    assert_eq!(
-        cost, 0.0,
-        "unrelated model should not fuzzy-match (prefix too short)"
-    );
+    assert_eq!(cost, 0.0, "unrelated model should not fuzzy-match (prefix too short)");
 }
 
 #[test]
@@ -253,10 +220,7 @@ fn cache_read_tokens_reduce_cost() {
         &cache_details(800), // 800 of 1000 input tokens are cached
     );
     assert!(full_cost > 0.0, "full cost should be positive");
-    assert!(
-        cached_cost < full_cost,
-        "cached cost should be lower than full cost"
-    );
+    assert!(cached_cost < full_cost, "cached cost should be lower than full cost");
     assert!(
         cached_cost > 0.0,
         "cached cost should still be positive (output tokens)"
@@ -280,12 +244,6 @@ fn cache_read_tokens_all_cached_zero_input_cost() {
 fn oversized_model_string_rejected() {
     let table = PricingTable::load();
     let huge = "claude-sonnet-4-".to_string() + &"x".repeat(8192);
-    let cost = table.estimate_cost(
-        "anthropic",
-        Some(&huge),
-        Some(1000),
-        Some(500),
-        &no_details(),
-    );
+    let cost = table.estimate_cost("anthropic", Some(&huge), Some(1000), Some(500), &no_details());
     assert_eq!(cost, 0.0, "oversized model string should be rejected");
 }

@@ -45,8 +45,7 @@ use tokio::signal;
 use tokio::sync::oneshot;
 
 use capsem_proto::{
-    decode_dns_response, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE,
-    VSOCK_PORT_DNS_PROXY,
+    decode_dns_response, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE, VSOCK_PORT_DNS_PROXY,
 };
 use vsock_io::{read_exact_fd, vsock_connect, write_all_fd, VSOCK_HOST_CID};
 
@@ -127,8 +126,7 @@ fn forward_query_on_fd(fd: i32, raw: Vec<u8>, proto: &str) -> io::Result<DnsResp
         proto: proto.to_string(),
         process_name: None,
     };
-    let frame = encode_dns_request(&req)
-        .map_err(|e| io::Error::other(format!("encode_dns_request: {e:#}")))?;
+    let frame = encode_dns_request(&req).map_err(|e| io::Error::other(format!("encode_dns_request: {e:#}")))?;
 
     write_all_fd(fd, &frame)?;
     let mut len_buf = [0u8; 4];
@@ -141,15 +139,10 @@ fn forward_query_on_fd(fd: i32, raw: Vec<u8>, proto: &str) -> io::Result<DnsResp
     }
     let mut payload = vec![0u8; len as usize];
     read_exact_fd(fd, &mut payload)?;
-    decode_dns_response(&payload)
-        .map_err(|e| io::Error::other(format!("decode_dns_response: {e:#}")))
+    decode_dns_response(&payload).map_err(|e| io::Error::other(format!("decode_dns_response: {e:#}")))
 }
 
-fn dns_round_trip_with_reconnect(
-    fd: &mut Option<i32>,
-    raw: Vec<u8>,
-    proto: &'static str,
-) -> io::Result<DnsResponse> {
+fn dns_round_trip_with_reconnect(fd: &mut Option<i32>, raw: Vec<u8>, proto: &'static str) -> io::Result<DnsResponse> {
     for attempt in 0..2 {
         let active_fd = match *fd {
             Some(active_fd) => active_fd,

@@ -144,16 +144,10 @@ impl<'pipe> HookCtx<'pipe> {
     /// scoped to this `on_event` call.
     pub fn state<T: Send + Sync + 'static>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         let key = TypeId::of::<T>();
-        let entry = self
-            .state
-            .map
-            .entry(key)
-            .or_insert_with(|| Box::new(init()));
+        let entry = self.state.map.entry(key).or_insert_with(|| Box::new(init()));
         // SAFETY: the TypeId key uniquely identifies T's storage; we
         // inserted a Box<T> for this key, so downcasting is sound.
-        entry
-            .downcast_mut::<T>()
-            .expect("HookCtx::state type punned")
+        entry.downcast_mut::<T>().expect("HookCtx::state type punned")
     }
 }
 
@@ -174,9 +168,7 @@ impl HookState {
     /// and telemetry to inspect the hook's accumulated state after a
     /// dispatch finishes.
     pub fn peek<T: 'static>(&self) -> Option<&T> {
-        self.map
-            .get(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_ref())
+        self.map.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref())
     }
 
     /// Insert / replace a typed slot. Used by `handle_request` to seed
@@ -216,10 +208,7 @@ impl std::error::Error for EmitError {}
 /// dispatch without `Pipeline` being a generic type parameter on
 /// `HookCtx`.
 pub(super) trait DynEmitter: Send {
-    fn emit<'a, 'b>(
-        &'b mut self,
-        ev: Event<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
+    fn emit<'a, 'b>(&'b mut self, ev: Event<'a>) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
     where
         'a: 'b;
 }
@@ -364,14 +353,8 @@ impl<'a> ChunkCtx<'a> {
     /// access, persists across all chunks in the connection.
     pub fn state<T: Send + Sync + 'static>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         let key = TypeId::of::<T>();
-        let entry = self
-            .state
-            .map
-            .entry(key)
-            .or_insert_with(|| Box::new(init()));
-        entry
-            .downcast_mut::<T>()
-            .expect("ChunkCtx::state type punned")
+        let entry = self.state.map.entry(key).or_insert_with(|| Box::new(init()));
+        entry.downcast_mut::<T>().expect("ChunkCtx::state type punned")
     }
 }
 

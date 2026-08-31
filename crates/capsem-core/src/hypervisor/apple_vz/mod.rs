@@ -43,16 +43,14 @@ impl Hypervisor for AppleVzHypervisor {
                 // Capped: guest console output is guest-controlled and a
                 // persistent VM runs for weeks, so appending forever bounds
                 // the log only by the disk.
-                let mut file = match crate::telemetry::CappedLogWriter::open(
-                    &path,
-                    crate::telemetry::SERIAL_LOG_MAX_BYTES,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");
-                        return;
-                    }
-                };
+                let mut file =
+                    match crate::telemetry::CappedLogWriter::open(&path, crate::telemetry::SERIAL_LOG_MAX_BYTES) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");
+                            return;
+                        }
+                    };
                 loop {
                     match rx.blocking_recv() {
                         Ok(bytes) => {
@@ -71,8 +69,7 @@ impl Hypervisor for AppleVzHypervisor {
 
         // Set up vsock listeners on the socket device
         let socket_devices = machine.socket_devices();
-        let (vsock_rx, delegate, listeners) =
-            vsock::setup_vsock_listeners(&socket_devices, vsock_ports)?;
+        let (vsock_rx, delegate, listeners) = vsock::setup_vsock_listeners(&socket_devices, vsock_ports)?;
 
         let handle = AppleVzHandle {
             machine,

@@ -58,42 +58,28 @@ fn build_tree_from_object(
 
     // Check if this is an action node (has "action" key)
     if let Some(action_val) = table.get("action").and_then(|v| v.as_str()) {
-        let action: ActionKind =
-            match serde_json::from_value(serde_json::Value::String(action_val.to_string())) {
-                Ok(a) => a,
-                Err(_) => {
-                    tracing::warn!("unknown action kind '{action_val}' at {path}");
-                    return vec![];
-                }
-            };
-        let hidden = table
-            .get("hidden")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let action: ActionKind = match serde_json::from_value(serde_json::Value::String(action_val.to_string())) {
+            Ok(a) => a,
+            Err(_) => {
+                tracing::warn!("unknown action kind '{action_val}' at {path}");
+                return vec![];
+            }
+        };
+        let hidden = table.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
         if hidden {
             return vec![];
         }
         return vec![SettingsNode::Action {
             key: path.to_string(),
-            name: table
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            description: table
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(String::from),
+            name: table.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            description: table.get("description").and_then(|v| v.as_str()).map(String::from),
             action,
         }];
     }
 
     // Group node
     let group_name = table.get("name").and_then(|v| v.as_str()).map(String::from);
-    let group_description = table
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let group_description = table.get("description").and_then(|v| v.as_str()).map(String::from);
     let group_enabled_by = table
         .get("enabled_by")
         .and_then(|v| v.as_str())
@@ -104,10 +90,7 @@ fn build_tree_from_object(
         .and_then(|v| v.as_bool())
         .unwrap_or(parent_collapsed);
 
-    let group_hidden = table
-        .get("hidden")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let group_hidden = table.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false);
     if group_hidden && !path.is_empty() {
         return vec![];
     }
@@ -141,10 +124,7 @@ fn build_tree_from_object(
     // Top-level call (path is empty) skips wrapping.
     if let Some(name) = group_name {
         if !path.is_empty() {
-            let group_enabled = table
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let group_enabled = table.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
             return vec![SettingsNode::Group {
                 key: path.to_string(),
                 name,
@@ -154,10 +134,7 @@ fn build_tree_from_object(
                     // itself should show its own enabled_by.
                     group_enabled_by
                 } else {
-                    table
-                        .get("enabled_by")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
+                    table.get("enabled_by").and_then(|v| v.as_str()).map(String::from)
                 },
                 enabled: group_enabled,
                 collapsed: group_collapsed,
@@ -182,8 +159,7 @@ pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
         .expect("settings UI metadata missing settings");
 
     // Build a lookup from ID to resolved setting.
-    let resolved_map: HashMap<String, ResolvedSetting> =
-        resolved.iter().map(|s| (s.id.clone(), s.clone())).collect();
+    let resolved_map: HashMap<String, ResolvedSetting> = resolved.iter().map(|s| (s.id.clone(), s.clone())).collect();
 
     let mut tree = Vec::new();
     for (key, val) in settings {

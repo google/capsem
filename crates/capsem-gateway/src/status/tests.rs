@@ -8,12 +8,7 @@ fn status_response_serializes() {
         service: "running".into(),
         gateway_version: "0.1.0".into(),
         vm_count: 1,
-        vms: vec![test_vm(
-            "abc123",
-            Some("dev"),
-            VmLifecycleState::Running,
-            true,
-        )],
+        vms: vec![test_vm("abc123", Some("dev"), VmLifecycleState::Running, true)],
         resource_summary: Some(ResourceSummary {
             total_ram_mb: 2048,
             total_cpus: 2,
@@ -201,12 +196,7 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
         resume_blocked_reason: None,
         last_error: None,
         available_actions: match status {
-            VmLifecycleState::Running => vec![
-                VmAction::Pause,
-                VmAction::Stop,
-                VmAction::Fork,
-                VmAction::Delete,
-            ],
+            VmLifecycleState::Running => vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
             VmLifecycleState::Stopped | VmLifecycleState::Suspended => {
                 vec![VmAction::Fork, VmAction::Delete]
             }
@@ -281,9 +271,7 @@ async fn uds_get_rejects_an_oversized_status_body() {
     );
     let (path, handle, _dir) = mock_uds(mock).await;
 
-    let error = uds_get(std::path::Path::new(&path), "/vms/list")
-        .await
-        .unwrap_err();
+    let error = uds_get(std::path::Path::new(&path), "/vms/list").await.unwrap_err();
 
     assert!(error.to_string().contains("length limit"), "{error:#}");
     handle.abort();
@@ -378,9 +366,7 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
     let resp = fetch_status(&state).await;
 
     assert_eq!(resp.service, "running");
-    let profiles = resp
-        .profiles
-        .expect("gateway status must include profile status");
+    let profiles = resp.profiles.expect("gateway status must include profile status");
     assert_eq!(profiles["source"], "directory");
     assert_eq!(profiles["profile_count"], 2);
     assert_eq!(profiles["ready_count"], 1);
@@ -395,10 +381,7 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
     assert_eq!(profiles["profiles"][0]["id"], "code");
     assert_eq!(profiles["profiles"][0]["ready"], true);
     assert_eq!(profiles["profiles"][1]["id"], "co-work");
-    assert_eq!(
-        profiles["profiles"][1]["missing_assets"][0]["kind"],
-        "rootfs"
-    );
+    assert_eq!(profiles["profiles"][1]["missing_assets"][0]["kind"], "rootfs");
     h.abort();
 }
 
@@ -435,10 +418,9 @@ async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
         );
     let (path, h, _d) = mock_uds(mock).await;
 
-    let response =
-        tokio::time::timeout(Duration::from_secs(1), fetch_status(&test_app_state(&path)))
-            .await
-            .expect("independent authoritative status reads must be in flight together");
+    let response = tokio::time::timeout(Duration::from_secs(1), fetch_status(&test_app_state(&path)))
+        .await
+        .expect("independent authoritative status reads must be in flight together");
 
     assert_eq!(response.service, "running");
     assert_eq!(response.vm_count, 0);
@@ -537,10 +519,7 @@ async fn fetch_status_service_unavailable() {
 
 #[tokio::test]
 async fn fetch_status_malformed_list_json() {
-    let mock = axum::Router::new().route(
-        "/vms/list",
-        axum::routing::get(|| async { "not json at all" }),
-    );
+    let mock = axum::Router::new().route("/vms/list", axum::routing::get(|| async { "not json at all" }));
     let (path, h, _d) = mock_uds(mock).await;
 
     let state = test_app_state(&path);

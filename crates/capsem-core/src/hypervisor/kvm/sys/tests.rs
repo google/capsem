@@ -104,11 +104,7 @@ fn struct_sizes() {
         32,
         "KvmUserspaceMemoryRegion"
     );
-    assert_eq!(
-        std::mem::size_of::<KvmCreateDevice>(),
-        12,
-        "KvmCreateDevice"
-    );
+    assert_eq!(std::mem::size_of::<KvmCreateDevice>(), 12, "KvmCreateDevice");
     assert_eq!(std::mem::size_of::<KvmDeviceAttr>(), 24, "KvmDeviceAttr");
     assert_eq!(std::mem::size_of::<KvmIrqfd>(), 32, "KvmIrqfd");
 }
@@ -179,10 +175,7 @@ fn vcpu_exit_debug_format() {
 #[test]
 fn kvm_run_eagain_is_transient_not_ready() {
     let err = std::io::Error::from_raw_os_error(libc::EAGAIN);
-    assert!(matches!(
-        classify_kvm_run_error(&err),
-        Some(VcpuExit::NotReady)
-    ));
+    assert!(matches!(classify_kvm_run_error(&err), Some(VcpuExit::NotReady)));
 }
 
 // -----------------------------------------------------------------------
@@ -293,11 +286,7 @@ fn vhost_struct_sizes() {
     assert_eq!(std::mem::size_of::<VhostVringState>(), 8, "VhostVringState");
     assert_eq!(std::mem::size_of::<VhostVringAddr>(), 40, "VhostVringAddr");
     assert_eq!(std::mem::size_of::<VhostVringFile>(), 8, "VhostVringFile");
-    assert_eq!(
-        std::mem::size_of::<VhostMemoryRegion>(),
-        32,
-        "VhostMemoryRegion"
-    );
+    assert_eq!(std::mem::size_of::<VhostMemoryRegion>(), 32, "VhostMemoryRegion");
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -389,11 +378,7 @@ fn kvm_preferred_target() {
     let Some(kvm) = require_kvm() else { return };
     let vm = kvm.create_vm().unwrap();
     let target = vm.preferred_target();
-    assert!(
-        target.is_ok(),
-        "preferred_target failed: {:?}",
-        target.err()
-    );
+    assert!(target.is_ok(), "preferred_target failed: {:?}", target.err());
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -427,11 +412,7 @@ fn kvm_set_memory_region() {
     assert_ne!(ptr, libc::MAP_FAILED);
 
     let result = vm.set_user_memory_region(0, 0x4000_0000, page_size as u64, ptr as *const u8);
-    assert!(
-        result.is_ok(),
-        "set_user_memory_region failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "set_user_memory_region failed: {:?}", result.err());
 
     unsafe {
         libc::munmap(ptr, page_size);
@@ -523,10 +504,7 @@ fn kvm_x86_64_ap_vcpu_can_be_parked_for_sipi() {
     .unwrap();
 
     assert_eq!(bsp.get_mp_state().unwrap().mp_state, KVM_MP_STATE_RUNNABLE);
-    assert_eq!(
-        ap.get_mp_state().unwrap().mp_state,
-        KVM_MP_STATE_UNINITIALIZED
-    );
+    assert_eq!(ap.get_mp_state().unwrap().mp_state, KVM_MP_STATE_UNINITIALIZED);
 }
 
 #[cfg(target_arch = "x86_64")]

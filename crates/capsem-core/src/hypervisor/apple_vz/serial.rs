@@ -5,9 +5,7 @@ use anyhow::Result;
 use objc2::rc::Retained;
 use objc2::AllocAnyThread;
 use objc2_foundation::NSPipe;
-use objc2_virtualization::{
-    VZFileHandleSerialPortAttachment, VZVirtioConsoleDeviceSerialPortConfiguration,
-};
+use objc2_virtualization::{VZFileHandleSerialPortAttachment, VZVirtioConsoleDeviceSerialPortConfiguration};
 use tokio::sync::broadcast;
 use tracing::{debug, debug_span, warn};
 
@@ -39,12 +37,11 @@ pub fn create_serial_port() -> Result<(
     let output_pipe = NSPipe::pipe();
 
     let serial_config = unsafe {
-        let attachment =
-            VZFileHandleSerialPortAttachment::initWithFileHandleForReading_fileHandleForWriting(
-                VZFileHandleSerialPortAttachment::alloc(),
-                Some(&input_pipe.fileHandleForReading()),
-                Some(&output_pipe.fileHandleForWriting()),
-            );
+        let attachment = VZFileHandleSerialPortAttachment::initWithFileHandleForReading_fileHandleForWriting(
+            VZFileHandleSerialPortAttachment::alloc(),
+            Some(&input_pipe.fileHandleForReading()),
+            Some(&output_pipe.fileHandleForWriting()),
+        );
 
         let config = VZVirtioConsoleDeviceSerialPortConfiguration::new();
         config.setAttachment(Some(&attachment));
@@ -56,10 +53,7 @@ pub fn create_serial_port() -> Result<(
     // Dup it so we have our own fd that survives even if NSPipe manages the original.
     let output_read_fd_dup = unsafe { libc::dup(output_read_fd) };
     if output_read_fd_dup < 0 {
-        return Err(anyhow::anyhow!(
-            "dup() failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(anyhow::anyhow!("dup() failed: {}", std::io::Error::last_os_error()));
     }
     let output_read_fd_dup = unsafe { OwnedFd::from_raw_fd(output_read_fd_dup) };
 
@@ -67,10 +61,7 @@ pub fn create_serial_port() -> Result<(
     let input_write_fd = input_pipe.fileHandleForWriting().fileDescriptor();
     let input_write_fd_dup = unsafe { libc::dup(input_write_fd) };
     if input_write_fd_dup < 0 {
-        return Err(anyhow::anyhow!(
-            "dup() failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(anyhow::anyhow!("dup() failed: {}", std::io::Error::last_os_error()));
     }
     let input_write_fd_dup = unsafe { OwnedFd::from_raw_fd(input_write_fd_dup) };
 
@@ -126,9 +117,7 @@ impl crate::hypervisor::SerialConsole for AppleVzSerialConsole {
     }
 
     fn input_fd(&self) -> RawFd {
-        self.input_fd
-            .as_ref()
-            .map_or(-1, |input_fd| input_fd.as_raw_fd())
+        self.input_fd.as_ref().map_or(-1, |input_fd| input_fd.as_raw_fd())
     }
 }
 

@@ -64,8 +64,7 @@ pub struct TelemetryConfig {
 /// in [`TelemetryConfig`] and the `RUST_LOG` env var that capsem-service
 /// passes to spawned children should be built using
 /// [`with_subsys_targets`] to keep the list in one place.
-pub const SUBSYS_TARGETS: &str =
-    "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info";
+pub const SUBSYS_TARGETS: &str = "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info";
 
 /// Enables local debug spans/metrics for benchmark and release triage.
 ///
@@ -161,9 +160,7 @@ fn rolling_parts(path: &std::path::Path) -> (PathBuf, String, String) {
 }
 
 /// Build the rotating appender behind a [`LogSink::File`] sink.
-fn rolling_appender(
-    path: &std::path::Path,
-) -> std::io::Result<tracing_appender::rolling::RollingFileAppender> {
+fn rolling_appender(path: &std::path::Path) -> std::io::Result<tracing_appender::rolling::RollingFileAppender> {
     let (dir, prefix, suffix) = rolling_parts(path);
     std::fs::create_dir_all(&dir)?;
     tracing_appender::rolling::Builder::new()
@@ -195,8 +192,7 @@ pub fn log_stream_files(path: &std::path::Path) -> Vec<PathBuf> {
             let name = path.file_name()?.to_str()?;
             // `service.log` and `service.<date>.log`, never `services.log`.
             let in_stream = name == format!("{prefix}.{suffix}")
-                || (name.starts_with(&format!("{prefix}."))
-                    && name.ends_with(&format!(".{suffix}")));
+                || (name.starts_with(&format!("{prefix}.")) && name.ends_with(&format!(".{suffix}")));
             if !in_stream || !entry.file_type().ok()?.is_file() {
                 return None;
             }
@@ -233,10 +229,7 @@ impl CappedLogWriter {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
         let written = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             path: path.to_path_buf(),
@@ -264,10 +257,7 @@ impl CappedLogWriter {
         let rotated = self.rotated_path();
         let _ = std::fs::remove_file(&rotated);
         std::fs::rename(&self.path, &rotated)?;
-        self.file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        self.file = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
         self.written = 0;
         Ok(())
     }
@@ -410,8 +400,8 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
     // always reaches the sink, even when callers pass a narrow default
     // filter like `"capsem_gateway=info,tower_http=debug,hyper=info"`. A
     // user override via the `RUST_LOG` env var keeps full control.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("service=info,{default_filter}")));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(format!("service=info,{default_filter}")));
 
     let registry = tracing_subscriber::registry().with(filter);
     let mut file_guard: Option<tracing_appender::non_blocking::WorkerGuard> = None;
@@ -425,9 +415,7 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
         LogSink::File { path } => {
             let (nb, guard) = tracing_appender::non_blocking(rolling_appender(&path)?);
             file_guard = Some(guard);
-            registry
-                .with(fmt::layer().json().with_writer(nb).boxed())
-                .init();
+            registry.with(fmt::layer().json().with_writer(nb).boxed()).init();
         }
         LogSink::FileAndPretty { path } => {
             let (nb, guard) = tracing_appender::non_blocking(rolling_appender(&path)?);
@@ -491,12 +479,8 @@ where
         .into_iter()
         .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_string()))
         .collect();
-    let local_debug_enabled = vars
-        .get(DEBUG_TELEMETRY_ENV)
-        .is_some_and(|value| env_truthy(value));
-    let upstream_export_allowed = vars
-        .get(ALLOW_UPSTREAM_OTEL_ENV)
-        .is_some_and(|value| env_truthy(value));
+    let local_debug_enabled = vars.get(DEBUG_TELEMETRY_ENV).is_some_and(|value| env_truthy(value));
+    let upstream_export_allowed = vars.get(ALLOW_UPSTREAM_OTEL_ENV).is_some_and(|value| env_truthy(value));
     let blocked_upstream_env = if upstream_export_allowed {
         Vec::new()
     } else {
@@ -540,10 +524,7 @@ pub fn ambient_capsem_trace_id() -> Option<String> {
     resolve_ambient_capsem_trace_id(env.as_deref(), PARENT_TRACEPARENT.get().map(String::as_str))
 }
 
-fn resolve_ambient_capsem_trace_id(
-    capsem_trace_id: Option<&str>,
-    parent_traceparent: Option<&str>,
-) -> Option<String> {
+fn resolve_ambient_capsem_trace_id(capsem_trace_id: Option<&str>, parent_traceparent: Option<&str>) -> Option<String> {
     if let Some(env) = capsem_trace_id {
         if !env.is_empty() {
             return Some(env.to_string());

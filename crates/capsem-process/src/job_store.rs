@@ -162,27 +162,18 @@ where
             let op_result = op().await;
 
             info!("Operation complete, sending Unfreeze to guest");
-            capsem_core::try_send!(
-                "ctrl_unfreeze_ok",
-                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
-            );
+            capsem_core::try_send!("ctrl_unfreeze_ok", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
             op_result
         }
         Ok(Err(_)) => {
             // Channel closed without receiving
             warn!("SnapshotReady channel closed prematurely, aborting operation and unfreezing");
-            capsem_core::try_send!(
-                "ctrl_unfreeze_premature",
-                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
-            );
+            capsem_core::try_send!("ctrl_unfreeze_premature", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
             anyhow::bail!("SnapshotReady channel closed prematurely");
         }
         Err(_) => {
             warn!("Timeout waiting for SnapshotReady, aborting operation and unfreezing");
-            capsem_core::try_send!(
-                "ctrl_unfreeze_timeout",
-                ctrl_cmd_tx.send(HostToGuest::Unfreeze).await
-            );
+            capsem_core::try_send!("ctrl_unfreeze_timeout", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
             anyhow::bail!("timed out waiting for SnapshotReady");
         }
     }

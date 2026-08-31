@@ -33,11 +33,7 @@ use capsem_proto::mcp_contracts::McpServerDef;
 use crate::server_manager::McpServerManager;
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "capsem-mcp-aggregator",
-    version,
-    about = "MCP aggregator subprocess"
-)]
+#[command(name = "capsem-mcp-aggregator", version, about = "MCP aggregator subprocess")]
 struct Args {
     /// PID of the parent process
     #[arg(long)]
@@ -53,12 +49,11 @@ pub async fn run() -> Result<()> {
     // mcp-aggregator.stderr.log in the VM's session dir). Matches the
     // format capsem-process + capsem-service already emit, so every
     // host-side log is machine-parseable with the same schema.
-    let _telemetry_guard =
-        capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
-            service: "capsem-mcp-aggregator",
-            sink: capsem_foundation::telemetry::LogSink::Stderr,
-            default_filter: "capsem_mcp_aggregator=info",
-        })?;
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+        service: "capsem-mcp-aggregator",
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
+        default_filter: "capsem_mcp_aggregator=info",
+    })?;
 
     // Root span: every log inherits `vm_id` and `trace_id` as
     // structured fields, so lines in mcp-aggregator.stderr.log can be
@@ -194,10 +189,7 @@ where
     }
 }
 
-async fn handle_request(
-    manager: &Arc<RwLock<McpServerManager>>,
-    req: AggregatorRequest,
-) -> AggregatorResponse {
+async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: AggregatorRequest) -> AggregatorResponse {
     let id = req.id;
 
     match req.method {
@@ -219,11 +211,7 @@ async fn handle_request(
                         .iter()
                         .filter(|r| r.server_name == d.name)
                         .count(),
-                    prompt_count: mgr
-                        .prompt_catalog()
-                        .iter()
-                        .filter(|p| p.server_name == d.name)
-                        .count(),
+                    prompt_count: mgr.prompt_catalog().iter().filter(|p| p.server_name == d.name).count(),
                 })
                 .collect();
             AggregatorResponse {
@@ -233,11 +221,7 @@ async fn handle_request(
         }
 
         AggregatorMethod::ListTools => {
-            let tools = manager
-                .read()
-                .expect("manager rwlock poisoned")
-                .tool_catalog()
-                .to_vec();
+            let tools = manager.read().expect("manager rwlock poisoned").tool_catalog().to_vec();
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Tools { tools },
@@ -287,16 +271,12 @@ async fn handle_request(
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
-                        },
+                        body: AggregatorResult::Error { error: e.to_string() },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error {
-                        error: e.to_string(),
-                    },
+                    body: AggregatorResult::Error { error: e.to_string() },
                 },
             }
         }
@@ -316,16 +296,12 @@ async fn handle_request(
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
-                        },
+                        body: AggregatorResult::Error { error: e.to_string() },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error {
-                        error: e.to_string(),
-                    },
+                    body: AggregatorResult::Error { error: e.to_string() },
                 },
             }
         }
@@ -345,16 +321,12 @@ async fn handle_request(
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
-                        },
+                        body: AggregatorResult::Error { error: e.to_string() },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error {
-                        error: e.to_string(),
-                    },
+                    body: AggregatorResult::Error { error: e.to_string() },
                 },
             }
         }

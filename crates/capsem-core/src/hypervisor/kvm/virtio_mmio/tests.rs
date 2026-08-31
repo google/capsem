@@ -51,20 +51,14 @@ impl VirtioDevice for DummyDevice {
     }
     fn write_config(&self, _offset: u64, _data: &[u8]) {}
     fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
-        self.activated
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.activated.store(true, std::sync::atomic::Ordering::SeqCst);
     }
-    fn restore_activate(
-        &mut self,
-        mem: GuestMemoryRef,
-        queues: &[QueueConfig],
-    ) -> anyhow::Result<()> {
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> anyhow::Result<()> {
         self.activate(mem, queues);
         Ok(())
     }
     fn queue_notify(&mut self, _queue_index: u32) -> bool {
-        self.notify_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.notify_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         true
     }
     fn uses_mmio_interrupt(&self) -> bool {
@@ -95,11 +89,7 @@ fn make_transport_with_interrupt() -> (
     assert!(raw_fd >= 0);
     let interrupt_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
     let read_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(raw_fd)) };
-    let transport = VirtioMmioTransport::new_with_interrupt(
-        Box::new(dev),
-        mem.clone_ref(RAM_BASE),
-        interrupt_fd,
-    );
+    let transport = VirtioMmioTransport::new_with_interrupt(Box::new(dev), mem.clone_ref(RAM_BASE), interrupt_fd);
     (transport, read_fd, notify_count)
 }
 
@@ -209,11 +199,7 @@ fn status_lifecycle() {
     assert_eq!(read_u32(&t, STATUS), STATUS_ACKNOWLEDGE | STATUS_DRIVER);
 
     // FEATURES_OK
-    write_u32(
-        &t,
-        STATUS,
-        STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK,
-    );
+    write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK);
 
     // DRIVER_OK -> activates device
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
@@ -352,10 +338,7 @@ fn restore_rejects_invalid_queue_selector_size_and_guest_memory_span() {
     let mut invalid_selector = valid_restored_snapshot();
     invalid_selector.queue_sel = 2;
     let err = transport.prepare_restore(&invalid_selector).unwrap_err();
-    assert!(
-        err.to_string().contains("selector is out of range"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("selector is out of range"), "{err:#}");
 
     let mut zero_size = valid_restored_snapshot();
     zero_size.queues[0].num = 0;
@@ -365,10 +348,7 @@ fn restore_rejects_invalid_queue_selector_size_and_guest_memory_span() {
     let mut too_large = valid_restored_snapshot();
     too_large.queues[0].num = 257;
     let err = transport.prepare_restore(&too_large).unwrap_err();
-    assert!(
-        err.to_string().contains("exceeds device maximum"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("exceeds device maximum"), "{err:#}");
 
     let mut outside_memory = valid_restored_snapshot();
     outside_memory.queues[0].desc_lo = 4080;
@@ -412,10 +392,7 @@ fn stateless_device_rejects_nonempty_checkpoint_state_before_activation() {
 
     let err = transport.prepare_restore(&snapshot).unwrap_err();
 
-    assert!(
-        err.to_string().contains("stateless virtio device"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("stateless virtio device"), "{err:#}");
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
 }
 
@@ -465,11 +442,7 @@ fn restore_rehydrates_device_state_before_queue_activation() {
         fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
             self.events.lock().unwrap().push("activate");
         }
-        fn restore_activate(
-            &mut self,
-            mem: GuestMemoryRef,
-            queues: &[QueueConfig],
-        ) -> anyhow::Result<()> {
+        fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> anyhow::Result<()> {
             self.activate(mem, queues);
             Ok(())
         }
@@ -489,9 +462,7 @@ fn restore_rehydrates_device_state_before_queue_activation() {
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mem = GuestMemory::new(4096).unwrap();
     let transport = VirtioMmioTransport::new(
-        Box::new(StatefulDevice {
-            events: events.clone(),
-        }),
+        Box::new(StatefulDevice { events: events.clone() }),
         mem.clone_ref(RAM_BASE),
     );
     let snapshot = VirtioMmioSnapshot {
@@ -532,18 +503,12 @@ fn restore_rejects_unsupported_selectors_and_feature_bits_before_activation() {
     let mut features_selector = valid_restored_snapshot();
     features_selector.features_sel = 2;
     let err = transport.prepare_restore(&features_selector).unwrap_err();
-    assert!(
-        err.to_string().contains("device feature selector"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("device feature selector"), "{err:#}");
 
     let mut driver_selector = valid_restored_snapshot();
     driver_selector.driver_features_sel = 2;
     let err = transport.prepare_restore(&driver_selector).unwrap_err();
-    assert!(
-        err.to_string().contains("driver feature selector"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("driver feature selector"), "{err:#}");
 
     let mut unsupported = valid_restored_snapshot();
     unsupported.driver_features |= 1 << 7;
@@ -596,12 +561,8 @@ fn restore_rejects_ready_queue_shape_alignment_and_overlap() {
 
     let alignment_mutations: &[(&str, QueueSnapshotMutation)] = &[
         ("descriptor", |queue: &mut QueueSnapshot| queue.desc_lo += 1),
-        ("available ring", |queue: &mut QueueSnapshot| {
-            queue.driver_lo += 1
-        }),
-        ("used ring", |queue: &mut QueueSnapshot| {
-            queue.device_lo += 2
-        }),
+        ("available ring", |queue: &mut QueueSnapshot| queue.driver_lo += 1),
+        ("used ring", |queue: &mut QueueSnapshot| queue.device_lo += 2),
     ];
     for (field, mutate) in alignment_mutations {
         let mut unaligned = valid_restored_snapshot();
@@ -613,9 +574,7 @@ fn restore_rejects_ready_queue_shape_alignment_and_overlap() {
 
     let mut within_queue_overlap = valid_restored_snapshot();
     within_queue_overlap.queues[0].driver_lo = within_queue_overlap.queues[0].desc_lo;
-    let err = transport
-        .prepare_restore(&within_queue_overlap)
-        .unwrap_err();
+    let err = transport.prepare_restore(&within_queue_overlap).unwrap_err();
     assert!(err.to_string().contains("overlap"), "{err:#}");
 
     let mut overlap = valid_restored_snapshot();
@@ -643,11 +602,7 @@ fn restored_activation_error_is_propagated() {
         fn read_config(&self, _offset: u64, _data: &mut [u8]) {}
         fn write_config(&self, _offset: u64, _data: &[u8]) {}
         fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {}
-        fn restore_activate(
-            &mut self,
-            _mem: GuestMemoryRef,
-            _queues: &[QueueConfig],
-        ) -> anyhow::Result<()> {
+        fn restore_activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) -> anyhow::Result<()> {
             anyhow::bail!("backend reconstruction failed")
         }
         fn queue_notify(&mut self, _queue_index: u32) -> bool {
@@ -665,10 +620,7 @@ fn restored_activation_error_is_propagated() {
     transport.prepare_restore(&snapshot).unwrap();
     let err = transport.activate_restored().unwrap_err();
 
-    assert!(
-        err.to_string().contains("backend reconstruction failed"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("backend reconstruction failed"), "{err:#}");
 }
 
 // -----------------------------------------------------------------------

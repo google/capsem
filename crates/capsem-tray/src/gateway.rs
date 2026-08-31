@@ -86,10 +86,7 @@ pub struct GatewayClient {
 impl GatewayClient {
     /// Parse a port from `gateway.port` file contents (trimmed).
     fn parse_port_file(contents: &str) -> Result<u16> {
-        contents
-            .trim()
-            .parse::<u16>()
-            .context("invalid port in gateway.port")
+        contents.trim().parse::<u16>().context("invalid port in gateway.port")
     }
 
     /// Construct a client pointed at the loopback gateway on `port`.
@@ -201,10 +198,7 @@ impl GatewayClient {
     pub async fn status(&self) -> Result<StatusResponse> {
         let start = std::time::Instant::now();
         let resp = self.get("/status").await?;
-        let mut status: StatusResponse = resp
-            .json()
-            .await
-            .context("failed to parse status response")?;
+        let mut status: StatusResponse = resp.json().await.context("failed to parse status response")?;
         status.latency_ms = Some(start.elapsed().as_millis() as u32);
         match self.update_status().await {
             Ok(updates) => status.updates = Some(updates),
@@ -215,9 +209,7 @@ impl GatewayClient {
 
     pub async fn update_status(&self) -> Result<UpdateStatusResponse> {
         let resp = self.get("/update/status").await?;
-        resp.json()
-            .await
-            .context("failed to parse update status response")
+        resp.json().await.context("failed to parse update status response")
     }
 
     pub async fn stop_vm(&self, id: &str) -> Result<()> {

@@ -141,11 +141,7 @@ fn decompress_chunk(decoder: &mut Decompress, input: &[u8]) -> Vec<u8> {
 
         let before_in = decoder.total_in();
         let before_out = decoder.total_out();
-        let status = match decoder.decompress(
-            &input[input_pos..],
-            &mut output[cur..],
-            FlushDecompress::None,
-        ) {
+        let status = match decoder.decompress(&input[input_pos..], &mut output[cur..], FlushDecompress::None) {
             Ok(s) => s,
             Err(_) => {
                 output.truncate(cur);
@@ -196,9 +192,7 @@ impl ChunkHook for DecompressionHook {
     }
 
     fn on_response_chunk(&self, chunk: &mut Bytes, ctx: &mut ChunkCtx<'_>) {
-        let enabled = ctx
-            .state::<DecompressionConfig>(DecompressionConfig::default)
-            .gzip;
+        let enabled = ctx.state::<DecompressionConfig>(DecompressionConfig::default).gzip;
         if !enabled {
             return;
         }
@@ -242,10 +236,7 @@ impl ChunkHook for DecompressionHook {
         if !state.is_gzip {
             return;
         }
-        let decoder = state
-            .decoder
-            .as_mut()
-            .expect("is_gzip implies decoder initialized");
+        let decoder = state.decoder.as_mut().expect("is_gzip implies decoder initialized");
         let decoded = decompress_chunk(decoder, chunk);
         *chunk = Bytes::from(decoded);
     }

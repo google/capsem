@@ -56,17 +56,12 @@ impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
-use crate::security_engine::{
-    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent,
-};
+use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
-use util::{
-    format_headers, format_headers_for_domain, is_llm_api_path, parse_http_host_target,
-    split_path_query,
-};
+use util::{format_headers, format_headers_for_domain, is_llm_api_path, parse_http_host_target, split_path_query};
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
 pub use mcp_frame::dispatch_logged_mcp_request;
@@ -110,8 +105,7 @@ pub struct MitmProxyConfig {
     /// MITM resolves host -> model protocol once per request and then passes
     /// that typed metadata to enforcement, hooks, broker substitution, and
     /// telemetry. Provider hooks must not infer protocol from domains.
-    pub model_endpoints:
-        Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
+    pub model_endpoints: Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
@@ -192,11 +186,7 @@ pub fn make_production_pipeline(
 }
 
 fn ai_provider_for_domain(config: &MitmProxyConfig, domain: &str) -> Option<ProviderKind> {
-    config
-        .model_endpoints
-        .read()
-        .unwrap()
-        .provider_for_host(domain)
+    config.model_endpoints.read().unwrap().provider_for_host(domain)
 }
 
 fn ai_provider_for_target(
@@ -250,23 +240,15 @@ fn ai_protocol_for_body_preview(body: &[u8]) -> Option<ModelProtocol> {
     let json: serde_json::Value = serde_json::from_slice(body).ok()?;
     let obj = json.as_object()?;
     let model = obj.get("model").and_then(|value| value.as_str());
-    let has_messages = obj
-        .get("messages")
-        .and_then(|value| value.as_array())
-        .is_some();
-    let has_google_contents = obj
-        .get("contents")
-        .and_then(|value| value.as_array())
-        .is_some()
+    let has_messages = obj.get("messages").and_then(|value| value.as_array()).is_some();
+    let has_google_contents = obj.get("contents").and_then(|value| value.as_array()).is_some()
         || obj.contains_key("generationConfig")
         || obj.contains_key("safetySettings");
 
     if has_google_contents || model.is_some_and(is_google_model_name) {
         return Some(ModelProtocol::Google);
     }
-    if model.is_some_and(is_anthropic_model_name)
-        || (has_messages && obj.contains_key("max_tokens"))
-    {
+    if model.is_some_and(is_anthropic_model_name) || (has_messages && obj.contains_key("max_tokens")) {
         return Some(ModelProtocol::Anthropic);
     }
     if model.is_some_and(is_openai_model_name)
@@ -288,10 +270,7 @@ fn should_sniff_unknown_model_body(
     if ai_provider.is_some() {
         return false;
     }
-    if !matches!(
-        *method,
-        http::Method::POST | http::Method::PUT | http::Method::PATCH
-    ) {
+    if !matches!(*method, http::Method::POST | http::Method::PUT | http::Method::PATCH) {
         return false;
     }
     let is_json = headers
@@ -327,11 +306,7 @@ impl ObservedMcpHttpRequest {
         runtime_mcp_event_type(&self.method)
     }
 
-    fn security_event(
-        &self,
-        tool_list: Option<String>,
-        response_preview: Option<&str>,
-    ) -> SecurityEvent {
+    fn security_event(&self, tool_list: Option<String>, response_preview: Option<&str>) -> SecurityEvent {
         let event = SecurityEvent::new(self.event_type()).with_mcp(
             McpSecurityEvent {
                 method: Some(self.method.clone()),
@@ -351,10 +326,7 @@ impl ObservedMcpHttpRequest {
 }
 
 fn should_sniff_mcp_http_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
-    if !matches!(
-        *method,
-        http::Method::POST | http::Method::PUT | http::Method::PATCH
-    ) {
+    if !matches!(*method, http::Method::POST | http::Method::PUT | http::Method::PATCH) {
         return false;
     }
     let is_json = headers
@@ -554,11 +526,7 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
     Ok(Bytes::from(decompressed))
 }
 
-fn materialize_collected_response_headers(
-    headers: &mut http::HeaderMap,
-    body_len: usize,
-    is_gzip: bool,
-) {
+fn materialize_collected_response_headers(headers: &mut http::HeaderMap, body_len: usize, is_gzip: bool) {
     if is_gzip {
         headers.remove(http::header::CONTENT_ENCODING);
     }
@@ -596,12 +564,7 @@ pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
 /// ChunkHook) when each HTTP response body completes. This function
 /// only emits connection-level error events (TLS failures, no SNI,
 /// etc.).
-#[tracing::instrument(
-    skip_all,
-    name = "capsem.mitm.connection",
-    target = "capsem.mitm",
-    fields(vsock_fd)
-)]
+#[tracing::instrument(skip_all, name = "capsem.mitm.connection", target = "capsem.mitm", fields(vsock_fd))]
 pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
     // The `protocol="…"` partition for `mitm.connections_total` is
     // incremented inside `handle_inner` once the first-byte sniff has
@@ -655,32 +618,20 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
             };
 
             crate::security_engine::emit_security_write(&config.db, WriteOp::NetEvent(event)).await;
-            warn!(
-                domain = display_domain,
-                reason, "MITM proxy: connection error"
-            );
+            warn!(domain = display_domain, reason, "MITM proxy: connection error");
         }
     }
 }
 
 /// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
 /// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
-async fn handle_inner(
-    vsock_fd: RawFd,
-    config: &Arc<MitmProxyConfig>,
-) -> Result<String, (String, Decision, String)> {
+async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     // Wrap vsock fd in a non-owning async stream.
     let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
     let std_fd = vsock_file
         .try_clone()
         .map_err(|e| (String::new(), Decision::Error, format!("dup vsock fd: {e}")))?;
-    set_nonblocking(vsock_fd).map_err(|e| {
-        (
-            String::new(),
-            Decision::Error,
-            format!("set nonblocking: {e}"),
-        )
-    })?;
+    set_nonblocking(vsock_fd).map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
     let async_fd = tokio::io::unix::AsyncFd::new(std_fd)
         .map_err(|e| (String::new(), Decision::Error, format!("async fd: {e}")))?;
     let mut vsock_stream = AsyncFdStream(async_fd);
@@ -700,11 +651,7 @@ async fn handle_inner(
         .map_err(|e| {
             classify_span.record("status", "error");
             classify_span.record("error_kind", "read_client_hello");
-            (
-                String::new(),
-                Decision::Error,
-                format!("read ClientHello: {e}"),
-            )
+            (String::new(), Decision::Error, format!("read ClientHello: {e}"))
         })?;
     if n == 0 {
         classify_span.record("status", "error");
@@ -726,11 +673,7 @@ async fn handle_inner(
                 break;
             }
             if initial_buf.len() >= MAX_META_SIZE {
-                return Err((
-                    String::new(),
-                    Decision::Error,
-                    "metadata exceeded 4KB limit".into(),
-                ));
+                return Err((String::new(), Decision::Error, "metadata exceeded 4KB limit".into()));
             }
             let mut more = vec![0u8; 1024];
             let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut more)
@@ -739,18 +682,10 @@ async fn handle_inner(
                 .map_err(|e| {
                     classify_span.record("status", "error");
                     classify_span.record("error_kind", "read_metadata");
-                    (
-                        String::new(),
-                        Decision::Error,
-                        format!("read metadata: {e}"),
-                    )
+                    (String::new(), Decision::Error, format!("read metadata: {e}"))
                 })?;
             if n2 == 0 {
-                return Err((
-                    String::new(),
-                    Decision::Error,
-                    "EOF during metadata read".into(),
-                ));
+                return Err((String::new(), Decision::Error, "EOF during metadata read".into()));
             }
             initial_buf.extend_from_slice(&more[..n2]);
         }
@@ -765,18 +700,10 @@ async fn handle_inner(
                 .map_err(|e| {
                     classify_span.record("status", "error");
                     classify_span.record("error_kind", "read_payload_after_meta");
-                    (
-                        String::new(),
-                        Decision::Error,
-                        format!("read payload after meta: {e}"),
-                    )
+                    (String::new(), Decision::Error, format!("read payload after meta: {e}"))
                 })?;
             if n2 == 0 {
-                return Err((
-                    String::new(),
-                    Decision::Error,
-                    "empty connection after meta".into(),
-                ));
+                return Err((String::new(), Decision::Error, "empty connection after meta".into()));
             }
             hello_buf.truncate(n2);
             initial_buf = hello_buf;
@@ -794,11 +721,7 @@ async fn handle_inner(
             .map_err(|e| {
                 classify_span.record("status", "error");
                 classify_span.record("error_kind", "read_protocol_prefix");
-                (
-                    String::new(),
-                    Decision::Error,
-                    format!("read protocol prefix: {e}"),
-                )
+                (String::new(), Decision::Error, format!("read protocol prefix: {e}"))
             })?;
         if n2 == 0 {
             break;
@@ -845,13 +768,7 @@ async fn handle_inner(
                     "framed MCP endpoint disabled".into(),
                 ));
             };
-            mcp_frame::serve(
-                initial_buf,
-                vsock_stream,
-                Arc::clone(endpoint),
-                Arc::clone(&config.db),
-            )
-            .await
+            mcp_frame::serve(initial_buf, vsock_stream, Arc::clone(endpoint), Arc::clone(&config.db)).await
         }
         Protocol::Unknown => unreachable!("Protocol::Unknown returned Err earlier"),
     }
@@ -894,22 +811,16 @@ async fn serve_tls(
         .map_err(|e| {
             tls_span.record("status", "error");
             tls_span.record("error_kind", "guest_tls_handshake");
-            ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS)
-                .record(handshake_start.elapsed().as_secs_f64() * 1000.0);
+            ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
             let domain = resolver.domain().unwrap_or_default();
             (domain, Decision::Error, format!("TLS handshake: {e}"))
         })?;
     tls_span.record("status", "ok");
-    ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS)
-        .record(handshake_start.elapsed().as_secs_f64() * 1000.0);
+    ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
 
-    let domain = resolver.domain().ok_or_else(|| {
-        (
-            String::new(),
-            Decision::Denied,
-            "no SNI in ClientHello".into(),
-        )
-    })?;
+    let domain = resolver
+        .domain()
+        .ok_or_else(|| (String::new(), Decision::Denied, "no SNI in ClientHello".into()))?;
 
     let io = TokioIo::new(tls_stream);
     serve_pipeline(io, domain.clone(), Protocol::Tls, config, process_name).await;
@@ -960,9 +871,8 @@ async fn serve_pipeline<IO>(
     // serves one upstream via keep-alive, so caching the sender
     // avoids re-establishing TCP[+TLS] for every request on the
     // same connection.
-    let cached_upstream: Arc<
-        tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
-    > = Arc::new(tokio::sync::Mutex::new(None));
+    let cached_upstream: Arc<tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let upstream_tls = Arc::clone(&upstream_tls);
@@ -976,19 +886,15 @@ async fn serve_pipeline<IO>(
             // already knows from SNI; HTTP must read the Host header.
             let (request_domain, upstream_port) = match protocol {
                 Protocol::Tls => (connection_domain, 443u16),
-                Protocol::Http => parse_http_host_target(req.headers().get("host"))
-                    .unwrap_or_else(|| (String::new(), 80)),
+                Protocol::Http => {
+                    parse_http_host_target(req.headers().get("host")).unwrap_or_else(|| (String::new(), 80))
+                }
                 Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
                 Protocol::Unknown => (String::new(), 0),
             };
             let ai_identity = {
                 let registry = config_arc.model_endpoints.read().unwrap();
-                ai_identity_for_target_or_path(
-                    &registry,
-                    &request_domain,
-                    upstream_port,
-                    req.uri().path(),
-                )
+                ai_identity_for_target_or_path(&registry, &request_domain, upstream_port, req.uri().path())
             };
             handle_request(
                 req,
@@ -1052,11 +958,7 @@ fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> Secu
     security_event_with_transport(event, input.domain, input.upstream_port)
 }
 
-fn security_event_with_transport(
-    mut event: SecurityEvent,
-    domain: &str,
-    upstream_port: u16,
-) -> SecurityEvent {
+fn security_event_with_transport(mut event: SecurityEvent, domain: &str, upstream_port: u16) -> SecurityEvent {
     event = event.with_tcp(TcpSecurityEvent {
         port: Some(upstream_port.to_string()),
     });
@@ -1102,9 +1004,7 @@ async fn handle_request(
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
     ai_protocol: Option<ModelProtocol>,
-    cached_upstream: &tokio::sync::Mutex<
-        Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>,
-    >,
+    cached_upstream: &tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
@@ -1279,8 +1179,7 @@ async fn handle_request(
         let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match protocol {
             Protocol::Tls => {
                 let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-                let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string())
-                {
+                let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
                     Ok(sn) => sn,
                     Err(error) => {
                         ws_span.record("decision", "error");
@@ -1290,9 +1189,7 @@ async fn handle_request(
                     }
                 };
                 match connector.connect(server_name, upstream_tcp).await {
-                    Ok(tls) => {
-                        TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>)
-                    }
+                    Ok(tls) => TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>),
                     Err(error) => {
                         ws_span.record("decision", "error");
                         ws_span.record("status", "error");
@@ -1301,9 +1198,7 @@ async fn handle_request(
                     }
                 }
             }
-            Protocol::Http => {
-                TokioIo::new(Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>)
-            }
+            Protocol::Http => TokioIo::new(Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>),
             Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP upstream dial"),
             Protocol::Unknown => unreachable!("handle_inner gates Unknown earlier"),
         };
@@ -1328,9 +1223,7 @@ async fn handle_request(
             Some(q) => format!("{path}?{q}"),
             None => path.clone(),
         };
-        let mut builder = hyper::Request::builder()
-            .method(original_method)
-            .uri(&full_path);
+        let mut builder = hyper::Request::builder().method(original_method).uri(&full_path);
         for (name, value) in original_headers.iter() {
             let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
             if drop_host {
@@ -1347,11 +1240,7 @@ async fn handle_request(
                 .boxed(),
         )?;
 
-        let mut upstream_resp = match sender
-            .send_request(upstream_req)
-            .instrument(ws_span.clone())
-            .await
-        {
+        let mut upstream_resp = match sender.send_request(upstream_req).instrument(ws_span.clone()).await {
             Ok(response) => response,
             Err(error) => {
                 ws_span.record("decision", "error");
@@ -1421,9 +1310,7 @@ async fn handle_request(
             credential_injections: credential_injections.clone(),
         };
 
-        let empty_body = Full::new(Bytes::new())
-            .map_err(|never| match never {})
-            .boxed();
+        let empty_body = Full::new(Bytes::new()).map_err(|never| match never {}).boxed();
 
         return Ok(hyper::Response::from_parts(
             resp_parts,
@@ -1479,12 +1366,7 @@ async fn handle_request(
             .boxed();
         hyper::Response::builder()
             .status(502)
-            .body(seal_with_telemetry(
-                deny_body,
-                req_ctx,
-                ai_provider,
-                ai_protocol,
-            ))
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider, ai_protocol))
             .unwrap()
     };
 
@@ -1574,9 +1456,7 @@ async fn handle_request(
                 }
             }
             if should_sniff_mcp {
-                if let Some(observed) =
-                    observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path)
-                {
+                if let Some(observed) = observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path) {
                     sniff_matched = true;
                     sniff_span.record("mcp_method", observed.method.as_str());
                     tracing::info!(
@@ -1656,16 +1536,11 @@ async fn handle_request(
         observations
     };
     credential_injections = http_evaluation.event.credential_injections.clone();
-    request_security_decision =
-        SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
+    request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
     if !http_evaluation.enforcement.is_allowed() {
         actions_span.record("decision", http_evaluation.enforcement.action.as_str());
         actions_span.record("status", "ok");
-        let rule_id = http_evaluation
-            .enforcement
-            .rule_id
-            .as_deref()
-            .unwrap_or("unknown");
+        let rule_id = http_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown");
         let body_text = if matches!(
             http_evaluation.enforcement.action,
             crate::security_engine::SecurityEnforcementAction::Ask
@@ -1706,19 +1581,14 @@ async fn handle_request(
             .boxed();
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(seal_with_telemetry(
-                deny_body,
-                req_ctx,
-                ai_provider,
-                ai_protocol,
-            ))
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider, ai_protocol))
             .unwrap());
     }
     actions_span.record("decision", "allow");
     actions_span.record("status", "ok");
-    let upstream_materialized = match actions_span.in_scope(|| {
-        crate::security_engine::materialize_http_request_for_upstream(&http_evaluation.event)
-    }) {
+    let upstream_materialized = match actions_span
+        .in_scope(|| crate::security_engine::materialize_http_request_for_upstream(&http_evaluation.event))
+    {
         Ok(materialized) => materialized,
         Err(error) => {
             actions_span.record("decision", "error");
@@ -1753,16 +1623,14 @@ async fn handle_request(
             error_kind = tracing::field::Empty,
         );
         let mcp_event = security_event_with_transport(
-            observed
-                .security_event(None, None)
-                .with_http(HttpSecurityEvent {
-                    host: Some(domain.to_string()),
-                    method: Some(method.clone()),
-                    path: Some(path.clone()),
-                    query: query.clone(),
-                    status: None,
-                    body: observed.request_preview.clone(),
-                }),
+            observed.security_event(None, None).with_http(HttpSecurityEvent {
+                host: Some(domain.to_string()),
+                method: Some(method.clone()),
+                path: Some(path.clone()),
+                query: query.clone(),
+                status: None,
+                body: observed.request_preview.clone(),
+            }),
             domain,
             upstream_port,
         );
@@ -1789,19 +1657,14 @@ async fn handle_request(
                 ));
             }
         };
-        mcp_request_security_decision =
-            SecurityBoundaryDecisionFields::from_enforcement(&mcp_evaluation.enforcement);
+        mcp_request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&mcp_evaluation.enforcement);
         if !mcp_evaluation.enforcement.is_allowed() {
             mcp_span.record("decision", mcp_evaluation.enforcement.action.as_str());
             mcp_span.record("status", "ok");
             request_security_decision = mcp_request_security_decision.clone();
             let body_text = format!(
                 "capsem: MCP request blocked by security rule: {}\n",
-                mcp_evaluation
-                    .enforcement
-                    .rule_id
-                    .as_deref()
-                    .unwrap_or("unknown")
+                mcp_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
             );
             let security_event = security_event_with_transport(
                 observed
@@ -1840,9 +1703,7 @@ async fn handle_request(
                 trace_id: crate::telemetry::ambient_capsem_trace_id(),
                 credential_ref: credential_ref.clone(),
             };
-            if let Some(event_id) =
-                emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await
-            {
+            if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await {
                 delegate_matching_security_rules_for_evaluated_event(
                     Arc::clone(&config.db),
                     event_id,
@@ -1903,16 +1764,15 @@ async fn handle_request(
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
     // (model name, tool results, etc.) regardless of log_bodies setting.
-    let req_max_body_capture =
-        body_capture_limit(effective_ai_provider, domain, &path, log_bodies, max_body);
+    let req_max_body_capture = body_capture_limit(effective_ai_provider, domain, &path, log_bodies, max_body);
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
         max_body_capture: req_max_body_capture,
     }));
 
-    let should_evaluate_model_request = sniffed_model_request
-        || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
+    let should_evaluate_model_request =
+        sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
     enum UpstreamRequestBody {
         Replayable(Bytes),
         Streaming(ProxyBoxBody),
@@ -1974,11 +1834,8 @@ async fn handle_request(
             st.preview.extend_from_slice(&body_bytes[..to_copy]);
         }
 
-        if let (Some(provider), Some(model_protocol)) =
-            (effective_ai_provider, effective_ai_protocol)
-        {
-            let request_meta =
-                crate::net::ai_traffic::request_parser::parse_request(model_protocol, &body_bytes);
+        if let (Some(provider), Some(model_protocol)) = (effective_ai_provider, effective_ai_protocol) {
+            let request_meta = crate::net::ai_traffic::request_parser::parse_request(model_protocol, &body_bytes);
             let model_event = model_security_event(
                 RuntimeSecurityEventType::ModelCall,
                 provider,
@@ -2016,18 +1873,13 @@ async fn handle_request(
                     ));
                 }
             };
-            request_security_decision =
-                SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
             if !model_evaluation.enforcement.is_allowed() {
                 model_request_span.record("decision", model_evaluation.enforcement.action.as_str());
                 model_request_span.record("status", "ok");
                 let body_text = format!(
                     "capsem: model request blocked by security rule: {}\n",
-                    model_evaluation
-                        .enforcement
-                        .rule_id
-                        .as_deref()
-                        .unwrap_or("unknown")
+                    model_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
                 );
                 let mut scrubbed_stats = BodyStats::new(0);
                 scrubbed_stats.bytes = body_bytes.len() as u64;
@@ -2085,9 +1937,7 @@ async fn handle_request(
                             st.preview.extend_from_slice(&body_for_upstream[..to_copy]);
                         }
                         original_headers.remove(http::header::CONTENT_LENGTH);
-                        if let Ok(value) =
-                            http::HeaderValue::from_str(&body_for_upstream.len().to_string())
-                        {
+                        if let Ok(value) = http::HeaderValue::from_str(&body_for_upstream.len().to_string()) {
                             original_headers.insert(http::header::CONTENT_LENGTH, value);
                         }
                     }
@@ -2143,11 +1993,7 @@ async fn handle_request(
     // If we have a cached sender, check it's still alive.
     let ready_us = if let Some(ref mut s) = reusable {
         let ready_start = Instant::now();
-        if s.ready()
-            .instrument(upstream_prepare_span.clone())
-            .await
-            .is_err()
-        {
+        if s.ready().instrument(upstream_prepare_span.clone()).await.is_err() {
             reusable = None;
         }
         ready_start.elapsed().as_micros() as u64
@@ -2159,9 +2005,7 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
-    let upstream_override = policy
-        .find_upstream_override(domain, upstream_port)
-        .cloned();
+    let upstream_override = policy.find_upstream_override(domain, upstream_port).cloned();
     let dial_target = upstream_override
         .as_ref()
         .map(|route| route.dial.clone())
@@ -2203,8 +2047,7 @@ async fn handle_request(
                     upstream_lock_us, ready_us, tcp_us,
                     error = %e, "upstream TCP connect failed"
                 );
-                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS)
-                    .record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
                 ::metrics::counter!(metrics::REQUESTS_TOTAL,
                     "protocol" => protocol.label(), "decision" => "upstream_error")
                 .increment(1);
@@ -2226,8 +2069,7 @@ async fn handle_request(
         let (sender, hs_us) = match upstream_protocol {
             Protocol::Tls => {
                 let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-                let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string())
-                {
+                let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
                     Ok(sn) => sn,
                     Err(e) => {
                         return Ok(make_502(
@@ -2302,8 +2144,7 @@ async fn handle_request(
                 (sender, hs)
             }
             Protocol::Http => {
-                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS)
-                    .record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
                 let upstream_io = TokioIo::new(upstream_tcp);
                 let handshake_start = Instant::now();
                 let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io)
@@ -2361,32 +2202,31 @@ async fn handle_request(
         UpstreamRequestBody::Replayable(body) => Some(body.clone()),
         UpstreamRequestBody::Streaming(_) => None,
     };
-    let build_upstream_request =
-        |body: ProxyBoxBody| -> anyhow::Result<hyper::Request<ProxyBoxBody>> {
-            let mut builder = hyper::Request::builder()
-                .method(original_method.clone())
-                .uri(&full_path);
-            for (name, value) in original_headers.iter() {
-                // TLS: drop inbound `host` -- the SNI-derived `domain` is
-                //      authoritative and we re-add it below.
-                // HTTP: preserve inbound `host` -- the guest sent it,
-                //       and parse_http_host_target already drove our
-                //       upstream selection from it.
-                let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
-                if drop_host || name == "accept-encoding" {
-                    continue;
-                }
-                builder = builder.header(name.clone(), value.clone());
+    let build_upstream_request = |body: ProxyBoxBody| -> anyhow::Result<hyper::Request<ProxyBoxBody>> {
+        let mut builder = hyper::Request::builder()
+            .method(original_method.clone())
+            .uri(&full_path);
+        for (name, value) in original_headers.iter() {
+            // TLS: drop inbound `host` -- the SNI-derived `domain` is
+            //      authoritative and we re-add it below.
+            // HTTP: preserve inbound `host` -- the guest sent it,
+            //       and parse_http_host_target already drove our
+            //       upstream selection from it.
+            let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
+            if drop_host || name == "accept-encoding" {
+                continue;
             }
-            if matches!(protocol, Protocol::Tls) {
-                builder = builder.header("host", domain);
-            }
-            // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
-            builder = builder.header("accept-encoding", "gzip");
-            builder.body(body).map_err(|error| {
-                anyhow::anyhow!("build upstream request for MITM forwarding: {error}")
-            })
-        };
+            builder = builder.header(name.clone(), value.clone());
+        }
+        if matches!(protocol, Protocol::Tls) {
+            builder = builder.header("host", domain);
+        }
+        // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
+        builder = builder.header("accept-encoding", "gzip");
+        builder
+            .body(body)
+            .map_err(|error| anyhow::anyhow!("build upstream request for MITM forwarding: {error}"))
+    };
 
     let upstream_req = build_upstream_request(upstream_req_body.into_body())?;
 
@@ -2458,69 +2298,62 @@ async fn handle_request(
                     ));
                 }
             };
-            let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> =
-                match upstream_protocol {
-                    Protocol::Tls => {
-                        let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-                        let server_name =
-                            match rustls::pki_types::ServerName::try_from(domain.to_string()) {
-                                Ok(server_name) => server_name,
-                                Err(retry_error) => {
-                                    upstream_send_span.record("error_kind", "retry_server_name");
-                                    return Ok(make_502(
-                                        &retry_error,
-                                        &method,
-                                        &path,
-                                        &query,
-                                        &req_hdrs,
-                                        start_time,
-                                        &request_security_decision,
-                                    ));
-                                }
-                            };
-                        match connector.connect(server_name, upstream_tcp).await {
-                            Ok(tls) => {
-                                TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>)
-                            }
-                            Err(retry_error) => {
-                                upstream_send_span.record("error_kind", "retry_tls_handshake");
-                                return Ok(make_502(
-                                    &retry_error,
-                                    &method,
-                                    &path,
-                                    &query,
-                                    &req_hdrs,
-                                    start_time,
-                                    &request_security_decision,
-                                ));
-                            }
+            let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match upstream_protocol {
+                Protocol::Tls => {
+                    let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
+                    let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
+                        Ok(server_name) => server_name,
+                        Err(retry_error) => {
+                            upstream_send_span.record("error_kind", "retry_server_name");
+                            return Ok(make_502(
+                                &retry_error,
+                                &method,
+                                &path,
+                                &query,
+                                &req_hdrs,
+                                start_time,
+                                &request_security_decision,
+                            ));
+                        }
+                    };
+                    match connector.connect(server_name, upstream_tcp).await {
+                        Ok(tls) => TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>),
+                        Err(retry_error) => {
+                            upstream_send_span.record("error_kind", "retry_tls_handshake");
+                            return Ok(make_502(
+                                &retry_error,
+                                &method,
+                                &path,
+                                &query,
+                                &req_hdrs,
+                                start_time,
+                                &request_security_decision,
+                            ));
                         }
                     }
-                    Protocol::Http => TokioIo::new(
-                        Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>
-                    ),
-                    Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP upstream dial"),
-                    Protocol::Unknown => unreachable!("handle_inner gates Unknown earlier"),
-                };
-            let (mut retry_sender, retry_conn) =
-                match hyper::client::conn::http1::handshake(upstream_io)
-                    .instrument(upstream_send_span.clone())
-                    .await
-                {
-                    Ok(pair) => pair,
-                    Err(retry_error) => {
-                        upstream_send_span.record("error_kind", "retry_http_handshake");
-                        return Ok(make_502(
-                            &retry_error,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_security_decision,
-                        ));
-                    }
-                };
+                }
+                Protocol::Http => TokioIo::new(Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>),
+                Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP upstream dial"),
+                Protocol::Unknown => unreachable!("handle_inner gates Unknown earlier"),
+            };
+            let (mut retry_sender, retry_conn) = match hyper::client::conn::http1::handshake(upstream_io)
+                .instrument(upstream_send_span.clone())
+                .await
+            {
+                Ok(pair) => pair,
+                Err(retry_error) => {
+                    upstream_send_span.record("error_kind", "retry_http_handshake");
+                    return Ok(make_502(
+                        &retry_error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            };
             tokio::spawn(async move {
                 let _ = retry_conn.await;
             });
@@ -2604,10 +2437,9 @@ async fn handle_request(
         resp_max_body_capture = resp_max_body_capture.max(MCP_BODY_CAPTURE_LIMIT);
     }
 
-    let should_evaluate_model_response = sniffed_model_request
-        || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
-    let should_collect_semantic_response =
-        should_evaluate_model_response || observed_mcp_request.is_some();
+    let should_evaluate_model_response =
+        sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
+    let should_collect_semantic_response = should_evaluate_model_response || observed_mcp_request.is_some();
 
     let resp_body: ProxyBoxBody = if should_collect_semantic_response {
         let model_response_span = tracing::debug_span!(
@@ -2658,17 +2490,12 @@ async fn handle_request(
             }
         };
 
-        if let (Some(provider), Some(model_protocol)) =
-            (effective_ai_provider, effective_ai_protocol)
-        {
+        if let (Some(provider), Some(model_protocol)) = (effective_ai_provider, effective_ai_protocol) {
             let request_preview = {
                 let st = req_stats.lock().expect("req body stats lock");
                 st.preview.clone()
             };
-            let request_meta = crate::net::ai_traffic::request_parser::parse_request(
-                model_protocol,
-                &request_preview,
-            );
+            let request_meta = crate::net::ai_traffic::request_parser::parse_request(model_protocol, &request_preview);
             let model_event = model_security_event(
                 RuntimeSecurityEventType::ModelCall,
                 provider,
@@ -2710,16 +2537,11 @@ async fn handle_request(
                 SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
             effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
             if !model_evaluation.enforcement.is_allowed() {
-                model_response_span
-                    .record("decision", model_evaluation.enforcement.action.as_str());
+                model_response_span.record("decision", model_evaluation.enforcement.action.as_str());
                 model_response_span.record("status", "ok");
                 let body_text = format!(
                     "capsem: model response blocked by security rule: {}\n",
-                    model_evaluation
-                        .enforcement
-                        .rule_id
-                        .as_deref()
-                        .unwrap_or("unknown")
+                    model_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
                 );
                 let req_ctx = TelemetryRequestContext {
                     domain: domain.to_string(),
@@ -2828,11 +2650,7 @@ async fn handle_request(
                 );
             }
         }
-        materialize_collected_response_headers(
-            &mut resp_parts.headers,
-            response_body.len(),
-            is_gzip,
-        );
+        materialize_collected_response_headers(&mut resp_parts.headers, response_body.len(), is_gzip);
         resp_hdrs = format_headers(&resp_parts.headers);
 
         Full::new(response_body)
@@ -2888,9 +2706,7 @@ async fn handle_request(
         },
         crate::telemetry::ambient_capsem_trace_id(),
     )
-    .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig {
-        gzip: is_gzip,
-    })
+    .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
     let chunk_dispatched = if is_gzip {
         chunk_dispatched.without_size_hint()

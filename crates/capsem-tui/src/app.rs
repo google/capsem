@@ -26,37 +26,14 @@ pub enum AppOverlay {
 pub enum ControlAction {
     StartService,
     Update,
-    CreateSession {
-        name: Option<String>,
-        profile_id: String,
-    },
-    Fork {
-        id: String,
-        name: String,
-    },
-    Resume {
-        id: String,
-        label: String,
-    },
-    Checkpoint {
-        id: String,
-        label: String,
-    },
-    Suspend {
-        id: String,
-        label: String,
-    },
-    Stop {
-        id: String,
-        label: String,
-    },
-    Delete {
-        id: String,
-        label: String,
-    },
-    Purge {
-        all: bool,
-    },
+    CreateSession { name: Option<String>, profile_id: String },
+    Fork { id: String, name: String },
+    Resume { id: String, label: String },
+    Checkpoint { id: String, label: String },
+    Suspend { id: String, label: String },
+    Stop { id: String, label: String },
+    Delete { id: String, label: String },
+    Purge { all: bool },
 }
 
 impl ControlAction {
@@ -94,9 +71,7 @@ impl ControlAction {
         match self {
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
-            Self::CreateSession {
-                name: Some(name), ..
-            } => name,
+            Self::CreateSession { name: Some(name), .. } => name,
             Self::CreateSession { profile_id, .. } => profile_id,
             Self::Fork { name, .. } => name,
             Self::Resume { label, .. }
@@ -186,11 +161,7 @@ impl App {
         if let Some(index) = self.pending_focus_index(&state) {
             state.active_session_id = state.sessions[index].id.clone();
             self.pending_focus_session = None;
-        } else if state
-            .sessions
-            .iter()
-            .any(|session| session.id == previous_active_id)
-        {
+        } else if state.sessions.iter().any(|session| session.id == previous_active_id) {
             state.active_session_id = previous_active_id;
         }
         self.active_index = state
@@ -404,11 +375,7 @@ impl App {
             KeyCode::Char('l' | 'L' | 'o' | 'O') => AppOverlay::Home,
             _ => return false,
         };
-        self.overlay = if self.overlay == next {
-            AppOverlay::None
-        } else {
-            next
-        };
+        self.overlay = if self.overlay == next { AppOverlay::None } else { next };
         self.pending_action = None;
         self.create_draft = None;
         self.fork_draft = None;
@@ -440,12 +407,8 @@ impl App {
             KeyCode::Char('r' | 'R') => self.active_resume_action(),
             KeyCode::Char('c' | 'C') => self.active_checkpoint_action(),
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
-            KeyCode::Char('t' | 'T') => {
-                self.active_session_action(|id, label| ControlAction::Stop { id, label })
-            }
-            KeyCode::Char('d' | 'D') => {
-                self.active_session_action(|id, label| ControlAction::Delete { id, label })
-            }
+            KeyCode::Char('t' | 'T') => self.active_session_action(|id, label| ControlAction::Stop { id, label }),
+            KeyCode::Char('d' | 'D') => self.active_session_action(|id, label| ControlAction::Delete { id, label }),
             KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
             KeyCode::Char('u' | 'U') => Some(ControlAction::Update),
             _ => None,
@@ -501,18 +464,13 @@ impl App {
         })
     }
 
-    fn active_session_action(
-        &self,
-        action: impl FnOnce(String, String) -> ControlAction,
-    ) -> Option<ControlAction> {
+    fn active_session_action(&self, action: impl FnOnce(String, String) -> ControlAction) -> Option<ControlAction> {
         let session = self.state.active_session()?;
         Some(action(session.id.clone(), session.title.clone()))
     }
 
     fn active_id(&self) -> Option<String> {
-        self.state
-            .active_session()
-            .map(|session| session.id.clone())
+        self.state.active_session().map(|session| session.id.clone())
     }
 
     fn open_create(&mut self) {
@@ -556,8 +514,7 @@ impl App {
                 if name.is_empty() {
                     return AppAction::Consumed;
                 }
-                let Some(profile_id) = selected_profile_id(&self.state, draft.selected_profile)
-                else {
+                let Some(profile_id) = selected_profile_id(&self.state, draft.selected_profile) else {
                     return AppAction::Consumed;
                 };
                 let generated = next_profile_session_name(&self.state, draft.selected_profile);
@@ -581,8 +538,7 @@ impl App {
                 let max_index = self.state.profiles.len().saturating_sub(1);
                 let mut selected_profile = None;
                 if let Some(draft) = &mut self.create_draft {
-                    draft.selected_profile =
-                        draft.selected_profile.saturating_add(1).min(max_index);
+                    draft.selected_profile = draft.selected_profile.saturating_add(1).min(max_index);
                     selected_profile = Some(draft.selected_profile);
                 }
                 if let (Some(draft), Some(index)) = (&mut self.create_draft, selected_profile) {
@@ -597,9 +553,9 @@ impl App {
                 AppAction::Consumed
             }
             KeyCode::Char(ch)
-                if !key.modifiers.intersects(
-                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                ) =>
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
             {
                 if let Some(draft) = &mut self.create_draft {
                     draft.name.push(ch);
@@ -640,9 +596,9 @@ impl App {
                 AppAction::Consumed
             }
             KeyCode::Char(ch)
-                if !key.modifiers.intersects(
-                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                ) =>
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
             {
                 if let Some(draft) = &mut self.fork_draft {
                     draft.name.push(ch);
@@ -718,10 +674,7 @@ pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&
         );
     }
     let status = session.profile_status.as_deref()?.to_ascii_lowercase();
-    if matches!(
-        status.as_str(),
-        "ready" | "ok" | "installed" | "active" | "current"
-    ) {
+    if matches!(status.as_str(), "ready" | "ok" | "installed" | "active" | "current") {
         return None;
     }
     Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
@@ -796,7 +749,5 @@ fn select_index(key: KeyEvent) -> Option<usize> {
     let KeyCode::Char(value) = key.code else {
         return None;
     };
-    value
-        .to_digit(10)
-        .map(|digit| digit.saturating_sub(1) as usize)
+    value.to_digit(10).map(|digit| digit.saturating_sub(1) as usize)
 }

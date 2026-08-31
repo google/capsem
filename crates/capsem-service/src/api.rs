@@ -1,7 +1,5 @@
 use capsem_core::net::policy_config::{DetectionLevel, ProfileConfigFile, SecurityRuleAction};
-use capsem_core::session::{
-    GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
-};
+use capsem_core::session::{GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -108,12 +106,7 @@ pub enum VmAction {
 impl VmLifecycleState {
     pub fn available_actions(self, can_resume: bool) -> Vec<VmAction> {
         match self {
-            Self::Running => vec![
-                VmAction::Pause,
-                VmAction::Stop,
-                VmAction::Fork,
-                VmAction::Delete,
-            ],
+            Self::Running => vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
             Self::Stopped => {
                 if can_resume {
                     vec![VmAction::Start, VmAction::Fork, VmAction::Delete]
@@ -226,13 +219,7 @@ pub struct SandboxInfo {
 
 impl SandboxInfo {
     /// Construct with only the core fields; all telemetry fields default to None.
-    pub fn new(
-        id: String,
-        profile_id: String,
-        pid: u32,
-        status: VmLifecycleState,
-        persistent: bool,
-    ) -> Self {
+    pub fn new(id: String, profile_id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
             id,

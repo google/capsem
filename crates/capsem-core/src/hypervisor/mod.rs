@@ -57,23 +57,17 @@ pub trait VmHandle: Send {
 
     /// Pause the VM.
     fn pause(&self) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "pause not supported by this hypervisor backend"
-        ))
+        Err(anyhow::anyhow!("pause not supported by this hypervisor backend"))
     }
 
     /// Resume the paused VM.
     fn resume(&self) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "resume not supported by this hypervisor backend"
-        ))
+        Err(anyhow::anyhow!("resume not supported by this hypervisor backend"))
     }
 
     /// Save the VM state to the given path.
     fn save_state(&self, _path: &std::path::Path) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "save_state not supported by this hypervisor backend"
-        ))
+        Err(anyhow::anyhow!("save_state not supported by this hypervisor backend"))
     }
 
     /// Returns true if this hypervisor supports suspend/resume functionality.

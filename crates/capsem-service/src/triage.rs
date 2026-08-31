@@ -107,11 +107,7 @@ pub struct SlowOpEvent {
 /// Two passes:
 /// 1. JSON tracing line with a `panic` or `panicked` substring.
 /// 2. Plain-text fallback regex for `thread '<name>' panicked at <loc>`.
-pub fn scan_panics_in_file(
-    path: &Path,
-    binary_name: &str,
-    since_unix_secs: u64,
-) -> Vec<PanicEvent> {
+pub fn scan_panics_in_file(path: &Path, binary_name: &str, since_unix_secs: u64) -> Vec<PanicEvent> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -128,28 +124,18 @@ pub fn scan_panics_in_file(
         // JSON tracing line first.
         if line.starts_with('{') {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                let ts = json
-                    .get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let ts = json.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let level = json.get("level").and_then(|v| v.as_str()).unwrap_or("");
                 let msg = json
                     .get("fields")
                     .and_then(|f| f.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("");
-                if (msg.contains("panicked at") || msg.contains("PANIC"))
-                    || level == "ERROR" && msg.contains("panic")
-                {
+                if (msg.contains("panicked at") || msg.contains("PANIC")) || level == "ERROR" && msg.contains("panic") {
                     if let Some(p) = pending.take() {
                         out.push(p);
                     }
-                    if !ts.is_empty()
-                        && parse_rfc3339_seconds(&ts)
-                            .map(|s| s < since_unix_secs)
-                            .unwrap_or(false)
-                    {
+                    if !ts.is_empty() && parse_rfc3339_seconds(&ts).map(|s| s < since_unix_secs).unwrap_or(false) {
                         continue;
                     }
                     let loc = json
@@ -206,12 +192,7 @@ pub fn scan_panics_in_file(
             // message body. Treat as message if `message` is still
             // empty AND this isn't a frame.
             let looks_like_frame = !trimmed.is_empty()
-                && (trimmed.starts_with("at ")
-                    || trimmed
-                        .chars()
-                        .next()
-                        .map(|c| c.is_ascii_digit())
-                        .unwrap_or(false));
+                && (trimmed.starts_with("at ") || trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false));
             if p.message.is_empty() && !looks_like_frame && !trimmed.is_empty() {
                 p.message = redact_home_path(trimmed);
                 continue;
@@ -237,12 +218,7 @@ pub fn scan_panics_in_file(
 /// Scan a tail of a file for level>=WARN events that fall within the
 /// `since` window. Plain-text lines are skipped (this is post-W2; all
 /// long-lived binaries emit JSON).
-pub fn scan_errors_in_file(
-    path: &Path,
-    binary_name: &str,
-    since_unix_secs: u64,
-    limit: usize,
-) -> Vec<ErrorEvent> {
+pub fn scan_errors_in_file(path: &Path, binary_name: &str, since_unix_secs: u64, limit: usize) -> Vec<ErrorEvent> {
     let bytes = match read_tail(path, 1024 * 1024) {
         Some(b) => b,
         None => return Vec::new(),
@@ -265,22 +241,11 @@ pub fn scan_errors_in_file(
         if level != "ERROR" && level != "WARN" {
             continue;
         }
-        let ts = json
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if !ts.is_empty()
-            && parse_rfc3339_seconds(&ts)
-                .map(|s| s < since_unix_secs)
-                .unwrap_or(false)
-        {
+        let ts = json.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if !ts.is_empty() && parse_rfc3339_seconds(&ts).map(|s| s < since_unix_secs).unwrap_or(false) {
             continue;
         }
-        let target = json
-            .get("target")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let target = json.get("target").and_then(|v| v.as_str()).map(String::from);
         let msg = json
             .get("fields")
             .and_then(|f| f.get("message"))
@@ -328,9 +293,7 @@ pub fn scan_slow_ops_in_file(
             Err(_) => continue,
         };
         let fields = json.get("fields");
-        let dur = fields
-            .and_then(|f| f.get("duration_ms"))
-            .and_then(|v| v.as_u64());
+        let dur = fields.and_then(|f| f.get("duration_ms")).and_then(|v| v.as_u64());
         let op = fields.and_then(|f| f.get("op")).and_then(|v| v.as_str());
         let (Some(duration_ms), Some(op)) = (dur, op) else {
             continue;
@@ -338,16 +301,8 @@ pub fn scan_slow_ops_in_file(
         if duration_ms < threshold_ms {
             continue;
         }
-        let ts = json
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if !ts.is_empty()
-            && parse_rfc3339_seconds(&ts)
-                .map(|s| s < since_unix_secs)
-                .unwrap_or(false)
-        {
+        let ts = json.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if !ts.is_empty() && parse_rfc3339_seconds(&ts).map(|s| s < since_unix_secs).unwrap_or(false) {
             continue;
         }
         out.push(SlowOpEvent {
@@ -397,8 +352,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     // used to metadata() the stream name and return None the moment rotation
     // landed, silently reporting no errors for a daemon that was logging them.
     // Correct for unrotated paths too: the reader yields the single file.
-    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize)
-        .map(String::into_bytes)
+    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
 }
 
 fn redact_home_path(s: &str) -> String {

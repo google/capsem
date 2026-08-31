@@ -22,29 +22,24 @@ fn bench_db_writer_bursts(c: &mut Criterion) {
 
     for burst_size in [128usize, 1024usize, 4096usize] {
         group.throughput(Throughput::Elements(burst_size as u64));
-        group.bench_with_input(
-            format!("file_events_{burst_size}"),
-            &burst_size,
-            |bench, &burst| {
-                bench.iter_batched(
-                    || {
-                        let dir = tempfile::tempdir().expect("create temp db dir");
-                        let db_path = dir.path().join("session.db");
-                        let writer =
-                            DbWriter::open(&db_path, burst.max(128)).expect("open DbWriter");
-                        let ops = (0..burst).map(file_event).collect::<Vec<_>>();
-                        (dir, writer, ops)
-                    },
-                    |(_dir, writer, ops)| {
-                        for op in ops {
-                            writer.write_blocking(op);
-                        }
-                        writer.shutdown_blocking();
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
+        group.bench_with_input(format!("file_events_{burst_size}"), &burst_size, |bench, &burst| {
+            bench.iter_batched(
+                || {
+                    let dir = tempfile::tempdir().expect("create temp db dir");
+                    let db_path = dir.path().join("session.db");
+                    let writer = DbWriter::open(&db_path, burst.max(128)).expect("open DbWriter");
+                    let ops = (0..burst).map(file_event).collect::<Vec<_>>();
+                    (dir, writer, ops)
+                },
+                |(_dir, writer, ops)| {
+                    for op in ops {
+                        writer.write_blocking(op);
+                    }
+                    writer.shutdown_blocking();
+                },
+                BatchSize::SmallInput,
+            );
+        });
     }
 
     group.finish();

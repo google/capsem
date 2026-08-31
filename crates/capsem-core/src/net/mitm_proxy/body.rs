@@ -51,11 +51,7 @@ pin_project_lite::pin_project! {
 
 impl<B> TrackedBody<B> {
     pub fn new(inner: B, stats: Arc<Mutex<BodyStats>>, max_size: u64) -> Self {
-        Self {
-            inner,
-            stats,
-            max_size,
-        }
+        Self { inner, stats, max_size }
     }
 }
 
@@ -79,9 +75,7 @@ where
                     let mut st = this.stats.lock().unwrap();
                     st.bytes += len;
                     if st.bytes > *this.max_size {
-                        return Poll::Ready(Some(Err(anyhow::anyhow!(
-                            "body exceeded maximum size"
-                        ))));
+                        return Poll::Ready(Some(Err(anyhow::anyhow!("body exceeded maximum size"))));
                     }
                     if st.preview.len() < st.max_body_capture {
                         let to_copy = (st.max_body_capture - st.preview.len()).min(len as usize);
@@ -138,12 +132,7 @@ pub struct ChunkDispatchBody<B> {
 }
 
 impl<B> ChunkDispatchBody<B> {
-    pub fn new(
-        inner: B,
-        pipeline: Arc<Pipeline>,
-        conn: ConnMeta,
-        trace_id: Option<String>,
-    ) -> Self {
+    pub fn new(inner: B, pipeline: Arc<Pipeline>, conn: ConnMeta, trace_id: Option<String>) -> Self {
         Self {
             inner,
             pipeline,
@@ -179,11 +168,9 @@ impl<B> ChunkDispatchBody<B> {
         if self.end_dispatched || !self.pipeline.has_chunk_hooks() {
             return;
         }
-        let end = self.pipeline.dispatch_response_end(
-            &mut self.state,
-            &self.conn,
-            self.trace_id.as_deref(),
-        );
+        let end = self
+            .pipeline
+            .dispatch_response_end(&mut self.state, &self.conn, self.trace_id.as_deref());
         self.end_dispatched = true;
         self.end_tail = Some(end.tail);
         self.pending_end = end.pending.into();
@@ -216,10 +203,7 @@ where
             if this.poll_response_end(cx).is_pending() {
                 return Poll::Pending;
             }
-            return Poll::Ready(Some(Ok(this
-                .pending_frame
-                .take()
-                .expect("pending frame checked"))));
+            return Poll::Ready(Some(Ok(this.pending_frame.take().expect("pending frame checked"))));
         }
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {

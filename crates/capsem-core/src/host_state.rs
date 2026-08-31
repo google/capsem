@@ -94,11 +94,7 @@ impl<S: Copy + PartialEq + Eq + std::fmt::Debug + 'static> StateMachine<S> {
     pub fn transition(&mut self, to: S, trigger: &'static str) -> Result<&Transition<S>> {
         let valid = (self.validate_fn)(&self.current);
         if !valid.contains(&to) {
-            bail!(
-                "invalid transition {:?} -> {:?} (trigger: {trigger})",
-                self.current,
-                to
-            );
+            bail!("invalid transition {:?} -> {:?} (trigger: {trigger})", self.current, to);
         }
         let now = Instant::now();
         let duration = now.duration_since(self.entered_at);

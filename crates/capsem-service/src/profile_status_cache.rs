@@ -1,7 +1,4 @@
-use super::{
-    build_profile_status_cache, load_profile_catalog_for_service, AppError, Bytes, ServiceState,
-    StatusCode,
-};
+use super::{build_profile_status_cache, load_profile_catalog_for_service, AppError, Bytes, ServiceState, StatusCode};
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::Path as StdPath;
@@ -46,9 +43,7 @@ pub(super) fn profile_status_inputs(state: &ServiceState) -> ProfileStatusInputs
     }
 }
 
-pub(super) fn build_stable_profile_status_cache(
-    state: &ServiceState,
-) -> Result<Arc<ProfileStatusCache>, AppError> {
+pub(super) fn build_stable_profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
     let inputs = profile_status_inputs(state);
     let catalog = load_profile_catalog_for_service()?;
     let cache = Arc::new(build_profile_status_cache(state, &catalog, inputs.clone()));
@@ -61,9 +56,7 @@ pub(super) fn build_stable_profile_status_cache(
     Ok(cache)
 }
 
-pub(super) fn rebuild_profile_status_cache(
-    state: &ServiceState,
-) -> Result<Arc<ProfileStatusCache>, AppError> {
+pub(super) fn rebuild_profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
     let cache = build_stable_profile_status_cache(state)?;
     *state.profile_status_cache.lock().map_err(|error| {
         AppError(
@@ -74,9 +67,7 @@ pub(super) fn rebuild_profile_status_cache(
     Ok(cache)
 }
 
-pub(super) fn profile_status_cache(
-    state: &ServiceState,
-) -> Result<Arc<ProfileStatusCache>, AppError> {
+pub(super) fn profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
     let inputs = profile_status_inputs(state);
     if let Some(cache) = state
         .profile_status_cache

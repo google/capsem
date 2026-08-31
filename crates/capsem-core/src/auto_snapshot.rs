@@ -59,12 +59,7 @@ pub struct AutoSnapshotScheduler {
 }
 
 impl AutoSnapshotScheduler {
-    pub fn new(
-        session_dir: PathBuf,
-        max_auto: usize,
-        max_manual: usize,
-        interval: Duration,
-    ) -> Self {
+    pub fn new(session_dir: PathBuf, max_auto: usize, max_manual: usize, interval: Duration) -> Self {
         Self {
             session_dir,
             max_auto,
@@ -118,18 +113,10 @@ impl AutoSnapshotScheduler {
             .workspace_dir()
             .canonicalize()
             .context("failed to resolve workspace directory for snapshot safety check")?;
-        self.ensure_existing_path_outside_workspace(
-            &self.snapshots_dir(),
-            &workspace,
-            "snapshot storage",
-        )
+        self.ensure_existing_path_outside_workspace(&self.snapshots_dir(), &workspace, "snapshot storage")
     }
 
-    fn ensure_snapshot_path_outside_workspace(
-        &self,
-        path: &Path,
-        label: &str,
-    ) -> anyhow::Result<()> {
+    fn ensure_snapshot_path_outside_workspace(&self, path: &Path, label: &str) -> anyhow::Result<()> {
         let workspace = self
             .workspace_dir()
             .canonicalize()
@@ -137,12 +124,7 @@ impl AutoSnapshotScheduler {
         self.ensure_existing_path_outside_workspace(path, &workspace, label)
     }
 
-    fn ensure_existing_path_outside_workspace(
-        &self,
-        path: &Path,
-        workspace: &Path,
-        label: &str,
-    ) -> anyhow::Result<()> {
+    fn ensure_existing_path_outside_workspace(&self, path: &Path, workspace: &Path, label: &str) -> anyhow::Result<()> {
         if path.exists() {
             let resolved = path
                 .canonicalize()
@@ -191,8 +173,7 @@ impl AutoSnapshotScheduler {
         let slot = self.manual_slot(self.next_manual_slot);
         // Find next free manual slot (or overwrite oldest if all full).
         // Since we check available_manual_slots > 0, there's always a free one.
-        let result =
-            self.snapshot_into_slot(slot, SnapshotOrigin::Manual, Some(name.to_string()))?;
+        let result = self.snapshot_into_slot(slot, SnapshotOrigin::Manual, Some(name.to_string()))?;
         self.next_manual_slot = (self.next_manual_slot + 1) % self.max_manual;
         info!(
             slot,
@@ -244,9 +225,7 @@ impl AutoSnapshotScheduler {
         let clone_sys_ms = t0.elapsed().as_millis() - clone_ws_ms;
 
         let now = SystemTime::now();
-        let since_epoch = now
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
+        let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
         let epoch = since_epoch.as_secs();
         let epoch_millis = since_epoch.as_millis();
 
@@ -361,11 +340,7 @@ impl AutoSnapshotScheduler {
     /// How many manual snapshot slots are available.
     pub fn available_manual_slots(&self) -> usize {
         let used = (0..self.max_manual)
-            .filter(|i| {
-                self.slot_dir(self.manual_slot(*i))
-                    .join("metadata.json")
-                    .exists()
-            })
+            .filter(|i| self.slot_dir(self.manual_slot(*i)).join("metadata.json").exists())
             .count();
         self.max_manual.saturating_sub(used)
     }
@@ -398,11 +373,7 @@ impl AutoSnapshotScheduler {
     ///
     /// Merges workspaces oldest-first (newest file version wins).
     /// Deletes all source snapshots after successful compaction.
-    pub fn compact_snapshots(
-        &mut self,
-        slots: &[usize],
-        name: &str,
-    ) -> anyhow::Result<SnapshotSlot> {
+    pub fn compact_snapshots(&mut self, slots: &[usize], name: &str) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
         self.ensure_snapshot_storage_outside_workspace()?;
         anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
@@ -501,9 +472,7 @@ impl AutoSnapshotScheduler {
 
         // Write metadata.
         let now = SystemTime::now();
-        let since_epoch = now
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
+        let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
         let epoch = since_epoch.as_secs();
         let epoch_millis = since_epoch.as_millis();
         let meta = SlotMetadata {
@@ -582,11 +551,7 @@ fn workspace_hash(workspace: &Path) -> String {
         }
         if let Ok(rel) = entry.path().strip_prefix(workspace) {
             let rel_str = rel.to_string_lossy().to_string();
-            let size = entry
-                .path()
-                .symlink_metadata()
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let size = entry.path().symlink_metadata().map(|m| m.len()).unwrap_or(0);
             let is_symlink = ft.is_symlink();
             let digest = snapshot_entry_digest(entry.path(), is_symlink);
             entries.insert(rel_str, (size, is_symlink, digest));
@@ -626,8 +591,8 @@ impl SnapshotBackend for ApfsSnapshot {
 
         let src_c = CString::new(source.as_os_str().as_bytes())
             .map_err(|_| anyhow::anyhow!("source path contains null byte"))?;
-        let dst_c = CString::new(dest.as_os_str().as_bytes())
-            .map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
+        let dst_c =
+            CString::new(dest.as_os_str().as_bytes()).map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
 
         // Direct clonefile(2) syscall -- no subprocess overhead.
         let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
@@ -675,8 +640,7 @@ fn source_entry_vanished(path: &Path, error: &std::io::Error) -> bool {
     if error.kind() != std::io::ErrorKind::NotFound {
         return false;
     }
-    std::fs::symlink_metadata(path)
-        .is_err_and(|source_error| source_error.kind() == std::io::ErrorKind::NotFound)
+    std::fs::symlink_metadata(path).is_err_and(|source_error| source_error.kind() == std::io::ErrorKind::NotFound)
 }
 
 #[cfg(target_os = "linux")]
@@ -697,13 +661,7 @@ impl ReflinkSnapshot {
 
         // SAFETY: FICLONE takes (dst_fd, FICLONE, src_fd). Both fds are valid
         // open files. The ioctl either clones the data or returns an error.
-        let ret = unsafe {
-            libc::ioctl(
-                dst_file.as_raw_fd(),
-                Self::FICLONE as _,
-                src_file.as_raw_fd(),
-            )
-        };
+        let ret = unsafe { libc::ioctl(dst_file.as_raw_fd(), Self::FICLONE as _, src_file.as_raw_fd()) };
 
         if ret == 0 {
             // Preserve permissions from source.
@@ -727,11 +685,7 @@ impl ReflinkSnapshot {
         }
     }
 
-    fn snapshot_entry(
-        entry: &walkdir::DirEntry,
-        source: &Path,
-        dest: &Path,
-    ) -> anyhow::Result<ReflinkEntryOutcome> {
+    fn snapshot_entry(entry: &walkdir::DirEntry, source: &Path, dest: &Path) -> anyhow::Result<ReflinkEntryOutcome> {
         let rel = entry.path().strip_prefix(source)?;
         let target = dest.join(rel);
 
@@ -770,14 +724,10 @@ impl ReflinkSnapshot {
             Ok(true) => Ok(ReflinkEntryOutcome::Reflinked),
             Ok(false) => match copy_file_sparse(entry.path(), &target) {
                 Ok(()) => Ok(ReflinkEntryOutcome::SparseCopied),
-                Err(error) if source_entry_vanished(entry.path(), &error) => {
-                    Ok(ReflinkEntryOutcome::SourceVanished)
-                }
+                Err(error) if source_entry_vanished(entry.path(), &error) => Ok(ReflinkEntryOutcome::SourceVanished),
                 Err(error) => Err(error.into()),
             },
-            Err(error) if source_entry_vanished(entry.path(), &error) => {
-                Ok(ReflinkEntryOutcome::SourceVanished)
-            }
+            Err(error) if source_entry_vanished(entry.path(), &error) => Ok(ReflinkEntryOutcome::SourceVanished),
             Err(error) => {
                 warn!(
                     path = %entry.path().display(),
@@ -807,10 +757,7 @@ impl SnapshotBackend for ReflinkSnapshot {
         let reflink_supported = AtomicBool::new(false);
         let mut reflink_failed_logged = false;
 
-        for entry in walkdir::WalkDir::new(source)
-            .follow_links(false)
-            .min_depth(1)
-        {
+        for entry in walkdir::WalkDir::new(source).follow_links(false).min_depth(1) {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error)
@@ -883,10 +830,10 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
-        let src_c = CString::new(src.as_os_str().as_bytes())
-            .map_err(|_| anyhow::anyhow!("source path contains null byte"))?;
-        let dst_c = CString::new(dst.as_os_str().as_bytes())
-            .map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
+        let src_c =
+            CString::new(src.as_os_str().as_bytes()).map_err(|_| anyhow::anyhow!("source path contains null byte"))?;
+        let dst_c =
+            CString::new(dst.as_os_str().as_bytes()).map_err(|_| anyhow::anyhow!("dest path contains null byte"))?;
 
         let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
         if ret == 0 {
@@ -933,11 +880,7 @@ pub(crate) fn copy_file_sparse(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn copy_sparse_extents(
-    input: &mut std::fs::File,
-    output: &mut std::fs::File,
-    logical_len: u64,
-) -> std::io::Result<()> {
+fn copy_sparse_extents(input: &mut std::fs::File, output: &mut std::fs::File, logical_len: u64) -> std::io::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::unix::io::AsRawFd;
 
@@ -997,11 +940,7 @@ fn copy_sparse_extents(
 }
 
 #[cfg(target_os = "linux")]
-fn lseek_extent(
-    fd: std::os::unix::io::RawFd,
-    offset: u64,
-    whence: libc::c_int,
-) -> std::io::Result<u64> {
+fn lseek_extent(fd: std::os::unix::io::RawFd, offset: u64, whence: libc::c_int) -> std::io::Result<u64> {
     let result = unsafe { libc::lseek(fd, offset as libc::off_t, whence) };
     if result < 0 {
         Err(std::io::Error::last_os_error())
@@ -1012,17 +951,11 @@ fn lseek_extent(
 
 #[cfg(target_os = "linux")]
 fn seek_data_unsupported(err: &std::io::Error) -> bool {
-    matches!(
-        err.raw_os_error(),
-        Some(libc::EINVAL | libc::ENOSYS | libc::ENOTTY)
-    )
+    matches!(err.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::ENOTTY))
 }
 
 #[cfg(target_os = "linux")]
-fn copy_sparse_by_scanning(
-    input: &mut std::fs::File,
-    output: &mut std::fs::File,
-) -> std::io::Result<()> {
+fn copy_sparse_by_scanning(input: &mut std::fs::File, output: &mut std::fs::File) -> std::io::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
     const CHUNK_SIZE: usize = 1024 * 1024;
@@ -1055,13 +988,7 @@ fn chunk_is_zero(chunk: &[u8], zero_buffer: &[u8]) -> bool {
     if chunk.is_empty() {
         return true;
     }
-    unsafe {
-        libc::memcmp(
-            chunk.as_ptr().cast(),
-            zero_buffer.as_ptr().cast(),
-            chunk.len(),
-        ) == 0
-    }
+    unsafe { libc::memcmp(chunk.as_ptr().cast(), zero_buffer.as_ptr().cast(), chunk.len()) == 0 }
 }
 
 /// Calculate the physical disk usage (allocated blocks) of a sandbox session directory.
@@ -1073,9 +1000,7 @@ pub fn sandbox_disk_usage(session_dir: &Path) -> anyhow::Result<u64> {
     }
     for entry in walkdir::WalkDir::new(session_dir) {
         let entry = entry.map_err(|e| anyhow::anyhow!("walkdir failed: {e}"))?;
-        let metadata = entry
-            .metadata()
-            .map_err(|e| anyhow::anyhow!("metadata failed: {e}"))?;
+        let metadata = entry.metadata().map_err(|e| anyhow::anyhow!("metadata failed: {e}"))?;
         if metadata.is_file() {
             #[cfg(unix)]
             {
@@ -1111,8 +1036,7 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
     let rootfs_path = sys_src.join("rootfs.img");
     if rootfs_path.exists() {
         if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&rootfs_path) {
-            f.sync_all()
-                .context("failed to fsync rootfs.img before clone")?;
+            f.sync_all().context("failed to fsync rootfs.img before clone")?;
         }
     }
 
@@ -1177,19 +1101,13 @@ fn log_rootfs_clone_usage(src: &Path, dst: &Path) {
 }
 
 fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    capsem_logger::snapshot_session_db(src, dst).with_context(|| {
-        format!(
-            "failed to snapshot session db {} into {}",
-            src.display(),
-            dst.display()
-        )
-    })
+    capsem_logger::snapshot_session_db(src, dst)
+        .with_context(|| format!("failed to snapshot session db {} into {}", src.display(), dst.display()))
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).
 fn chrono_like_iso(epoch_secs: u64) -> String {
-    let ts = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let ts = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     ts.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| format!("{epoch_secs}"))
 }

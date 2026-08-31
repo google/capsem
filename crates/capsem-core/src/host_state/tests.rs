@@ -155,12 +155,9 @@ fn full_host_lifecycle() {
     sm.transition(HostState::Booting, "vm_started").unwrap();
     sm.transition(HostState::VsockConnected, "vsock_ports_connected")
         .unwrap();
-    sm.transition(HostState::Handshaking, "ready_received")
-        .unwrap();
-    sm.transition(HostState::Running, "boot_ready_received")
-        .unwrap();
-    sm.transition(HostState::ShuttingDown, "shutdown_requested")
-        .unwrap();
+    sm.transition(HostState::Handshaking, "ready_received").unwrap();
+    sm.transition(HostState::Running, "boot_ready_received").unwrap();
+    sm.transition(HostState::ShuttingDown, "shutdown_requested").unwrap();
     sm.transition(HostState::Stopped, "vm_stopped").unwrap();
     assert_eq!(sm.state(), HostState::Stopped);
     assert_eq!(sm.history().len(), 6);
@@ -333,10 +330,7 @@ fn boot_ready_rejected_in_other_states() {
 
 #[test]
 fn exec_done_in_running() {
-    let msg = GuestToHost::ExecDone {
-        id: 1,
-        exit_code: 0,
-    };
+    let msg = GuestToHost::ExecDone { id: 1, exit_code: 0 };
     assert!(validate_guest_msg(&msg, HostState::Running).is_ok());
 }
 

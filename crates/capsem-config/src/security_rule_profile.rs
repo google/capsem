@@ -12,9 +12,7 @@ pub const USER_PRIORITY_MIN: i32 = 10;
 pub const USER_PRIORITY_MAX: i32 = 1000;
 pub const DEFAULT_RULE_PRIORITY: i32 = USER_PRIORITY_MAX + 1;
 
-pub const SECURITY_EVENT_CEL_ROOTS: &[&str] = &[
-    "http", "dns", "mcp", "model", "file", "process", "ip", "tcp", "udp",
-];
+pub const SECURITY_EVENT_CEL_ROOTS: &[&str] = &["http", "dns", "mcp", "model", "file", "process", "ip", "tcp", "udp"];
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -364,8 +362,7 @@ pub struct SecurityRuleEvaluation<'a> {
 
 impl SecurityRuleProfile {
     pub fn parse_toml(input: &str) -> Result<Self, String> {
-        let profile: Self =
-            toml::from_str(input).map_err(|error| format!("security rule TOML: {error}"))?;
+        let profile: Self = toml::from_str(input).map_err(|error| format!("security rule TOML: {error}"))?;
         profile.validate()?;
         Ok(profile)
     }
@@ -374,15 +371,10 @@ impl SecurityRuleProfile {
         let mut profile = Self::default();
         let mut parsed_any = false;
         for document in serde_yaml::Deserializer::from_str(input) {
-            let sigma_rule = SigmaRule::deserialize(document)
-                .map_err(|error| format!("security rule Sigma YAML: {error}"))?;
+            let sigma_rule =
+                SigmaRule::deserialize(document).map_err(|error| format!("security rule Sigma YAML: {error}"))?;
             let (rule_key, rule) = sigma_rule.into_security_rule()?;
-            if profile
-                .profiles
-                .rules
-                .insert(rule_key.clone(), rule)
-                .is_some()
-            {
+            if profile.profiles.rules.insert(rule_key.clone(), rule).is_some() {
                 return Err(format!("duplicate Sigma-derived rule '{rule_key}'"));
             }
             parsed_any = true;
@@ -441,20 +433,8 @@ impl SecurityRuleProfile {
         self.validate()?;
         let mut compiled = Vec::new();
         self.compile_default_rules(source, &mut compiled)?;
-        self.compile_group(
-            "corp",
-            "corp",
-            &self.corp,
-            SecurityRuleSource::Corp,
-            &mut compiled,
-        )?;
-        self.compile_group(
-            "profiles",
-            "profiles",
-            &self.profiles,
-            source,
-            &mut compiled,
-        )?;
+        self.compile_group("corp", "corp", &self.corp, SecurityRuleSource::Corp, &mut compiled)?;
+        self.compile_group("profiles", "profiles", &self.profiles, source, &mut compiled)?;
         for (provider_id, provider) in &self.ai {
             for (rule_key, rule) in &provider.rules {
                 let priority = rule.effective_priority(source)?;
@@ -691,9 +671,9 @@ fn sigma_condition_to_security_event_match(
                 return Err("Sigma condition grouping is not supported yet".to_string());
             }
             name => {
-                let clause = selections.get(name).ok_or_else(|| {
-                    format!("Sigma condition references unknown selection '{name}'")
-                })?;
+                let clause = selections
+                    .get(name)
+                    .ok_or_else(|| format!("Sigma condition references unknown selection '{name}'"))?;
                 if negate_next {
                     output.push(clause.negative.clone());
                     negate_next = false;
@@ -743,10 +723,7 @@ fn tokenize_sigma_condition(condition: &str) -> Result<Vec<String>, String> {
     }
 }
 
-fn sigma_field_clause(
-    field: &str,
-    expected: &serde_yaml::Value,
-) -> Result<SigmaSelectionClause, String> {
+fn sigma_field_clause(field: &str, expected: &serde_yaml::Value) -> Result<SigmaSelectionClause, String> {
     if let Some(values) = expected.as_sequence() {
         if values.is_empty() {
             return Err(format!("Sigma field '{field}' sequence must not be empty"));
@@ -768,17 +745,10 @@ fn sigma_field_clause(
     })
 }
 
-fn sigma_scalar_compare(
-    field: &str,
-    operator: &str,
-    expected: &serde_yaml::Value,
-) -> Result<String, String> {
+fn sigma_scalar_compare(field: &str, operator: &str, expected: &serde_yaml::Value) -> Result<String, String> {
     let expected = sigma_scalar_to_string(expected)
         .ok_or_else(|| format!("Sigma field '{field}' value must be a scalar or sequence"))?;
-    Ok(format!(
-        "{field} {operator} {}",
-        cel_string_literal(&expected)
-    ))
+    Ok(format!("{field} {operator} {}", cel_string_literal(&expected)))
 }
 
 fn sigma_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
@@ -829,10 +799,7 @@ impl SecurityRuleSet {
         Self { rules }
     }
 
-    pub fn compile_profile(
-        profile: &SecurityRuleProfile,
-        source: SecurityRuleSource,
-    ) -> Result<Self, String> {
+    pub fn compile_profile(profile: &SecurityRuleProfile, source: SecurityRuleSource) -> Result<Self, String> {
         profile.compile(source).map(Self::new)
     }
 
@@ -925,9 +892,7 @@ impl ProviderDiscovery {
         }
         if let Some(credential_ref) = self.credential_ref.as_deref() {
             if !crate::is_credential_reference(credential_ref) {
-                return Err(format!(
-                    "{path}.credential_ref must be a credential:blake3 reference"
-                ));
+                return Err(format!("{path}.credential_ref must be a credential:blake3 reference"));
             }
         }
         Ok(())
@@ -948,30 +913,19 @@ impl SecurityRule {
             return Err(format!("{rule_id} must not use 'decision'; use 'action'"));
         }
         if self.plugin_config.contains_key("actions") {
-            return Err(format!(
-                "{rule_id} must not use 'actions'; use one 'action'"
-            ));
+            return Err(format!("{rule_id} must not use 'actions'; use one 'action'"));
         }
         if self.plugin_config.contains_key("level") {
-            return Err(format!(
-                "{rule_id} must not use 'level'; use 'detection_level'"
-            ));
+            return Err(format!("{rule_id} must not use 'level'; use 'detection_level'"));
         }
         if self.plugin_config.contains_key("plugin") {
-            return Err(format!(
-                "{rule_id} must not use 'plugin'; plugins own their filtering"
-            ));
+            return Err(format!("{rule_id} must not use 'plugin'; plugins own their filtering"));
         }
         if let Some(managed) = &self.managed {
             managed.validate(rule_id)?;
         }
         if !self.plugin_config.is_empty() {
-            let fields = self
-                .plugin_config
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
+            let fields = self.plugin_config.keys().cloned().collect::<Vec<_>>().join(", ");
             return Err(format!("{rule_id} has unknown rule fields: {fields}"));
         }
         self.validate_match()?;
@@ -983,13 +937,7 @@ impl SecurityRule {
             .priority
             .map(SecurityRulePriority::resolve)
             .unwrap_or_else(|| source.default_priority(self.corp_locked));
-        validate_priority_for_source(
-            &self.name,
-            source,
-            self.corp_locked,
-            self.priority,
-            priority,
-        )?;
+        validate_priority_for_source(&self.name, source, self.corp_locked, self.priority, priority)?;
         Ok(priority)
     }
 
@@ -1049,9 +997,7 @@ fn validate_priority_for_source(
         if priority <= CORP_PRIORITY_MAX {
             return Ok(());
         }
-        return Err(format!(
-            "rule '{rule_name}' corp priority {priority} must be <= -10"
-        ));
+        return Err(format!("rule '{rule_name}' corp priority {priority} must be <= -10"));
     }
 
     match source {
@@ -1110,11 +1056,7 @@ fn validate_managed_targets_unique(profile: &SecurityRuleProfile) -> Result<(), 
     }
     for (provider_id, provider) in &profile.ai {
         for (rule_key, rule) in &provider.rules {
-            track_managed_target(
-                &mut seen,
-                format!("ai.{provider_id}.rules.{rule_key}"),
-                rule,
-            )?;
+            track_managed_target(&mut seen, format!("ai.{provider_id}.rules.{rule_key}"), rule)?;
         }
     }
     Ok(())
@@ -1157,9 +1099,7 @@ fn validate_security_event_field(field: &str) -> Result<(), String> {
         return Err("security-event CEL field must not be empty".to_string());
     };
     if !SECURITY_EVENT_CEL_ROOTS.contains(&root) {
-        return Err(format!(
-            "field '{field}' is not a first-party security-event root"
-        ));
+        return Err(format!("field '{field}' is not a first-party security-event root"));
     }
     if crate::SECURITY_EVENT_CEL_FIELDS.contains(&field) {
         return Ok(());

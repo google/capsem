@@ -68,12 +68,7 @@ impl CredentialStore {
         CREDENTIAL_STORE.get_or_init(Self::default)
     }
 
-    pub fn capture(
-        &self,
-        provider: CredentialProvider,
-        credential_ref: &str,
-        raw_value: &str,
-    ) -> Result<bool, String> {
+    pub fn capture(&self, provider: CredentialProvider, credential_ref: &str, raw_value: &str) -> Result<bool, String> {
         if let Some(existing) = self.cache_get(provider, credential_ref)? {
             if existing == raw_value {
                 return Ok(false);
@@ -106,11 +101,7 @@ impl CredentialStore {
         Ok(true)
     }
 
-    pub fn resolve(
-        &self,
-        provider: CredentialProvider,
-        credential_ref: &str,
-    ) -> Result<Option<String>, String> {
+    pub fn resolve(&self, provider: CredentialProvider, credential_ref: &str) -> Result<Option<String>, String> {
         if !is_broker_reference(credential_ref) {
             return Ok(None);
         }
@@ -138,15 +129,8 @@ impl CredentialStore {
         }
     }
 
-    pub fn replay_available_in_memory(
-        &self,
-        provider: CredentialProvider,
-        credential_ref: &str,
-    ) -> bool {
-        self.cache_get(provider, credential_ref)
-            .ok()
-            .flatten()
-            .is_some()
+    pub fn replay_available_in_memory(&self, provider: CredentialProvider, credential_ref: &str) -> bool {
+        self.cache_get(provider, credential_ref).ok().flatten().is_some()
     }
 
     pub fn hydrate_from_durable_store(&self) -> Result<usize, String> {
@@ -172,10 +156,7 @@ impl CredentialStore {
             }
         }
         self.mark_hydrated(count);
-        info!(
-            count,
-            "credential store: hydrated runtime cache from durable backend"
-        );
+        info!(count, "credential store: hydrated runtime cache from durable backend");
         Ok(count)
     }
 
@@ -208,27 +189,15 @@ impl CredentialStore {
         *self.status.lock().unwrap() = CredentialStoreStatusState::default();
     }
 
-    fn cache_insert(
-        &self,
-        provider: CredentialProvider,
-        credential_ref: &str,
-        raw_value: &str,
-    ) -> Result<(), String> {
+    fn cache_insert(&self, provider: CredentialProvider, credential_ref: &str, raw_value: &str) -> Result<(), String> {
         self.cache
             .lock()
             .map_err(|_| "credential runtime cache lock poisoned".to_string())?
-            .insert(
-                credential_store_key(provider, credential_ref),
-                raw_value.to_string(),
-            );
+            .insert(credential_store_key(provider, credential_ref), raw_value.to_string());
         Ok(())
     }
 
-    fn cache_get(
-        &self,
-        provider: CredentialProvider,
-        credential_ref: &str,
-    ) -> Result<Option<String>, String> {
+    fn cache_get(&self, provider: CredentialProvider, credential_ref: &str) -> Result<Option<String>, String> {
         Ok(self
             .cache
             .lock()
@@ -276,9 +245,10 @@ pub fn resolve_broker_reference_for_provider(
 
 pub fn broker_reference_replay_available(provider: Option<&str>, credential_ref: &str) -> bool {
     let Some(provider) = provider.and_then(credential_provider_from_str) else {
-        return CredentialProvider::all().iter().copied().any(|provider| {
-            CredentialStore::global().replay_available_in_memory(provider, credential_ref)
-        });
+        return CredentialProvider::all()
+            .iter()
+            .copied()
+            .any(|provider| CredentialStore::global().replay_available_in_memory(provider, credential_ref));
     };
     CredentialStore::global().replay_available_in_memory(provider, credential_ref)
 }

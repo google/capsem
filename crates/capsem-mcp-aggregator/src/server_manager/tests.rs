@@ -92,10 +92,7 @@ async fn call_tool_no_separator_errors() {
     let mgr = McpServerManager::new(vec![], reqwest::Client::new());
     let result = mgr.call_tool("noseparator", serde_json::json!({})).await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("invalid namespaced"));
+    assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
 }
 
 #[tokio::test]
@@ -118,10 +115,7 @@ fn lookup_tool_peer_no_separator_errors() {
     let mgr = McpServerManager::new(vec![], reqwest::Client::new());
     let result = mgr.lookup_tool_peer("noseparator");
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("invalid namespaced"));
+    assert!(result.unwrap_err().to_string().contains("invalid namespaced"));
 }
 
 // ── ServerPool round-robin tests (T3 angle 2) ───────────────────
@@ -242,9 +236,7 @@ fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef 
 
 #[tokio::test]
 async fn duplicate_tool_definitions_are_advertised_once() {
-    let harness = crate::test_support::spawn_duplicate_tool_mcp_server()
-        .await
-        .unwrap();
+    let harness = crate::test_support::spawn_duplicate_tool_mcp_server().await.unwrap();
     let def = local_http_mcp_def(harness.url.clone(), None);
     let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
 
@@ -263,13 +255,8 @@ async fn duplicate_tool_definitions_are_advertised_once() {
 async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
     let _lock = TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let _store_guard = EnvVarGuard::set(
-        "CAPSEM_CREDENTIAL_STORE_PATH",
-        dir.path().join("store.json"),
-    );
-    let harness = crate::test_support::spawn_recording_mcp_server()
-        .await
-        .unwrap();
+    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_STORE_PATH", dir.path().join("store.json"));
+    let harness = crate::test_support::spawn_recording_mcp_server().await.unwrap();
     let credential_ref = format!("credential:blake3:{}", "d".repeat(64));
     capsem_credentials::CredentialStore::global().clear_for_test();
     capsem_credentials::CredentialStore::global()
@@ -305,10 +292,7 @@ async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
     );
 
     let result = mgr
-        .call_tool(
-            "localtest__echo",
-            serde_json::json!({ "message": "winter" }),
-        )
+        .call_tool("localtest__echo", serde_json::json!({ "message": "winter" }))
         .await
         .expect("local echo tool should dispatch");
     let result_json = serde_json::to_string(&result).unwrap();
@@ -346,13 +330,8 @@ async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
 async fn local_http_mcp_unresolved_broker_ref_fails_before_network_dispatch() {
     let _lock = TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let _store_guard = EnvVarGuard::set(
-        "CAPSEM_CREDENTIAL_STORE_PATH",
-        dir.path().join("store.json"),
-    );
-    let harness = crate::test_support::spawn_recording_mcp_server()
-        .await
-        .unwrap();
+    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_STORE_PATH", dir.path().join("store.json"));
+    let harness = crate::test_support::spawn_recording_mcp_server().await.unwrap();
     let def = local_http_mcp_def(
         harness.url.clone(),
         Some(McpAuthConfig {
@@ -464,9 +443,7 @@ fn rejected_header_error_names_the_offending_header() {
 
 #[test]
 fn scope_is_read_from_a_quoted_challenge() {
-    let scope = extract_mcp_scope_from_header(
-        r#"Bearer realm="https://idp.example.com", scope="mcp:read mcp:write""#,
-    );
+    let scope = extract_mcp_scope_from_header(r#"Bearer realm="https://idp.example.com", scope="mcp:read mcp:write""#);
     assert_eq!(scope.as_deref(), Some("mcp:read mcp:write"));
 }
 
@@ -478,11 +455,7 @@ fn unquoted_scope_stops_at_the_first_delimiter() {
         ("Bearer scope=mcp:read realm=x", "mcp:read"),
         ("Bearer scope=mcp:read", "mcp:read"),
     ] {
-        assert_eq!(
-            extract_mcp_scope_from_header(header).as_deref(),
-            Some(want),
-            "{header}"
-        );
+        assert_eq!(extract_mcp_scope_from_header(header).as_deref(), Some(want), "{header}");
     }
 }
 
@@ -513,9 +486,7 @@ fn a_challenge_without_a_scope_yields_none() {
 
 #[test]
 fn only_a_json_rpc_error_body_parses_as_an_error() {
-    let error = parse_mcp_json_rpc_error(
-        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad request"}}"#,
-    );
+    let error = parse_mcp_json_rpc_error(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad request"}}"#);
     assert!(error.is_some(), "an error envelope must be recognized");
 }
 

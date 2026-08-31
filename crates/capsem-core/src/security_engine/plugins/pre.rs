@@ -1,11 +1,10 @@
 use crate::credential_broker::{
-    broker_observed_credential, detect_brokered_http_references,
-    detect_http_credential_with_provider,
+    broker_observed_credential, detect_brokered_http_references, detect_http_credential_with_provider,
 };
 use crate::net::policy_config::{PolicyActionId, SecurityPluginConfig, SecurityPluginMode};
 use crate::security_engine::{
-    security_event_contains_text, SecurityActionError, SecurityEvent, SecurityPlugin,
-    SecurityPluginResult, SecurityPluginStage, DUMMY_EICAR_TEST_STRING,
+    security_event_contains_text, SecurityActionError, SecurityEvent, SecurityPlugin, SecurityPluginResult,
+    SecurityPluginStage, DUMMY_EICAR_TEST_STRING,
 };
 
 pub(in crate::security_engine) struct CredentialBrokerPlugin;
@@ -59,21 +58,16 @@ impl SecurityPlugin for CredentialBrokerPlugin {
         }
 
         for observation in &event.credential_observations {
-            let brokered =
-                broker_observed_credential(observation).map_err(SecurityActionError::new)?;
+            let brokered = broker_observed_credential(observation).map_err(SecurityActionError::new)?;
             if event.credential_ref.is_none() {
                 event.credential_ref = Some(brokered.credential_ref);
             }
         }
         if !event.credential_observations.is_empty() {
-            event
-                .action_trace
-                .push(PolicyActionId::CredentialBrokerCapture);
+            event.action_trace.push(PolicyActionId::CredentialBrokerCapture);
         }
         if !event.credential_injections.is_empty() {
-            event
-                .action_trace
-                .push(PolicyActionId::CredentialBrokerSubstitute);
+            event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
         }
         Ok(SecurityPluginResult::applied(event))
     }
@@ -103,9 +97,7 @@ impl SecurityPlugin for DummyPreEicarPlugin {
         if matches!(config.mode, SecurityPluginMode::Rewrite) {
             rewrite_file_eicar_content(&mut event);
         }
-        event
-            .action_trace
-            .push(PolicyActionId::CredentialBrokerCapture);
+        event.action_trace.push(PolicyActionId::CredentialBrokerCapture);
         Ok(SecurityPluginResult::applied(event))
     }
 }

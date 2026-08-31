@@ -31,11 +31,7 @@ pub(super) fn set_nonblocking(fd: RawFd) -> io::Result<()> {
 pub(super) struct AsyncFdStream(pub(super) tokio::io::unix::AsyncFd<std::fs::File>);
 
 impl AsyncRead for AsyncFdStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         loop {
             let mut guard = match self.0.poll_read_ready(cx) {
                 Poll::Ready(Ok(g)) => g,
@@ -60,11 +56,7 @@ impl AsyncRead for AsyncFdStream {
 }
 
 impl AsyncWrite for AsyncFdStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         loop {
             let mut guard = match self.0.poll_write_ready(cx) {
                 Poll::Ready(Ok(g)) => g,
@@ -125,20 +117,12 @@ pub(super) struct ReplayReader<R> {
 
 impl<R> ReplayReader<R> {
     pub(super) fn new(buffer: Vec<u8>, inner: R) -> Self {
-        Self {
-            buffer,
-            pos: 0,
-            inner,
-        }
+        Self { buffer, pos: 0, inner }
     }
 }
 
 impl<R: AsyncRead + Unpin> AsyncRead for ReplayReader<R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
 
         // First, drain the replay buffer.
@@ -156,11 +140,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for ReplayReader<R> {
 }
 
 impl<R: AsyncWrite + Unpin> AsyncWrite for ReplayReader<R> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
     }
 

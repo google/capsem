@@ -41,21 +41,10 @@ impl VirtqDesc {
         let host = mem.gpa_to_host(offset)?;
         unsafe {
             let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
-            let len = u32::from_le(std::ptr::read_unaligned(
-                host.cast_const().add(8) as *const u32
-            ));
-            let flags = u16::from_le(std::ptr::read_unaligned(
-                host.cast_const().add(12) as *const u16
-            ));
-            let next = u16::from_le(std::ptr::read_unaligned(
-                host.cast_const().add(14) as *const u16
-            ));
-            Some(VirtqDesc {
-                addr,
-                len,
-                flags,
-                next,
-            })
+            let len = u32::from_le(std::ptr::read_unaligned(host.cast_const().add(8) as *const u32));
+            let flags = u16::from_le(std::ptr::read_unaligned(host.cast_const().add(12) as *const u16));
+            let next = u16::from_le(std::ptr::read_unaligned(host.cast_const().add(14) as *const u16));
+            Some(VirtqDesc { addr, len, flags, next })
         }
     }
 
@@ -109,13 +98,7 @@ struct QueueIndices {
 
 impl VirtQueue {
     /// Create a new virtqueue from guest-provided addresses.
-    pub fn new(
-        mem: GuestMemoryRef,
-        desc_table_gpa: u64,
-        avail_ring_gpa: u64,
-        used_ring_gpa: u64,
-        size: u16,
-    ) -> Self {
+    pub fn new(mem: GuestMemoryRef, desc_table_gpa: u64, avail_ring_gpa: u64, used_ring_gpa: u64, size: u16) -> Self {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
         Self::from_indices(
             mem,
@@ -175,13 +158,7 @@ impl VirtQueue {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
         debug!(
             event_name = "virtio.queue.restore",
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_avail,
-            next_used,
-            "virtqueue restored"
+            desc_table_gpa, avail_ring_gpa, used_ring_gpa, size, next_avail, next_used, "virtqueue restored"
         );
         Self::from_indices(
             mem,
@@ -211,14 +188,7 @@ impl VirtQueue {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
         debug!(
             event_name = "virtio.queue.restore",
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_avail,
-            next_used,
-            event_idx,
-            "virtqueue restored"
+            desc_table_gpa, avail_ring_gpa, used_ring_gpa, size, next_avail, next_used, event_idx, "virtqueue restored"
         );
         Self::from_indices(
             mem,

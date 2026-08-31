@@ -18,9 +18,7 @@ use capsem_tui::ui::{render_app, render_app_snapshot, render_app_svg_snapshot};
 use clap::Parser;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -98,9 +96,7 @@ fn load_state(cli: &Cli) -> Result<AppState> {
     match GatewayProvider::new(base_url.clone()).load() {
         Ok(state) => Ok(state),
         Err(_) if cli.gateway_url.is_none() => Ok(offline_state()),
-        Err(error) => {
-            Err(error).with_context(|| format!("load capsem gateway state from {base_url}"))
-        }
+        Err(error) => Err(error).with_context(|| format!("load capsem gateway state from {base_url}")),
     }
 }
 
@@ -227,13 +223,8 @@ fn run_loop(
             if !active_id.is_empty() {
                 surface.resize(&active_id, size.width.max(1), surface_rows);
             }
-            needs_draw |= sync_terminal_connection(
-                app,
-                bridge,
-                &mut connected_terminal,
-                size.width.max(1),
-                surface_rows,
-            );
+            needs_draw |=
+                sync_terminal_connection(app, bridge, &mut connected_terminal, size.width.max(1), surface_rows);
         }
         if last_refresh.elapsed() >= refresh_interval {
             if let Some(bridge) = &refresh_bridge {
@@ -248,12 +239,7 @@ fn run_loop(
         match input_events.recv_timeout(UI_TICK_INTERVAL) {
             Ok(event) => {
                 if handle_input_event_batch(event, &input_events, |event| {
-                    handle_terminal_event(
-                        event,
-                        app,
-                        terminal_bridge.as_ref(),
-                        control_bridge.as_ref(),
-                    )
+                    handle_terminal_event(event, app, terminal_bridge.as_ref(), control_bridge.as_ref())
                 })? {
                     break;
                 }
@@ -507,10 +493,7 @@ fn active_terminal_session_id(state: &AppState) -> Option<&str> {
     }
 }
 
-fn terminal_event_closes_connection(
-    event: &TerminalEvent,
-    connected: Option<&ConnectedTerminal>,
-) -> bool {
+fn terminal_event_closes_connection(event: &TerminalEvent, connected: Option<&ConnectedTerminal>) -> bool {
     let Some(connected) = connected else {
         return false;
     };
@@ -538,13 +521,8 @@ fn apply_refresh_event(app: &mut App, event: RefreshEvent) -> bool {
             let mut state = app.state().clone();
             state.service.status = ServiceStatus::Offline;
             state.service.latency = Duration::ZERO;
-            state.service.reconnect_attempt = Some(
-                state
-                    .service
-                    .reconnect_attempt
-                    .unwrap_or_default()
-                    .saturating_add(1),
-            );
+            state.service.reconnect_attempt =
+                Some(state.service.reconnect_attempt.unwrap_or_default().saturating_add(1));
             app.replace_state(state);
             true
         }

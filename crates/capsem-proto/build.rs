@@ -41,9 +41,6 @@ fn main() {
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    std::fs::write(
-        format!("{}/schema_hash.txt", out_dir),
-        format!("{}u64", hash),
-    )
-    .expect("schema_hash build script: write OUT_DIR/schema_hash.txt");
+    std::fs::write(format!("{}/schema_hash.txt", out_dir), format!("{}u64", hash))
+        .expect("schema_hash build script: write OUT_DIR/schema_hash.txt");
 }

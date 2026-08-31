@@ -33,12 +33,10 @@ use anyhow::{Context, Result};
 /// lifetime, and its own inode.
 pub fn stage(source: &Path, destination: &Path, root: &Path) -> Result<()> {
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create parent for {}", destination.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create parent for {}", destination.display()))?;
     }
     if destination.exists() {
-        fs::remove_file(destination)
-            .with_context(|| format!("replace {}", destination.display()))?;
+        fs::remove_file(destination).with_context(|| format!("replace {}", destination.display()))?;
     }
 
     if is_build_output(source, root) {
@@ -53,8 +51,7 @@ pub fn stage(source: &Path, destination: &Path, root: &Path) -> Result<()> {
 }
 
 fn copy(source: &Path, destination: &Path) -> Result<()> {
-    fs::copy(source, destination)
-        .with_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
+    fs::copy(source, destination).with_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
     Ok(())
 }
 

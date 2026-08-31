@@ -4,9 +4,8 @@ use std::sync::{Mutex, OnceLock};
 
 pub use capsem_credentials::{
     broker_reference_replay_available, credential_store_account, credential_store_status,
-    hydrate_credential_runtime_cache_from_durable_store, is_broker_reference,
-    resolve_broker_reference_for_provider, CredentialProvider, CredentialStore,
-    CredentialStoreStatus, STORE_PATH_ENV,
+    hydrate_credential_runtime_cache_from_durable_store, is_broker_reference, resolve_broker_reference_for_provider,
+    CredentialProvider, CredentialStore, CredentialStoreStatus, STORE_PATH_ENV,
 };
 use capsem_logger::{credential_reference, DbWriter, SubstitutionEvent};
 use tracing::warn;
@@ -17,8 +16,7 @@ use crate::security_engine::RuntimeSecurityEventType;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static LOGGED_CREDENTIAL_OBSERVATIONS: OnceLock<Mutex<HashSet<LoggedCredentialObservation>>> =
-    OnceLock::new();
+static LOGGED_CREDENTIAL_OBSERVATIONS: OnceLock<Mutex<HashSet<LoggedCredentialObservation>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialObservation {
@@ -90,16 +88,11 @@ impl CredentialInjection {
     }
 }
 
-pub fn broker_observed_credential(
-    observation: &CredentialObservation,
-) -> Result<BrokeredCredential, String> {
+pub fn broker_observed_credential(observation: &CredentialObservation) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
     let store_account = credential_store_account(observation.provider, &credential_ref);
-    let newly_captured = CredentialStore::global().capture(
-        observation.provider,
-        &credential_ref,
-        &observation.raw_value,
-    )?;
+    let newly_captured =
+        CredentialStore::global().capture(observation.provider, &credential_ref, &observation.raw_value)?;
     Ok(BrokeredCredential {
         provider: observation.provider,
         credential_ref,
@@ -129,11 +122,7 @@ pub fn parse_env_credentials(source_path: &str, content: &str) -> Vec<Credential
         .collect()
 }
 
-pub fn detect_http_credential(
-    domain: &str,
-    header_name: &str,
-    header_value: &[u8],
-) -> Option<CredentialObservation> {
+pub fn detect_http_credential(domain: &str, header_name: &str, header_value: &[u8]) -> Option<CredentialObservation> {
     detect_http_credential_with_provider(domain, None, header_name, header_value)
 }
 
@@ -256,19 +245,14 @@ pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
     (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
         || (domain.ends_with("github.com") && path.contains("oauth"))
         || (is_local_oauth_fixture_domain(domain)
-            && (path.contains("/token")
-                || path.contains("oauth")
-                || path.contains("/credential/response")))
+            && (path.contains("/token") || path.contains("oauth") || path.contains("/credential/response")))
 }
 
 pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str) -> String {
     credential_reference(provider.as_str(), raw_value)
 }
 
-pub fn redact_observed_credentials_in_bytes(
-    bytes: &[u8],
-    observations: &[CredentialObservation],
-) -> Vec<u8> {
+pub fn redact_observed_credentials_in_bytes(bytes: &[u8], observations: &[CredentialObservation]) -> Vec<u8> {
     if observations.is_empty() {
         return bytes.to_vec();
     }
@@ -348,8 +332,7 @@ pub async fn broker_and_log_observations(
             }
         };
 
-        let first_logged_in_session =
-            mark_credential_observation_logged(db, &observation, &brokered.credential_ref);
+        let first_logged_in_session = mark_credential_observation_logged(db, &observation, &brokered.credential_ref);
         if first_logged_in_session {
             crate::security_engine::emit_substitution_security_write_and_rules(
                 db,
@@ -398,11 +381,7 @@ fn mark_credential_observation_logged(
         .unwrap_or(true)
 }
 
-pub async fn log_brokered_injections(
-    db: &DbWriter,
-    rules: &SecurityRuleSet,
-    injections: Vec<CredentialInjection>,
-) {
+pub async fn log_brokered_injections(db: &DbWriter, rules: &SecurityRuleSet, injections: Vec<CredentialInjection>) {
     for injection in injections {
         crate::security_engine::emit_substitution_security_write_and_rules(
             db,
@@ -432,9 +411,7 @@ pub fn substitute_brokered_upstream_credentials(
         let text = value
             .to_str()
             .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?;
-        let Some(substitution) =
-            substitute_brokered_header_value(text, provider_hint, &mut credential_ref)?
-        else {
+        let Some(substitution) = substitute_brokered_header_value(text, provider_hint, &mut credential_ref)? else {
             continue;
         };
         *value = http::header::HeaderValue::from_str(&substitution)
@@ -442,18 +419,11 @@ pub fn substitute_brokered_upstream_credentials(
     }
 
     let query = match query {
-        Some(q) => Some(substitute_brokered_query(
-            q,
-            provider_hint,
-            &mut credential_ref,
-        )?),
+        Some(q) => Some(substitute_brokered_query(q, provider_hint, &mut credential_ref)?),
         None => None,
     };
 
-    Ok(BrokeredUpstreamCredentials {
-        credential_ref,
-        query,
-    })
+    Ok(BrokeredUpstreamCredentials { credential_ref, query })
 }
 
 fn substitute_brokered_header_value(
@@ -469,9 +439,7 @@ fn substitute_brokered_header_value(
         }
         return Ok(Some(raw));
     }
-    if let Some(reference) =
-        bearer_value(trimmed).filter(|reference| is_broker_reference(reference))
-    {
+    if let Some(reference) = bearer_value(trimmed).filter(|reference| is_broker_reference(reference)) {
         let raw = resolve_broker_reference(provider_hint, reference)?;
         if credential_ref.is_none() {
             *credential_ref = Some(reference.to_string());
@@ -518,10 +486,7 @@ fn substitute_brokered_query(
     }
 }
 
-fn resolve_broker_reference(
-    provider_hint: Option<CredentialProvider>,
-    credential_ref: &str,
-) -> Result<String, String> {
+fn resolve_broker_reference(provider_hint: Option<CredentialProvider>, credential_ref: &str) -> Result<String, String> {
     if let Some(provider) = provider_hint {
         if let Ok(Some(raw)) = resolve_broker_reference_for_provider(provider, credential_ref) {
             return Ok(raw);
@@ -582,10 +547,7 @@ fn collect_query_brokered_references(
     }
 }
 
-fn credential_provider_for_request(
-    domain: &str,
-    ai_provider: Option<ProviderKind>,
-) -> Option<CredentialProvider> {
+fn credential_provider_for_request(domain: &str, ai_provider: Option<ProviderKind>) -> Option<CredentialProvider> {
     match ai_provider {
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
@@ -609,10 +571,9 @@ fn percent_decode(value: &str) -> Result<String, String> {
     while i < bytes.len() {
         match bytes[i] {
             b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
-                    .map_err(|e| format!("invalid percent escape: {e}"))?;
-                let byte = u8::from_str_radix(hex, 16)
-                    .map_err(|e| format!("invalid percent escape %{hex}: {e}"))?;
+                let hex =
+                    std::str::from_utf8(&bytes[i + 1..i + 3]).map_err(|e| format!("invalid percent escape: {e}"))?;
+                let byte = u8::from_str_radix(hex, 16).map_err(|e| format!("invalid percent escape %{hex}: {e}"))?;
                 out.push(byte);
                 i += 3;
             }
@@ -781,22 +742,11 @@ fn collect_form_credentials(
     }
 }
 
-fn provider_for_body_field(
-    domain: &str,
-    path: &str,
-    field_name: &str,
-    value: &str,
-) -> Option<CredentialProvider> {
-    provider_for_oauth_field(domain, path, field_name, value)
-        .or_else(|| provider_for_token(domain, field_name, value))
+fn provider_for_body_field(domain: &str, path: &str, field_name: &str, value: &str) -> Option<CredentialProvider> {
+    provider_for_oauth_field(domain, path, field_name, value).or_else(|| provider_for_token(domain, field_name, value))
 }
 
-fn provider_for_oauth_field(
-    domain: &str,
-    path: &str,
-    field_name: &str,
-    value: &str,
-) -> Option<CredentialProvider> {
+fn provider_for_oauth_field(domain: &str, path: &str, field_name: &str, value: &str) -> Option<CredentialProvider> {
     if value.trim().is_empty() {
         return None;
     }
@@ -824,9 +774,7 @@ fn is_local_oauth_fixture_domain(domain: &str) -> bool {
 }
 
 fn bearer_value(value: &str) -> Option<&str> {
-    value
-        .strip_prefix("Bearer ")
-        .or_else(|| value.strip_prefix("bearer "))
+    value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer "))
 }
 
 fn header_broker_reference(value: &str) -> Option<&str> {

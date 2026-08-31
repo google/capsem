@@ -4,14 +4,12 @@ use objc2::rc::Retained;
 use objc2::AllocAnyThread;
 use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSString, NSURL};
 use objc2_virtualization::{
-    VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
-    VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
-    VZEntropyDeviceConfiguration, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
-    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare, VZSocketDevice,
-    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
-    VZVirtioEntropyDeviceConfiguration, VZVirtioFileSystemDeviceConfiguration,
-    VZVirtioSocketDeviceConfiguration, VZVirtualMachine as ObjcVZVirtualMachine,
-    VZVirtualMachineConfiguration, VZVirtualMachineState,
+    VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment,
+    VZDiskImageSynchronizationMode, VZEntropyDeviceConfiguration, VZGenericMachineIdentifier,
+    VZGenericPlatformConfiguration, VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
+    VZSocketDevice, VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZVirtioEntropyDeviceConfiguration, VZVirtioFileSystemDeviceConfiguration, VZVirtioSocketDeviceConfiguration,
+    VZVirtualMachine as ObjcVZVirtualMachine, VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use tracing::{debug_span, info};
 
@@ -73,8 +71,7 @@ where
     // it in an Option behind a mutex so the first invocation takes it and
     // subsequent invocations (which shouldn't happen, but guard anyway)
     // become no-ops.
-    let f_slot: std::sync::Arc<std::sync::Mutex<Option<F>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Some(f)));
+    let f_slot: std::sync::Arc<std::sync::Mutex<Option<F>>> = std::sync::Arc::new(std::sync::Mutex::new(Some(f)));
     let (tx, rx) = std::sync::mpsc::channel();
     let f_slot_cb = std::sync::Arc::clone(&f_slot);
     let block = block2::RcBlock::new(move || {
@@ -100,22 +97,17 @@ where
 /// Apple VZ requires the identifier to match between save and restore. The
 /// default constructor generates a fresh identifier each time, so callers
 /// that care about save/restore parity must persist it across boots.
-fn load_or_create_machine_identifier(
-    path: Option<&std::path::Path>,
-) -> Result<Retained<VZGenericMachineIdentifier>> {
+fn load_or_create_machine_identifier(path: Option<&std::path::Path>) -> Result<Retained<VZGenericMachineIdentifier>> {
     let Some(path) = path else {
         return Ok(unsafe { VZGenericMachineIdentifier::new() });
     };
 
     if path.exists() {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("failed to read machine identifier at {}", path.display()))?;
+        let bytes =
+            std::fs::read(path).with_context(|| format!("failed to read machine identifier at {}", path.display()))?;
         let nsdata = NSData::with_bytes(&bytes);
         let id = unsafe {
-            VZGenericMachineIdentifier::initWithDataRepresentation(
-                VZGenericMachineIdentifier::alloc(),
-                &nsdata,
-            )
+            VZGenericMachineIdentifier::initWithDataRepresentation(VZGenericMachineIdentifier::alloc(), &nsdata)
         }
         .ok_or_else(|| anyhow::anyhow!("invalid machine identifier data at {}", path.display()))?;
         return Ok(id);
@@ -126,8 +118,7 @@ fn load_or_create_machine_identifier(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    std::fs::write(path, &data)
-        .with_context(|| format!("failed to write machine identifier to {}", path.display()))?;
+    std::fs::write(path, &data).with_context(|| format!("failed to write machine identifier to {}", path.display()))?;
     Ok(id)
 }
 
@@ -172,28 +163,24 @@ impl AppleVzMachine {
                 // Persist the identifier alongside the session and reuse it
                 // across boots so save/restore parity holds.
                 let platform = VZGenericPlatformConfiguration::new();
-                let identifier =
-                    load_or_create_machine_identifier(config.machine_identifier_path.as_deref())?;
+                let identifier = load_or_create_machine_identifier(config.machine_identifier_path.as_deref())?;
                 platform.setMachineIdentifier(&identifier);
                 vz_config.setPlatform(&platform);
 
                 // Entropy device (prevents hangs waiting for random)
                 let entropy_config = VZVirtioEntropyDeviceConfiguration::new();
-                let entropy_super: Retained<VZEntropyDeviceConfiguration> =
-                    Retained::into_super(entropy_config);
+                let entropy_super: Retained<VZEntropyDeviceConfiguration> = Retained::into_super(entropy_config);
                 let entropy_array = NSArray::from_retained_slice(&[entropy_super]);
                 vz_config.setEntropyDevices(&entropy_array);
 
                 // Serial ports - cast to superclass array
-                let serial_port_super: Retained<VZSerialPortConfiguration> =
-                    Retained::into_super(serial_port_config);
+                let serial_port_super: Retained<VZSerialPortConfiguration> = Retained::into_super(serial_port_config);
                 let serial_array = NSArray::from_retained_slice(&[serial_port_super]);
                 vz_config.setSerialPorts(&serial_array);
 
                 // Vsock device for host<->guest PTY and control channels
                 let vsock_config = VZVirtioSocketDeviceConfiguration::new();
-                let vsock_super: Retained<VZSocketDeviceConfiguration> =
-                    Retained::into_super(vsock_config);
+                let vsock_super: Retained<VZSocketDeviceConfiguration> = Retained::into_super(vsock_config);
                 let socket_array = NSArray::from_retained_slice(&[vsock_super]);
                 vz_config.setSocketDevices(&socket_array);
 
@@ -219,11 +206,9 @@ impl AppleVzMachine {
 
                 // VirtioFS directory sharing devices
                 if !config.virtio_fs_shares.is_empty() {
-                    let mut dir_devices: Vec<Retained<VZDirectorySharingDeviceConfiguration>> =
-                        Vec::new();
+                    let mut dir_devices: Vec<Retained<VZDirectorySharingDeviceConfiguration>> = Vec::new();
                     for share in &config.virtio_fs_shares {
-                        let device =
-                            attach_virtiofs_share(&share.tag, &share.host_path, share.read_only)?;
+                        let device = attach_virtiofs_share(&share.tag, &share.host_path, share.read_only)?;
                         dir_devices.push(device);
                     }
                     let dir_array = NSArray::from_retained_slice(&dir_devices);
@@ -244,12 +229,7 @@ impl AppleVzMachine {
 
         let vm = {
             let _span = debug_span!("vz_init").entered();
-            unsafe {
-                ObjcVZVirtualMachine::initWithConfiguration(
-                    ObjcVZVirtualMachine::alloc(),
-                    &vz_config,
-                )
-            }
+            unsafe { ObjcVZVirtualMachine::initWithConfiguration(ObjcVZVirtualMachine::alloc(), &vz_config) }
         };
 
         info!("virtual machine created");
@@ -270,11 +250,7 @@ impl AppleVzMachine {
     /// Start the VM. Must be called on the main thread.
     ///
     /// Also spawns the serial reader thread.
-    pub fn start(
-        &self,
-        serial: &AppleVzSerialConsole,
-        checkpoint_path: Option<&std::path::Path>,
-    ) -> Result<()> {
+    pub fn start(&self, serial: &AppleVzSerialConsole, checkpoint_path: Option<&std::path::Path>) -> Result<()> {
         let _span = debug_span!("vm_start").entered();
 
         anyhow::ensure!(
@@ -299,9 +275,7 @@ impl AppleVzMachine {
         unsafe {
             if let Some(cp) = checkpoint_path {
                 let path_str = cp.to_string_lossy().to_string();
-                let url = objc2_foundation::NSURL::fileURLWithPath(
-                    &objc2_foundation::NSString::from_str(&path_str),
-                );
+                let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
                 self.inner
                     .restoreMachineStateFromURL_completionHandler(&url, &completion);
             } else {
@@ -403,9 +377,7 @@ impl AppleVzMachine {
             "VZVirtualMachine.saveMachineStateToURL() must be called on the main thread"
         );
         let path_str = path.to_string_lossy().to_string();
-        let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(
-            &path_str,
-        ));
+        let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path_str));
 
         let (tx, rx) = std::sync::mpsc::channel();
         let completion = RcBlock::new(move |error: *mut objc2_foundation::NSError| {
@@ -418,8 +390,7 @@ impl AppleVzMachine {
         });
 
         unsafe {
-            self.inner
-                .saveMachineStateToURL_completionHandler(&url, &completion);
+            self.inner.saveMachineStateToURL_completionHandler(&url, &completion);
         }
 
         spin_runloop_until(&rx).context("VM save_state")?;
@@ -494,26 +465,19 @@ fn attach_virtiofs_share(
     read_only: bool,
 ) -> anyhow::Result<Retained<VZDirectorySharingDeviceConfiguration>> {
     unsafe {
-        let path_str = host_path
-            .to_str()
-            .context("VirtioFS path not valid UTF-8")?;
+        let path_str = host_path.to_str().context("VirtioFS path not valid UTF-8")?;
         let ns_path = NSString::from_str(path_str);
         let url = NSURL::fileURLWithPath(&ns_path);
 
-        let shared_dir =
-            VZSharedDirectory::initWithURL_readOnly(VZSharedDirectory::alloc(), &url, read_only);
+        let shared_dir = VZSharedDirectory::initWithURL_readOnly(VZSharedDirectory::alloc(), &url, read_only);
 
-        let single_share =
-            VZSingleDirectoryShare::initWithDirectory(VZSingleDirectoryShare::alloc(), &shared_dir);
+        let single_share = VZSingleDirectoryShare::initWithDirectory(VZSingleDirectoryShare::alloc(), &shared_dir);
 
         let ns_tag = NSString::from_str(tag);
-        let fs_config = VZVirtioFileSystemDeviceConfiguration::initWithTag(
-            VZVirtioFileSystemDeviceConfiguration::alloc(),
-            &ns_tag,
-        );
+        let fs_config =
+            VZVirtioFileSystemDeviceConfiguration::initWithTag(VZVirtioFileSystemDeviceConfiguration::alloc(), &ns_tag);
 
-        let share_super: Retained<objc2_virtualization::VZDirectoryShare> =
-            Retained::into_super(single_share);
+        let share_super: Retained<objc2_virtualization::VZDirectoryShare> = Retained::into_super(single_share);
         fs_config.setShare(Some(&share_super));
 
         Ok(Retained::into_super(fs_config))

@@ -20,10 +20,7 @@ async fn app_error_formats_json() {
 
 #[tokio::test]
 async fn app_error_internal_server() {
-    let err = AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "db connection failed".into(),
-    );
+    let err = AppError(StatusCode::INTERNAL_SERVER_ERROR, "db connection failed".into());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();

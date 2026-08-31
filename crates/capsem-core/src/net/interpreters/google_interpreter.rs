@@ -35,11 +35,7 @@ impl Provider for GoogleProvider {
         }
     }
 
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder {
+    fn inject_key(&self, builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
         builder.query(&[("key", api_key)])
     }
 }

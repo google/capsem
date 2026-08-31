@@ -26,10 +26,7 @@ fn log_attribution_reads_tool_namespace() {
 
 #[test]
 fn log_attribution_reads_resource_namespace() {
-    let req = request(
-        "resources/read",
-        json!({"uri": "capsem://slowlist/doc://slow"}),
-    );
+    let req = request("resources/read", json!({"uri": "capsem://slowlist/doc://slow"}));
 
     let (server_name, tool_name) = mcp_log_attribution(&req);
 
@@ -136,11 +133,7 @@ fn every_known_method_maps_to_its_label() {
         "prompts/get",
     ] {
         let summary = interpret_mcp_method(&request(method, json!({})));
-        assert_eq!(
-            summary.kind.label(),
-            method,
-            "{method} round-trips through its kind"
-        );
+        assert_eq!(summary.kind.label(), method, "{method} round-trips through its kind");
     }
 }
 
@@ -246,10 +239,7 @@ fn response_text_and_content_prefer_the_error_message() {
     };
 
     assert_eq!(response_text(&resp).as_deref(), Some("tool denied by policy"));
-    assert_eq!(
-        response_content(&resp).as_deref(),
-        Some("tool denied by policy")
-    );
+    assert_eq!(response_content(&resp).as_deref(), Some("tool denied by policy"));
 }
 
 #[test]
@@ -293,8 +283,5 @@ fn security_decision_projects_into_mcp_call_policy_fields() {
     assert_eq!(fields.policy_mode.as_deref(), Some("security_event"));
     assert_eq!(fields.policy_action.as_deref(), Some("block"));
     assert_eq!(fields.policy_rule.as_deref(), Some("rule-42"));
-    assert_eq!(
-        fields.policy_reason.as_deref(),
-        Some("blocked by corp policy")
-    );
+    assert_eq!(fields.policy_reason.as_deref(), Some("blocked by corp policy"));
 }

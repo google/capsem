@@ -28,11 +28,7 @@ fn lint_empty_settings_no_issues() {
 
 #[test]
 fn lint_nul_byte_in_text() {
-    let s = make_resolved(
-        "test.key",
-        SettingType::Text,
-        SettingValue::Text("hello\0world".into()),
-    );
+    let s = make_resolved("test.key", SettingType::Text, SettingValue::Text("hello\0world".into()));
     let issues = config_lint(&[s]);
     assert!(issues
         .iter()
@@ -66,25 +62,15 @@ fn lint_number_in_range_no_issue() {
 
 #[test]
 fn lint_invalid_choice() {
-    let mut s = make_resolved(
-        "test.choice",
-        SettingType::Text,
-        SettingValue::Text("bad".into()),
-    );
+    let mut s = make_resolved("test.choice", SettingType::Text, SettingValue::Text("bad".into()));
     s.metadata.choices = vec!["good".into(), "ok".into()];
     let issues = config_lint(&[s]);
-    assert!(issues
-        .iter()
-        .any(|i| i.message.contains("not a valid choice")));
+    assert!(issues.iter().any(|i| i.message.contains("not a valid choice")));
 }
 
 #[test]
 fn lint_valid_choice_no_issue() {
-    let mut s = make_resolved(
-        "test.choice",
-        SettingType::Text,
-        SettingValue::Text("good".into()),
-    );
+    let mut s = make_resolved("test.choice", SettingType::Text, SettingValue::Text("good".into()));
     s.metadata.choices = vec!["good".into(), "ok".into()];
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
@@ -101,9 +87,7 @@ fn lint_file_path_traversal() {
         },
     );
     let issues = config_lint(&[s]);
-    assert!(issues
-        .iter()
-        .any(|i| i.message.contains("must not contain '..'")));
+    assert!(issues.iter().any(|i| i.message.contains("must not contain '..'")));
 }
 
 #[test]
@@ -117,9 +101,7 @@ fn lint_file_path_not_absolute() {
         },
     );
     let issues = config_lint(&[s]);
-    assert!(issues
-        .iter()
-        .any(|i| i.message.contains("must be absolute")));
+    assert!(issues.iter().any(|i| i.message.contains("must be absolute")));
 }
 
 #[test]

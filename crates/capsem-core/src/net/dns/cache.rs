@@ -141,11 +141,7 @@ impl DnsAnswerCache {
         if policy.find_dns_redirect(qname, qtype).is_some() {
             guard.pop(&key);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
-            trace!(
-                qname,
-                qtype,
-                "dns cache: entry invalidated by redirect change"
-            );
+            trace!(qname, qtype, "dns cache: entry invalidated by redirect change");
             return None;
         }
         let mut bytes = entry.bytes.clone();
@@ -216,12 +212,7 @@ impl DnsAnswerCache {
 /// somehow accepted.
 fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
     let answer_ttl = match Message::from_vec(answer_bytes) {
-        Ok(m) if !m.answers.is_empty() => m
-            .answers
-            .iter()
-            .map(|r| r.ttl)
-            .min()
-            .unwrap_or(MIN_TTL_SECS),
+        Ok(m) if !m.answers.is_empty() => m.answers.iter().map(|r| r.ttl).min().unwrap_or(MIN_TTL_SECS),
         _ => MIN_TTL_SECS,
     };
     let clamped = u64::from(answer_ttl.max(MIN_TTL_SECS));

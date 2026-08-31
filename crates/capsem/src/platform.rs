@@ -21,8 +21,8 @@ pub fn detect_install_layout() -> InstallLayout {
         Err(_) => return InstallLayout::Development,
     };
 
-    let macos_pkg_marker = cfg!(target_os = "macos")
-        && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
+    let macos_pkg_marker =
+        cfg!(target_os = "macos") && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
     detect_layout_from_path_with_macos_pkg_marker(&exe, macos_pkg_marker)
 }
 
@@ -32,10 +32,7 @@ fn detect_layout_from_path(exe: &std::path::Path) -> InstallLayout {
     detect_layout_from_path_with_macos_pkg_marker(exe, false)
 }
 
-fn detect_layout_from_path_with_macos_pkg_marker(
-    exe: &std::path::Path,
-    macos_pkg_marker: bool,
-) -> InstallLayout {
+fn detect_layout_from_path_with_macos_pkg_marker(exe: &std::path::Path, macos_pkg_marker: bool) -> InstallLayout {
     use std::path::Component;
 
     let components: Vec<_> = exe.components().collect();

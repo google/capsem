@@ -170,10 +170,9 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     if should_buffer_json_response(&method, &path, &parts.headers) {
         let body = body.collect().await?.to_bytes();
         parts.headers.remove(TRANSFER_ENCODING);
-        parts.headers.insert(
-            CONTENT_LENGTH,
-            HeaderValue::from_str(&body.len().to_string())?,
-        );
+        parts
+            .headers
+            .insert(CONTENT_LENGTH, HeaderValue::from_str(&body.len().to_string())?);
         return Ok(Response::from_parts(parts, axum::body::Body::from(body)));
     }
     Ok(Response::from_parts(parts, axum::body::Body::new(body)))

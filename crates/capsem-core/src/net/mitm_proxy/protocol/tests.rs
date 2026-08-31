@@ -53,13 +53,8 @@ fn rejects_high_bit_junk() {
 
 #[test]
 fn detects_mcp_frame_prefix() {
-    let frame = capsem_proto::encode_mcp_frame(
-        1,
-        0,
-        "codex",
-        br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
-    )
-    .unwrap();
+    let frame =
+        capsem_proto::encode_mcp_frame(1, 0, "codex", br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
     assert_eq!(detect(&frame), Some(Protocol::McpFrame));
 }
 

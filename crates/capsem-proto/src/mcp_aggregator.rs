@@ -36,10 +36,7 @@ where
         .write_all(&len.to_be_bytes())
         .await
         .context("write frame length")?;
-    writer
-        .write_all(&payload)
-        .await
-        .context("write frame payload")?;
+    writer.write_all(&payload).await.context("write frame payload")?;
     writer.flush().await.context("flush frame")?;
     Ok(())
 }
@@ -61,10 +58,7 @@ where
         anyhow::bail!("frame too large: {len} bytes (max {MAX_FRAME_SIZE})");
     }
     let mut buf = vec![0u8; len as usize];
-    reader
-        .read_exact(&mut buf)
-        .await
-        .context("read frame payload")?;
+    reader.read_exact(&mut buf).await.context("read frame payload")?;
     let msg: T = rmp_serde::from_slice(&buf).context("msgpack deserialize")?;
     Ok(Some(msg))
 }
@@ -236,9 +230,7 @@ impl AggregatorClient {
             .await
             .map_err(|_| anyhow::anyhow!("aggregator channel closed"))?;
 
-        let resp = resp_rx
-            .await
-            .context("aggregator response channel dropped")?;
+        let resp = resp_rx.await.context("aggregator response channel dropped")?;
 
         Ok(resp.body)
     }
@@ -280,11 +272,7 @@ impl AggregatorClient {
     }
 
     /// Call a tool on an external MCP server.
-    pub async fn call_tool(
-        &self,
-        namespaced_name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn call_tool(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
         match self
             .request(AggregatorMethod::CallTool {
                 name: namespaced_name.to_string(),
@@ -313,11 +301,7 @@ impl AggregatorClient {
     }
 
     /// Get a prompt from an external MCP server.
-    pub async fn get_prompt(
-        &self,
-        namespaced_name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn get_prompt(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
         match self
             .request(AggregatorMethod::GetPrompt {
                 name: namespaced_name.to_string(),

@@ -12,13 +12,7 @@ pub enum CredentialProvider {
 
 impl CredentialProvider {
     pub fn all() -> &'static [Self] {
-        &[
-            Self::Anthropic,
-            Self::Google,
-            Self::OpenAi,
-            Self::Github,
-            Self::Mcp,
-        ]
+        &[Self::Anthropic, Self::Google, Self::OpenAi, Self::Github, Self::Mcp]
     }
 
     pub fn as_str(self) -> &'static str {

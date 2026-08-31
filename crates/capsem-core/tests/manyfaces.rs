@@ -38,7 +38,9 @@ use capsem_assets::asset_manager::{
 /// characters, and digests sharing a prefix would collide on disk for fixture
 /// reasons having nothing to do with the model under test.
 fn digest(profile: &str, kind: &str, revision: &str) -> String {
-    blake3::hash(format!("{profile}/{kind}/{revision}").as_bytes()).to_hex().to_string()
+    blake3::hash(format!("{profile}/{kind}/{revision}").as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn image(profile: &str, kind: &str, name: &str, revision: &str) -> serde_json::Value {
@@ -166,8 +168,7 @@ fn profiles_pinning_one_kernel_share_a_single_file() {
         ("profile2", "2030.0202.2", "2030.0202.20"),
     ]);
     for id in ["profile1", "profile2"] {
-        graph["profiles"][id]["architectures"][0]["images"][0]["digest"]["blake3"] =
-            serde_json::json!(shared.clone());
+        graph["profiles"][id]["architectures"][0]["images"][0]["digest"]["blake3"] = serde_json::json!(shared.clone());
     }
 
     let one = kernel_digest_of(&graph, "profile1");
@@ -207,8 +208,7 @@ fn each_profile_keeps_its_own_revision() {
 
 #[test]
 fn no_channel_wide_asset_version_may_stand_in_for_three_profiles() {
-    let manifest =
-        ManifestV2::from_json(&wheel_breaker().to_string()).expect("channel graph is accepted");
+    let manifest = ManifestV2::from_json(&wheel_breaker().to_string()).expect("channel graph is accepted");
     let arch = host_manifest_arch();
 
     // The flat view keeps one release. Three profiles with three image
@@ -372,17 +372,13 @@ fn refresh_collects_a_kernel_no_profile_references() {
 
     cleanup_unused_assets(&arch_dir, &manifest).expect("cleanup runs");
 
-    assert!(
-        !orphan.exists(),
-        "a blob no profile references must be collected"
-    );
+    assert!(!orphan.exists(), "a blob no profile references must be collected");
 }
 
 /// Overwrite a profile's kernel digest so two profiles can be made to share one.
 fn pin_kernel(graph: &mut serde_json::Value, id: &str, hash: &str) {
     for field in ["blake3", "sha256"] {
-        graph["profiles"][id]["architectures"][0]["images"][0]["digest"][field] =
-            serde_json::json!(hash);
+        graph["profiles"][id]["architectures"][0]["images"][0]["digest"][field] = serde_json::json!(hash);
     }
 }
 
@@ -403,8 +399,7 @@ fn removing_a_profile_keeps_a_kernel_another_profile_shares() {
     let path = write_blob(&arch_dir, "vmlinuz", &shared);
 
     // Both present: the blob is shared, one file for two profiles.
-    let installed =
-        ManifestV2::from_json(&before.to_string()).expect("channel graph is accepted");
+    let installed = ManifestV2::from_json(&before.to_string()).expect("channel graph is accepted");
     cleanup_unused_assets(&arch_dir, &installed).expect("cleanup runs");
     assert!(path.exists(), "a shared blob must survive while both pin it");
 
@@ -469,25 +464,17 @@ fn production_layout_cleanup_preserves_three_installed_revisions_and_collects_or
             ("initrd", "initrd.img"),
             ("rootfs", "rootfs.erofs"),
         ] {
-            retained.push(write_blob(
-                &arch_dir,
-                name,
-                &digest("profile1", kind, revision),
-            ));
+            retained.push(write_blob(&arch_dir, name, &digest("profile1", kind, revision)));
         }
     }
-    let orphan = write_blob(
-        &arch_dir,
-        "vmlinuz",
-        &digest("uninstalled", "kernel", "2030.0000.0"),
-    );
+    let orphan = write_blob(&arch_dir, "vmlinuz", &digest("uninstalled", "kernel", "2030.0000.0"));
     let preserved_old_revisions = revisions[..2]
         .iter()
         .flat_map(|revision| revision_filenames("profile1", revision))
         .collect::<Vec<_>>();
 
-    let removed = cleanup_unused_assets_preserving(assets_dir, &manifest, &preserved_old_revisions)
-        .expect("cleanup runs");
+    let removed =
+        cleanup_unused_assets_preserving(assets_dir, &manifest, &preserved_old_revisions).expect("cleanup runs");
 
     assert_eq!(removed, vec![orphan.clone()]);
     assert!(!orphan.exists(), "an unreferenced blob must be collected");
@@ -507,8 +494,7 @@ fn production_layout_cleanup_preserves_three_installed_revisions_and_collects_or
 #[test]
 fn a_single_profile_channel_is_not_a_special_case() {
     let state =
-        release_graph_profile_state(&channel(&[("only", "2030.0101.1", "2030.0101.10")]))
-            .expect("graph parses");
+        release_graph_profile_state(&channel(&[("only", "2030.0101.1", "2030.0101.10")])).expect("graph parses");
 
     assert_eq!(state.profiles.len(), 1);
     assert_eq!(state.profiles["only"].revision, "2030.0101.1");
@@ -540,17 +526,21 @@ fn no_profile_name_is_privileged() {
     // A model that prefers a profile literally called "default" answers
     // differently for channels that have one, which is a name deciding
     // behaviour.
-    let without = ManifestV2::from_json(&channel(&[
-        ("alpha", "2030.0101.1", "2030.0101.10"),
-        ("omega", "2030.0202.2", "2030.0202.20"),
-    ])
-    .to_string())
+    let without = ManifestV2::from_json(
+        &channel(&[
+            ("alpha", "2030.0101.1", "2030.0101.10"),
+            ("omega", "2030.0202.2", "2030.0202.20"),
+        ])
+        .to_string(),
+    )
     .expect("channel graph is accepted");
-    let with = ManifestV2::from_json(&channel(&[
-        ("default", "2030.0101.1", "2030.0101.10"),
-        ("omega", "2030.0202.2", "2030.0202.20"),
-    ])
-    .to_string())
+    let with = ManifestV2::from_json(
+        &channel(&[
+            ("default", "2030.0101.1", "2030.0101.10"),
+            ("omega", "2030.0202.2", "2030.0202.20"),
+        ])
+        .to_string(),
+    )
     .expect("channel graph is accepted");
 
     assert_eq!(
@@ -578,10 +568,7 @@ fn alphabetical_order_does_not_decide_which_profile_boots() {
             .is_some_and(|entry| entry.hash == last)
     });
 
-    assert!(
-        found,
-        "the alphabetically last profile must be as real as the first"
-    );
+    assert!(found, "the alphabetically last profile must be as real as the first");
 }
 
 #[test]

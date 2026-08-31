@@ -294,11 +294,7 @@ impl VirtioMmioTransport {
         }
     }
 
-    pub fn new_with_interrupt(
-        device: Box<dyn VirtioDevice>,
-        mem: GuestMemoryRef,
-        interrupt_fd: OwnedFd,
-    ) -> Self {
+    pub fn new_with_interrupt(device: Box<dyn VirtioDevice>, mem: GuestMemoryRef, interrupt_fd: OwnedFd) -> Self {
         let transport = Self::new(device, mem);
         transport.state.lock().unwrap().interrupt_fd = Some(interrupt_fd);
         transport
@@ -385,10 +381,7 @@ impl VirtioMmioTransport {
             );
         }
         if snapshot.queue_sel as usize >= snapshot.queues.len() {
-            bail!(
-                "virtio-mmio queue selector is out of range: {}",
-                snapshot.queue_sel
-            );
+            bail!("virtio-mmio queue selector is out of range: {}", snapshot.queue_sel);
         }
         let max_sizes = state.device.queue_max_sizes();
         let mut ranges = Vec::new();
@@ -417,9 +410,7 @@ impl VirtioMmioTransport {
 
         // A device backend must be fully reconstructed before activation can
         // observe the restored virtqueue addresses.
-        state
-            .device
-            .restore_checkpoint_state(&snapshot.device_state)?;
+        state.device.restore_checkpoint_state(&snapshot.device_state)?;
 
         state.status = snapshot.status;
         state.features_sel = snapshot.features_sel;
@@ -524,9 +515,7 @@ fn validate_restore_registers(state: &TransportState, snapshot: &VirtioMmioSnaps
             bail!("virtio-mmio status dependency violation: bit {bit:#x} requires {required:#x}");
         }
     }
-    if snapshot.status & STATUS_FEATURES_OK != 0
-        && snapshot.driver_features & VIRTIO_F_VERSION_1 == 0
-    {
+    if snapshot.status & STATUS_FEATURES_OK != 0 && snapshot.driver_features & VIRTIO_F_VERSION_1 == 0 {
         bail!("virtio-mmio FEATURES_OK checkpoint did not negotiate VIRTIO_F_VERSION_1");
     }
     if snapshot.interrupt_status & !INTERRUPT_KNOWN_MASK != 0 {
@@ -548,11 +537,7 @@ pub(super) struct QueueMemoryRange {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn validate_queue_memory(
-    mem: &GuestMemoryRef,
-    index: usize,
-    queue: &QueueSnapshot,
-) -> Result<[QueueMemoryRange; 3]> {
+fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapshot) -> Result<[QueueMemoryRange; 3]> {
     let addresses = [
         (queue.desc_addr(), 16, "descriptor"),
         (queue.driver_addr(), 2, "available ring"),
@@ -565,14 +550,8 @@ fn validate_queue_memory(
     }
     let ranges = queue_memory_ranges(index, queue)?;
     for range in &ranges {
-        if mem
-            .gpa_range_to_host(range.start, range.end - range.start)
-            .is_none()
-        {
-            bail!(
-                "virtio-mmio queue {index} {} is outside guest memory",
-                range.name
-            );
+        if mem.gpa_range_to_host(range.start, range.end - range.start).is_none() {
+            bail!("virtio-mmio queue {index} {} is outside guest memory", range.name);
         }
     }
     Ok(ranges)
@@ -602,18 +581,17 @@ fn queue_memory_ranges(index: usize, queue: &QueueSnapshot) -> Result<[QueueMemo
             "used ring",
         ),
     ];
-    let validate_range =
-        |(address, len, name): (u64, u64, &'static str)| -> Result<QueueMemoryRange> {
-            let end = address
-                .checked_add(len)
-                .with_context(|| format!("virtio-mmio queue {index} {name} address overflow"))?;
-            Ok(QueueMemoryRange {
-                start: address,
-                end,
-                queue: index,
-                name,
-            })
-        };
+    let validate_range = |(address, len, name): (u64, u64, &'static str)| -> Result<QueueMemoryRange> {
+        let end = address
+            .checked_add(len)
+            .with_context(|| format!("virtio-mmio queue {index} {name} address overflow"))?;
+        Ok(QueueMemoryRange {
+            start: address,
+            end,
+            queue: index,
+            name,
+        })
+    };
     Ok([
         validate_range(spans[0])?,
         validate_range(spans[1])?,
@@ -622,9 +600,7 @@ fn queue_memory_ranges(index: usize, queue: &QueueSnapshot) -> Result<[QueueMemo
 }
 
 #[cfg(target_arch = "x86_64")]
-pub(super) fn ready_queue_memory_ranges(
-    snapshot: &VirtioMmioSnapshot,
-) -> Result<Vec<QueueMemoryRange>> {
+pub(super) fn ready_queue_memory_ranges(snapshot: &VirtioMmioSnapshot) -> Result<Vec<QueueMemoryRange>> {
     let mut ranges = Vec::new();
     for (index, queue) in snapshot.queues.iter().enumerate() {
         if queue.ready {
@@ -692,9 +668,7 @@ impl MmioDevice for VirtioMmioTransport {
                 let config_offset = offset - CONFIG_SPACE;
                 let mut config_data = [0u8; 4];
                 let len = data.len().min(4);
-                state
-                    .device
-                    .read_config(config_offset, &mut config_data[..len]);
+                state.device.read_config(config_offset, &mut config_data[..len]);
                 data[..len].copy_from_slice(&config_data[..len]);
                 return;
             }
@@ -735,11 +709,9 @@ impl MmioDevice for VirtioMmioTransport {
             }
             DRIVER_FEATURES => {
                 if state.driver_features_sel == 0 {
-                    state.driver_features =
-                        (state.driver_features & 0xFFFF_FFFF_0000_0000) | u64::from(val);
+                    state.driver_features = (state.driver_features & 0xFFFF_FFFF_0000_0000) | u64::from(val);
                 } else {
-                    state.driver_features =
-                        (state.driver_features & 0x0000_0000_FFFF_FFFF) | (u64::from(val) << 32);
+                    state.driver_features = (state.driver_features & 0x0000_0000_FFFF_FFFF) | (u64::from(val) << 32);
                 }
             }
             DRIVER_FEATURES_SEL => {

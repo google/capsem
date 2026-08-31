@@ -64,18 +64,14 @@ fn base_url_format() {
 #[test]
 fn auth_header_format() {
     let client = GatewayClient::new(8080, "my-secret".into());
-    assert_eq!(
-        client.auth_header().unwrap().to_str().unwrap(),
-        "Bearer my-secret"
-    );
+    assert_eq!(client.auth_header().unwrap().to_str().unwrap(), "Bearer my-secret");
 }
 
 #[test]
 fn auth_header_rejects_invalid_token_without_panic() {
     let client = GatewayClient::new(8080, "bad\ntoken".into());
-    let result =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.auth_header()))
-            .expect("invalid token must be returned as an error, not a panic");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.auth_header()))
+        .expect("invalid token must be returned as an error, not a panic");
     assert!(result.is_err(), "invalid token should be rejected");
 }
 
@@ -233,7 +229,8 @@ fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
 
 #[tokio::test]
 async fn status_parses_and_measures_latency() {
-    let body = r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true}]}"#;
+    let body =
+        r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true}]}"#;
     let (base, captures, handle) = spawn_http_probe("GET", "/status", 200, body).await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     let status = client.status().await.unwrap();
@@ -330,8 +327,7 @@ async fn stop_vm_sends_post() {
 
 #[tokio::test]
 async fn delete_vm_sends_delete() {
-    let (base, captures, handle) =
-        spawn_http_probe("DELETE", "/vms/vm-42/delete", 200, "{}").await;
+    let (base, captures, handle) = spawn_http_probe("DELETE", "/vms/vm-42/delete", 200, "{}").await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     client.delete_vm("vm-42").await.unwrap();
     handle.await.unwrap();
@@ -341,8 +337,7 @@ async fn delete_vm_sends_delete() {
 
 #[tokio::test]
 async fn suspend_vm_sends_post() {
-    let (base, captures, handle) =
-        spawn_http_probe("POST", "/vms/vm-42/pause", 200, "{}").await;
+    let (base, captures, handle) = spawn_http_probe("POST", "/vms/vm-42/pause", 200, "{}").await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     client.suspend_vm("vm-42").await.unwrap();
     handle.await.unwrap();
@@ -351,8 +346,7 @@ async fn suspend_vm_sends_post() {
 
 #[tokio::test]
 async fn resume_vm_sends_post() {
-    let (base, captures, handle) =
-        spawn_http_probe("POST", "/vms/vm-42/resume", 200, "{}").await;
+    let (base, captures, handle) = spawn_http_probe("POST", "/vms/vm-42/resume", 200, "{}").await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     client.resume_vm("vm-42").await.unwrap();
     handle.await.unwrap();

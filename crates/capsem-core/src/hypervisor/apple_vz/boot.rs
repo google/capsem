@@ -15,11 +15,9 @@ use crate::vm::config::VmConfig;
 pub fn create_boot_loader(config: &VmConfig) -> Result<objc2::rc::Retained<VZLinuxBootLoader>> {
     let _span = debug_span!("create_boot_loader").entered();
     unsafe {
-        let kernel_url =
-            nsurl_from_path(&config.kernel_path).context("failed to create kernel URL")?;
+        let kernel_url = nsurl_from_path(&config.kernel_path).context("failed to create kernel URL")?;
 
-        let boot_loader =
-            VZLinuxBootLoader::initWithKernelURL(VZLinuxBootLoader::alloc(), &kernel_url);
+        let boot_loader = VZLinuxBootLoader::initWithKernelURL(VZLinuxBootLoader::alloc(), &kernel_url);
 
         let cmdline = NSString::from_str(&config.kernel_cmdline);
         boot_loader.setCommandLine(&cmdline);

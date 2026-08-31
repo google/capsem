@@ -15,15 +15,14 @@ use futures::{stream::BoxStream, StreamExt};
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{
-    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage,
-    ReadResourceRequestParams, ServerJsonRpcMessage,
+    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage, ReadResourceRequestParams,
+    ServerJsonRpcMessage,
 };
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
-    AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient,
-    StreamableHttpClientTransport, StreamableHttpClientTransportConfig, StreamableHttpError,
-    StreamableHttpPostResponse,
+    AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient, StreamableHttpClientTransport,
+    StreamableHttpClientTransportConfig, StreamableHttpError, StreamableHttpPostResponse,
 };
 use rmcp::{RoleClient, ServiceExt};
 use sse_stream::{Sse, SseStream};
@@ -109,9 +108,7 @@ fn validate_mcp_custom_header(name: &HeaderName) -> Result<(), String> {
     if reserved
         .iter()
         .any(|reserved| name.as_str().eq_ignore_ascii_case(reserved))
-        && !name
-            .as_str()
-            .eq_ignore_ascii_case(MCP_HEADER_PROTOCOL_VERSION)
+        && !name.as_str().eq_ignore_ascii_case(MCP_HEADER_PROTOCOL_VERSION)
     {
         return Err(name.to_string());
     }
@@ -163,24 +160,15 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             request_builder = request_builder.bearer_auth(auth_header);
         }
         request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder
-            .send()
-            .await
-            .map_err(StreamableHttpError::Client)?;
+        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             return Err(StreamableHttpError::ServerDoesNotSupportSse);
         }
-        let response = response
-            .error_for_status()
-            .map_err(StreamableHttpError::Client)?;
+        let response = response.error_for_status().map_err(StreamableHttpError::Client)?;
         match response.headers().get(reqwest::header::CONTENT_TYPE) {
             Some(content_type) => {
-                if !content_type
-                    .as_bytes()
-                    .starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
-                    && !content_type
-                        .as_bytes()
-                        .starts_with(JSON_MIME_TYPE.as_bytes())
+                if !content_type.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
+                    && !content_type.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes())
                 {
                     return Err(StreamableHttpError::UnexpectedContentType(Some(
                         String::from_utf8_lossy(content_type.as_bytes()).to_string(),
@@ -207,17 +195,12 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             request_builder = request_builder.bearer_auth(auth_header);
         }
         request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder
-            .send()
-            .await
-            .map_err(StreamableHttpError::Client)?;
+        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             tracing::debug!("this server doesn't support deleting session");
             return Ok(());
         }
-        response
-            .error_for_status()
-            .map_err(StreamableHttpError::Client)?;
+        response.error_for_status().map_err(StreamableHttpError::Client)?;
         Ok(())
     }
 
@@ -256,32 +239,23 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
                         ))
                     })?
                     .to_string();
-                return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(
-                    header,
-                )));
+                return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(header)));
             }
         }
         if response.status() == reqwest::StatusCode::FORBIDDEN {
             if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
                 let header_str = header.to_str().map_err(|_| {
-                    StreamableHttpError::UnexpectedServerResponse(Cow::from(
-                        "invalid www-authenticate header value",
-                    ))
+                    StreamableHttpError::UnexpectedServerResponse(Cow::from("invalid www-authenticate header value"))
                 })?;
-                return Err(StreamableHttpError::InsufficientScope(
-                    InsufficientScopeError::new(
-                        header_str.to_string(),
-                        extract_mcp_scope_from_header(header_str),
-                    ),
-                ));
+                return Err(StreamableHttpError::InsufficientScope(InsufficientScopeError::new(
+                    header_str.to_string(),
+                    extract_mcp_scope_from_header(header_str),
+                )));
             }
         }
 
         let status = response.status();
-        if matches!(
-            status,
-            reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT
-        ) {
+        if matches!(status, reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT) {
             return Ok(StreamableHttpPostResponse::Accepted);
         }
         if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {
@@ -311,9 +285,9 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
                 }
                 tracing::warn!("HTTP {status}: could not parse JSON body as a JSON-RPC error");
             }
-            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(
-                format!("HTTP {status}: {body}"),
-            )));
+            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(format!(
+                "HTTP {status}: {body}"
+            ))));
         }
 
         match content_type.as_deref() {
@@ -375,12 +349,7 @@ impl McpServerManager {
     /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
     /// then query each to build the unified catalog.
     pub async fn initialize_all(&mut self) -> Result<()> {
-        let defs: Vec<McpServerDef> = self
-            .definitions
-            .iter()
-            .filter(|d| d.enabled)
-            .cloned()
-            .collect();
+        let defs: Vec<McpServerDef> = self.definitions.iter().filter(|d| d.enabled).cloned().collect();
 
         for def in &defs {
             match self.connect_and_initialize(def).await {
@@ -451,8 +420,7 @@ impl McpServerManager {
                         open_world_hint: a.open_world_hint.unwrap_or(true),
                     });
 
-                    let input_schema =
-                        serde_json::to_value(&*tool.input_schema).unwrap_or(serde_json::json!({}));
+                    let input_schema = serde_json::to_value(&*tool.input_schema).unwrap_or(serde_json::json!({}));
 
                     self.tool_catalog.push(McpToolDef {
                         namespaced_name: ns_name.clone(),
@@ -507,11 +475,7 @@ impl McpServerManager {
                     let arguments: Vec<serde_json::Value> = prompt
                         .arguments
                         .as_ref()
-                        .map(|args| {
-                            args.iter()
-                                .filter_map(|a| serde_json::to_value(a).ok())
-                                .collect()
-                        })
+                        .map(|args| args.iter().filter_map(|a| serde_json::to_value(a).ok()).collect())
                         .unwrap_or_default();
                     self.prompt_catalog.push(McpPromptDef {
                         namespaced_name: ns_name.clone(),
@@ -588,20 +552,16 @@ impl McpServerManager {
         if !def.headers.is_empty() {
             let mut headers = HashMap::new();
             for (key, val) in &def.headers {
-                let name: http::header::HeaderName = key
-                    .parse()
-                    .with_context(|| format!("invalid header name: {key}"))?;
-                let value: http::header::HeaderValue = val
-                    .parse()
-                    .with_context(|| format!("invalid header value for {key}"))?;
+                let name: http::header::HeaderName =
+                    key.parse().with_context(|| format!("invalid header name: {key}"))?;
+                let value: http::header::HeaderValue =
+                    val.parse().with_context(|| format!("invalid header value for {key}"))?;
                 headers.insert(name, value);
             }
             config = config.custom_headers(headers);
         }
-        let transport = StreamableHttpClientTransport::with_client(
-            CapsemMcpHttpClient::new(self.http_client.clone()),
-            config,
-        );
+        let transport =
+            StreamableHttpClientTransport::with_client(CapsemMcpHttpClient::new(self.http_client.clone()), config);
         ().serve(transport)
             .await
             .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
@@ -613,11 +573,7 @@ impl McpServerManager {
     /// secondaries). Forwarded as `CAPSEM_BUILTIN_PEER_INDEX` so the
     /// builtin can pick a per-peer lockfile and avoid the singleton
     /// guard's "another instance holds the lock; exiting 0" path.
-    async fn connect_stdio(
-        &self,
-        def: &McpServerDef,
-        peer_index: u32,
-    ) -> Result<RunningService<RoleClient, ()>> {
+    async fn connect_stdio(&self, def: &McpServerDef, peer_index: u32) -> Result<RunningService<RoleClient, ()>> {
         let command = def
             .command
             .as_deref()
@@ -631,8 +587,8 @@ impl McpServerManager {
         cmd.env("CAPSEM_PARENT_PID", std::process::id().to_string());
         cmd.env("CAPSEM_BUILTIN_PEER_INDEX", peer_index.to_string());
 
-        let transport = TokioChildProcess::new(cmd)
-            .with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;
+        let transport =
+            TokioChildProcess::new(cmd).with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;
 
         ().serve(transport)
             .await
@@ -661,10 +617,7 @@ impl McpServerManager {
 
     /// Count tools provided by a named server.
     pub fn tool_count_for_server(&self, name: &str) -> usize {
-        self.tool_catalog
-            .iter()
-            .filter(|t| t.server_name == name)
-            .count()
+        self.tool_catalog.iter().filter(|t| t.server_name == name).count()
     }
 
     /// Check if a server is currently connected.
@@ -717,11 +670,7 @@ impl McpServerManager {
     }
 
     /// Route a tools/call: parse namespace, strip prefix, forward to server.
-    pub async fn call_tool(
-        &self,
-        namespaced_name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<JsonRpcResponse> {
+    pub async fn call_tool(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
         self.dispatch_call_tool(namespaced_name, arguments)?.await
     }
 
@@ -731,11 +680,7 @@ impl McpServerManager {
     }
 
     /// Route a prompts/get: parse namespace, forward to server.
-    pub async fn get_prompt(
-        &self,
-        namespaced_name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<JsonRpcResponse> {
+    pub async fn get_prompt(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
         self.dispatch_get_prompt(namespaced_name, arguments)?.await
     }
 
@@ -763,8 +708,7 @@ impl McpServerManager {
                 .call_tool(params)
                 .await
                 .with_context(|| format!("tool call '{}' failed", original_name))?;
-            let result_json =
-                serde_json::to_value(&result).context("failed to serialize tool result")?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize tool result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })
     }
@@ -781,8 +725,7 @@ impl McpServerManager {
                 .read_resource(params)
                 .await
                 .with_context(|| format!("resource read '{}' failed", original_uri))?;
-            let result_json =
-                serde_json::to_value(&result).context("failed to serialize resource result")?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize resource result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })
     }
@@ -805,8 +748,7 @@ impl McpServerManager {
                 .get_prompt(params)
                 .await
                 .with_context(|| format!("prompt get '{}' failed", original_name))?;
-            let result_json =
-                serde_json::to_value(&result).context("failed to serialize prompt result")?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize prompt result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })
     }

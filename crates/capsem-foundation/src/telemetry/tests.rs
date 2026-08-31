@@ -19,20 +19,14 @@ fn ambient_trace_id_returns_none_without_env() {
 
 #[test]
 fn ambient_trace_id_extracts_lower_half_from_traceparent() {
-    let id = resolve_ambient_capsem_trace_id(
-        None,
-        Some("00-11111111111111112222222222222222-3333333333333333-01"),
-    );
+    let id = resolve_ambient_capsem_trace_id(None, Some("00-11111111111111112222222222222222-3333333333333333-01"));
     assert_eq!(id.as_deref(), Some("2222222222222222"));
 }
 
 #[test]
 fn debug_telemetry_policy_is_local_only_by_default() {
     let policy = debug_telemetry_policy_from_pairs([
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "http://collector.example:4317",
-        ),
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example:4317"),
         ("OTEL_TRACES_EXPORTER", "otlp"),
     ]);
 
@@ -61,10 +55,7 @@ fn debug_telemetry_policy_enables_local_debug_filter_only() {
 #[test]
 fn upstream_otel_requires_explicit_allow_env() {
     let policy = debug_telemetry_policy_from_pairs([
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "http://collector.example:4317",
-        ),
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example:4317"),
         (ALLOW_UPSTREAM_OTEL_ENV, "true"),
     ]);
 
@@ -130,20 +121,10 @@ fn rolling_appender_writes_a_dated_file_beside_the_requested_path() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
 
-    assert_eq!(
-        written.len(),
-        1,
-        "expected exactly one log file, got {written:?}"
-    );
+    assert_eq!(written.len(), 1, "expected exactly one log file, got {written:?}");
     let name = &written[0];
-    assert!(
-        name.starts_with("service."),
-        "{name} is not in the service stream"
-    );
-    assert!(
-        name.ends_with(".log"),
-        "{name} would not match a *.log collector"
-    );
+    assert!(name.starts_with("service."), "{name} is not in the service stream");
+    assert!(name.ends_with(".log"), "{name} would not match a *.log collector");
     assert!(
         std::fs::read_to_string(dir.path().join(name))
             .expect("read back")
@@ -156,11 +137,7 @@ fn rolling_appender_writes_a_dated_file_beside_the_requested_path() {
 fn log_stream_files_returns_the_whole_stream_newest_first() {
     let dir = tempfile::tempdir().expect("tempdir");
     // Written oldest to newest so mtime ordering is unambiguous.
-    for name in [
-        "service.2026-07-28.log",
-        "service.2026-07-29.log",
-        "service.log",
-    ] {
+    for name in ["service.2026-07-28.log", "service.2026-07-29.log", "service.log"] {
         std::fs::write(dir.path().join(name), name).expect("write");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -176,11 +153,7 @@ fn log_stream_files_returns_the_whole_stream_newest_first() {
 
     assert_eq!(
         names,
-        vec![
-            "service.log",
-            "service.2026-07-29.log",
-            "service.2026-07-28.log"
-        ],
+        vec!["service.log", "service.2026-07-29.log", "service.2026-07-28.log"],
         "a support bundle reads this order to spend its byte budget on recent history"
     );
 }
@@ -236,12 +209,8 @@ fn a_rotated_serial_file_stays_inside_its_stream() {
     let path = dir.path().join("serial.log");
 
     let mut writer = CappedLogWriter::open(&path, 16).unwrap();
-    writer
-        .write_all(b"first half aaaaaaaaaaaaaaaaaaaa")
-        .unwrap();
-    writer
-        .write_all(b"second half bbbbbbbbbbbbbbbbbbb")
-        .unwrap();
+    writer.write_all(b"first half aaaaaaaaaaaaaaaaaaaa").unwrap();
+    writer.write_all(b"second half bbbbbbbbbbbbbbbbbbb").unwrap();
     writer.flush().unwrap();
 
     // A rotated name outside the stream is a file nobody collects.

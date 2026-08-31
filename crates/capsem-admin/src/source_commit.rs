@@ -24,9 +24,7 @@ impl FromStr for SourceCommit {
         {
             return Ok(Self(value.to_owned()));
         }
-        Err(anyhow!(
-            "source commit must be 40-character lowercase hexadecimal"
-        ))
+        Err(anyhow!("source commit must be 40-character lowercase hexadecimal"))
     }
 }
 
@@ -36,9 +34,7 @@ impl fmt::Display for SourceCommit {
     }
 }
 
-pub(crate) fn deserialize_optional<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<SourceCommit>, D::Error>
+pub(crate) fn deserialize_optional<'de, D>(deserializer: D) -> std::result::Result<Option<SourceCommit>, D::Error>
 where
     D: Deserializer<'de>,
 {

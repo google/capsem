@@ -33,10 +33,7 @@ fn args_parses_all_required() {
     assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
     assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
     assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
-    assert_eq!(
-        args.active_profile,
-        PathBuf::from("/tmp/config/profiles/code")
-    );
+    assert_eq!(args.active_profile, PathBuf::from("/tmp/config/profiles/code"));
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
 }
 
@@ -322,10 +319,7 @@ fn args_checkpoint_path_set() {
         "/tmp/cp.vzsave",
     ])
     .unwrap();
-    assert_eq!(
-        args.checkpoint_path.unwrap(),
-        PathBuf::from("/tmp/cp.vzsave")
-    );
+    assert_eq!(args.checkpoint_path.unwrap(), PathBuf::from("/tmp/cp.vzsave"));
 }
 
 #[test]
@@ -368,10 +362,7 @@ fn cli_env_parsing_valid() {
     let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
     let parsed: Vec<(String, String)> = env
         .iter()
-        .filter_map(|kv| {
-            kv.split_once('=')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-        })
+        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
     assert_eq!(
         parsed,
@@ -387,10 +378,7 @@ fn cli_env_parsing_no_equals_skipped() {
     let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
     let parsed: Vec<(String, String)> = env
         .iter()
-        .filter_map(|kv| {
-            kv.split_once('=')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-        })
+        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0], ("GOOD".to_string(), "val".to_string()));
@@ -401,10 +389,7 @@ fn cli_env_parsing_empty_value() {
     let env = ["KEY=".to_string()];
     let parsed: Vec<(String, String)> = env
         .iter()
-        .filter_map(|kv| {
-            kv.split_once('=')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-        })
+        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
     assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
 }
@@ -461,8 +446,7 @@ fn process_kernel_cmdline_uses_arch_console_and_root_device() {
 fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
     let dir = tempfile::tempdir().unwrap();
     let fake_exe = dir.path().join("capsem-process");
-    let error = resolve_mcp_aggregator_binary(&fake_exe)
-        .expect_err("missing aggregator binary must not resolve");
+    let error = resolve_mcp_aggregator_binary(&fake_exe).expect_err("missing aggregator binary must not resolve");
     assert!(
         error.to_string().contains("capsem-mcp-aggregator"),
         "error should name the missing component: {error:#}"

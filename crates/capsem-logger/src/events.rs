@@ -3,9 +3,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-pub use capsem_proto::credential_reference::{
-    credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX,
-};
+pub use capsem_proto::credential_reference::{credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX};
 
 /// Canonical action vocabulary for security rule matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,10 +410,7 @@ impl Decision {
             "error" => Decision::Error,
             "redirected" => Decision::Redirected,
             other => {
-                tracing::warn!(
-                    value = other,
-                    "unknown decision string in DB, treating as Error"
-                );
+                tracing::warn!(value = other, "unknown decision string in DB, treating as Error");
                 Decision::Error
             }
         }
@@ -424,9 +419,7 @@ impl Decision {
 
 /// Serialize SystemTime as f64 epoch seconds (for frontend compatibility).
 fn serialize_timestamp<S: serde::Serializer>(ts: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
-    let epoch = ts
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+    let epoch = ts.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     s.serialize_f64(epoch.as_secs_f64())
 }
 
@@ -472,10 +465,7 @@ impl FileAction {
             "import" => FileAction::Imported,
             "export" => FileAction::Exported,
             other => {
-                tracing::warn!(
-                    value = other,
-                    "unknown file action string in DB, treating as Modified"
-                );
+                tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
                 FileAction::Modified
             }
         }
@@ -487,10 +477,7 @@ impl FileAction {
 pub struct FileEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub action: FileAction,
     pub path: String,
@@ -508,10 +495,7 @@ pub struct FileEvent {
 pub struct NetEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub domain: String,
     pub port: u16,
@@ -592,10 +576,7 @@ pub struct ToolResponseEntry {
 pub struct McpCall {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub server_name: String,
     pub method: String,
@@ -634,10 +615,7 @@ pub struct McpCall {
 pub struct ModelCall {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub provider: String,
     #[serde(default)]
@@ -685,10 +663,7 @@ pub struct ModelCall {
 pub struct ExecEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub exec_id: u64,
     pub command: String,
@@ -725,10 +700,7 @@ pub struct ExecEventComplete {
 pub struct DnsEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     /// Query hostname, lowercased, no trailing dot
     /// (e.g. "anthropic.com", not "anthropic.com.").
@@ -787,10 +759,7 @@ pub struct DnsEvent {
 pub struct AuditEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub pid: u32,
     pub ppid: u32,
@@ -815,10 +784,7 @@ pub struct AuditEvent {
 pub struct SubstitutionEvent {
     #[serde(default)]
     pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
+    #[serde(serialize_with = "serialize_timestamp", deserialize_with = "deserialize_timestamp")]
     pub timestamp: SystemTime,
     pub material_class: String,
     pub source: String,

@@ -130,8 +130,7 @@ impl ConditionAtom {
                 let expected = parse_string_literal(argument)?;
                 let method = match method {
                     "matches" => StringMethod::Matches {
-                        regex: regex::Regex::new(&expected)
-                            .map_err(|e| format!("invalid CEL matches() regex: {e}"))?,
+                        regex: regex::Regex::new(&expected).map_err(|e| format!("invalid CEL matches() regex: {e}"))?,
                     },
                     "contains" => StringMethod::Contains { expected },
                     "endsWith" => StringMethod::EndsWith { expected },
@@ -221,11 +220,7 @@ where
     CompiledCondition::parse_with(condition, validate).map(|_| ())
 }
 
-pub(crate) fn evaluate_condition_with<S, F>(
-    condition: &str,
-    subject: &S,
-    validate: F,
-) -> Result<bool, String>
+pub(crate) fn evaluate_condition_with<S, F>(condition: &str, subject: &S, validate: F) -> Result<bool, String>
 where
     S: PolicySubject + ?Sized,
     F: Fn(&str) -> Result<(), String>,
@@ -245,10 +240,7 @@ fn contains_top_level_operator(condition: &str, operator: &str) -> Result<bool, 
     Ok(split_top_level_operator(condition, operator)?.len() > 1)
 }
 
-fn split_top_level_operator<'a>(
-    condition: &'a str,
-    operator: &str,
-) -> Result<Vec<&'a str>, String> {
+fn split_top_level_operator<'a>(condition: &'a str, operator: &str) -> Result<Vec<&'a str>, String> {
     let mut atoms = Vec::new();
     let mut start = 0;
     let mut quote = None;
@@ -370,10 +362,7 @@ fn outer_parens_wrap(value: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn parse_method_call<'a>(
-    atom: &'a str,
-    method: &str,
-) -> Result<Option<(&'a str, &'a str)>, String> {
+fn parse_method_call<'a>(atom: &'a str, method: &str) -> Result<Option<(&'a str, &'a str)>, String> {
     let needle = format!(".{method}(");
     let Some(index) = atom.find(&needle) else {
         return Ok(None);
@@ -407,9 +396,8 @@ fn parse_zero_arg_method_call<'a>(atom: &'a str, method: &str) -> Result<Option<
 
 /// Compiled once. `contains_pii()` runs per security event, so building this
 /// regex inside the call put regex compilation on the enforcement hot path.
-static SSN_PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("PII regex is valid")
-});
+static SSN_PATTERN: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("PII regex is valid"));
 
 fn looks_like_pii(value: &str) -> bool {
     value.contains('@') || SSN_PATTERN.is_match(value)

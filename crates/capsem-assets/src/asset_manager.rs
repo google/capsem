@@ -345,8 +345,7 @@ fn is_hash_tagged_asset_filename(filename: &str) -> bool {
 impl ManifestV2 {
     /// Parse a manifest from JSON.
     pub fn from_json(content: &str) -> Result<Self> {
-        let value: serde_json::Value =
-            serde_json::from_str(content).context("failed to parse manifest JSON")?;
+        let value: serde_json::Value = serde_json::from_str(content).context("failed to parse manifest JSON")?;
         let manifest: ManifestV2 = if value.get("format").is_some() {
             serde_json::from_value(value).context("failed to parse manifest v2 JSON")?
         } else {
@@ -384,29 +383,23 @@ impl ManifestV2 {
     /// Resolve asset file paths for a given binary version and architecture.
     ///
     /// Finds the best compatible asset release and returns hash-based file paths.
-    pub fn resolve(
-        &self,
-        binary_version: &str,
-        arch: &str,
-        base_dir: &Path,
-    ) -> Result<ResolvedAssets> {
+    pub fn resolve(&self, binary_version: &str, arch: &str, base_dir: &Path) -> Result<ResolvedAssets> {
         let asset_version = pick_asset_version(self, binary_version)?;
 
-        let release =
-            self.assets.releases.get(&asset_version).with_context(|| {
-                format!("asset version {} not found in manifest", asset_version)
-            })?;
-        let arch_assets = release.arches.get(arch).with_context(|| {
-            format!("arch {} not found in asset release {}", arch, asset_version)
-        })?;
+        let release = self
+            .assets
+            .releases
+            .get(&asset_version)
+            .with_context(|| format!("asset version {} not found in manifest", asset_version))?;
+        let arch_assets = release
+            .arches
+            .get(arch)
+            .with_context(|| format!("arch {} not found in asset release {}", arch, asset_version))?;
 
         let resolve_one = |name: &str| -> Result<PathBuf> {
-            let entry = arch_assets.get(name).with_context(|| {
-                format!(
-                    "{} not found in asset release {} / {}",
-                    name, asset_version, arch
-                )
-            })?;
+            let entry = arch_assets
+                .get(name)
+                .with_context(|| format!("{} not found in asset release {} / {}", name, asset_version, arch))?;
             let hname = hash_filename(name, &entry.hash);
             // Check flat layout first (base_dir/{hash}), then arch subdir (base_dir/{arch}/{hash})
             let flat = base_dir.join(&hname);
@@ -420,12 +413,8 @@ impl ManifestV2 {
             // Return the flat path (caller will report the error)
             Ok(flat)
         };
-        let rootfs_name = canonical_rootfs_asset_name(arch_assets).with_context(|| {
-            format!(
-                "rootfs not found in asset release {} / {}",
-                asset_version, arch
-            )
-        })?;
+        let rootfs_name = canonical_rootfs_asset_name(arch_assets)
+            .with_context(|| format!("rootfs not found in asset release {} / {}", asset_version, arch))?;
 
         Ok(ResolvedAssets {
             kernel: resolve_one("vmlinuz")?,
@@ -445,10 +434,7 @@ impl ManifestV2 {
         Some(ExpectedAssetHashes {
             kernel: assets.get("vmlinuz")?.hash.clone(),
             initrd: assets.get("initrd.img")?.hash.clone(),
-            rootfs: assets
-                .get(canonical_rootfs_asset_name(assets)?)?
-                .hash
-                .clone(),
+            rootfs: assets.get(canonical_rootfs_asset_name(assets)?)?.hash.clone(),
         })
     }
 
@@ -497,9 +483,7 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
     // default, so no profile's assets are discarded on the way through.
     let usable: Vec<(&String, &serde_json::Value)> = profiles
         .iter()
-        .filter(|(_, profile)| {
-            profile.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
-        })
+        .filter(|(_, profile)| profile.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
         .collect();
     if usable.is_empty() {
         bail!("release graph contains no usable profile");
@@ -544,9 +528,7 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
         .unwrap_or_default();
     let binary_version = packages
         .iter()
-        .filter(|package| {
-            package.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
-        })
+        .filter(|package| package.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
         .find_map(|package| package.get("version").and_then(serde_json::Value::as_str))
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_string();
@@ -586,9 +568,7 @@ type ProfileArchAssets = HashMap<String, HashMap<String, AssetEntry>>;
 /// One profile's image set: its asset version, minimum binary, and per-arch
 /// assets. Each profile carries its own, which is why no channel-wide pointer
 /// can stand in for them.
-fn profile_asset_release(
-    profile: &serde_json::Value,
-) -> Result<(String, String, ProfileArchAssets)> {
+fn profile_asset_release(profile: &serde_json::Value) -> Result<(String, String, ProfileArchAssets)> {
     let min_binary = profile
         .get("min_capsem_version")
         .and_then(serde_json::Value::as_str)
@@ -610,9 +590,9 @@ fn profile_asset_release(
             .and_then(serde_json::Value::as_str)
             .context("release graph profile architecture is missing image_revision")?;
         match asset_version.as_deref() {
-            Some(expected) if expected != image_revision => bail!(
-                "release graph profile image revisions disagree: {expected} != {image_revision} for {arch}"
-            ),
+            Some(expected) if expected != image_revision => {
+                bail!("release graph profile image revisions disagree: {expected} != {image_revision} for {arch}")
+            }
             None => asset_version = Some(image_revision.to_string()),
             _ => {}
         }
@@ -621,9 +601,10 @@ fn profile_asset_release(
             .and_then(serde_json::Value::as_array)
             .context("release graph profile architecture is missing images")?;
         let mut assets = HashMap::new();
-        for image in images.iter().filter(|image| {
-            image.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
-        }) {
+        for image in images
+            .iter()
+            .filter(|image| image.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
+        {
             let Some(kind) = image.get("kind").and_then(serde_json::Value::as_str) else {
                 continue;
             };
@@ -634,9 +615,7 @@ fn profile_asset_release(
                 .get("name")
                 .and_then(serde_json::Value::as_str)
                 .context("release graph image is missing name")?;
-            let digest = image
-                .get("digest")
-                .context("release graph image is missing digest")?;
+            let digest = image.get("digest").context("release graph image is missing digest")?;
             assets.insert(
                 name.to_string(),
                 AssetEntry {
@@ -667,8 +646,7 @@ fn profile_asset_release(
     if arches.is_empty() {
         bail!("release graph profile contains no usable architectures");
     }
-    let asset_version =
-        asset_version.context("release graph profile contains no image revision")?;
+    let asset_version = asset_version.context("release graph profile contains no image revision")?;
 
     Ok((asset_version, min_binary, arches))
 }
@@ -695,16 +673,14 @@ pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseG
     let mut usable_profiles = 0usize;
 
     for (profile_id, profile) in profiles {
-        validate_version(profile_id)
-            .with_context(|| format!("release graph profile id {profile_id} is invalid"))?;
+        validate_version(profile_id).with_context(|| format!("release graph profile id {profile_id} is invalid"))?;
         let revision = profile
             .get("revision")
             .and_then(serde_json::Value::as_str)
             .context("release graph profile is missing revision")?
             .to_string();
-        validate_version(&revision).with_context(|| {
-            format!("release graph profile {profile_id} has invalid revision {revision}")
-        })?;
+        validate_version(&revision)
+            .with_context(|| format!("release graph profile {profile_id} has invalid revision {revision}"))?;
         let status = profile
             .get("status")
             .and_then(serde_json::Value::as_str)
@@ -740,9 +716,7 @@ pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseG
                 .and_then(serde_json::Value::as_str)
                 .context("release graph profile architecture is missing image_revision")?;
             validate_version(image_revision).with_context(|| {
-                format!(
-                    "release graph profile {profile_id} architecture {arch} has invalid image revision"
-                )
+                format!("release graph profile {profile_id} architecture {arch} has invalid image revision")
             })?;
 
             let configs = canonical_active_artifacts(
@@ -767,9 +741,7 @@ pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseG
                     .collect();
                 for required in ["kernel", "initrd", "rootfs"] {
                     if !image_kinds.contains(required) {
-                        bail!(
-                            "release graph profile {profile_id} architecture {arch} is missing {required} image"
-                        );
+                        bail!("release graph profile {profile_id} architecture {arch} is missing {required} image");
                     }
                 }
             }
@@ -795,8 +767,7 @@ pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseG
         );
         let profile_images_revision = state_revision(
             "images",
-            &serde_json::to_value(&profile_images_scope)
-                .context("serialize profile image state")?,
+            &serde_json::to_value(&profile_images_scope).context("serialize profile image state")?,
         );
         let identity = ReleaseGraphProfileIdentity {
             revision: revision.clone(),
@@ -835,13 +806,11 @@ pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseG
     Ok(ReleaseGraphProfileState {
         catalog_revision: state_revision(
             "catalog",
-            &serde_json::to_value(catalog_scope)
-                .context("serialize release graph profile catalog state")?,
+            &serde_json::to_value(catalog_scope).context("serialize release graph profile catalog state")?,
         ),
         images_revision: state_revision(
             "images",
-            &serde_json::to_value(images_scope)
-                .context("serialize release graph image catalog state")?,
+            &serde_json::to_value(images_scope).context("serialize release graph image catalog state")?,
         ),
         profiles: identities,
     })
@@ -899,9 +868,7 @@ fn canonical_active_artifacts(
 }
 
 fn state_revision(prefix: &str, value: &serde_json::Value) -> String {
-    let hash = blake3::hash(canonical_json(value).as_bytes())
-        .to_hex()
-        .to_string();
+    let hash = blake3::hash(canonical_json(value).as_bytes()).to_hex().to_string();
     format!("{prefix}-{}", &hash[..16])
 }
 
@@ -909,9 +876,7 @@ fn canonical_json(value: &serde_json::Value) -> String {
     fn write(value: &serde_json::Value, output: &mut String) {
         match value {
             serde_json::Value::Null => output.push_str("null"),
-            serde_json::Value::Bool(value) => {
-                output.push_str(if *value { "true" } else { "false" })
-            }
+            serde_json::Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
             serde_json::Value::Number(value) => output.push_str(&value.to_string()),
             serde_json::Value::String(value) => {
                 output.push_str(&serde_json::to_string(value).expect("JSON strings serialize"));
@@ -955,8 +920,7 @@ fn canonical_json(value: &serde_json::Value) -> String {
 /// Compute the blake3 hash of a file.
 pub fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
-    let mut file =
-        std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mut buf = vec![0u8; 256 * 1024];
     loop {
         use std::io::Read;
@@ -1045,10 +1009,10 @@ pub fn asset_release_base_url_from_manifest_metadata(assets_dir: &Path) -> Resul
     if !metadata_path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&metadata_path)
-        .with_context(|| format!("read {}", metadata_path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("parse {}", metadata_path.display()))?;
+    let content =
+        std::fs::read_to_string(&metadata_path).with_context(|| format!("read {}", metadata_path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format!("parse {}", metadata_path.display()))?;
     let Some(source) = value.get("manifest_url").and_then(|v| v.as_str()) else {
         return Ok(None);
     };
@@ -1064,9 +1028,7 @@ fn remote_asset_release_base_url(manifest: &ManifestV2, assets_dir: &Path) -> Re
     let asset_base_url = asset_base_url.trim_end_matches('/').to_string();
     let validation_url = asset_base_url.replace("{asset_version}", "0");
     let parsed = reqwest::Url::parse(&validation_url).map_err(|_| {
-        anyhow::anyhow!(
-            "asset base URL must be a URL: use https://... or http://..., got {asset_base_url}"
-        )
+        anyhow::anyhow!("asset base URL must be a URL: use https://... or http://..., got {asset_base_url}")
     })?;
     if !matches!(parsed.scheme(), "http" | "https") {
         anyhow::bail!(
@@ -1099,12 +1061,7 @@ pub fn asset_download_url_with_base(
     } else {
         format!("{asset_base_url}/{asset_version}")
     };
-    format!(
-        "{}/{}-{}",
-        version_base.trim_end_matches('/'),
-        arch,
-        logical_name
-    )
+    format!("{}/{}-{}", version_base.trim_end_matches('/'), arch, logical_name)
 }
 
 fn asset_storage_dir(base_dir: &Path, arch: &str) -> PathBuf {
@@ -1151,8 +1108,7 @@ where
             continue;
         }
         for (arch, assets) in &release.arches {
-            validate_filename(arch)
-                .with_context(|| format!("invalid asset architecture directory {arch}"))?;
+            validate_filename(arch).with_context(|| format!("invalid asset architecture directory {arch}"))?;
             architecture_dirs.insert(arch.clone());
             for (name, entry) in assets {
                 referenced.insert(hash_filename(name, &entry.hash));
@@ -1261,8 +1217,7 @@ where
 
     let asset_base_url = remote_asset_release_base_url(manifest, base_dir)?;
     let arch_dir = asset_storage_dir(base_dir, arch);
-    std::fs::create_dir_all(&arch_dir)
-        .with_context(|| format!("cannot create {}", arch_dir.display()))?;
+    std::fs::create_dir_all(&arch_dir).with_context(|| format!("cannot create {}", arch_dir.display()))?;
 
     let client = reqwest::Client::builder()
         .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
@@ -1306,11 +1261,7 @@ where
         let url = asset_download_url_with_base(&asset_base_url, asset_version, arch, name);
         info!(name = %name, url = %url, "downloading asset");
 
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
+        let resp = client.get(&url).send().await.with_context(|| format!("GET {url}"))?;
         if !resp.status().is_success() {
             bail!("GET {} returned {}", url, resp.status());
         }
@@ -1361,16 +1312,10 @@ where
         let actual = hasher.finalize().to_hex().to_string();
         if actual != entry.hash {
             cleanup_tmp(&tmp);
-            bail!(
-                "{}: hash mismatch (expected {}, got {})",
-                name,
-                entry.hash,
-                actual
-            );
+            bail!("{}: hash mismatch (expected {}, got {})", name, entry.hash, actual);
         }
 
-        std::fs::rename(&tmp, &target)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+        std::fs::rename(&tmp, &target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1410,8 +1355,7 @@ where
     let arch_assets = arch_assets_to_materialize(manifest, binary_version, arch)?;
 
     let arch_dir = asset_storage_dir(base_dir, arch);
-    std::fs::create_dir_all(&arch_dir)
-        .with_context(|| format!("cannot create {}", arch_dir.display()))?;
+    std::fs::create_dir_all(&arch_dir).with_context(|| format!("cannot create {}", arch_dir.display()))?;
 
     let mut copied = Vec::new();
 
@@ -1465,8 +1409,7 @@ where
             )
         })?;
 
-        let actual =
-            hash_file(&source).with_context(|| format!("hash local asset {}", source.display()))?;
+        let actual = hash_file(&source).with_context(|| format!("hash local asset {}", source.display()))?;
         if actual != entry.hash {
             bail!(
                 "{}: local asset hash mismatch at {} (expected {}, got {})",
@@ -1479,10 +1422,8 @@ where
 
         let tmp = arch_dir.join(format!("{hname}.tmp"));
         let _ = std::fs::remove_file(&tmp);
-        std::fs::copy(&source, &tmp)
-            .with_context(|| format!("copy {} -> {}", source.display(), tmp.display()))?;
-        std::fs::rename(&tmp, &target)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+        std::fs::copy(&source, &tmp).with_context(|| format!("copy {} -> {}", source.display(), tmp.display()))?;
+        std::fs::rename(&tmp, &target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1553,10 +1494,7 @@ fn arch_assets_to_materialize<'m>(
 /// must materialize all of them, and the two disagreeing about which are
 /// compatible is how an install ends up missing exactly the assets it is about
 /// to ask for.
-fn compatible_asset_versions<'m>(
-    manifest: &'m ManifestV2,
-    binary_version: &str,
-) -> Result<Vec<&'m String>> {
+fn compatible_asset_versions<'m>(manifest: &'m ManifestV2, binary_version: &str) -> Result<Vec<&'m String>> {
     // Empty min_assets means "no compatibility constraint declared".
     let min_assets = manifest
         .binaries
@@ -1572,8 +1510,7 @@ fn compatible_asset_versions<'m>(
         .filter(|(asset_version, release)| {
             !release.deprecated
                 && version_at_least(asset_version, min_assets)
-                && (release.min_binary.is_empty()
-                    || version_at_least(binary_version, &release.min_binary))
+                && (release.min_binary.is_empty() || version_at_least(binary_version, &release.min_binary))
         })
         .map(|(asset_version, _)| asset_version)
         .collect();

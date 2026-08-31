@@ -75,27 +75,15 @@ fn sql_fingerprint(sql: &str) -> String {
 fn query_result_rows(raw: &str) -> Option<usize> {
     serde_json::from_str::<serde_json::Value>(raw)
         .ok()
-        .and_then(|value| {
-            value
-                .get("rows")
-                .and_then(|rows| rows.as_array())
-                .map(Vec::len)
-        })
+        .and_then(|value| value.get("rows").and_then(|rows| rows.as_array()).map(Vec::len))
 }
 
-fn record_query_metrics(
-    phase: &'static str,
-    started: Instant,
-    params_count: usize,
-    result: &DbResult<String>,
-) {
+fn record_query_metrics(phase: &'static str, started: Instant, params_count: usize, result: &DbResult<String>) {
     let status = if result.is_ok() { "ok" } else { "error" };
     let elapsed_ms = elapsed_ms_f64(started);
     ::metrics::counter!(DB_QUERY_TOTAL, "phase" => phase, "status" => status).increment(1);
-    ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => phase, "status" => status)
-        .record(elapsed_ms);
-    ::metrics::histogram!(DB_QUERY_PARAMS_COUNT, "phase" => phase, "status" => status)
-        .record(params_count as f64);
+    ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => phase, "status" => status).record(elapsed_ms);
+    ::metrics::histogram!(DB_QUERY_PARAMS_COUNT, "phase" => phase, "status" => status).record(params_count as f64);
     if let Ok(raw) = result {
         ::metrics::histogram!(DB_QUERY_RESULT_BYTES, "phase" => phase).record(raw.len() as f64);
         if let Some(rows) = query_result_rows(raw) {
@@ -236,13 +224,9 @@ impl DbHandle {
         sync_from_disk_before_query: bool,
     ) -> rusqlite::Result<Self> {
         let handle = Self::open_reader(db_path, sync_from_disk_before_query)?;
-        let mut inner = Arc::try_unwrap(handle.inner)
-            .ok()
-            .expect("new handle is unique");
+        let mut inner = Arc::try_unwrap(handle.inner).ok().expect("new handle is unique");
         inner.writer = Some(writer);
-        Ok(Self {
-            inner: Arc::new(inner),
-        })
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     #[cfg(test)]
@@ -381,9 +365,7 @@ impl DbHandle {
         let query_count = queries.len();
         let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
         if !self.inner.sync_from_disk_before_query {
-            if let Some((cached_queries, cached_result)) =
-                self.inner.query_many_cache.lock().unwrap().clone()
-            {
+            if let Some((cached_queries, cached_result)) = self.inner.query_many_cache.lock().unwrap().clone() {
                 if cached_queries == queries {
                     tracing::debug!(
                         db_path = %self.inner.path.display(),
@@ -478,9 +460,7 @@ impl DbHandle {
         let started = Instant::now();
         let op_kind = op.kind();
         let Some(writer) = &self.inner.writer else {
-            let error =
-                "db handle is read-only; session writes must use the owning process DB handle"
-                    .to_string();
+            let error = "db handle is read-only; session writes must use the owning process DB handle".to_string();
             tracing::error!(
                 db_path = %self.inner.path.display(),
                 operation = "write",
@@ -537,11 +517,9 @@ impl DbHandle {
     /// New async route code should use `ready().await`. This method exists only
     /// while service routes are being moved behind persistent async DB handles.
     pub fn ready_blocking(&self) -> rusqlite::Result<()> {
-        match DbReader::open(&self.inner.path).and_then(|reader| {
-            reader
-                .ready()
-                .map_err(rusqlite::Error::InvalidParameterName)
-        }) {
+        match DbReader::open(&self.inner.path)
+            .and_then(|reader| reader.ready().map_err(rusqlite::Error::InvalidParameterName))
+        {
             Ok(()) => Ok(()),
             Err(error) => {
                 tracing::error!(
@@ -567,10 +545,7 @@ impl DbHandle {
     ///
     /// New route work should flow through `query`; future sprint items burn
     /// this bridge as handles move into service session state.
-    pub fn with_reader_blocking<T>(
-        &self,
-        f: impl FnOnce(&DbReader) -> rusqlite::Result<T>,
-    ) -> rusqlite::Result<T> {
+    pub fn with_reader_blocking<T>(&self, f: impl FnOnce(&DbReader) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
         let reader = match DbReader::open(&self.inner.path) {
             Ok(reader) => reader,
             Err(error) => {
@@ -586,10 +561,7 @@ impl DbHandle {
         f(&reader)
     }
 
-    fn with_reader_string<T>(
-        &self,
-        f: impl FnOnce(&DbReader) -> Result<T, String>,
-    ) -> Result<T, String> {
+    fn with_reader_string<T>(&self, f: impl FnOnce(&DbReader) -> Result<T, String>) -> Result<T, String> {
         let reader = DbReader::open(&self.inner.path).map_err(|error| {
             tracing::error!(
                 db_path = %self.inner.path.display(),
@@ -798,16 +770,15 @@ pub fn checkpoint_and_vacuum_session_db(path: &Path) -> anyhow::Result<()> {
         );
         error
     })?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .map_err(|error| {
-            tracing::error!(
-                db_path = %path.display(),
-                operation = "wal_checkpoint_truncate",
-                error = %error,
-                "session db maintenance failed"
-            );
-            error
-        })?;
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|error| {
+        tracing::error!(
+            db_path = %path.display(),
+            operation = "wal_checkpoint_truncate",
+            error = %error,
+            "session db maintenance failed"
+        );
+        error
+    })?;
     conn.execute_batch("VACUUM").map_err(|error| {
         tracing::error!(
             db_path = %path.display(),

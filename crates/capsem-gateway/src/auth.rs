@@ -85,15 +85,13 @@ pub struct AuthState {
 impl AuthState {
     /// Generate runtime files: token (600), port, pid.
     pub fn new(run_dir: &Path, token: &str, port: u16) -> Result<Self> {
-        std::fs::create_dir_all(run_dir)
-            .with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
+        std::fs::create_dir_all(run_dir).with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
 
         let token_path = run_dir.join("gateway.token");
         let port_path = run_dir.join("gateway.port");
         let pid_path = run_dir.join("gateway.pid");
 
-        std::fs::write(&token_path, token)
-            .with_context(|| format!("failed to write {}", token_path.display()))?;
+        std::fs::write(&token_path, token).with_context(|| format!("failed to write {}", token_path.display()))?;
 
         // chmod 600 on token file
         #[cfg(unix)]

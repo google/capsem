@@ -119,13 +119,7 @@ impl FileHandleTable {
         }))
     }
 
-    pub fn alloc_dir(
-        &mut self,
-        inode: u64,
-        device: u64,
-        host_inode: u64,
-        entries: Vec<DirEntryData>,
-    ) -> Option<u64> {
+    pub fn alloc_dir(&mut self, inode: u64, device: u64, host_inode: u64, entries: Vec<DirEntryData>) -> Option<u64> {
         self.alloc(OpenHandle::Dir(OpenDirHandle {
             inode,
             device,
@@ -159,66 +153,64 @@ impl FileHandleTable {
         );
         let mut handles = Vec::with_capacity(self.handles.len());
         for (&fh, handle) in &mut self.handles {
-            let (inode, kind) =
-                match handle {
-                    OpenHandle::File(handle) => {
-                        let path = inodes.reopen_path(handle.inode).with_context(|| {
-                            format!("open VirtioFS file handle {fh} is not reopenable")
-                        })?;
-                        let metadata = handle.file.metadata().with_context(|| {
-                            format!("read metadata for VirtioFS file handle {fh}")
-                        })?;
-                        let path_metadata = std::fs::metadata(&path).with_context(|| {
-                            format!("read path metadata for VirtioFS file handle {fh}")
-                        })?;
-                        ensure!(
-                            (metadata.mode() & HOST_FILE_TYPE_MASK) == HOST_REGULAR_FILE_TYPE
-                                && metadata.dev() == path_metadata.dev()
-                                && metadata.ino() == path_metadata.ino()
-                                && (metadata.mode() & HOST_FILE_TYPE_MASK)
-                                    == (path_metadata.mode() & HOST_FILE_TYPE_MASK),
-                            "open VirtioFS file handle {fh} is not reopenable by stable identity"
-                        );
-                        let offset = handle.file.stream_position().with_context(|| {
-                            format!("read cursor for VirtioFS file handle {fh}")
-                        })?;
-                        (
-                            handle.inode,
-                            FileHandleKindSnapshot::File {
-                                readable: handle.readable,
-                                writable: handle.writable,
-                                append: handle.append,
-                                offset,
-                                device: metadata.dev(),
-                                inode: metadata.ino(),
-                                file_type: metadata.mode() & HOST_FILE_TYPE_MASK,
-                            },
-                        )
-                    }
-                    OpenHandle::Dir(handle) => {
-                        let path = inodes.reopen_path(handle.inode).with_context(|| {
-                            format!("open VirtioFS directory handle {fh} is not reopenable")
-                        })?;
-                        let path_metadata = std::fs::metadata(&path).with_context(|| {
-                            format!("read path metadata for VirtioFS directory handle {fh}")
-                        })?;
-                        ensure!(
-                            path_metadata.is_dir()
-                                && path_metadata.dev() == handle.device
-                                && path_metadata.ino() == handle.host_inode,
-                            "open VirtioFS directory handle {fh} identity changed"
-                        );
-                        validate_dir_entries(fh, &handle.entries)?;
-                        (
-                            handle.inode,
-                            FileHandleKindSnapshot::Dir {
-                                device: handle.device,
-                                host_inode: handle.host_inode,
-                                entries: handle.entries.clone(),
-                            },
-                        )
-                    }
-                };
+            let (inode, kind) = match handle {
+                OpenHandle::File(handle) => {
+                    let path = inodes
+                        .reopen_path(handle.inode)
+                        .with_context(|| format!("open VirtioFS file handle {fh} is not reopenable"))?;
+                    let metadata = handle
+                        .file
+                        .metadata()
+                        .with_context(|| format!("read metadata for VirtioFS file handle {fh}"))?;
+                    let path_metadata = std::fs::metadata(&path)
+                        .with_context(|| format!("read path metadata for VirtioFS file handle {fh}"))?;
+                    ensure!(
+                        (metadata.mode() & HOST_FILE_TYPE_MASK) == HOST_REGULAR_FILE_TYPE
+                            && metadata.dev() == path_metadata.dev()
+                            && metadata.ino() == path_metadata.ino()
+                            && (metadata.mode() & HOST_FILE_TYPE_MASK) == (path_metadata.mode() & HOST_FILE_TYPE_MASK),
+                        "open VirtioFS file handle {fh} is not reopenable by stable identity"
+                    );
+                    let offset = handle
+                        .file
+                        .stream_position()
+                        .with_context(|| format!("read cursor for VirtioFS file handle {fh}"))?;
+                    (
+                        handle.inode,
+                        FileHandleKindSnapshot::File {
+                            readable: handle.readable,
+                            writable: handle.writable,
+                            append: handle.append,
+                            offset,
+                            device: metadata.dev(),
+                            inode: metadata.ino(),
+                            file_type: metadata.mode() & HOST_FILE_TYPE_MASK,
+                        },
+                    )
+                }
+                OpenHandle::Dir(handle) => {
+                    let path = inodes
+                        .reopen_path(handle.inode)
+                        .with_context(|| format!("open VirtioFS directory handle {fh} is not reopenable"))?;
+                    let path_metadata = std::fs::metadata(&path)
+                        .with_context(|| format!("read path metadata for VirtioFS directory handle {fh}"))?;
+                    ensure!(
+                        path_metadata.is_dir()
+                            && path_metadata.dev() == handle.device
+                            && path_metadata.ino() == handle.host_inode,
+                        "open VirtioFS directory handle {fh} identity changed"
+                    );
+                    validate_dir_entries(fh, &handle.entries)?;
+                    (
+                        handle.inode,
+                        FileHandleKindSnapshot::Dir {
+                            device: handle.device,
+                            host_inode: handle.host_inode,
+                            entries: handle.entries.clone(),
+                        },
+                    )
+                }
+            };
             handles.push(FileHandleSnapshot { fh, inode, kind });
         }
         handles.sort_by_key(|handle| handle.fh);
@@ -228,11 +220,7 @@ impl FileHandleTable {
         })
     }
 
-    pub(crate) fn restore(
-        snapshot: &FileHandleTableSnapshot,
-        inodes: &InodeTable,
-        read_only: bool,
-    ) -> Result<Self> {
+    pub(crate) fn restore(snapshot: &FileHandleTableSnapshot, inodes: &InodeTable, read_only: bool) -> Result<Self> {
         ensure!(
             snapshot.handles.len() <= DEFAULT_MAX_HANDLES,
             "VirtioFS open handle checkpoint count exceeds limit"
@@ -253,14 +241,8 @@ impl FileHandleTable {
                     inode,
                     file_type,
                 } => {
-                    ensure!(
-                        *readable || *writable,
-                        "VirtioFS file handle {fh} has no access mode"
-                    );
-                    ensure!(
-                        !append || *writable,
-                        "VirtioFS append handle {fh} is not writable"
-                    );
+                    ensure!(*readable || *writable, "VirtioFS file handle {fh} has no access mode");
+                    ensure!(!append || *writable, "VirtioFS append handle {fh} is not writable");
                     ensure!(
                         !read_only || !*writable,
                         "writable VirtioFS handle {fh} cannot restore on a read-only share"
@@ -275,12 +257,10 @@ impl FileHandleTable {
                         .append(*append)
                         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
                         .open(&path)
-                        .with_context(|| {
-                            format!("reopen VirtioFS file handle {fh}: {}", path.display())
-                        })?;
-                    let metadata = file.metadata().with_context(|| {
-                        format!("read reopened VirtioFS file handle {fh} metadata")
-                    })?;
+                        .with_context(|| format!("reopen VirtioFS file handle {fh}: {}", path.display()))?;
+                    let metadata = file
+                        .metadata()
+                        .with_context(|| format!("read reopened VirtioFS file handle {fh} metadata"))?;
                     ensure!(
                         metadata.dev() == *device
                             && metadata.ino() == *inode
@@ -302,13 +282,10 @@ impl FileHandleTable {
                     host_inode,
                     entries,
                 } => {
-                    let metadata = std::fs::metadata(&path).with_context(|| {
-                        format!("read reopened VirtioFS directory handle {fh} metadata")
-                    })?;
+                    let metadata = std::fs::metadata(&path)
+                        .with_context(|| format!("read reopened VirtioFS directory handle {fh} metadata"))?;
                     ensure!(
-                        metadata.is_dir()
-                            && metadata.dev() == *device
-                            && metadata.ino() == *host_inode,
+                        metadata.is_dir() && metadata.dev() == *device && metadata.ino() == *host_inode,
                         "VirtioFS directory handle {fh} identity changed"
                     );
                     validate_dir_entries(fh, entries)?;

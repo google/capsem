@@ -114,8 +114,7 @@ fn installed_release_graph_resolves_relative_image_urls_to_hydrated_assets() {
         arm64.rootfs.url,
         format!("file://{}", dir.path().join("arm64/rootfs.erofs").display())
     );
-    code.validate()
-        .expect("installed profile overlay must remain valid");
+    code.validate().expect("installed profile overlay must remain valid");
 }
 
 #[test]
@@ -259,43 +258,26 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
     profile.validate().expect("profile contract validates");
     assert_eq!(profile.id, "developer");
     assert_eq!(profile.assets.arch["arm64"].rootfs.name, "rootfs.erofs");
-    assert_eq!(
-        profile.obom.as_ref().unwrap().arch["arm64"].generator,
-        "cdxgen"
-    );
+    assert_eq!(profile.obom.as_ref().unwrap().arch["arm64"].generator, "cdxgen");
     assert_eq!(profile.vm.cpu_count, 6);
     assert_eq!(
         profile.rule_files.enforcement.as_deref(),
         Some("rules/enforcement.toml")
     );
+    assert_eq!(profile.rule_files.sigma.as_deref(), Some("rules/detection.yaml"));
     assert_eq!(
-        profile.rule_files.sigma.as_deref(),
-        Some("rules/detection.yaml")
-    );
-    assert_eq!(
-        profile
-            .files
-            .mcp
-            .as_ref()
-            .map(|descriptor| descriptor.path.as_str()),
+        profile.files.mcp.as_ref().map(|descriptor| descriptor.path.as_str()),
         Some("profiles/developer/mcp.json")
     );
     assert_eq!(
-        profile
-            .files
-            .build
-            .as_ref()
-            .map(|descriptor| descriptor.path.as_str()),
+        profile.files.build.as_ref().map(|descriptor| descriptor.path.as_str()),
         Some("profiles/developer/build.sh")
     );
     assert!(profile.default.contains_key("http"));
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));
-    assert_eq!(
-        profile.mcp.unwrap().server_enabled.get("local").copied(),
-        Some(true)
-    );
+    assert_eq!(profile.mcp.unwrap().server_enabled.get("local").copied(), Some(true));
 }
 
 #[test]
@@ -339,14 +321,9 @@ hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 size = 1
 "#
     );
-    parse_profile(&base)
-        .validate()
-        .expect("valid profile file ref");
+    parse_profile(&base).validate().expect("valid profile file ref");
 
-    let absolute = base.replace(
-        "path = \"profiles/developer/mcp.json\"",
-        "path = \"/etc/passwd\"",
-    );
+    let absolute = base.replace("path = \"profiles/developer/mcp.json\"", "path = \"/etc/passwd\"");
     assert!(parse_profile(&absolute)
         .validate()
         .unwrap_err()
@@ -365,16 +342,10 @@ size = 1
         "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );
-    assert!(parse_profile(&bad_hash)
-        .validate()
-        .unwrap_err()
-        .contains("blake3"));
+    assert!(parse_profile(&bad_hash).validate().unwrap_err().contains("blake3"));
 
     let zero_size = base.replace("size = 1", "size = 0");
-    assert!(parse_profile(&zero_size)
-        .validate()
-        .unwrap_err()
-        .contains("size"));
+    assert!(parse_profile(&zero_size).validate().unwrap_err().contains("size"));
 }
 
 #[test]
@@ -402,9 +373,7 @@ format = "toml"
 fn builtin_primary_profile_manifest_is_valid_and_erofs_backed() {
     let profile = ProfileConfigFile::builtin_primary();
 
-    profile
-        .validate()
-        .expect("builtin primary profile validates");
+    profile.validate().expect("builtin primary profile validates");
     assert_eq!(profile.id, "code");
     assert_eq!(profile.name, "Code");
     assert_eq!(
@@ -487,14 +456,11 @@ fn profile_config_validation_rejects_bad_identity_assets_and_vm_defaults() {
 
 #[test]
 fn checked_in_code_profile_parses_and_validates() {
-    let profile = toml::from_str::<ProfileConfigFile>(include_str!(
-        "../../../../../../config/profiles/code/profile.toml"
-    ))
-    .expect("checked-in code profile parses");
+    let profile =
+        toml::from_str::<ProfileConfigFile>(include_str!("../../../../../../config/profiles/code/profile.toml"))
+            .expect("checked-in code profile parses");
 
-    profile
-        .validate()
-        .expect("checked-in code profile validates");
+    profile.validate().expect("checked-in code profile validates");
     assert_eq!(profile.id, "code");
     assert!(profile.assets.arch.contains_key("arm64"));
     assert!(profile.assets.arch.contains_key("x86_64"));
@@ -557,10 +523,7 @@ fn profile_download_assets_uses_file_url_same_status_path() {
 
     assert!(status.ready, "{status:?}");
     assert_eq!(status.assets.len(), 3);
-    assert!(status
-        .assets
-        .iter()
-        .all(|asset| asset.present && asset.valid));
+    assert!(status.assets.iter().all(|asset| asset.present && asset.valid));
 }
 
 #[test]
@@ -595,10 +558,7 @@ upstreams = ["127.0.0.1:5353"]
     assert_eq!(active.network.log_bodies, Some(true));
     assert_eq!(active.network.max_body_capture, Some(8192));
     assert_eq!(active.network.http_upstream_ports, vec![80, 3713, 8080]);
-    assert_eq!(
-        active.network.dns.upstreams,
-        vec!["127.0.0.1:5353".to_string()]
-    );
+    assert_eq!(active.network.dns.upstreams, vec!["127.0.0.1:5353".to_string()]);
 }
 
 #[test]
@@ -612,14 +572,7 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
     assert_eq!(initial.source, "default");
     assert_eq!(initial.rule_id.as_deref(), Some("default.mcp"));
 
-    let old_pin = profile
-        .config()
-        .files
-        .enforcement
-        .as_ref()
-        .unwrap()
-        .hash
-        .clone();
+    let old_pin = profile.config().files.enforcement.as_ref().unwrap().hash.clone();
 
     let summary = profile
         .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
@@ -647,14 +600,7 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
         Some("profiles.rules.mcp_capsem_fetch_http_permission")
     );
 
-    let new_pin = reloaded
-        .config()
-        .files
-        .enforcement
-        .as_ref()
-        .unwrap()
-        .hash
-        .clone();
+    let new_pin = reloaded.config().files.enforcement.as_ref().unwrap().hash.clone();
     assert_eq!(new_pin, Some(summary.new_hash));
     reloaded
         .check(&fixture.assets_dir(), "arm64")
@@ -691,14 +637,7 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_default_tool_per
     assert_eq!(initial_default.source, "default");
     assert_eq!(initial_default.rule_id.as_deref(), Some("default.mcp"));
 
-    let old_pin = profile
-        .config()
-        .files
-        .enforcement
-        .as_ref()
-        .unwrap()
-        .hash
-        .clone();
+    let old_pin = profile.config().files.enforcement.as_ref().unwrap().hash.clone();
 
     let summary = profile
         .set_mcp_default_permission(SecurityRuleAction::Ask, "ui")
@@ -723,14 +662,7 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_default_tool_per
     assert_eq!(inherited_default.action, SecurityRuleAction::Ask);
     assert_eq!(inherited_default.source, "default");
 
-    let new_pin = reloaded
-        .config()
-        .files
-        .enforcement
-        .as_ref()
-        .unwrap()
-        .hash
-        .clone();
+    let new_pin = reloaded.config().files.enforcement.as_ref().unwrap().hash.clone();
     assert_eq!(new_pin, Some(summary.new_hash));
     reloaded
         .check(&fixture.assets_dir(), "arm64")
@@ -772,9 +704,7 @@ fn profile_mcp_server_mutation_persists_profile_toml_and_permissions() {
         .unwrap()
         .servers
         .iter()
-        .any(|server| server.name == "github"
-            && server.url == "https://mcp.invalid/github"
-            && server.enabled));
+        .any(|server| server.name == "github" && server.url == "https://mcp.invalid/github" && server.enabled));
 
     let permission = reloaded
         .mcp_tool_permission("github", "search_repos")
@@ -802,10 +732,7 @@ fn profile_mcp_server_mutation_persists_profile_toml_and_permissions() {
     let error = reloaded
         .mcp_tool_permission("github", "search_repos")
         .expect_err("deleted MCP server is no longer known");
-    assert!(
-        error.contains("MCP server github is not declared"),
-        "{error}"
-    );
+    assert!(error.contains("MCP server github is not declared"), "{error}");
 }
 
 #[test]
@@ -916,17 +843,10 @@ fn profile_mcp_tool_permission_mutation_updates_existing_managed_rule() {
 #[test]
 fn profile_mcp_tool_permission_requires_pinned_enforcement_file() {
     let fixture = ProfileFixture::new();
-    let mut config = Profile::load_from_dir(fixture.profile_dir())
-        .unwrap()
-        .config()
-        .clone();
+    let mut config = Profile::load_from_dir(fixture.profile_dir()).unwrap().config().clone();
     config.files.enforcement = None;
-    let mut profile = Profile::from_config(
-        fixture.config_root(),
-        fixture.profile_dir().to_path_buf(),
-        config,
-    )
-    .expect("profile without enforcement pin can still parse before mutation");
+    let mut profile = Profile::from_config(fixture.config_root(), fixture.profile_dir().to_path_buf(), config)
+        .expect("profile without enforcement pin can still parse before mutation");
 
     let error = profile
         .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
@@ -962,11 +882,7 @@ operation = "permission"
 "#;
     let enforcement = fixture.config_root().join("profiles/code/enforcement.toml");
     std::fs::write(&enforcement, managed).unwrap();
-    fixture.repin(
-        "enforcement",
-        "profiles/code/enforcement.toml",
-        &enforcement,
-    );
+    fixture.repin("enforcement", "profiles/code/enforcement.toml", &enforcement);
 
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
     let error = profile
@@ -997,15 +913,10 @@ fn checked_in_code_profile_rule_files_compile_into_security_rule_set() {
         "Sigma detection file must compile into profile security rules"
     );
     assert!(
-        rule_ids
-            .iter()
-            .all(|rule_id| !rule_id.starts_with("policy.")),
+        rule_ids.iter().all(|rule_id| !rule_id.starts_with("policy.")),
         "profile rule files must not mirror into old policy rails"
     );
-    assert!(rules
-        .rules()
-        .iter()
-        .all(|rule| !rule.condition.contains("credential.")));
+    assert!(rules.rules().iter().all(|rule| !rule.condition.contains("credential.")));
 }
 
 #[test]
@@ -1104,8 +1015,7 @@ generator_version = "11.0.0"
         "generator_version = \"11.0.0\"\n",
         "generator_version = \"11.0.0\"\ncompression = \"lz4hc\"\n",
     );
-    let error = toml::from_str::<ProfileConfigFile>(&with_build_knob)
-        .expect_err("OBOM must not expose build knobs");
+    let error = toml::from_str::<ProfileConfigFile>(&with_build_knob).expect_err("OBOM must not expose build knobs");
     assert!(error.to_string().contains("compression"), "{error}");
 }
 
@@ -1336,10 +1246,7 @@ capsem = true
         profile.replace_range(hash_pos..hash_end, &hash_line);
         let suffix = &profile[start..];
         let size_pos = start + suffix.find("size = ").expect("size exists");
-        let size_end = size_pos
-            + profile[size_pos..]
-                .find('\n')
-                .unwrap_or(profile.len() - size_pos);
+        let size_end = size_pos + profile[size_pos..].find('\n').unwrap_or(profile.len() - size_pos);
         profile.replace_range(size_pos..size_end, &size_line);
         std::fs::write(profile_path, profile).unwrap();
     }

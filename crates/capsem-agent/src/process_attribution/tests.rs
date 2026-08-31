@@ -13,10 +13,7 @@ fn sanitizes_process_names_before_encoding() {
     assert_eq!(sanitize_process_name("has\rcarriage"), "has_carriage");
     assert_eq!(sanitize_process_name("has\0nul"), "has_nul");
     assert_eq!(sanitize_process_name("has\ttab"), "has_tab");
-    assert_eq!(
-        sanitize_process_name("claude/code-v4.0"),
-        "claude/code-v4.0"
-    );
+    assert_eq!(sanitize_process_name("claude/code-v4.0"), "claude/code-v4.0");
 }
 
 #[test]

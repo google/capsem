@@ -34,17 +34,10 @@ fn graph_channel_page_validates_each_mixed_profile_revision() {
         "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json ",
         "co-work 2026.06.08.7 code profiles-derived-set-identity"
     );
-    let error = validate_assets_channel_graph_page_state(
-        missing_code_revision,
-        "nightly",
-        &manifest,
-        &health,
-    )
-    .expect_err("aggregate identity cannot replace a missing profile revision");
+    let error = validate_assets_channel_graph_page_state(missing_code_revision, "nightly", &manifest, &health)
+        .expect_err("aggregate identity cannot replace a missing profile revision");
     assert!(
-        error
-            .to_string()
-            .contains("missing profile revision code 2026.06.08.8"),
+        error.to_string().contains("missing profile revision code 2026.06.08.8"),
         "{error:#}"
     );
 }
@@ -71,10 +64,7 @@ fn cli_accepts_materialized_profile_validation() {
 #[test]
 fn validates_checked_in_code_profile_through_security_rule_set() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let config_root = repo_root.join("config");
     let profile_path = config_root.join("profiles/code/profile.toml");
 
@@ -88,13 +78,9 @@ fn validates_checked_in_code_profile_through_security_rule_set() {
 #[test]
 fn source_profile_validation_rejects_generated_pins() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let config_root = repo_root.join("config");
-    let source = fs::read_to_string(config_root.join("profiles/code/profile.toml"))
-        .expect("read source profile");
+    let source = fs::read_to_string(config_root.join("profiles/code/profile.toml")).expect("read source profile");
     let pinned = source.replace(
         "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\n",
         "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\nhash = \"blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1\"\nsize = 8786432\n",
@@ -103,12 +89,10 @@ fn source_profile_validation_rejects_generated_pins() {
     let profile_path = temp.path().join("profile.toml");
     fs::write(&profile_path, pinned).expect("write pinned profile");
 
-    let error = validate_profile(&profile_path, Some(&config_root))
-        .expect_err("source profile pins rejected");
+    let error = validate_profile(&profile_path, Some(&config_root)).expect_err("source profile pins rejected");
 
     assert!(
-        error.to_string().contains("source profile")
-            && error.to_string().contains("hash/size pins"),
+        error.to_string().contains("source profile") && error.to_string().contains("hash/size pins"),
         "{error:#}"
     );
 }
@@ -116,10 +100,7 @@ fn source_profile_validation_rejects_generated_pins() {
 #[test]
 fn validates_checked_in_settings_file() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let path = repo_root.join("config/settings/settings.toml");
 
     let report = validate_settings(&path).expect("settings validates");
@@ -154,22 +135,15 @@ code = true
 
     let error = validate_settings(&path).expect_err("profile fields rejected");
 
-    assert!(
-        format!("{error:#}").contains("unknown field `profiles`"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("unknown field `profiles`"), "{error:#}");
 }
 
 #[test]
 fn checked_in_config_root_passes_admin_lint() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
 
-    let report =
-        check_config_root(&repo_root.join("config"), Some("arm64")).expect("config root checks");
+    let report = check_config_root(&repo_root.join("config"), Some("arm64")).expect("config root checks");
 
     assert!(report.ok);
     assert!(report
@@ -194,19 +168,14 @@ fn config_root_lint_rejects_profile_id_mismatch() {
         include_str!("../../../config/settings/settings.toml"),
     )
     .expect("settings");
-    fs::write(
-        config_root.join("corp/corp.toml"),
-        "refresh_policy = \"24h\"\n",
-    )
-    .expect("corp");
+    fs::write(config_root.join("corp/corp.toml"), "refresh_policy = \"24h\"\n").expect("corp");
     fs::write(
         config_root.join("profiles/wrong/profile.toml"),
         include_str!("../../../config/profiles/code/profile.toml"),
     )
     .expect("profile");
 
-    let error =
-        check_config_root(&config_root, Some("arm64")).expect_err("catalog id mismatch rejected");
+    let error = check_config_root(&config_root, Some("arm64")).expect_err("catalog id mismatch rejected");
 
     assert!(format!("{error:#}").contains("id mismatch"), "{error:#}");
 }
@@ -259,15 +228,11 @@ enforcement = "profiles/code/enforcement.toml"
     )
     .expect("profile");
 
-    let error = validate_profile(
-        &config_root.join("profiles/code/profile.toml"),
-        Some(config_root),
-    )
-    .expect_err("old policy syntax rejected");
+    let error = validate_profile(&config_root.join("profiles/code/profile.toml"), Some(config_root))
+        .expect_err("old policy syntax rejected");
 
     assert!(
-        error.to_string().contains("unknown field `policy`")
-            || format!("{error:#}").contains("unknown field `policy`"),
+        error.to_string().contains("unknown field `policy`") || format!("{error:#}").contains("unknown field `policy`"),
         "{error:#}"
     );
 }
@@ -275,10 +240,7 @@ enforcement = "profiles/code/enforcement.toml"
 #[test]
 fn compiles_checked_in_enforcement_file() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let path = repo_root.join("config/profiles/code/enforcement.toml");
 
     let report = compile_rule_file("enforcement", &path, RuleFileSourceArg::User).expect("compile");
@@ -323,14 +285,8 @@ fn compiles_checked_in_enforcement_file() {
             .map(|rule| (rule.rule_id.as_str(), rule.detection_level))
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            (
-                "profiles.rules.default_unknown_model_provider",
-                Some("informational")
-            ),
-            (
-                "profiles.rules.default_unknown_mcp_server",
-                Some("informational")
-            ),
+            ("profiles.rules.default_unknown_model_provider", Some("informational")),
+            ("profiles.rules.default_unknown_mcp_server", Some("informational")),
         ])
     );
 }
@@ -338,10 +294,7 @@ fn compiles_checked_in_enforcement_file() {
 #[test]
 fn compiles_checked_in_detection_file() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let path = repo_root.join("config/profiles/code/detection.yaml");
 
     let report = compile_rule_file("detection", &path, RuleFileSourceArg::User).expect("compile");
@@ -355,10 +308,7 @@ fn compiles_checked_in_detection_file() {
 #[test]
 fn checked_in_profile_build_wraps_agy_with_skip_permissions() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let path = repo_root.join("config/profiles/code/build.sh");
     let content = fs::read_to_string(path).expect("profile build script");
 
@@ -395,13 +345,9 @@ decision = "block"
     )
     .expect("old rule");
 
-    let error = compile_rule_file("enforcement", &path, RuleFileSourceArg::User)
-        .expect_err("old shape rejected");
+    let error = compile_rule_file("enforcement", &path, RuleFileSourceArg::User).expect_err("old shape rejected");
 
-    assert!(
-        format!("{error:#}").contains("missing field `action`"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("missing field `action`"), "{error:#}");
 }
 
 #[test]
@@ -422,9 +368,7 @@ fn checks_manifest_contract() {
 
     assert_eq!(
         report.blake3,
-        blake3::hash(fs::read(&path).unwrap().as_slice())
-            .to_hex()
-            .to_string()
+        blake3::hash(fs::read(&path).unwrap().as_slice()).to_hex().to_string()
     );
     assert_eq!(report.refresh_policy, "24h");
     assert_eq!(report.asset_version, "2026.0607.1");
@@ -455,8 +399,8 @@ fn manifest_verify_checks_literal_sibling_assets() {
     fs::write(assets_dir.join("rootfs.erofs"), payload).expect("asset");
 
     let manifest = load_manifest(&manifest_path).expect("manifest");
-    let report = manifest_report(&manifest_path, &manifest, Some(&assets_root), Some("arm64"))
-        .expect("manifest verify");
+    let report =
+        manifest_report(&manifest_path, &manifest, Some(&assets_root), Some("arm64")).expect("manifest verify");
 
     let asset = &report.arches[0].assets[0];
     assert!(asset.present);
@@ -484,11 +428,7 @@ fn profile_check_verifies_only_declared_file_urls() {
         descriptor.url = format!("file://{}", path.display());
     }
     let profile_path = temp.path().join("profile.toml");
-    fs::write(
-        &profile_path,
-        toml::to_string(&profile).expect("serialize profile"),
-    )
-    .expect("profile");
+    fs::write(&profile_path, toml::to_string(&profile).expect("serialize profile")).expect("profile");
 
     let report = check_profile(&ProfileCheckArgs {
         path: profile_path,
@@ -505,10 +445,7 @@ fn profile_check_verifies_only_declared_file_urls() {
 #[test]
 fn profile_check_validates_profile_payload_files_and_root_manifest() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let profile_path = repo_root.join("config/profiles/code/profile.toml");
 
     let report = check_profile(&ProfileCheckArgs {
@@ -519,10 +456,7 @@ fn profile_check_validates_profile_payload_files_and_root_manifest() {
     })
     .expect("checked-in profile payload files validate");
 
-    assert!(report
-        .profile_files
-        .iter()
-        .any(|file| file.logical_name == "mcp"));
+    assert!(report.profile_files.iter().any(|file| file.logical_name == "mcp"));
     assert!(report
         .profile_files
         .iter()
@@ -537,16 +471,11 @@ fn profile_check_validates_profile_payload_files_and_root_manifest() {
 #[test]
 fn release_graph_publishes_every_manifested_profile_root_payload() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let config_root = repo_root.join("config");
-    let profile =
-        load_profile(&config_root.join("profiles/code/profile.toml")).expect("load profile");
+    let profile = load_profile(&config_root.join("profiles/code/profile.toml")).expect("load profile");
     let root_manifest: ProfileRootManifest = serde_json::from_slice(
-        &fs::read(config_root.join("profiles/code/root.manifest.json"))
-            .expect("read root manifest"),
+        &fs::read(config_root.join("profiles/code/root.manifest.json")).expect("read root manifest"),
     )
     .expect("parse root manifest");
     let mut copies = Vec::new();
@@ -578,31 +507,22 @@ fn release_graph_publishes_every_manifested_profile_root_payload() {
     assert_eq!(actual_paths, expected_paths);
     let expected_digests = root_rows
         .iter()
-        .map(|row| {
-            row["digest"]["blake3"]
-                .as_str()
-                .expect("root payload BLAKE3")
-        })
+        .map(|row| row["digest"]["blake3"].as_str().expect("root payload BLAKE3"))
         .collect::<BTreeSet<_>>();
     let actual_urls = root_rows
         .iter()
         .map(|row| row["url"].as_str().expect("root payload URL"))
         .collect::<BTreeSet<_>>();
     assert_eq!(actual_urls.len(), expected_digests.len());
-    let urls_by_digest = root_rows.iter().fold(
-        BTreeMap::<&str, BTreeSet<&str>>::new(),
-        |mut grouped, row| {
+    let urls_by_digest = root_rows
+        .iter()
+        .fold(BTreeMap::<&str, BTreeSet<&str>>::new(), |mut grouped, row| {
             grouped
-                .entry(
-                    row["digest"]["blake3"]
-                        .as_str()
-                        .expect("root payload BLAKE3"),
-                )
+                .entry(row["digest"]["blake3"].as_str().expect("root payload BLAKE3"))
                 .or_default()
                 .insert(row["url"].as_str().expect("root payload URL"));
             grouped
-        },
-    );
+        });
     assert!(
         urls_by_digest.values().all(|urls| urls.len() == 1),
         "identical root payload bytes must reuse one immutable URL"
@@ -610,8 +530,7 @@ fn release_graph_publishes_every_manifested_profile_root_payload() {
     for row in root_rows {
         let path = row["path"].as_str().expect("root payload path");
         assert!(copies.iter().any(|copy| {
-            copy.url == row["url"].as_str().expect("root payload URL")
-                && copy.source == config_root.join(path)
+            copy.url == row["url"].as_str().expect("root payload URL") && copy.source == config_root.join(path)
         }));
     }
 }
@@ -674,10 +593,7 @@ fn profile_check_rejects_malformed_profile_mcp_file_even_when_hash_matches() {
     })
     .expect_err("malformed MCP config rejected");
 
-    assert!(
-        format!("{error:#}").contains("parse profile MCP config"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("parse profile MCP config"), "{error:#}");
 }
 
 #[test]
@@ -698,18 +614,16 @@ fn profile_check_rejects_empty_profile_package_file_even_when_hash_matches() {
     profile.rule_files.sigma = None;
     profile.assets.arch.retain(|arch, _| arch == "arm64");
     profile.files = Default::default();
-    profile.files.python_requirements =
-        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-            path: "profiles/code/python-requirements.txt".to_string(),
-            hash: None,
-            size: None,
-        });
-    profile.files.python_requirements_lock =
-        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-            path: "profiles/code/python-requirements.lock".to_string(),
-            hash: None,
-            size: None,
-        });
+    profile.files.python_requirements = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: "profiles/code/python-requirements.txt".to_string(),
+        hash: None,
+        size: None,
+    });
+    profile.files.python_requirements_lock = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: "profiles/code/python-requirements.lock".to_string(),
+        hash: None,
+        size: None,
+    });
     let profile_path = profile_dir.join("profile.toml");
     fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
 
@@ -806,10 +720,7 @@ fn profile_check_rejects_profile_root_manifest_escape_paths() {
     })
     .expect_err("root manifest escape rejected");
 
-    assert!(
-        error.to_string().contains("profile root manifest file"),
-        "{error:#}"
-    );
+    assert!(error.to_string().contains("profile root manifest file"), "{error:#}");
 }
 
 #[test]
@@ -902,10 +813,7 @@ fn profile_check_rejects_symlinked_profile_root_payloads() {
 
     let error = check_profile_root_manifest(&manifest_path).expect_err("payload symlink rejected");
 
-    assert!(
-        format!("{error:#}").contains("not a regular file"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("not a regular file"), "{error:#}");
 }
 
 #[test]
@@ -923,11 +831,7 @@ fn profile_check_rejects_local_model_provider_profile_root_payloads() {
   }
 }
 "#;
-    fs::write(
-        profile_root.join("root/.gemini/config/config.json"),
-        payload,
-    )
-    .expect("agy config");
+    fs::write(profile_root.join("root/.gemini/config/config.json"), payload).expect("agy config");
     let root_manifest = format!(
         r#"{{
   "format": "capsem.profile-root.v1",
@@ -1026,11 +930,7 @@ fn image_verify_rejects_profile_manifest_pin_drift() {
     profile.rule_files.sigma = None;
     profile.assets.arch.retain(|arch, _| arch == "arm64");
     let profile_path = temp.path().join("profile.toml");
-    fs::write(
-        &profile_path,
-        toml::to_string(&profile).expect("serialize profile"),
-    )
-    .expect("profile");
+    fs::write(&profile_path, toml::to_string(&profile).expect("serialize profile")).expect("profile");
 
     let error = verify_image_outputs(&ImageVerifyArgs {
         profile: profile_path,
@@ -1041,29 +941,21 @@ fn image_verify_rejects_profile_manifest_pin_drift() {
     })
     .expect_err("manifest/output drift rejected");
 
-    assert!(
-        format!("{error:#}").contains("image output verify failed"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("image output verify failed"), "{error:#}");
 }
 
 #[test]
 fn image_build_requires_profile_argument() {
-    let error =
-        Cli::try_parse_from(["capsem-admin", "image", "build"]).expect_err("profile is required");
+    let error = Cli::try_parse_from(["capsem-admin", "image", "build"]).expect_err("profile is required");
 
     assert!(error.to_string().contains("--profile"), "{error}");
 }
 
 #[test]
 fn image_workspace_is_a_supported_command_with_required_inputs() {
-    let error = Cli::try_parse_from(["capsem-admin", "image", "workspace"])
-        .expect_err("workspace inputs are required");
+    let error = Cli::try_parse_from(["capsem-admin", "image", "workspace"]).expect_err("workspace inputs are required");
 
-    assert_eq!(
-        error.kind(),
-        clap::error::ErrorKind::MissingRequiredArgument
-    );
+    assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     let rendered = error.to_string();
     assert!(rendered.contains("--profile"), "{rendered}");
     assert!(rendered.contains("--output"), "{rendered}");
@@ -1093,12 +985,7 @@ fn image_build_rejects_dry_run_escape_hatch() {
     ])
     .expect_err("dry-run is not a public product rail");
 
-    assert!(
-        error
-            .to_string()
-            .contains("unexpected argument '--dry-run'"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("unexpected argument '--dry-run'"), "{error}");
 }
 
 #[test]
@@ -1113,20 +1000,14 @@ fn removed_admin_authoring_commands_are_not_parseable() {
         ["capsem-admin", "image", "verify"],
     ] {
         let error = Cli::try_parse_from(argv).expect_err("removed command rejected");
-        assert!(
-            error.to_string().contains("unrecognized subcommand"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("unrecognized subcommand"), "{error}");
     }
 }
 
 #[test]
 fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let args = ImageBuildArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
         config_root: repo_root.join("config"),
@@ -1151,13 +1032,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec![
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "capsem_builder.image.image_build_backend",
-        ]
+        vec!["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend",]
     );
     assert!(!plan.commands[0]
         .argv
@@ -1169,13 +1044,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec![
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "capsem_builder.image.image_build_backend",
-        ]
+        vec!["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend",]
     );
     assert!(!plan.commands[1]
         .argv
@@ -1186,9 +1055,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
         Some(&"lz4hc".to_string())
     );
     assert_eq!(
-        plan.commands[1]
-            .env
-            .get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL"),
+        plan.commands[1].env.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL"),
         Some(&"12".to_string())
     );
     assert_eq!(plan.commands[2].step, "manifest");
@@ -1197,10 +1064,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
 #[test]
 fn image_plan_kernel_only_does_not_generate_manifest() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let args = ImageBuildArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
         config_root: repo_root.join("config"),
@@ -1292,10 +1156,7 @@ fn image_clean_kernel_preserves_rootfs() {
 #[test]
 fn image_plan_rejects_arch_missing_from_profile() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let args = ImageBuildArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
         config_root: repo_root.join("config"),
@@ -1310,9 +1171,7 @@ fn image_plan_rejects_arch_missing_from_profile() {
     let error = image_build_plan(&args).expect_err("unknown arch rejected");
 
     assert!(
-        error
-            .to_string()
-            .contains("does not define assets for arch riscv64"),
+        error.to_string().contains("does not define assets for arch riscv64"),
         "{error:#}"
     );
 }
@@ -1320,10 +1179,7 @@ fn image_plan_rejects_arch_missing_from_profile() {
 #[test]
 fn image_workspace_materializes_self_contained_profile_config() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let args = ImageWorkspaceArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
@@ -1342,14 +1198,8 @@ fn image_workspace_materializes_self_contained_profile_config() {
     assert_eq!(report.rule_files.len(), 2);
     let workspace_profile = args.output.join("config/profiles/code/profile.toml");
     assert!(workspace_profile.is_file());
-    assert!(args
-        .output
-        .join("config/profiles/code/enforcement.toml")
-        .is_file());
-    assert!(args
-        .output
-        .join("config/profiles/code/detection.yaml")
-        .is_file());
+    assert!(args.output.join("config/profiles/code/enforcement.toml").is_file());
+    assert!(args.output.join("config/profiles/code/detection.yaml").is_file());
     assert!(args.output.join("build-plan.json").is_file());
     assert!(args.output.join("workspace.json").is_file());
     let generated_config = args.output.join("guest").join("config");
@@ -1361,43 +1211,34 @@ fn image_workspace_materializes_self_contained_profile_config() {
         fs::read(&source_build).expect("source build config"),
         "the image workspace must copy the one authoritative build contract byte-for-byte"
     );
-    let build_config: toml::Value = toml::from_str(
-        &fs::read_to_string(&generated_build).expect("read materialized build config"),
-    )
-    .expect("parse materialized build config");
+    let build_config: toml::Value =
+        toml::from_str(&fs::read_to_string(&generated_build).expect("read materialized build config"))
+            .expect("parse materialized build config");
     let kernel = build_config["build"]["kernel"]
         .as_table()
         .expect("one common kernel source table");
     assert!(kernel.get("version").is_some());
     assert!(kernel.get("sha256").is_some());
-    let apt_packages = fs::read_to_string(generated_config.join("packages/apt.toml"))
-        .expect("materialized apt packages");
+    let apt_packages =
+        fs::read_to_string(generated_config.join("packages/apt.toml")).expect("materialized apt packages");
     assert!(
         apt_packages.contains("\"zstd\""),
         "Ollama's official installer consumes .tar.zst payloads, so shipped profiles must include zstd"
     );
     assert!(generated_config.join("packages/python.toml").is_file());
-    assert!(generated_config
-        .join("packages/python-requirements.lock")
-        .is_file());
+    assert!(generated_config.join("packages/python-requirements.lock").is_file());
     assert!(generated_config.join("packages/npm.toml").is_file());
     assert!(generated_config.join("packages/npm-package.json").is_file());
-    assert!(generated_config
-        .join("packages/npm-package-lock.json")
-        .is_file());
-    let resources = fs::read_to_string(generated_config.join("vm/resources.toml"))
-        .expect("materialized VM resources");
+    assert!(generated_config.join("packages/npm-package-lock.json").is_file());
+    let resources = fs::read_to_string(generated_config.join("vm/resources.toml")).expect("materialized VM resources");
     assert!(resources.contains("ram_gb = 12"));
     assert!(resources.contains("scratch_disk_size_gb = 64"));
     assert!(args.output.join("guest/profile-build.sh").is_file());
-    let profile_build = fs::read_to_string(args.output.join("guest/profile-build.sh"))
-        .expect("materialized profile build script");
+    let profile_build =
+        fs::read_to_string(args.output.join("guest/profile-build.sh")).expect("materialized profile build script");
     assert!(profile_build.contains("CAPSEM_OLLAMA_SHA256"));
     assert!(!profile_build.contains("https://ollama.com/install.sh"));
-    assert!(args
-        .output
-        .join("guest/profile-root/root/.codex/config.toml")
-        .is_file());
+    assert!(args.output.join("guest/profile-root/root/.codex/config.toml").is_file());
     assert!(args.output.join("guest/artifacts/tips.txt").is_file());
     let build_plan: serde_json::Value =
         serde_json::from_slice(&fs::read(args.output.join("build-plan.json")).unwrap()).unwrap();
@@ -1425,10 +1266,7 @@ fn image_workspace_materializes_self_contained_profile_config() {
 #[test]
 fn image_workspace_removes_stale_profile_root_payloads_before_materializing() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let output = temp.path().join("workspace");
     let stale_profile_root = output.join("guest/profile-root/root/.gemini/config/config.json");
@@ -1452,8 +1290,7 @@ fn image_workspace_removes_stale_profile_root_payloads_before_materializing() {
 
     materialize_image_workspace(&args).expect("workspace");
 
-    let materialized_config =
-        fs::read_to_string(&stale_profile_root).expect("materialized AGY provider config");
+    let materialized_config = fs::read_to_string(&stale_profile_root).expect("materialized AGY provider config");
     assert_eq!(materialized_config.trim(), "{}");
     assert!(
         !stale_deleted_file.exists(),
@@ -1464,10 +1301,7 @@ fn image_workspace_removes_stale_profile_root_payloads_before_materializing() {
 #[test]
 fn profile_materialize_writes_generated_config_from_manifest() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
@@ -1524,16 +1358,13 @@ fn profile_materialize_writes_generated_config_from_manifest() {
     assert!(obom.url.starts_with("file://"));
     assert_eq!(
         obom.hash,
-        format!(
-            "blake3:{}",
-            blake3::hash(test_obom_json().as_bytes()).to_hex()
-        )
+        format!("blake3:{}", blake3::hash(test_obom_json().as_bytes()).to_hex())
     );
     assert_eq!(obom.generator, "cdxgen");
     assert_eq!(obom.generator_version, "11.0.0");
 
-    let validation = validate_materialized_profile(&generated_profile_path, Some(&output_root))
-        .expect("valid materialized output");
+    let validation =
+        validate_materialized_profile(&generated_profile_path, Some(&output_root)).expect("valid materialized output");
     assert_eq!(validation.profile_id, "code");
     assert_eq!(
         fs::read_to_string(source_profile).expect("read source profile after"),
@@ -1545,10 +1376,7 @@ fn profile_materialize_writes_generated_config_from_manifest() {
 #[test]
 fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_json = fs::read_to_string(&manifest_path).expect("manifest");
@@ -1572,19 +1400,10 @@ fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
         toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated"))
             .expect("parse generated profile");
     let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
-    let expected_base = manifest_url.replace(
-        "/assets/stable/manifest.json",
-        "/assets/releases/2030.0101.1",
-    );
+    let expected_base = manifest_url.replace("/assets/stable/manifest.json", "/assets/releases/2030.0101.1");
     assert_eq!(arm64.kernel.url, format!("{expected_base}/arm64-vmlinuz"));
-    assert_eq!(
-        arm64.initrd.url,
-        format!("{expected_base}/arm64-initrd.img")
-    );
-    assert_eq!(
-        arm64.rootfs.url,
-        format!("{expected_base}/arm64-rootfs.erofs")
-    );
+    assert_eq!(arm64.initrd.url, format!("{expected_base}/arm64-initrd.img"));
+    assert_eq!(arm64.rootfs.url, format!("{expected_base}/arm64-rootfs.erofs"));
     assert_eq!(
         arm64.kernel.hash,
         Some(format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex()))
@@ -1604,10 +1423,7 @@ fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
 #[test]
 fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let output_root = temp.path().join("target/config");
     let local_obom = temp.path().join("resolved-obom.cdx.json");
@@ -1615,8 +1431,7 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     let local_obom_url = file_url(&local_obom);
     let software_inventory = test_software_inventory_json("arm64");
     let local_software_inventory = temp.path().join("resolved-software-inventory.json");
-    fs::write(&local_software_inventory, &software_inventory)
-        .expect("write resolved software inventory");
+    fs::write(&local_software_inventory, &software_inventory).expect("write resolved software inventory");
     let local_software_inventory_url = file_url(&local_software_inventory);
     let digest = |bytes: &[u8]| {
         serde_json::json!({
@@ -1734,10 +1549,9 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     assert_eq!(obom.generator_version, "11.0.0");
 
     let converted_manifest_path = output_root.join("assets/manifest.json");
-    let converted = ManifestV2::from_json(
-        &fs::read_to_string(&converted_manifest_path).expect("read converted manifest"),
-    )
-    .expect("converted release channel manifest is raw v2");
+    let converted =
+        ManifestV2::from_json(&fs::read_to_string(&converted_manifest_path).expect("read converted manifest"))
+            .expect("converted release channel manifest is raw v2");
     assert_eq!(converted.format, 2);
     assert_eq!(converted.assets.current, "2030.0101.1");
     // The graph profile's `min_capsem_version` reaches the runtime manifest as
@@ -1746,8 +1560,7 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     // which copies `min_binary` onto every graph profile as
     // `min_capsem_version`, and `record-binary` refuses an empty semver.
     assert_eq!(
-        converted.assets.releases["2030.0101.1"].min_binary,
-        "1.5.0",
+        converted.assets.releases["2030.0101.1"].min_binary, "1.5.0",
         "the graph profile declares a binary floor and the runtime manifest \
          has to carry it, or re-authoring a channel names no floor at all"
     );
@@ -1770,10 +1583,7 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
 #[test]
 fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
@@ -1805,14 +1615,10 @@ fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
     .expect("materialize code");
 
     for profile_id in ["co-work", "code"] {
-        let generated_profile_path = output_root
-            .join("profiles")
-            .join(profile_id)
-            .join("profile.toml");
-        let generated: ProfileConfigFile = toml::from_str(
-            &fs::read_to_string(&generated_profile_path).expect("read generated profile"),
-        )
-        .expect("generated profile parses");
+        let generated_profile_path = output_root.join("profiles").join(profile_id).join("profile.toml");
+        let generated: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated profile"))
+                .expect("generated profile parses");
         let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
         assert_eq!(
             arm64.kernel.hash,
@@ -1838,10 +1644,7 @@ fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
 #[test]
 fn profile_materialize_rejects_arch_missing_from_manifest() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
 
@@ -1866,10 +1669,7 @@ fn profile_materialize_rejects_arch_missing_from_manifest() {
 #[test]
 fn profile_materialize_manifest_source_must_be_url() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root");
+    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
 
@@ -1885,10 +1685,7 @@ fn profile_materialize_manifest_source_must_be_url() {
     })
     .expect_err("bare manifest path rejected");
 
-    assert!(
-        format!("{error:#}").contains("manifest must be a URL"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("manifest must be a URL"), "{error:#}");
 }
 
 #[test]
@@ -1973,17 +1770,14 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
                 .trim_start_matches('/'),
         );
         assert_ne!(
-            fs::metadata(assets_dir.join("arm64/vmlinuz"))
-                .unwrap()
-                .ino(),
+            fs::metadata(assets_dir.join("arm64/vmlinuz")).unwrap().ino(),
             fs::metadata(published).unwrap().ino(),
             "an external fixture must remain independent from published output"
         );
     }
     assert_eq!(
         kernel_artifact["digest"]["blake3"],
-        source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]["vmlinuz"]
-            ["hash"]
+        source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]["vmlinuz"]["hash"]
     );
     assert!(
         kernel_artifact["digest"]["sha256"]
@@ -1992,21 +1786,14 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         "channel manifest must hydrate VM asset SHA-256"
     );
     let health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
-            .expect("health json parses");
-    assert_eq!(
-        health["schema"].as_str(),
-        Some("capsem.assets_channel.health.v1")
-    );
+        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap()).expect("health json parses");
+    assert_eq!(health["schema"].as_str(), Some("capsem.assets_channel.health.v1"));
     assert_eq!(health["current"]["assets"].as_str(), Some("2030.0101.1"));
     assert_eq!(
         health["urls"]["manifest"].as_str(),
         Some("/assets/stable/manifest.json")
     );
-    assert_eq!(
-        health["urls"]["asset_base"].as_str(),
-        Some("/assets/releases")
-    );
+    assert_eq!(health["urls"]["asset_base"].as_str(), Some("/assets/releases"));
     assert_eq!(
         health["assets"]["files"][0]["url"].as_str(),
         Some("/assets/releases/2030.0101.1/arm64-initrd.img")
@@ -2015,18 +1802,9 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         health["updates"]["assets"]["files"].is_null(),
         "VM asset file inventory belongs under assets.files, not updates.assets.files"
     );
-    assert_eq!(
-        health["assets"]["compatibility"]["min_binary"].as_str(),
-        Some("1.0.0")
-    );
-    assert_eq!(
-        health["assets"]["requires_newer"]["binary"].as_bool(),
-        Some(false)
-    );
-    assert_eq!(
-        health["asset_releases"][0]["date"].as_str(),
-        Some("2030-01-01")
-    );
+    assert_eq!(health["assets"]["compatibility"]["min_binary"].as_str(), Some("1.0.0"));
+    assert_eq!(health["assets"]["requires_newer"]["binary"].as_bool(), Some(false));
+    assert_eq!(health["asset_releases"][0]["date"].as_str(), Some("2030-01-01"));
     assert_eq!(
         health["evidence"]["vm_oboms"][0]["url"].as_str(),
         Some("/assets/releases/2030.0101.1/arm64-obom.cdx.json")
@@ -2091,14 +1869,8 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         health["updates"]["binary"]["source"].as_str(),
         Some("manifest.binaries.current")
     );
-    assert_eq!(
-        health["updates"]["assets"]["latest"].as_str(),
-        Some("2030.0101.1")
-    );
-    assert_eq!(
-        health["updates"]["assets"]["current"].as_str(),
-        Some("2030.0101.1")
-    );
+    assert_eq!(health["updates"]["assets"]["latest"].as_str(), Some("2030.0101.1"));
+    assert_eq!(health["updates"]["assets"]["current"].as_str(), Some("2030.0101.1"));
     assert_eq!(
         health["updates"]["assets"]["manifest"].as_str(),
         Some("/assets/stable/manifest.json")
@@ -2128,14 +1900,8 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         health["updates"]["profiles"]["compatibility"].is_null(),
         "profile update metadata must not publish channel compatibility"
     );
-    assert_eq!(
-        health["updates"]["profiles"]["state"].as_str(),
-        Some("current")
-    );
-    assert_eq!(
-        health["profiles"]["source"].as_str(),
-        Some("manifest.profiles")
-    );
+    assert_eq!(health["updates"]["profiles"]["state"].as_str(), Some("current"));
+    assert_eq!(health["profiles"]["source"].as_str(), Some("manifest.profiles"));
     assert!(health["profiles"]["hash"].is_null());
     assert_eq!(
         health["updates"]["profiles"]["source"].as_str(),
@@ -2147,10 +1913,7 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         health["updates"]["images"]["latest"].is_null(),
         "unpublished image latest should be explicit null"
     );
-    assert_eq!(
-        health["updates"]["images"]["state"].as_str(),
-        Some("not_published")
-    );
+    assert_eq!(health["updates"]["images"]["state"].as_str(), Some("not_published"));
     assert_eq!(
         health["updates"]["images"]["source"].as_str(),
         Some("manifest.profiles.images")
@@ -2180,12 +1943,10 @@ fn release_graph_manifest_version_is_independent_from_package_and_assets() {
     .expect("asset channel builds");
 
     let channels: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out_dir.join("channels.json")).unwrap())
-            .expect("channels json");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap(),
-    )
-    .expect("graph manifest json");
+        serde_json::from_str(&fs::read_to_string(out_dir.join("channels.json")).unwrap()).expect("channels json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap())
+            .expect("graph manifest json");
 
     assert_eq!(
         channels["channels"]["stable"]["manifests"][0]["version"].as_str(),
@@ -2267,34 +2028,26 @@ fn assets_channel_build_preserves_existing_channels_when_adding_nightly() {
     )
     .expect("nightly channel builds without erasing stable");
 
-    let channels: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out_dir.join("channels.json")).unwrap())
-            .expect("merged channels json");
+    let channels: serde_json::Value = serde_json::from_str(&fs::read_to_string(out_dir.join("channels.json")).unwrap())
+        .expect("merged channels json");
     let channel_ids = channels["channels"]
         .as_object()
         .expect("channels object")
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    assert_eq!(
-        channel_ids,
-        vec!["nightly".to_string(), "stable".to_string()]
-    );
+    assert_eq!(channel_ids, vec!["nightly".to_string(), "stable".to_string()]);
     assert_eq!(
         channels["channels"]["stable"]["manifests"][0]["url"].as_str(),
         Some(stable_manifest_url.as_str())
     );
-    assert!(out_dir
-        .join(stable_manifest_url.trim_start_matches('/'))
-        .is_file());
+    assert!(out_dir.join(stable_manifest_url.trim_start_matches('/')).is_file());
     assert!(out_dir.join("assets/stable/manifest.json").is_file());
     assert!(out_dir.join("assets/nightly/manifest.json").is_file());
     let nightly_manifest_url = channels["channels"]["nightly"]["manifests"][0]["url"]
         .as_str()
         .expect("nightly manifest url");
-    assert!(out_dir
-        .join(nightly_manifest_url.trim_start_matches('/'))
-        .is_file());
+    assert!(out_dir.join(nightly_manifest_url.trim_start_matches('/')).is_file());
 
     check_assets_channel(&out_dir, "stable").expect("merged stable channel checks");
     fs::remove_file(out_dir.join("index.html")).expect("remove stable test index fixture");
@@ -2306,8 +2059,7 @@ fn assets_channel_build_bootstraps_without_binary_files() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let mut manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("manifest json");
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("manifest json");
     manifest["binaries"]["releases"]["1.0.0"]
         .as_object_mut()
         .expect("binary release")
@@ -2332,12 +2084,8 @@ fn assets_channel_build_bootstraps_without_binary_files() {
     .expect("first asset channel builds before binary evidence exists");
 
     let health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
-            .expect("health json parses");
-    assert_eq!(
-        health["evidence"]["host_binary_files"],
-        serde_json::json!([])
-    );
+        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap()).expect("health json parses");
+    assert_eq!(health["evidence"]["host_binary_files"], serde_json::json!([]));
     assert_eq!(health["evidence"]["host_sboms"], serde_json::json!([]));
     assert!(health["evidence"]["attestations"]
         .as_array()
@@ -2345,8 +2093,7 @@ fn assets_channel_build_bootstraps_without_binary_files() {
         .iter()
         .any(|item| item["name"] == "github_attestations_vm_assets"));
 
-    check_assets_channel(&out_dir, "stable")
-        .expect("first asset channel checks before binary evidence exists");
+    check_assets_channel(&out_dir, "stable").expect("first asset channel checks before binary evidence exists");
 }
 
 #[test]
@@ -2360,10 +2107,8 @@ fn assets_channel_headers_split_mutable_and_immutable_paths() {
     assert!(headers.contains("/health.json\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
     assert!(!headers.contains("/profiles/stable/*\n  Cache-Control: no-cache"));
-    assert!(headers
-        .contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
-    assert!(headers
-        .contains("/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
+    assert!(headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
+    assert!(headers.contains("/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
     assert!(!headers.contains("/assets/*\n  Cache-Control: no-cache"));
     assert!(!headers.contains("/profiles/*\n  Cache-Control: no-cache"));
 }
@@ -2387,13 +2132,10 @@ fn host_spdx_requires_sha256_file_checksums() {
           ]
         }"#;
 
-    let error = validate_host_spdx_sbom_bytes(sha1_only, &sbom_path)
-        .expect_err("SHA1-only SPDX file checksums rejected");
+    let error =
+        validate_host_spdx_sbom_bytes(sha1_only, &sbom_path).expect_err("SHA1-only SPDX file checksums rejected");
 
-    assert!(
-        format!("{error:#}").contains("missing SHA256 checksum"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("missing SHA256 checksum"), "{error:#}");
 }
 
 #[test]
@@ -2415,8 +2157,7 @@ fn host_spdx_accepts_sha256_file_checksums() {
           ]
         }"#;
 
-    validate_host_spdx_sbom_bytes(with_sha256, &sbom_path)
-        .expect("SPDX file with SHA256 checksum validates");
+    validate_host_spdx_sbom_bytes(with_sha256, &sbom_path).expect("SPDX file with SHA256 checksum validates");
 }
 
 #[test]
@@ -2457,12 +2198,10 @@ fn binary_files_from_deb_rejects_filename_control_architecture_mismatch() {
         release_graph::PackageArchitecture::Arm64,
     );
 
-    let error = binary_files_from_artifacts(&[deb_path])
-        .expect_err("filename/control architecture mismatch rejected");
+    let error = binary_files_from_artifacts(&[deb_path]).expect_err("filename/control architecture mismatch rejected");
 
     assert!(
-        format!("{error:#}")
-            .contains("filename architecture amd64 does not match control Architecture arm64"),
+        format!("{error:#}").contains("filename architecture amd64 does not match control Architecture arm64"),
         "{error:#}"
     );
 }
@@ -2478,13 +2217,9 @@ fn binary_files_from_deb_rejects_missing_control_architecture() {
         b"Package: capsem\nVersion: 1.0.0\n",
     );
 
-    let error = binary_files_from_artifacts(&[deb_path])
-        .expect_err("missing control Architecture rejected");
+    let error = binary_files_from_artifacts(&[deb_path]).expect_err("missing control Architecture rejected");
 
-    assert!(
-        format!("{error:#}").contains("missing Architecture"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("missing Architecture"), "{error:#}");
 }
 
 #[test]
@@ -2566,27 +2301,16 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
     assert_eq!(updated["packages"].as_array().expect("packages").len(), 2);
     assert_eq!(updated["packages"][0]["name"], "Capsem-1.4.1234567890.pkg");
     assert_eq!(updated["packages"][0]["version"], "1.4.1234567890");
-    assert_eq!(
-        updated["packages"][0]["source_commit"],
-        source_commit().as_str()
-    );
-    assert_eq!(
-        updated["packages"][1]["source_commit"],
-        source_commit().as_str()
-    );
+    assert_eq!(updated["packages"][0]["source_commit"], source_commit().as_str());
+    assert_eq!(updated["packages"][1]["source_commit"], source_commit().as_str());
     assert!(updated.get("source_commit").is_none());
-    assert!(updated["packages"][0]["binaries"][0]
-        .get("source_commit")
-        .is_none());
+    assert!(updated["packages"][0]["binaries"][0].get("source_commit").is_none());
     assert_eq!(updated["packages"][0]["status"], "current");
     assert_eq!(updated["packages"][0]["platform"], "macos");
     assert_eq!(updated["packages"][0]["architecture"], "arm64");
     assert_eq!(
         updated["packages"][0]["digest"]["sha256"],
-        format!(
-            "{:x}",
-            Sha256::digest(fs::read(&pkg_path).expect("pkg bytes"))
-        )
+        format!("{:x}", Sha256::digest(fs::read(&pkg_path).expect("pkg bytes")))
     );
     assert_eq!(
         updated["packages"][0]["binaries"][0]["installed_path"].as_str(),
@@ -2604,10 +2328,7 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
         updated["packages"][1]["binaries"][0]["installed_path"].as_str(),
         Some("/usr/bin/capsem-app")
     );
-    assert_eq!(
-        updated["packages"][1]["name"],
-        "Capsem_1.4.1234567890_amd64.deb"
-    );
+    assert_eq!(updated["packages"][1]["name"], "Capsem_1.4.1234567890_amd64.deb");
     assert_eq!(updated["packages"][1]["architecture"], "amd64");
 }
 
@@ -2636,8 +2357,7 @@ fn release_graph_health_uses_profile_obom_as_vm_attestation_predicate() {
         .expect("build graph distribution");
 
     let health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(dist.join("health.json")).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(dist.join("health.json")).expect("health")).expect("health json");
     let attestation = health["evidence"]["attestations"]
         .as_array()
         .expect("attestations")
@@ -2655,26 +2375,19 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
     let mut staged: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
     staged["profiles"]["co-work"]["version"] = serde_json::Value::String("2030.0203.1".to_string());
-    staged["profiles"]["co-work"]["revision"] =
-        serde_json::Value::String("2030.0203.1".to_string());
-    staged["profiles"]["co-work"]["min_capsem_version"] =
-        serde_json::Value::String("1.4.1234567890".to_string());
-    staged["profiles"]["co-work"]["max_capsem_version"] =
-        serde_json::Value::String("1.4.1234567890".to_string());
+    staged["profiles"]["co-work"]["revision"] = serde_json::Value::String("2030.0203.1".to_string());
+    staged["profiles"]["co-work"]["min_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
+    staged["profiles"]["co-work"]["max_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
     fs::write(
         &manifest_path,
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&staged).expect("staged manifest")
-        ),
+        format!("{}\n", serde_json::to_string_pretty(&staged).expect("staged manifest")),
     )
     .expect("write staged manifest");
     let staged_bytes = fs::read(&manifest_path).expect("staged bytes");
     let staged_profile = staged["profiles"]["co-work"].clone();
 
     assert!(
-        !graph_profile_matches_current_binary(&staged_profile, &staged)
-            .expect("old binary compatibility"),
+        !graph_profile_matches_current_binary(&staged_profile, &staged).expect("old binary compatibility"),
         "the staged profile must remain private while the public binary is too old"
     );
     let error = build_assets_channel_from_graph(
@@ -2754,8 +2467,7 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
     .expect("compatible binary activates staged profile");
 
     let activated: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("activated manifest"))
-            .expect("activated json");
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("activated manifest")).expect("activated json");
     assert_eq!(
         activated["profiles"]["co-work"], staged_profile,
         "binary activation must reuse the exact staged profile instead of rebuilding it"
@@ -2794,8 +2506,7 @@ fn assets_channel_record_binary_rejects_sbom_without_host_package() {
     .expect_err("SBOM-only binary metadata rejected");
 
     assert!(
-        format!("{error:#}")
-            .contains("binary release metadata must include a host package artifact"),
+        format!("{error:#}").contains("binary release metadata must include a host package artifact"),
         "{error:#}"
     );
 }
@@ -2822,8 +2533,7 @@ fn assets_channel_record_binary_rejects_non_package_host_artifact() {
     .expect_err("non-package host artifact rejected");
 
     assert!(
-        format!("{error:#}")
-            .contains("binary release metadata must include a .pkg or .deb artifact"),
+        format!("{error:#}").contains("binary release metadata must include a .pkg or .deb artifact"),
         "{error:#}"
     );
 }
@@ -2911,10 +2621,7 @@ fn assets_channel_record_binary_rejects_noncanonical_sbom_artifact() {
     )
     .expect_err("noncanonical SBOM artifact rejected");
 
-    assert!(
-        format!("{error:#}").contains("capsem-sbom.spdx.json"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("capsem-sbom.spdx.json"), "{error:#}");
 }
 
 fn write_minimal_pkg_with_file(path: &Path, file_path: &str, contents: &[u8]) {
@@ -2924,11 +2631,9 @@ fn write_minimal_pkg_with_file(path: &Path, file_path: &str, contents: &[u8]) {
 
         let root = tempfile::tempdir().expect("pkg root");
         let payload_path = root.path().join(file_path);
-        fs::create_dir_all(payload_path.parent().expect("payload parent"))
-            .expect("payload parent dir");
+        fs::create_dir_all(payload_path.parent().expect("payload parent")).expect("payload parent dir");
         fs::write(&payload_path, contents).expect("payload file");
-        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o755))
-            .expect("payload executable");
+        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o755)).expect("payload executable");
 
         let output = Command::new("pkgbuild")
             .arg("--root")
@@ -2961,11 +2666,7 @@ fn write_minimal_pkg_with_file(path: &Path, file_path: &str, contents: &[u8]) {
             header.set_mode(0o755);
             header.set_cksum();
             builder
-                .append_data(
-                    &mut header,
-                    format!("capsem.pkg/Payload/{file_path}"),
-                    contents,
-                )
+                .append_data(&mut header, format!("capsem.pkg/Payload/{file_path}"), contents)
                 .expect("append pkg executable");
             let encoder = builder.into_inner().expect("finish tar");
             encoder.finish().expect("finish gzip");
@@ -3071,20 +2772,15 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     assert_eq!(report.copied_assets, 0);
     assert!(!out_dir.join("assets/releases").exists());
     assert!(out_dir.join("profiles/releases/stable").is_dir());
-    let channel_manifest: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap(),
-    )
-    .expect("channel manifest parses");
+    let channel_manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap())
+            .expect("channel manifest parses");
     let health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
-            .expect("health parses");
-    let rootfs_url =
-        "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs";
+        serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap()).expect("health parses");
+    let rootfs_url = "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs";
     assert_eq!(health["urls"]["asset_base"].as_str(), Some(asset_base));
     let health_files = health["assets"]["files"].as_array().expect("asset files");
-    assert!(health_files
-        .iter()
-        .any(|file| file["url"].as_str() == Some(rootfs_url)));
+    assert!(health_files.iter().any(|file| file["url"].as_str() == Some(rootfs_url)));
     assert!(
         serde_json::to_string(&channel_manifest)
             .expect("serialize channel manifest")
@@ -3115,11 +2811,9 @@ fn assets_channel_check_rejects_bad_health_schema() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     health["schema"] = serde_json::Value::String("capsem.bad_schema".to_string());
-    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
-        .expect("write bad health");
+    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap()).expect("write bad health");
 
     let error = check_assets_channel(&out_dir, "stable").expect_err("bad health schema rejected");
 
@@ -3148,18 +2842,15 @@ fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     health["evidence"]["host_sboms"] = serde_json::json!([]);
     health["evidence"]["attestations"]
         .as_array_mut()
         .expect("attestations")
         .retain(|attestation| {
-            attestation.get("name").and_then(|name| name.as_str())
-                != Some("github_attestations_host_sbom")
+            attestation.get("name").and_then(|name| name.as_str()) != Some("github_attestations_host_sbom")
         });
-    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
-        .expect("write health without host SBOM");
+    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap()).expect("write health without host SBOM");
 
     check_assets_channel(&out_dir, "stable").expect("package-owned SBOMs are allowed");
 }
@@ -3183,8 +2874,7 @@ fn assets_channel_check_rejects_missing_asset_release_date() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     health["asset_releases"][0]
         .as_object_mut()
         .expect("asset release object")
@@ -3192,8 +2882,7 @@ fn assets_channel_check_rejects_missing_asset_release_date() {
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write health without asset release date");
 
-    let error =
-        check_assets_channel(&out_dir, "stable").expect_err("missing release date rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing release date rejected");
 
     assert!(
         format!("{error:#}").contains("health.json asset release date mismatch"),
@@ -3220,11 +2909,9 @@ fn assets_channel_check_rejects_missing_evidence_vm_obom() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     health["evidence"]["vm_oboms"] = serde_json::json!([]);
-    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
-        .expect("write health without VM OBOM");
+    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap()).expect("write health without VM OBOM");
 
     let error = check_assets_channel(&out_dir, "stable").expect_err("missing VM OBOM rejected");
 
@@ -3253,15 +2940,13 @@ fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     let attestations = health["evidence"]["attestations"]
         .as_array()
         .expect("attestations")
         .iter()
         .filter(|attestation| {
-            attestation.get("name").and_then(|name| name.as_str())
-                != Some("github_attestations_vm_assets")
+            attestation.get("name").and_then(|name| name.as_str()) != Some("github_attestations_vm_assets")
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -3269,8 +2954,7 @@ fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write health without VM attestation");
 
-    let error =
-        check_assets_channel(&out_dir, "stable").expect_err("missing VM attestation rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing VM attestation rejected");
 
     assert!(
         format!("{error:#}").contains("health.json VM asset attestation evidence missing"),
@@ -3297,27 +2981,21 @@ fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
-    let attestations = health["evidence"]["attestations"]
-        .as_array_mut()
-        .expect("attestations");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
+    let attestations = health["evidence"]["attestations"].as_array_mut().expect("attestations");
     let vm_attestation = attestations
         .iter_mut()
         .find(|attestation| {
-            attestation.get("name").and_then(|name| name.as_str())
-                == Some("github_attestations_vm_assets")
+            attestation.get("name").and_then(|name| name.as_str()) == Some("github_attestations_vm_assets")
         })
         .expect("VM asset attestation");
     vm_attestation
         .as_object_mut()
         .expect("attestation object")
         .remove("predicate_url");
-    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
-        .expect("write health without VM predicate");
+    fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap()).expect("write health without VM predicate");
 
-    let error = check_assets_channel(&out_dir, "stable")
-        .expect_err("missing VM attestation predicate rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing VM attestation predicate rejected");
 
     assert!(
         format!("{error:#}").contains("health.json VM asset attestation predicate_url missing"),
@@ -3344,15 +3022,13 @@ fn assets_channel_check_rejects_missing_host_sbom_attestation() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     let attestations = health["evidence"]["attestations"]
         .as_array()
         .expect("attestations")
         .iter()
         .filter(|attestation| {
-            attestation.get("name").and_then(|name| name.as_str())
-                != Some("github_attestations_host_sbom")
+            attestation.get("name").and_then(|name| name.as_str()) != Some("github_attestations_host_sbom")
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -3360,8 +3036,7 @@ fn assets_channel_check_rejects_missing_host_sbom_attestation() {
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write health without host SBOM attestation");
 
-    let error = check_assets_channel(&out_dir, "stable")
-        .expect_err("missing host SBOM attestation rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing host SBOM attestation rejected");
 
     assert!(
         format!("{error:#}").contains("health.json host SBOM attestation evidence missing"),
@@ -3374,8 +3049,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let mut manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("manifest json");
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("manifest json");
     manifest["binaries"]["releases"]["1.0.0"]["files"]
         .as_array_mut()
         .expect("binary files")
@@ -3415,16 +3089,12 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     let host_attestation = health["evidence"]["attestations"]
         .as_array_mut()
         .expect("attestations")
         .iter_mut()
-        .find(|attestation| {
-            attestation.get("name").and_then(|name| name.as_str())
-                == Some("github_attestations_host")
-        })
+        .find(|attestation| attestation.get("name").and_then(|name| name.as_str()) == Some("github_attestations_host"))
         .expect("host package attestation");
     let subjects = host_attestation["subjects"]
         .as_array_mut()
@@ -3435,8 +3105,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write health without deb SBOM subject");
 
-    let error = check_assets_channel(&out_dir, "stable")
-        .expect_err("missing host package SBOM subject rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing host package SBOM subject rejected");
 
     assert!(
         format!("{error:#}").contains("health.json host package attestation subjects missing"),
@@ -3463,8 +3132,7 @@ fn assets_channel_check_rejects_attestation_without_verification_metadata() {
 
     let health_path = out_dir.join("health.json");
     let mut health: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&health_path).expect("health"))
-            .expect("health json");
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("health")).expect("health json");
     health["evidence"]["attestations"][0]
         .as_object_mut()
         .expect("attestation object")
@@ -3472,8 +3140,8 @@ fn assets_channel_check_rejects_attestation_without_verification_metadata() {
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write health without verification metadata");
 
-    let error = check_assets_channel(&out_dir, "stable")
-        .expect_err("missing attestation verification metadata rejected");
+    let error =
+        check_assets_channel(&out_dir, "stable").expect_err("missing attestation verification metadata rejected");
 
     assert!(
         format!("{error:#}").contains("health.json attestation verify_command missing"),
@@ -3499,15 +3167,11 @@ fn assets_channel_check_rejects_missing_current_asset_blob() {
         None,
     )
     .expect("asset channel builds");
-    fs::remove_file(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs"))
-        .expect("remove published rootfs");
+    fs::remove_file(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs")).expect("remove published rootfs");
 
     let error = check_assets_channel(&out_dir, "stable").expect_err("missing asset blob rejected");
 
-    assert!(
-        format!("{error:#}").contains("arm64-rootfs.erofs"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("arm64-rootfs.erofs"), "{error:#}");
 }
 
 #[test]
@@ -3550,10 +3214,7 @@ fn assets_channel_manifest_source_must_be_url() {
     )
     .expect_err("bare manifest path rejected");
 
-    assert!(
-        format!("{error:#}").contains("manifest must be a URL"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("manifest must be a URL"), "{error:#}");
 }
 
 #[test]
@@ -3562,12 +3223,7 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
     let stable_manifest = temp.path().join("stable-manifest.json");
     let nightly_manifest = temp.path().join("nightly-manifest.json");
     write_profile_release_manifest(&stable_manifest, "1.4.0", "1.0.0", "deprecated");
-    write_profile_release_manifest(
-        &nightly_manifest,
-        "1.5.0-nightly.20300101",
-        "2026.7.2-2",
-        "supported",
-    );
+    write_profile_release_manifest(&nightly_manifest, "1.5.0-nightly.20300101", "2026.7.2-2", "supported");
 
     let args = ReleaseArgs {
         source_commit: source_commit(),
@@ -3578,10 +3234,7 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
         manifest_version: Some("1.5.0-nightly.20300101".to_string()),
         profile: "co-work".to_string(),
         profile_version: Some("2026.7.2-2".to_string()),
-        config_root: repo_config_profiles_dir()
-            .parent()
-            .expect("config root")
-            .to_path_buf(),
+        config_root: repo_config_profiles_dir().parent().expect("config root").to_path_buf(),
         status: ProfileReleaseStatusArg::Current,
         bootstrap_from_manifest: None,
         bootstrap_retired_manifest: None,
@@ -3603,12 +3256,8 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
     assert_eq!(report.changed_image_artifacts, 3);
 
     let nightly: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&nightly_manifest).expect("nightly manifest"))
-            .expect("nightly json");
-    assert_eq!(
-        nightly["profiles"]["co-work"]["status"].as_str(),
-        Some("current")
-    );
+        serde_json::from_str(&fs::read_to_string(&nightly_manifest).expect("nightly manifest")).expect("nightly json");
+    assert_eq!(nightly["profiles"]["co-work"]["status"].as_str(), Some("current"));
     assert_eq!(
         nightly["profiles"]["co-work"]["architectures"][0]["config"][0]["status"].as_str(),
         Some("current")
@@ -3619,8 +3268,7 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
     );
 
     let stable: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&stable_manifest).expect("stable manifest"))
-            .expect("stable json");
+        serde_json::from_str(&fs::read_to_string(&stable_manifest).expect("stable manifest")).expect("stable json");
     assert_eq!(
         stable["profiles"]["co-work"]["status"].as_str(),
         Some("deprecated"),
@@ -3661,25 +3309,18 @@ fn retired_graph_authoring_verifies_the_exact_input_bytes() {
         .expect("canonical digest");
 
     verify_retired_graph_sha256(bytes, &expected).expect("exact payload accepted");
-    let error = verify_retired_graph_sha256(b"substituted graph", &expected)
-        .expect_err("substitution rejected");
-    assert!(
-        format!("{error:#}").contains("sha256 mismatch"),
-        "{error:#}"
-    );
+    let error = verify_retired_graph_sha256(b"substituted graph", &expected).expect_err("substitution rejected");
+    assert!(format!("{error:#}").contains("sha256 mismatch"), "{error:#}");
 }
 
 #[test]
 fn profile_release_paths_are_channel_qualified() {
-    let stable = profile_release_url("stable", "code", "2026.06.08.7", "arm64", "rootfs.erofs")
-        .expect("stable profile URL");
-    let nightly = profile_release_url("nightly", "code", "2026.06.08.7", "arm64", "rootfs.erofs")
-        .expect("nightly profile URL");
+    let stable =
+        profile_release_url("stable", "code", "2026.06.08.7", "arm64", "rootfs.erofs").expect("stable profile URL");
+    let nightly =
+        profile_release_url("nightly", "code", "2026.06.08.7", "arm64", "rootfs.erofs").expect("nightly profile URL");
 
-    assert_eq!(
-        stable,
-        "/profiles/releases/stable/code/2026.06.08.7/arm64/rootfs.erofs"
-    );
+    assert_eq!(stable, "/profiles/releases/stable/code/2026.06.08.7/arm64/rootfs.erofs");
     assert_eq!(
         nightly,
         "/profiles/releases/nightly/code/2026.06.08.7/arm64/rootfs.erofs"
@@ -3704,18 +3345,14 @@ fn release_command_has_one_operator_shape() {
         Commands::Release(args) => {
             assert_eq!(args.channel, "nightly");
             assert_eq!(args.profile, "code");
-            assert_eq!(
-                args.source_commit.as_str(),
-                "0123456789abcdef0123456789abcdef01234567"
-            );
+            assert_eq!(args.source_commit.as_str(), "0123456789abcdef0123456789abcdef01234567");
             assert!(args.manifest_path.is_none());
             assert!(args.dry_run);
         }
         _ => panic!("expected release command"),
     }
     assert_eq!(
-        profile_publication_identity("nightly", "code", "2026.06.08.7")
-            .expect("publication identity"),
+        profile_publication_identity("nightly", "code", "2026.06.08.7").expect("publication identity"),
         "profile-nightly-code-2026.06.08.7"
     );
     assert!(
@@ -3856,15 +3493,8 @@ fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
         ..Default::default()
     };
 
-    let run_id = dispatch_profile_workflow(
-        &mut runner,
-        "release-assets.yaml",
-        "nightly",
-        "code",
-        &commit,
-        "ours",
-    )
-    .expect("the correlated run is selected");
+    let run_id = dispatch_profile_workflow(&mut runner, "release-assets.yaml", "nightly", "code", &commit, "ours")
+        .expect("the correlated run is selected");
 
     assert_eq!(run_id, 10);
     assert_eq!(runner.calls.last().expect("watch call")[2], "10");
@@ -3888,15 +3518,8 @@ fn profile_release_dispatch_propagates_the_exact_run_failure() {
         ..Default::default()
     };
 
-    let error = dispatch_profile_workflow(
-        &mut runner,
-        "release-assets.yaml",
-        "nightly",
-        "code",
-        &commit,
-        "ours",
-    )
-    .expect_err("the public command must fail with its exact workflow run");
+    let error = dispatch_profile_workflow(&mut runner, "release-assets.yaml", "nightly", "code", &commit, "ours")
+        .expect_err("the public command must fail with its exact workflow run");
 
     assert!(format!("{error:#}").contains("watched profile workflow failed"));
     assert_eq!(runner.calls.last().expect("watch call")[2], "11");
@@ -3911,19 +3534,12 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
         serde_json::from_str(&fs::read_to_string(fixture).expect("fixture")).expect("fixture json");
     let base = graph["manifests"]["nightly"]["1.0.2"].clone();
     let mut candidate = base.clone();
-    candidate["profiles"]["code"]["revision"] =
-        serde_json::Value::String("2026.07.24.1".to_string());
-    candidate["profiles"]["code"]["version"] =
-        serde_json::Value::String("2026.07.24.1".to_string());
-    candidate["profiles"]["code"]["min_capsem_version"] =
-        serde_json::Value::String("9.0.0".to_string());
+    candidate["profiles"]["code"]["revision"] = serde_json::Value::String("2026.07.24.1".to_string());
+    candidate["profiles"]["code"]["version"] = serde_json::Value::String("2026.07.24.1".to_string());
+    candidate["profiles"]["code"]["min_capsem_version"] = serde_json::Value::String("9.0.0".to_string());
     let base_path = temp.path().join("base.json");
     let candidate_path = temp.path().join("candidate.json");
-    fs::write(
-        &base_path,
-        serde_json::to_vec_pretty(&base).expect("base json"),
-    )
-    .expect("write base");
+    fs::write(&base_path, serde_json::to_vec_pretty(&base).expect("base json")).expect("write base");
     fs::write(
         &candidate_path,
         serde_json::to_vec_pretty(&candidate).expect("candidate json"),
@@ -3937,8 +3553,7 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
         manifest_path: Some(base_path.clone()),
         candidate_manifest: Some(candidate_path),
         publication_base: Some(
-            "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1"
-                .to_string(),
+            "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1".to_string(),
         ),
         manifest_version: Some("1.0.2".to_string()),
         profile_version: Some("2026.07.24.1".to_string()),
@@ -3977,26 +3592,16 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
     assert_eq!(report.changed_profiles, vec!["code"]);
     assert_eq!(merged["packages"], base["packages"]);
     assert_eq!(merged["profiles"]["co-work"], base["profiles"]["co-work"]);
-    assert_eq!(
-        merged["profiles"]["code"]["source_commit"],
-        source_commit().as_str()
-    );
+    assert_eq!(merged["profiles"]["code"]["source_commit"], source_commit().as_str());
     assert!(merged.get("source_commit").is_none());
-    assert_eq!(
-        merged["profiles"]["code"]["revision"].as_str(),
-        Some("2026.07.24.1")
-    );
+    assert_eq!(merged["profiles"]["code"]["revision"].as_str(), Some("2026.07.24.1"));
     assert_eq!(
         merged["profiles"]["code"]["architectures"][0]["config"][0]["url"].as_str(),
-        Some(
-            "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-profile.toml"
-        )
+        Some("https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-profile.toml")
     );
     assert_eq!(
         merged["profiles"]["code"]["architectures"][0]["images"][0]["url"].as_str(),
-        Some(
-            "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-vmlinuz"
-        )
+        Some("https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-vmlinuz")
     );
     assert!(merged["profiles"]["code"]["architectures"][0]["software"]
         .as_array()
@@ -4010,18 +3615,10 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
         .as_array()
         .expect("evidence rows")
         .iter()
-        .all(|row| !row["url"]
-            .as_str()
-            .expect("evidence URL")
-            .contains("/arm64-arm64-")));
+        .all(|row| !row["url"].as_str().expect("evidence URL").contains("/arm64-arm64-")));
 }
 
-fn write_profile_release_manifest(
-    path: &Path,
-    manifest_version: &str,
-    profile_revision: &str,
-    status: &str,
-) {
+fn write_profile_release_manifest(path: &Path, manifest_version: &str, profile_revision: &str, status: &str) {
     fs::write(
         path,
         format!(
@@ -4144,9 +3741,7 @@ fn serve_manifest_once(body: String) -> String {
             body.len(),
             body
         );
-        stream
-            .write_all(response.as_bytes())
-            .expect("write manifest response");
+        stream.write_all(response.as_bytes()).expect("write manifest response");
     });
     format!("http://{addr}/assets/stable/manifest.json")
 }
@@ -4276,10 +3871,8 @@ fn write_test_assets_manifest(root: &Path, arch: &str) -> PathBuf {
             sbom_sha256 = sbom_sha256,
             pkg_blake3 = pkg_blake3,
             sbom_blake3 = sbom_blake3,
-            binary_sha256 =
-                "3333333333333333333333333333333333333333333333333333333333333333",
-            binary_blake3 =
-                "4444444444444444444444444444444444444444444444444444444444444444",
+            binary_sha256 = "3333333333333333333333333333333333333333333333333333333333333333",
+            binary_blake3 = "4444444444444444444444444444444444444444444444444444444444444444",
         ),
     )
     .expect("manifest");

@@ -101,8 +101,7 @@ fn db_mem_disk_ready_rejects_missing_memory_schema() {
     create_tables(&conn).unwrap();
     migrate(&conn);
 
-    let error = validate_ready_schema(&conn)
-        .expect_err("ready() must fail if DB-owned memory tables were not created");
+    let error = validate_ready_schema(&conn).expect_err("ready() must fail if DB-owned memory tables were not created");
     assert!(
         error.contains("mem.net_events"),
         "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
@@ -114,13 +113,8 @@ fn db_mem_flush_uses_per_table_id_watermark() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
     migrate(&conn);
-    create_memory_tables(
-        &conn,
-        &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark"),
-    )
-    .unwrap();
-    let mut watermarks =
-        initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
+    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark")).unwrap();
+    let mut watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
 
     conn.execute(
         "INSERT INTO mem.net_events (timestamp, domain, decision)
@@ -136,8 +130,7 @@ fn db_mem_flush_uses_per_table_id_watermark() {
     .unwrap();
 
     let before_first = conn.total_changes();
-    let advanced =
-        flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
+    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
     watermarks.extend(advanced);
     assert_eq!(
         conn.total_changes() - before_first,
@@ -153,8 +146,7 @@ fn db_mem_flush_uses_per_table_id_watermark() {
     .unwrap();
 
     let before_second = conn.total_changes();
-    let advanced =
-        flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
+    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
     watermarks.extend(advanced);
     assert_eq!(
         conn.total_changes() - before_second,
@@ -163,8 +155,7 @@ fn db_mem_flush_uses_per_table_id_watermark() {
     );
 
     let before_third = conn.total_changes();
-    let advanced =
-        flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
+    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
     watermarks.extend(advanced);
     assert_eq!(
         conn.total_changes() - before_third,
@@ -192,10 +183,12 @@ fn db_mem_disk_memory_tables_work_before_query_only_guard() {
     )
     .unwrap();
     apply_reader_pragmas(&conn).unwrap();
-    validate_ready_schema(&conn)
-        .expect("query-only connection must still own its DB-local memory schema");
+    validate_ready_schema(&conn).expect("query-only connection must still own its DB-local memory schema");
     let error = conn
-        .execute("INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')", [])
+        .execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
+            [],
+        )
         .expect_err("query_only must prevent writes after DB-owned memory setup");
     assert!(
         error.to_string().contains("readonly"),
@@ -216,9 +209,7 @@ fn writer_pragmas_enable_file_backed_mmap() {
     let conn = Connection::open(&path).unwrap();
     apply_pragmas(&conn).unwrap();
 
-    let mmap_size: i64 = conn
-        .query_row("PRAGMA mmap_size", [], |row| row.get(0))
-        .unwrap();
+    let mmap_size: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap();
     assert!(
         mmap_size >= SQLITE_MMAP_SIZE_BYTES,
         "writer connections must enable SQLite mmap inside the DB layer; got {mmap_size}"
@@ -282,11 +273,9 @@ fn migrate_fs_events_idempotent() {
     )
     .unwrap();
     let path: String = conn
-        .query_row(
-            "SELECT path FROM fs_events WHERE action = 'deleted'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT path FROM fs_events WHERE action = 'deleted'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(path, "project/old.txt");
 }
@@ -313,11 +302,9 @@ fn migrate_tool_calls_origin_idempotent() {
     )
     .unwrap();
     let origin: String = conn
-        .query_row(
-            "SELECT origin FROM tool_calls WHERE call_id = 'call_01'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT origin FROM tool_calls WHERE call_id = 'call_01'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(origin, "mcp");
 }
@@ -434,9 +421,7 @@ fn create_tables_include_shared_credential_ref_columns() {
         "security_rule_events",
         "security_decision_events",
     ] {
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .unwrap();
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
         let cols: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap()
@@ -468,9 +453,7 @@ fn create_tables_include_shared_turn_id_columns() {
         "security_rule_events",
         "security_decision_events",
     ] {
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .unwrap();
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
         let cols: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap()
@@ -498,9 +481,7 @@ fn create_tables_include_shared_event_id_columns() {
         "substitution_events",
         "security_rule_events",
     ] {
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .unwrap();
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
         let cols: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap()
@@ -947,8 +928,7 @@ fn reader_pragmas_work_on_readonly_connection() {
     }
 
     // Open read-only -- apply_reader_pragmas must not fail.
-    let flags =
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
     apply_reader_pragmas(&conn).unwrap();
 }
@@ -963,22 +943,17 @@ fn reader_pragmas_enable_mmap_before_query_only() {
         create_tables(&conn).unwrap();
     }
 
-    let flags =
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
     apply_reader_pragmas(&conn).unwrap();
 
-    let mmap_size: i64 = conn
-        .query_row("PRAGMA mmap_size", [], |row| row.get(0))
-        .unwrap();
+    let mmap_size: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap();
     assert!(
         mmap_size >= SQLITE_MMAP_SIZE_BYTES,
         "reader worker connections must enable SQLite mmap before query_only; got {mmap_size}"
     );
 
-    let query_only: i64 = conn
-        .query_row("PRAGMA query_only", [], |row| row.get(0))
-        .unwrap();
+    let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0)).unwrap();
     assert_eq!(query_only, 1, "reader worker must still be query-only");
 }
 
@@ -1002,8 +977,7 @@ fn mmap_telemetry_records_budget_and_size_metrics() {
         key.key().name() == DB_SQLITE_MMAP_CONFIG_BYTES && matches!(value, DebugValue::Gauge(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_EFFECTIVE_BYTES
-            && matches!(value, DebugValue::Gauge(_))
+        key.key().name() == DB_SQLITE_MMAP_EFFECTIVE_BYTES && matches!(value, DebugValue::Gauge(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_SQLITE_FILE_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
@@ -1012,12 +986,10 @@ fn mmap_telemetry_records_budget_and_size_metrics() {
         key.key().name() == DB_SQLITE_WAL_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_COVERAGE_RATIO
-            && matches!(value, DebugValue::Gauge(_))
+        key.key().name() == DB_SQLITE_MMAP_COVERAGE_RATIO && matches!(value, DebugValue::Gauge(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL
-            && matches!(value, DebugValue::Counter(1))
+        key.key().name() == DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL && matches!(value, DebugValue::Counter(1))
     }));
 }
 
@@ -1052,10 +1024,7 @@ fn security_event_type_check_rejects_snapshot_event() {
              )",
         [],
     );
-    assert!(
-        result.is_err(),
-        "snapshot.event must not be a security-event type"
-    );
+    assert!(result.is_err(), "snapshot.event must not be a security-event type");
 }
 
 #[test]
@@ -1100,11 +1069,9 @@ fn migrate_dns_events_idempotent() {
     )
     .unwrap();
     let trace: String = conn
-        .query_row(
-            "SELECT trace_id FROM dns_events WHERE qname = 'pypi.org'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT trace_id FROM dns_events WHERE qname = 'pypi.org'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(trace, "tr_abc");
 }

@@ -2,10 +2,7 @@ use super::*;
 
 #[test]
 fn namespace_name_basic() {
-    assert_eq!(
-        namespace_name("github", "search_repos"),
-        "github__search_repos"
-    );
+    assert_eq!(namespace_name("github", "search_repos"), "github__search_repos");
 }
 
 #[test]
@@ -61,8 +58,7 @@ fn parse_resource_uri_basic() {
 
 #[test]
 fn parse_resource_uri_nested_slashes() {
-    let (server, original) =
-        parse_resource_uri("capsem://fs/file:///home/user/doc.txt").unwrap();
+    let (server, original) = parse_resource_uri("capsem://fs/file:///home/user/doc.txt").unwrap();
     assert_eq!(server, "fs");
     assert_eq!(original, "file:///home/user/doc.txt");
 }
@@ -98,8 +94,7 @@ fn json_rpc_request_serialize() {
 
 #[test]
 fn json_rpc_response_ok() {
-    let resp =
-        JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!({"tools": []}));
+    let resp = JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!({"tools": []}));
     assert!(resp.error.is_none());
     assert!(resp.result.is_some());
 }

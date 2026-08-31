@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 pub use crate::mcp::{McpAuthConfig, McpAuthKind};
+use serde::{Deserialize, Serialize};
 
 /// Namespace separator for MCP tool/prompt/resource names.
 pub const NS_SEP: &str = "__";

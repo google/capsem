@@ -22,11 +22,7 @@ pub(crate) fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommand
     )
 }
 
-fn direct_systemd_invocation(
-    invocation_id: Option<&OsStr>,
-    exec_pid: Option<&OsStr>,
-    current_pid: u32,
-) -> bool {
+fn direct_systemd_invocation(invocation_id: Option<&OsStr>, exec_pid: Option<&OsStr>, current_pid: u32) -> bool {
     // Both values are inherited. Only the PID match proves systemd executed
     // this service directly instead of an unrelated ancestor.
     invocation_id.is_some_and(|value| !value.is_empty())

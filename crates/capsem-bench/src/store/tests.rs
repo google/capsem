@@ -162,8 +162,7 @@ fn history_is_a_query_rather_than_a_glob() {
         let row = record(Dimension::Routes, "x86_64", "code", at, value);
         insert(&mut connection, &row).expect("inserts");
     }
-    let trend = history(&connection, "gateway./vms/list.cpu_s", "x86_64", "code")
-        .expect("queries");
+    let trend = history(&connection, "gateway./vms/list.cpu_s", "x86_64", "code").expect("queries");
     assert_eq!(trend.len(), 3, "oldest first, one point per run");
     assert_eq!(trend[0].2, 0.10);
     assert_eq!(trend[2].2, 0.11);
@@ -173,9 +172,7 @@ fn history_is_a_query_rather_than_a_glob() {
 fn deleting_a_run_takes_its_metrics_with_it() {
     let (_dir, mut connection) = store();
     let run_id = insert(&mut connection, &base()).expect("inserts");
-    connection
-        .execute("PRAGMA foreign_keys = ON", [])
-        .expect("enables");
+    connection.execute("PRAGMA foreign_keys = ON", []).expect("enables");
     connection
         .execute("DELETE FROM runs WHERE id = ?1", rusqlite::params![run_id])
         .expect("deletes");

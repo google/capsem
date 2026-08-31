@@ -1,11 +1,11 @@
 mod collector;
 mod commands;
 mod machine;
+mod protocol;
+mod scenarios;
 mod schema;
 mod stats;
 mod store;
-mod protocol;
-mod scenarios;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -200,7 +200,6 @@ struct ProtocolDeltaArgs {
     json_out: PathBuf,
 }
 
-
 use protocol::*;
 use scenarios::*;
 
@@ -223,17 +222,11 @@ async fn main() -> Result<()> {
     })) {
         Command::Protocol(args) => {
             let destination = args.record.clone();
-            let (channel, commit, profile) =
-                (args.channel.clone(), args.commit.clone(), args.profile.clone());
+            let (channel, commit, profile) = (args.channel.clone(), args.commit.clone(), args.profile.clone());
             let artifact = run_protocol(args).await?;
             if let Some(root) = destination {
-                let record = commands::protocol_record(
-                    &artifact,
-                    &channel,
-                    &commit,
-                    &profile,
-                    running_capsem_processes(),
-                );
+                let record =
+                    commands::protocol_record(&artifact, &channel, &commit, &profile, running_capsem_processes());
                 let mut connection = store::open(&root)?;
                 let run_id = store::insert(&mut connection, &record)?;
                 eprintln!(
@@ -252,9 +245,7 @@ async fn main() -> Result<()> {
             let artifact = run_delta(args)?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
-        Command::Report(args) => {
-            return commands::report(&args.store, std::env::consts::ARCH, &args.profile)
-        }
+        Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH, &args.profile),
         Command::List => commands::list_dimensions(),
         Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
         Command::Compare(args) => {
@@ -298,7 +289,6 @@ fn running_capsem_processes() -> Vec<String> {
         &std::process::id().to_string(),
     )
 }
-
 
 #[cfg(test)]
 mod tests;

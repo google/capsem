@@ -73,9 +73,7 @@ impl CertAuthority {
         let leaf_key = KeyPair::generate()?;
 
         let mut params = CertificateParams::new(vec![domain.to_string()])?;
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, domain);
+        params.distinguished_name.push(rcgen::DnType::CommonName, domain);
         params.subject_alt_names = vec![SanType::DnsName(domain.try_into()?)];
         params.not_before = time::Date::from_calendar_date(2026, time::Month::January, 1)
             .unwrap()

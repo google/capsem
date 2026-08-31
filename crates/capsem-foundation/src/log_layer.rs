@@ -38,8 +38,7 @@ impl Visit for MessageVisitor {
         if field.name() == "message" {
             write!(&mut self.message, "{value:?}").ok();
         } else {
-            self.fields
-                .push((field.name().to_string(), format!("{value:?}")));
+            self.fields.push((field.name().to_string(), format!("{value:?}")));
         }
     }
 
@@ -47,8 +46,7 @@ impl Visit for MessageVisitor {
         if field.name() == "message" {
             self.message = value.to_string();
         } else {
-            self.fields
-                .push((field.name().to_string(), value.to_string()));
+            self.fields.push((field.name().to_string(), value.to_string()));
         }
     }
 }
@@ -58,11 +56,7 @@ impl MessageVisitor {
         if self.fields.is_empty() {
             return self.message;
         }
-        let pairs: Vec<String> = self
-            .fields
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        let pairs: Vec<String> = self.fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
         if self.message.is_empty() {
             pairs.join(", ")
         } else {
@@ -152,8 +146,7 @@ impl TauriLogLayer {
     pub fn new() -> (Self, LogHandle) {
         let emitter = Arc::new(OnceLock::new());
         let early_buffer = Arc::new(Mutex::new(Some(Vec::new())));
-        let vm_writer_tx: Arc<Mutex<Option<std::sync::mpsc::Sender<WriterMsg>>>> =
-            Arc::new(Mutex::new(None));
+        let vm_writer_tx: Arc<Mutex<Option<std::sync::mpsc::Sender<WriterMsg>>>> = Arc::new(Mutex::new(None));
 
         let layer = Self {
             emitter: Arc::clone(&emitter),

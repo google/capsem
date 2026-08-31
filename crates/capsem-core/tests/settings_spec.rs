@@ -226,24 +226,15 @@ fn setting_fields_match_expected() {
     let root = parse_golden();
     let expected = parse_expected();
     let settings = extract_settings(&root.settings);
-    let by_key: HashMap<&str, &&TestSettingNode> =
-        settings.iter().map(|s| (s.key.as_str(), s)).collect();
+    let by_key: HashMap<&str, &&TestSettingNode> = settings.iter().map(|s| (s.key.as_str(), s)).collect();
 
     for exp in &expected.settings {
         let actual = by_key
             .get(exp.key.as_str())
             .unwrap_or_else(|| panic!("missing setting: {}", exp.key));
         assert_eq!(actual.name, exp.name, "name mismatch for {}", exp.key);
-        assert_eq!(
-            actual.setting_type, exp.setting_type,
-            "type mismatch for {}",
-            exp.key
-        );
-        assert_eq!(
-            actual.enabled_by, exp.enabled_by,
-            "enabled_by mismatch for {}",
-            exp.key
-        );
+        assert_eq!(actual.setting_type, exp.setting_type, "type mismatch for {}", exp.key);
+        assert_eq!(actual.enabled_by, exp.enabled_by, "enabled_by mismatch for {}", exp.key);
     }
 }
 
@@ -263,8 +254,7 @@ fn only_app_preference_setting_types_present() {
     ]);
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let present: std::collections::HashSet<&str> =
-        settings.iter().map(|s| s.setting_type.as_str()).collect();
+    let present: std::collections::HashSet<&str> = settings.iter().map(|s| s.setting_type.as_str()).collect();
     assert_eq!(present, expected_types);
     assert!(!present.contains("apikey"));
     assert!(!present.contains("file"));
@@ -274,17 +264,10 @@ fn only_app_preference_setting_types_present() {
 fn action_settings_have_action_kind() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let actions: Vec<_> = settings
-        .iter()
-        .filter(|s| s.setting_type == "action")
-        .collect();
+    let actions: Vec<_> = settings.iter().filter(|s| s.setting_type == "action").collect();
     assert!(!actions.is_empty());
     for a in &actions {
-        assert!(
-            a.metadata.action.is_some(),
-            "action {} missing metadata.action",
-            a.key
-        );
+        assert!(a.metadata.action.is_some(), "action {} missing metadata.action", a.key);
     }
 }
 
@@ -292,10 +275,7 @@ fn action_settings_have_action_kind() {
 fn profile_mcp_tools_are_not_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let tools: Vec<_> = settings
-        .iter()
-        .filter(|s| s.setting_type == "mcp_tool")
-        .collect();
+    let tools: Vec<_> = settings.iter().filter(|s| s.setting_type == "mcp_tool").collect();
     assert!(tools.is_empty());
 }
 
@@ -303,10 +283,7 @@ fn profile_mcp_tools_are_not_settings() {
 fn no_profile_provider_file_payloads_in_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let files: Vec<_> = settings
-        .iter()
-        .filter(|s| s.setting_type == "file")
-        .collect();
+    let files: Vec<_> = settings.iter().filter(|s| s.setting_type == "file").collect();
     assert!(files.is_empty());
     assert!(settings.iter().all(|s| !s.key.contains("provider")));
     assert!(settings.iter().all(|s| !s.key.contains("credential")));
@@ -330,8 +307,5 @@ fn roundtrip_serialize_deserialize() {
 fn hidden_setting_exists() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    assert!(
-        settings.iter().any(|s| s.metadata.hidden),
-        "no hidden setting found"
-    );
+    assert!(settings.iter().any(|s| s.metadata.hidden), "no hidden setting found");
 }

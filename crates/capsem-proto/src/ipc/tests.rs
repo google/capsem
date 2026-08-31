@@ -111,14 +111,8 @@ fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
         ProcessToService::ShutdownRequested { id: "vm".into() },
         ProcessToService::SuspendRequested { id: "vm".into() },
         ProcessToService::SnapshotReady { id: "vm".into() },
-        ProcessToService::McpServersResult {
-            id: 5,
-            servers: vec![],
-        },
-        ProcessToService::McpToolsResult {
-            id: 6,
-            tools: vec![],
-        },
+        ProcessToService::McpServersResult { id: 5, servers: vec![] },
+        ProcessToService::McpToolsResult { id: 6, tools: vec![] },
         ProcessToService::McpRefreshResult {
             id: 7,
             success: true,
@@ -178,10 +172,7 @@ fn terminal_input_roundtrip() {
 
 #[test]
 fn terminal_resize_roundtrip() {
-    let msg = ServiceToProcess::TerminalResize {
-        cols: 120,
-        rows: 40,
-    };
+    let msg = ServiceToProcess::TerminalResize { cols: 120, rows: 40 };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
@@ -300,9 +291,7 @@ fn pong_roundtrip() {
 
 #[test]
 fn terminal_output_roundtrip() {
-    let msg = ProcessToService::TerminalOutput {
-        data: vec![0x68, 0x69],
-    };
+    let msg = ProcessToService::TerminalOutput { data: vec![0x68, 0x69] };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
@@ -338,8 +327,7 @@ fn suspend_failed_bincode_roundtrip_preserves_exact_cause() {
     };
 
     let bytes = bincode::serialize(&msg).expect("serialize suspend failure");
-    let decoded: ProcessToService =
-        bincode::deserialize(&bytes).expect("deserialize suspend failure");
+    let decoded: ProcessToService = bincode::deserialize(&bytes).expect("deserialize suspend failure");
 
     match decoded {
         ProcessToService::SuspendFailed { id, error } => {
@@ -390,9 +378,7 @@ fn exec_result_nonzero_exit() {
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ProcessToService::ExecResult {
-            exit_code, stderr, ..
-        } => {
+        ProcessToService::ExecResult { exit_code, stderr, .. } => {
             assert_eq!(exit_code, 127);
             assert_eq!(stderr, b"not found\n");
         }
@@ -562,8 +548,7 @@ fn job_ids_are_distinct() {
     let e: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&exec).unwrap()).unwrap();
     let w: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&write).unwrap()).unwrap();
     let r: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&read).unwrap()).unwrap();
-    let b: ServiceToProcess =
-        serde_json::from_slice(&serde_json::to_vec(&boundary).unwrap()).unwrap();
+    let b: ServiceToProcess = serde_json::from_slice(&serde_json::to_vec(&boundary).unwrap()).unwrap();
 
     match (e, w, r, b) {
         (
@@ -638,9 +623,7 @@ fn resume_roundtrip() {
 
 #[test]
 fn shutdown_requested_roundtrip() {
-    let msg = ProcessToService::ShutdownRequested {
-        id: "vm-abc".into(),
-    };
+    let msg = ProcessToService::ShutdownRequested { id: "vm-abc".into() };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
@@ -651,9 +634,7 @@ fn shutdown_requested_roundtrip() {
 
 #[test]
 fn suspend_requested_roundtrip() {
-    let msg = ProcessToService::SuspendRequested {
-        id: "vm-xyz".into(),
-    };
+    let msg = ProcessToService::SuspendRequested { id: "vm-xyz".into() };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
@@ -664,9 +645,7 @@ fn suspend_requested_roundtrip() {
 
 #[test]
 fn snapshot_ready_roundtrip() {
-    let msg = ProcessToService::SnapshotReady {
-        id: "vm-snap".into(),
-    };
+    let msg = ProcessToService::SnapshotReady { id: "vm-snap".into() };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
@@ -866,9 +845,7 @@ fn exec_result_truncation_flag_survives_the_wire() {
     let back: ProcessToService = bincode::deserialize(&bytes).expect("deserialize");
 
     match back {
-        ProcessToService::ExecResult {
-            truncated, stdout, ..
-        } => {
+        ProcessToService::ExecResult { truncated, stdout, .. } => {
             assert!(truncated, "a capped result must not arrive looking complete");
             assert_eq!(stdout, b"prefix");
         }

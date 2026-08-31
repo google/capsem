@@ -118,9 +118,11 @@ impl TestHarness {
         assert!(notify_raw_fd >= 0);
         let notify_fd = unsafe { OwnedFd::from_raw_fd(notify_raw_fd) };
         let interrupt_status = Arc::new(AtomicU32::new(0));
-        let mut dev = VirtioBlockDevice::new(path, read_only)
-            .unwrap()
-            .with_async_notify(irq_raw_fd, Arc::clone(&interrupt_status), notify_fd);
+        let mut dev = VirtioBlockDevice::new(path, read_only).unwrap().with_async_notify(
+            irq_raw_fd,
+            Arc::clone(&interrupt_status),
+            notify_fd,
+        );
 
         let queue_config = QueueConfig {
             desc_addr: RAM_BASE + DESC_TABLE_OFFSET,
@@ -165,21 +167,15 @@ impl TestHarness {
     fn push_avail(&self, ring_index: u16, desc_head: u16, avail_idx: u16) {
         // Write ring entry
         let entry_offset = AVAIL_RING_OFFSET + 4 + u64::from(ring_index) * 2;
-        self.mem
-            .write_at(entry_offset, &desc_head.to_le_bytes())
-            .unwrap();
+        self.mem.write_at(entry_offset, &desc_head.to_le_bytes()).unwrap();
         // Write avail idx
         let idx_offset = AVAIL_RING_OFFSET + 2;
-        self.mem
-            .write_at(idx_offset, &avail_idx.to_le_bytes())
-            .unwrap();
+        self.mem.write_at(idx_offset, &avail_idx.to_le_bytes()).unwrap();
     }
 
     fn write_used_event(&self, used_event: u16) {
         let offset = AVAIL_RING_OFFSET + 4 + u64::from(QUEUE_TEST_SIZE) * 2;
-        self.mem
-            .write_at(offset, &used_event.to_le_bytes())
-            .unwrap();
+        self.mem.write_at(offset, &used_event.to_le_bytes()).unwrap();
     }
 
     /// Read status byte from guest memory at a given offset from RAM_BASE.
@@ -400,14 +396,8 @@ fn block_checkpoint_state_binds_open_fd_and_guest_contract() {
         ),
         1
     );
-    assert_eq!(
-        checkpoint_u64(&state, BLOCK_CHECKPOINT_DEVICE_OFFSET),
-        metadata.dev()
-    );
-    assert_eq!(
-        checkpoint_u64(&state, BLOCK_CHECKPOINT_INODE_OFFSET),
-        metadata.ino()
-    );
+    assert_eq!(checkpoint_u64(&state, BLOCK_CHECKPOINT_DEVICE_OFFSET), metadata.dev());
+    assert_eq!(checkpoint_u64(&state, BLOCK_CHECKPOINT_INODE_OFFSET), metadata.ino());
     assert_eq!(checkpoint_u64(&state, BLOCK_CHECKPOINT_LENGTH_OFFSET), 1000);
     assert_eq!(checkpoint_u64(&state, BLOCK_CHECKPOINT_CAPACITY_OFFSET), 1);
     assert_eq!(state[BLOCK_CHECKPOINT_READ_ONLY_OFFSET], 0);
@@ -522,8 +512,7 @@ fn block_checkpoint_restore_rejects_capacity_drift() {
     let path = temp_disk("checkpoint-capacity.img", 4096);
     let mut source = VirtioBlockDevice::new(&path, false).unwrap();
     let mut state = source.checkpoint_state().unwrap();
-    state[BLOCK_CHECKPOINT_CAPACITY_OFFSET..BLOCK_CHECKPOINT_READ_ONLY_OFFSET]
-        .copy_from_slice(&9_u64.to_le_bytes());
+    state[BLOCK_CHECKPOINT_CAPACITY_OFFSET..BLOCK_CHECKPOINT_READ_ONLY_OFFSET].copy_from_slice(&9_u64.to_le_bytes());
     let mut restored = VirtioBlockDevice::new(&path, false).unwrap();
 
     let error = restored.restore_checkpoint_state(&state).unwrap_err();
@@ -545,8 +534,7 @@ fn block_checkpoint_restore_rejects_malformed_and_trailing_state() {
     bad_magic[0] ^= 0xff;
     cases.push((bad_magic, "magic"));
     let mut bad_version = valid.clone();
-    bad_version[BLOCK_CHECKPOINT_VERSION_OFFSET..BLOCK_CHECKPOINT_DEVICE_OFFSET]
-        .copy_from_slice(&2_u32.to_le_bytes());
+    bad_version[BLOCK_CHECKPOINT_VERSION_OFFSET..BLOCK_CHECKPOINT_DEVICE_OFFSET].copy_from_slice(&2_u32.to_le_bytes());
     cases.push((bad_version, "version"));
     let mut bad_bool = valid;
     bad_bool[BLOCK_CHECKPOINT_READ_ONLY_OFFSET] = 2;
@@ -570,10 +558,7 @@ fn block_restore_activate_requires_validated_checkpoint_identity() {
         .restore_activate(mem.clone_ref(RAM_BASE), &[warm_queue_config()])
         .unwrap_err();
 
-    assert!(
-        error.to_string().contains("checkpoint identity"),
-        "{error:#}"
-    );
+    assert!(error.to_string().contains("checkpoint identity"), "{error:#}");
     assert!(restored.queue.is_none() && restored.mem.is_none());
 }
 
@@ -668,9 +653,8 @@ fn block_read_records_queue_and_request_metrics() {
             .sum()
     };
     let histogram_present = |name: &str| -> bool {
-        snap.iter().any(|(key, _, _, value)| {
-            key.key().name() == name && matches!(value, DebugValue::Histogram(_))
-        })
+        snap.iter()
+            .any(|(key, _, _, value)| key.key().name() == name && matches!(value, DebugValue::Histogram(_)))
     };
 
     assert_eq!(counter_total(METRIC_QUEUE_NOTIFICATIONS_TOTAL), 1);
@@ -736,9 +720,8 @@ fn block_io_uring_records_async_metrics() {
             .sum()
     };
     let histogram_present = |name: &str| -> bool {
-        snap.iter().any(|(key, _, _, value)| {
-            key.key().name() == name && matches!(value, DebugValue::Histogram(_))
-        })
+        snap.iter()
+            .any(|(key, _, _, value)| key.key().name() == name && matches!(value, DebugValue::Histogram(_)))
     };
 
     assert_eq!(counter_total(METRIC_ASYNC_SUBMISSIONS_TOTAL), 1);
@@ -1002,13 +985,7 @@ fn block_multiple_requests_in_batch() {
     let status1_offset = data1_offset + 512;
 
     h.write_header(hdr1_offset, VIRTIO_BLK_T_IN, 0);
-    h.write_desc(
-        0,
-        RAM_BASE + hdr1_offset,
-        REQ_HEADER_SIZE as u32,
-        VRING_DESC_F_NEXT,
-        1,
-    );
+    h.write_desc(0, RAM_BASE + hdr1_offset, REQ_HEADER_SIZE as u32, VRING_DESC_F_NEXT, 1);
     h.write_desc(
         1,
         RAM_BASE + data1_offset,
@@ -1024,13 +1001,7 @@ fn block_multiple_requests_in_batch() {
     let status2_offset = data2_offset + 512;
 
     h.write_header(hdr2_offset, VIRTIO_BLK_T_IN, 1);
-    h.write_desc(
-        3,
-        RAM_BASE + hdr2_offset,
-        REQ_HEADER_SIZE as u32,
-        VRING_DESC_F_NEXT,
-        4,
-    );
+    h.write_desc(3, RAM_BASE + hdr2_offset, REQ_HEADER_SIZE as u32, VRING_DESC_F_NEXT, 4);
     h.write_desc(
         4,
         RAM_BASE + data2_offset,
@@ -1213,13 +1184,7 @@ fn block_data_gpa_out_of_ram() {
         1,
     );
     // Desc 1: data buffer at invalid GPA (way outside RAM)
-    h.write_desc(
-        1,
-        0xDEAD_0000,
-        512,
-        VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
-        2,
-    );
+    h.write_desc(1, 0xDEAD_0000, 512, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 2);
     // Desc 2: status
     h.write_desc(2, RAM_BASE + status_offset, 1, VRING_DESC_F_WRITE, 0);
 

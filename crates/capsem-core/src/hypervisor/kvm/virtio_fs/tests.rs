@@ -105,10 +105,7 @@ fn events_named<'a>(events: &'a [CapturedEvent], name: &str) -> Vec<&'a Captured
 }
 
 fn emit_capture_probe() {
-    debug!(
-        event_name = "virtio.fs.capture_probe",
-        "structured capture probe"
-    );
+    debug!(event_name = "virtio.fs.capture_probe", "structured capture probe");
 }
 
 fn temp_share(name: &str) -> PathBuf {
@@ -211,10 +208,7 @@ fn run_worker_notification(harness: WorkerHarness, dir: &Path, queue_index: u32)
         done: done_tx,
     })
     .unwrap();
-    done_rx
-        .recv_timeout(Duration::from_secs(1))
-        .unwrap()
-        .unwrap();
+    done_rx.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
     drop(tx);
     handle.join().unwrap();
 
@@ -251,10 +245,7 @@ fn assert_irq_not_signaled(harness: &WorkerHarness) {
         )
     };
     assert_eq!(ret, -1);
-    assert_eq!(
-        std::io::Error::last_os_error().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
 }
 
 fn assert_irq_signaled(harness: &WorkerHarness) {
@@ -284,10 +275,7 @@ fn enqueue_hiprio_request(harness: &WorkerHarness, avail_flags: u16) {
             next: 0,
         },
     );
-    harness
-        .mem
-        .write_at(0x100, &avail_flags.to_le_bytes())
-        .unwrap();
+    harness.mem.write_at(0x100, &avail_flags.to_le_bytes()).unwrap();
     harness.mem.write_at(0x102, &1u16.to_le_bytes()).unwrap();
     harness.mem.write_at(0x104, &0u16.to_le_bytes()).unwrap();
 }
@@ -368,22 +356,10 @@ fn empty_notification_and_checkpoint_keep_only_structured_evidence() {
     assert_eq!(quiesce[0].level, Level::DEBUG);
     assert_eq!(quiesce[0].fields.get("hiprio_processed").unwrap(), "0");
     assert_eq!(quiesce[0].fields.get("request_processed").unwrap(), "0");
-    assert_eq!(
-        quiesce[0].fields.get("hiprio_processed_total").unwrap(),
-        "0"
-    );
-    assert_eq!(
-        quiesce[0].fields.get("request_processed_total").unwrap(),
-        "0"
-    );
-    assert_eq!(
-        quiesce[0].fields.get("hiprio_should_interrupt").unwrap(),
-        "false"
-    );
-    assert_eq!(
-        quiesce[0].fields.get("request_should_interrupt").unwrap(),
-        "false"
-    );
+    assert_eq!(quiesce[0].fields.get("hiprio_processed_total").unwrap(), "0");
+    assert_eq!(quiesce[0].fields.get("request_processed_total").unwrap(), "0");
+    assert_eq!(quiesce[0].fields.get("hiprio_should_interrupt").unwrap(), "false");
+    assert_eq!(quiesce[0].fields.get("request_should_interrupt").unwrap(), "false");
 }
 
 #[test]
@@ -404,14 +380,8 @@ fn nonempty_notification_is_trace_and_aggregated_at_quiesce() {
     assert_eq!(drains[0].fields.get("should_interrupt").unwrap(), "true");
     assert_eq!(quiesce.len(), 1, "{events:#?}");
     assert_eq!(quiesce[0].level, Level::DEBUG);
-    assert_eq!(
-        quiesce[0].fields.get("hiprio_processed_total").unwrap(),
-        "1"
-    );
-    assert_eq!(
-        quiesce[0].fields.get("request_processed_total").unwrap(),
-        "0"
-    );
+    assert_eq!(quiesce[0].fields.get("hiprio_processed_total").unwrap(), "1");
+    assert_eq!(quiesce[0].fields.get("request_processed_total").unwrap(), "0");
 }
 
 #[test]
@@ -448,10 +418,7 @@ fn fs_features() {
 #[test]
 fn fs_two_queues() {
     let dir = temp_share("queues");
-    assert_eq!(
-        test_device(&dir).queue_max_sizes(),
-        &[QUEUE_SIZE, QUEUE_SIZE]
-    );
+    assert_eq!(test_device(&dir).queue_max_sizes(), &[QUEUE_SIZE, QUEUE_SIZE]);
 }
 
 #[test]
@@ -596,10 +563,7 @@ fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32>
 /// OPEN a file by inode, return the file handle.
 fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i32> {
     let h = make_header(FUSE_OPEN, nodeid, 200);
-    let open_in = FuseOpenIn {
-        flags,
-        open_flags: 0,
-    };
+    let open_in = FuseOpenIn { flags, open_flags: 0 };
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&open_in)));
     let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
     if out.error != 0 {
@@ -628,12 +592,7 @@ fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
     let mut proc = test_processor(&dir);
     let held_ino = lookup(&mut proc, 1, "held.txt").unwrap();
     assert_eq!(lookup(&mut proc, 1, "held.txt").unwrap(), held_ino);
-    let file_fh = open_file(
-        &mut proc,
-        held_ino,
-        (libc::O_WRONLY | libc::O_APPEND) as u32,
-    )
-    .unwrap();
+    let file_fh = open_file(&mut proc, held_ino, (libc::O_WRONLY | libc::O_APPEND) as u32).unwrap();
     let dir_fh = open_dir(&mut proc, 1).unwrap();
     proc.file_handles
         .get_file(file_fh)
@@ -668,10 +627,7 @@ fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
         whence: libc::SEEK_CUR as u32,
         padding: 0,
     };
-    let response = restored.do_lseek(
-        &make_header(FUSE_LSEEK, held_ino, 204),
-        fuse::as_bytes(&seek),
-    );
+    let response = restored.do_lseek(&make_header(FUSE_LSEEK, held_ino, 204), fuse::as_bytes(&seek));
     assert_eq!(response_error(&response), 0);
     let seek_out: FuseLseekOut = fuse::read_struct(&response[OUT_HDR_SIZE..]).unwrap();
     assert_eq!(seek_out.offset, 3);
@@ -680,10 +636,7 @@ fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
     assert!(restored.inodes.get(held_ino).is_some());
     restored.inodes.forget(held_ino, 1);
     assert!(restored.inodes.get(held_ino).is_none());
-    assert_eq!(
-        lookup(&mut restored, 1, "next.txt").unwrap(),
-        expected_next_ino
-    );
+    assert_eq!(lookup(&mut restored, 1, "next.txt").unwrap(), expected_next_ino);
 
     let write = FuseWriteIn {
         fh: file_fh,
@@ -698,10 +651,7 @@ fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
     body.extend_from_slice(b"after\n");
     let response = restored.do_write(&make_header(FUSE_WRITE, held_ino, 202), &body);
     assert_eq!(response_error(&response), 0);
-    assert_eq!(
-        std::fs::read(dir.join("held.txt")).unwrap(),
-        b"before\nafter\n"
-    );
+    assert_eq!(std::fs::read(dir.join("held.txt")).unwrap(), b"before\nafter\n");
 
     let read = FuseReadIn {
         fh: dir_fh,
@@ -714,9 +664,7 @@ fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
     };
     let response = restored.do_readdir(&make_header(FUSE_READDIR, 1, 203), fuse::as_bytes(&read));
     assert_eq!(response_error(&response), 0);
-    assert!(response
-        .windows(b"held.txt".len())
-        .any(|w| w == b"held.txt"));
+    assert!(response.windows(b"held.txt".len()).any(|w| w == b"held.txt"));
     assert_eq!(open_dir(&mut restored, 1).unwrap(), expected_next_fh);
 }
 
@@ -743,10 +691,7 @@ fn checkpoint_restore_rejects_inode_path_escaping_share_root() {
         Err(err) => err,
     };
 
-    assert!(
-        format!("{err:#}").contains("outside VirtioFS root"),
-        "{err:#}"
-    );
+    assert!(format!("{err:#}").contains("outside VirtioFS root"), "{err:#}");
 }
 
 #[test]
@@ -796,11 +741,7 @@ fn checkpoint_omits_unlinked_cache_only_inode_without_reusing_its_id() {
     let encoded = proc.encode_checkpoint().unwrap();
     let decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
     assert!(
-        decoded
-            .inodes
-            .entries
-            .iter()
-            .all(|entry| entry.ino != stale_ino),
+        decoded.inodes.entries.iter().all(|entry| entry.ino != stale_ino),
         "an unreachable cache-only inode must not block or enter the checkpoint"
     );
     let expected_next_ino = decoded.inodes.next_ino;
@@ -911,16 +852,11 @@ fn virtiofs_device_restore_rejects_tag_and_read_only_identity_mismatch() {
     source.quiesce().unwrap();
     let state = source.checkpoint_state().unwrap();
 
-    let mut wrong_tag =
-        VirtioFsDevice::new("other", &dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mut wrong_tag = VirtioFsDevice::new("other", &dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap();
     let tag_err = wrong_tag.restore_checkpoint_state(&state).unwrap_err();
-    assert!(
-        tag_err.to_string().contains("tag identity mismatch"),
-        "{tag_err:#}"
-    );
+    assert!(tag_err.to_string().contains("tag identity mismatch"), "{tag_err:#}");
 
-    let mut wrong_mode =
-        VirtioFsDevice::new("capsem", &dir, true, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mut wrong_mode = VirtioFsDevice::new("capsem", &dir, true, -1, Arc::new(AtomicU32::new(0))).unwrap();
     let mode_err = wrong_mode.restore_checkpoint_state(&state).unwrap_err();
     assert!(
         mode_err.to_string().contains("read-only identity mismatch"),
@@ -943,10 +879,7 @@ fn checkpoint_codec_rejects_invalid_boolean_and_count_before_allocation() {
     let count_offset = 8 + 4 + TAG_LEN + 1;
     invalid_count[count_offset..count_offset + 4].copy_from_slice(&1_048_577u32.to_le_bytes());
     let err = VirtioFsBackendSnapshot::decode(&invalid_count).unwrap_err();
-    assert!(
-        err.to_string().contains("inode count exceeds limit"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("inode count exceeds limit"), "{err:#}");
 }
 
 #[test]
@@ -974,21 +907,14 @@ fn checkpoint_restore_rejects_symlink_replacement_without_following_it() {
     inode.device = metadata.dev();
     inode.host_inode = metadata.ino();
     inode.file_type = host_file_type(&metadata);
-    assert!(decoded
-        .file_handles
-        .handles
-        .iter()
-        .any(|handle| handle.fh == fh));
+    assert!(decoded.file_handles.handles.iter().any(|handle| handle.fh == fh));
 
     let err = match FuseProcessor::restore_checkpoint(&dir, false, &decoded.encode().unwrap()) {
         Ok(_) => panic!("symlink replacement must be rejected"),
         Err(err) => err,
     };
 
-    assert!(
-        format!("{err:#}").contains("outside VirtioFS root"),
-        "{err:#}"
-    );
+    assert!(format!("{err:#}").contains("outside VirtioFS root"), "{err:#}");
 }
 
 // ── ops_meta tests ───────────────────────────────────────────────
@@ -1018,11 +944,7 @@ fn getattr_root() {
     let resp = proc.handle_request(&build_request(&h, &[]));
     assert_eq!(response_error(&resp), 0);
     let attr_out: FuseAttrOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
-    assert_ne!(
-        attr_out.attr.mode & S_IFDIR,
-        0,
-        "root should be a directory"
-    );
+    assert_ne!(attr_out.attr.mode & S_IFDIR, 0, "root should be a directory");
 }
 
 #[test]
@@ -1156,10 +1078,7 @@ fn statfs_returns_data() {
     assert_eq!(response_error(&resp), 0);
     let kstatfs: FuseKStatfs = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     assert!(kstatfs.blocks > 0, "statfs should report non-zero blocks");
-    assert!(
-        kstatfs.bsize > 0,
-        "statfs should report non-zero block size"
-    );
+    assert!(kstatfs.bsize > 0, "statfs should report non-zero block size");
 }
 
 #[test]
@@ -1330,11 +1249,7 @@ fn read_past_eof_returns_empty() {
     let h = make_header(FUSE_READ, ino, 1);
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
     assert_eq!(response_error(&resp), 0);
-    assert_eq!(
-        resp.len(),
-        OUT_HDR_SIZE,
-        "read past EOF should return empty body"
-    );
+    assert_eq!(resp.len(), OUT_HDR_SIZE, "read past EOF should return empty body");
 }
 
 #[test]
@@ -1364,14 +1279,7 @@ fn read_write_use_positional_io_without_moving_handle_cursor() {
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
     assert_eq!(response_error(&resp), 0);
     assert_eq!(&resp[OUT_HDR_SIZE..], b"abc");
-    assert_eq!(
-        proc.file_handles
-            .get_file(fh)
-            .unwrap()
-            .stream_position()
-            .unwrap(),
-        7
-    );
+    assert_eq!(proc.file_handles.get_file(fh).unwrap().stream_position().unwrap(), 7);
 
     let write_in = FuseWriteIn {
         fh,
@@ -1387,14 +1295,7 @@ fn read_write_use_positional_io_without_moving_handle_cursor() {
     body.extend_from_slice(b"XYZ");
     let resp = proc.handle_request(&build_request(&h, &body));
     assert_eq!(response_error(&resp), 0);
-    assert_eq!(
-        proc.file_handles
-            .get_file(fh)
-            .unwrap()
-            .stream_position()
-            .unwrap(),
-        7
-    );
+    assert_eq!(proc.file_handles.get_file(fh).unwrap().stream_position().unwrap(), 7);
     assert_eq!(std::fs::read(dir.join("data.txt")).unwrap(), b"aXYZefghij");
 }
 
@@ -1466,8 +1367,7 @@ fn create_new_append_handle_preserves_semantics_across_checkpoint() {
     let response = proc.handle_request(&build_request(&header, &body));
     assert_eq!(response_error(&response), 0);
     let entry: FuseEntryOut = fuse::read_struct(&response[OUT_HDR_SIZE..]).unwrap();
-    let opened: FuseOpenOut =
-        fuse::read_struct(&response[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]).unwrap();
+    let opened: FuseOpenOut = fuse::read_struct(&response[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]).unwrap();
 
     std::fs::write(dir.join("append.txt"), b"base\n").unwrap();
     let write = |processor: &mut FuseProcessor, unique, data: &[u8]| {
@@ -1482,10 +1382,8 @@ fn create_new_append_handle_preserves_semantics_across_checkpoint() {
         };
         let mut request = fuse::as_bytes(&input).to_vec();
         request.extend_from_slice(data);
-        let response = processor.handle_request(&build_request(
-            &make_header(FUSE_WRITE, entry.nodeid, unique),
-            &request,
-        ));
+        let response =
+            processor.handle_request(&build_request(&make_header(FUSE_WRITE, entry.nodeid, unique), &request));
         assert_eq!(response_error(&response), 0);
     };
 
@@ -1494,10 +1392,7 @@ fn create_new_append_handle_preserves_semantics_across_checkpoint() {
     let mut restored = FuseProcessor::restore_checkpoint(&dir, false, &checkpoint).unwrap();
     write(&mut restored, 3, b"after\n");
 
-    assert_eq!(
-        std::fs::read(dir.join("append.txt")).unwrap(),
-        b"base\nbefore\nafter\n"
-    );
+    assert_eq!(std::fs::read(dir.join("append.txt")).unwrap(), b"base\nbefore\nafter\n");
 }
 
 #[test]
@@ -1761,10 +1656,7 @@ fn mkdir_creates_directory() {
     let dir = temp_share("mkdir");
     let mut proc = test_processor(&dir);
 
-    let mkdir_in = FuseMkdirIn {
-        mode: 0o755,
-        umask: 0,
-    };
+    let mkdir_in = FuseMkdirIn { mode: 0o755, umask: 0 };
     let h = make_header(FUSE_MKDIR, 1, 1);
     let mut body = fuse::as_bytes(&mkdir_in).to_vec();
     body.extend_from_slice(b"subdir\0");
@@ -1782,10 +1674,7 @@ fn mkdir_readonly_rejected() {
     let mut proc = test_processor(&dir);
     proc.read_only = true;
 
-    let mkdir_in = FuseMkdirIn {
-        mode: 0o755,
-        umask: 0,
-    };
+    let mkdir_in = FuseMkdirIn { mode: 0o755, umask: 0 };
     let h = make_header(FUSE_MKDIR, 1, 1);
     let mut body = fuse::as_bytes(&mkdir_in).to_vec();
     body.extend_from_slice(b"nope\0");
@@ -1993,9 +1882,7 @@ fn link_creates_hardlink() {
     let orig_ino = lookup(&mut proc, 1, "original.txt").unwrap();
 
     // LINK: create "linked.txt" pointing to original.txt's inode
-    let link_in = FuseLinkIn {
-        oldnodeid: orig_ino,
-    };
+    let link_in = FuseLinkIn { oldnodeid: orig_ino };
     let h = make_header(FUSE_LINK, 1, 1);
     let mut body = fuse::as_bytes(&link_in).to_vec();
     body.extend_from_slice(b"linked.txt\0");

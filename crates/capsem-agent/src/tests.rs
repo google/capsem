@@ -48,10 +48,7 @@ fn agent_ready_roundtrip() {
 #[test]
 fn host_resize_decodable_by_agent() {
     let (read_fd, write_fd) = make_pipe();
-    let msg = HostToGuest::Resize {
-        cols: 200,
-        rows: 50,
-    };
+    let msg = HostToGuest::Resize { cols: 200, rows: 50 };
     let frame = capsem_proto::encode_host_msg(&msg).unwrap();
     write_all_fd(write_fd, &frame).unwrap();
     let decoded = recv_host_msg(read_fd).unwrap();
@@ -129,12 +126,7 @@ fn boot_handshake_file_write_roundtrip() {
     write_all_fd(write_fd, &frame).unwrap();
     let decoded = recv_host_msg(read_fd).unwrap();
     match decoded {
-        HostToGuest::FileWrite {
-            id,
-            path,
-            data,
-            mode,
-        } => {
+        HostToGuest::FileWrite { id, path, data, mode } => {
             assert_eq!(id, 1);
             assert_eq!(path, "/root/.gemini/settings.json");
             assert_eq!(data, b"{}");
@@ -205,14 +197,7 @@ fn send_recv_exec_over_pipe() {
 #[test]
 fn send_recv_exec_done_over_pipe() {
     let (read_fd, write_fd) = make_pipe();
-    send_guest_msg(
-        write_fd,
-        &GuestToHost::ExecDone {
-            id: 99,
-            exit_code: 1,
-        },
-    )
-    .unwrap();
+    send_guest_msg(write_fd, &GuestToHost::ExecDone { id: 99, exit_code: 1 }).unwrap();
     let mut len_buf = [0u8; 4];
     read_exact_fd(read_fd, &mut len_buf).unwrap();
     let len = u32::from_be_bytes(len_buf) as usize;
@@ -304,17 +289,12 @@ fn send_recv_multiple_messages_over_pipe() {
     let (read_fd, write_fd) = make_pipe();
 
     // Send host messages.
-    let ping_frame =
-        capsem_proto::encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
+    let ping_frame = capsem_proto::encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
     write_all_fd(write_fd, &ping_frame).unwrap();
-    let resize_frame =
-        capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
+    let resize_frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 80, rows: 24 }).unwrap();
     write_all_fd(write_fd, &resize_frame).unwrap();
 
-    assert!(matches!(
-        recv_host_msg(read_fd).unwrap(),
-        HostToGuest::Ping { .. }
-    ));
+    assert!(matches!(recv_host_msg(read_fd).unwrap(), HostToGuest::Ping { .. }));
     match recv_host_msg(read_fd).unwrap() {
         HostToGuest::Resize { cols, rows } => {
             assert_eq!(cols, 80);
@@ -702,13 +682,7 @@ fn exec_sentinel_in_output_is_not_stripped() {
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
-        run_exec_on_fds(
-            exec_fd,
-            &ctrl_tx,
-            99,
-            r#"printf '\033_CAPSEM_EXIT:999:0\033\\'"#,
-            &[],
-        );
+        run_exec_on_fds(exec_fd, &ctrl_tx, 99, r#"printf '\033_CAPSEM_EXIT:999:0\033\\'"#, &[]);
     });
 
     let _id = read_exec_started(&mut exec_host);
@@ -747,11 +721,7 @@ fn exec_large_output_no_truncation() {
     let _id = read_exec_started(&mut exec_host);
     let mut output = Vec::new();
     exec_host.read_to_end(&mut output).unwrap();
-    assert!(
-        output.len() > 100_000,
-        "output too small: {} bytes",
-        output.len()
-    );
+    assert!(output.len() > 100_000, "output too small: {} bytes", output.len());
 
     let (_, exit_code) = recv_exec_done(&ctrl_rx);
     assert_eq!(exit_code, 0);
@@ -861,7 +831,8 @@ fn parse_boot_timing_valid_jsonl() {
     std::fs::write(
         &path,
         "{\"name\":\"squashfs\",\"duration_ms\":50}\n{\"name\":\"network\",\"duration_ms\":120}\n",
-    ).unwrap();
+    )
+    .unwrap();
     let result = parse_boot_timing(path.to_str().unwrap());
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "squashfs");
@@ -884,7 +855,8 @@ fn parse_boot_timing_skips_malformed_lines() {
     std::fs::write(
         &path,
         "{\"name\":\"good\",\"duration_ms\":100}\nnot json\n{\"name\":\"also_good\",\"duration_ms\":200}\n",
-    ).unwrap();
+    )
+    .unwrap();
     let result = parse_boot_timing(path.to_str().unwrap());
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "good");
@@ -1084,13 +1056,7 @@ fn exec_stdout_and_stderr_both_appear_in_merged_stream() {
 
     // Generate distinct output on both stdout and stderr
     std::thread::spawn(move || {
-        run_exec_on_fds(
-            exec_fd,
-            &ctrl_tx,
-            50,
-            "echo STDOUT_MARKER; echo STDERR_MARKER >&2",
-            &[],
-        );
+        run_exec_on_fds(exec_fd, &ctrl_tx, 50, "echo STDOUT_MARKER; echo STDERR_MARKER >&2", &[]);
     });
 
     let _id = read_exec_started(&mut exec_host);
@@ -1496,11 +1462,7 @@ fn control_loop_resize_changes_pty_winsize() {
     let (ctrl_tx, _ctrl_rx) = std::sync::mpsc::channel();
 
     // Send resize then close.
-    let frame = capsem_proto::encode_host_msg(&HostToGuest::Resize {
-        cols: 132,
-        rows: 43,
-    })
-    .unwrap();
+    let frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 132, rows: 43 }).unwrap();
     write_all_fd(ctrl_write_fd, &frame).unwrap();
     unsafe {
         libc::close(ctrl_write_fd);
@@ -1620,19 +1582,11 @@ fn control_loop_ack_reply_removes_pending_entry() {
     // Seed pending_responses with two entries, send AckReply for one,
     // verify only the matching entry was removed.
     let seed = vec![
-        (
-            42,
-            GuestToHost::ExecDone {
-                id: 42,
-                exit_code: 0,
-            },
-        ),
+        (42, GuestToHost::ExecDone { id: 42, exit_code: 0 }),
         (43, GuestToHost::FileOpDone { id: 43 }),
     ];
-    let (_responses, pending) = run_control_loop_with_messages_and_pending(
-        vec![HostToGuest::AckReply { id: 42 }],
-        Some(seed),
-    );
+    let (_responses, pending) =
+        run_control_loop_with_messages_and_pending(vec![HostToGuest::AckReply { id: 42 }], Some(seed));
     let p = pending.lock().unwrap();
     assert_eq!(p.len(), 1);
     assert!(!p.contains_key(&42));
@@ -1643,26 +1597,18 @@ fn control_loop_ack_reply_removes_pending_entry() {
 fn control_loop_ack_reply_for_unknown_id_is_no_op() {
     // AckReply for an id that is not in pending_responses should be a no-op
     // (e.g. a duplicate AckReply from a replayed response that landed twice).
-    let (_responses, pending) = run_control_loop_with_messages_and_pending(
-        vec![HostToGuest::AckReply { id: 9999 }],
-        None,
-    );
+    let (_responses, pending) =
+        run_control_loop_with_messages_and_pending(vec![HostToGuest::AckReply { id: 9999 }], None);
     assert!(pending.lock().unwrap().is_empty());
 }
 
 #[test]
 fn ackable_response_id_covers_response_variants() {
     assert_eq!(
-        ackable_response_id(&GuestToHost::ExecDone {
-            id: 1,
-            exit_code: 0
-        }),
+        ackable_response_id(&GuestToHost::ExecDone { id: 1, exit_code: 0 }),
         Some(1)
     );
-    assert_eq!(
-        ackable_response_id(&GuestToHost::FileOpDone { id: 2 }),
-        Some(2)
-    );
+    assert_eq!(ackable_response_id(&GuestToHost::FileOpDone { id: 2 }), Some(2));
     assert_eq!(
         ackable_response_id(&GuestToHost::FileContent {
             id: 3,
@@ -1682,12 +1628,7 @@ fn ackable_response_id_covers_response_variants() {
     assert_eq!(ackable_response_id(&GuestToHost::Pong), None);
     assert_eq!(ackable_response_id(&GuestToHost::Ack { id: 5 }), None);
     assert_eq!(ackable_response_id(&GuestToHost::SnapshotReady), None);
-    assert_eq!(
-        ackable_response_id(&GuestToHost::Ready {
-            version: "x".into()
-        }),
-        None
-    );
+    assert_eq!(ackable_response_id(&GuestToHost::Ready { version: "x".into() }), None);
 }
 
 // -------------------------------------------------------------------
@@ -1699,11 +1640,7 @@ fn parse_boot_timing_name_at_exact_boundary() {
     let dir = std::env::temp_dir();
     let path = dir.join("capsem-test-boot-timing-boundary");
     let name_64 = "a".repeat(64); // exactly at limit, should pass
-    std::fs::write(
-        &path,
-        format!("{{\"name\":\"{name_64}\",\"duration_ms\":10}}\n"),
-    )
-    .unwrap();
+    std::fs::write(&path, format!("{{\"name\":\"{name_64}\",\"duration_ms\":10}}\n")).unwrap();
     let result = parse_boot_timing(path.to_str().unwrap());
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, name_64);
@@ -1743,17 +1680,14 @@ const SYSCALL_LINE: &str = concat!(
 
 #[test]
 fn audit_id_is_read_from_the_msg_envelope() {
-    assert_eq!(
-        extract_audit_id(SYSCALL_LINE).as_deref(),
-        Some("1713100000.001:42")
-    );
+    assert_eq!(extract_audit_id(SYSCALL_LINE).as_deref(), Some("1713100000.001:42"));
 }
 
 #[test]
 fn audit_id_is_none_when_the_envelope_is_absent_or_unterminated() {
     for line in [
         "",
-        "type=SYSCALL arch=c000003e",              // no msg=audit(
+        "type=SYSCALL arch=c000003e",               // no msg=audit(
         "type=SYSCALL msg=audit(1713100000.001:42", // no closing paren
     ] {
         assert_eq!(extract_audit_id(line), None, "{line:?}");
@@ -1762,19 +1696,12 @@ fn audit_id_is_none_when_the_envelope_is_absent_or_unterminated() {
 
 #[test]
 fn audit_timestamp_converts_seconds_to_microseconds() {
-    assert_eq!(
-        extract_audit_timestamp_us(SYSCALL_LINE),
-        Some(1_713_100_000_001_000)
-    );
+    assert_eq!(extract_audit_timestamp_us(SYSCALL_LINE), Some(1_713_100_000_001_000));
 }
 
 #[test]
 fn audit_timestamp_is_none_when_the_seconds_field_is_not_a_number() {
-    for line in [
-        "msg=audit(not-a-number:42):",
-        "msg=audit(:42):",
-        "type=SYSCALL",
-    ] {
+    for line in ["msg=audit(not-a-number:42):", "msg=audit(:42):", "type=SYSCALL"] {
         assert_eq!(extract_audit_timestamp_us(line), None, "{line:?}");
     }
 }
@@ -1784,10 +1711,7 @@ fn audit_timestamp_saturates_rather_than_wrapping_on_absurd_input() {
     // Rust float->int casts saturate, so a nonsense timestamp cannot wrap into
     // a plausible-looking value that would silently reorder the ledger.
     assert_eq!(extract_audit_timestamp_us("msg=audit(-1.0:1):"), Some(0));
-    assert_eq!(
-        extract_audit_timestamp_us("msg=audit(1e30:1):"),
-        Some(u64::MAX)
-    );
+    assert_eq!(extract_audit_timestamp_us("msg=audit(1e30:1):"), Some(u64::MAX));
 }
 
 #[test]
@@ -1817,10 +1741,7 @@ fn field_values_stop_at_the_next_space_and_keep_their_quotes() {
 
 #[test]
 fn field_value_at_end_of_line_needs_no_trailing_space() {
-    assert_eq!(
-        extract_field("type=SYSCALL pid=7", " pid=").as_deref(),
-        Some("7")
-    );
+    assert_eq!(extract_field("type=SYSCALL pid=7", " pid=").as_deref(), Some("7"));
 }
 
 #[test]
@@ -1840,10 +1761,7 @@ fn execve_argv_is_rebuilt_in_order_and_unquoted() {
         "a0=\"python3\" a1=\"train.py\" a2=\"--epochs\""
     );
 
-    assert_eq!(
-        extract_execve_argv(line).as_deref(),
-        Some("python3 train.py --epochs")
-    );
+    assert_eq!(extract_execve_argv(line).as_deref(), Some("python3 train.py --epochs"));
 }
 
 #[test]

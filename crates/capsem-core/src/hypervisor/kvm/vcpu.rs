@@ -87,12 +87,10 @@ impl VcpuControl {
     }
 
     pub fn request_pause(&self, timeout: Duration) -> Result<()> {
-        match self.lifecycle.compare_exchange(
-            VCPU_RUNNING,
-            VCPU_PAUSING,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
+        match self
+            .lifecycle
+            .compare_exchange(VCPU_RUNNING, VCPU_PAUSING, Ordering::SeqCst, Ordering::SeqCst)
+        {
             Ok(_) => {}
             Err(VCPU_PAUSED) => return Ok(()),
             Err(VCPU_PAUSING) => {}
@@ -102,10 +100,7 @@ impl VcpuControl {
 
         #[cfg(target_arch = "x86_64")]
         {
-            self.snapshots
-                .lock()
-                .expect("snapshot mutex poisoned")
-                .fill(None);
+            self.snapshots.lock().expect("snapshot mutex poisoned").fill(None);
         }
         self.pause_cv.notify_all();
         self.kick_vcpus();
@@ -115,11 +110,7 @@ impl VcpuControl {
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                 self.lifecycle.store(VCPU_RUNNING, Ordering::SeqCst);
                 self.pause_cv.notify_all();
-                bail!(
-                    "timed out pausing KVM VM: {}/{} vCPUs parked",
-                    *paused,
-                    self.vcpu_count
-                );
+                bail!("timed out pausing KVM VM: {}/{} vCPUs parked", *paused, self.vcpu_count);
             };
             let (guard, wait) = self
                 .pause_cv
@@ -129,11 +120,7 @@ impl VcpuControl {
             if wait.timed_out() && *paused < self.vcpu_count {
                 self.lifecycle.store(VCPU_RUNNING, Ordering::SeqCst);
                 self.pause_cv.notify_all();
-                bail!(
-                    "timed out pausing KVM VM: {}/{} vCPUs parked",
-                    *paused,
-                    self.vcpu_count
-                );
+                bail!("timed out pausing KVM VM: {}/{} vCPUs parked", *paused, self.vcpu_count);
             }
         }
         self.lifecycle.store(VCPU_PAUSED, Ordering::SeqCst);
@@ -161,10 +148,7 @@ impl VcpuControl {
             .get_mut(vcpu_id as usize)
             .ok_or_else(|| anyhow::anyhow!("vCPU id {vcpu_id} outside thread table"))?;
         *slot = Some(VcpuThread(unsafe { libc::pthread_self() }));
-        Ok(VcpuThreadRegistration {
-            control: self,
-            vcpu_id,
-        })
+        Ok(VcpuThreadRegistration { control: self, vcpu_id })
     }
 
     fn unregister_thread(&self, vcpu_id: u32) {
@@ -219,11 +203,7 @@ impl VcpuControl {
 
         let snapshot = snapshot()?;
         if snapshot.id != vcpu_id {
-            bail!(
-                "snapshot vCPU id mismatch: snapshot={}, vcpu={}",
-                snapshot.id,
-                vcpu_id
-            );
+            bail!("snapshot vCPU id mismatch: snapshot={}, vcpu={}", snapshot.id, vcpu_id);
         }
         {
             let mut snapshots = self.snapshots.lock().expect("snapshot mutex poisoned");
@@ -249,11 +229,7 @@ impl VcpuControl {
         let mut paused = self.paused_count.lock().expect("pause mutex poisoned");
         *paused += 1;
         self.pause_cv.notify_all();
-        while matches!(
-            self.lifecycle.load(Ordering::SeqCst),
-            VCPU_PAUSING | VCPU_PAUSED
-        ) && !self.is_stopped()
-        {
+        while matches!(self.lifecycle.load(Ordering::SeqCst), VCPU_PAUSING | VCPU_PAUSED) && !self.is_stopped() {
             paused = self.pause_cv.wait(paused).expect("pause condvar poisoned");
         }
         *paused = paused.saturating_sub(1);
@@ -372,11 +348,7 @@ fn vcpu_loop(
             }
 
             #[cfg(target_arch = "x86_64")]
-            VcpuExit::Io {
-                direction,
-                port,
-                size,
-            } => {
+            VcpuExit::Io { direction, port, size } => {
                 let io = vcpu.io_data();
                 dispatch_pio(
                     pio_bus,
@@ -410,8 +382,7 @@ fn vcpu_loop(
             } => {
                 warn!(
                     vcpu_id = vcpu.id(),
-                    hardware_entry_failure_reason =
-                        format_args!("{hardware_entry_failure_reason:#x}"),
+                    hardware_entry_failure_reason = format_args!("{hardware_entry_failure_reason:#x}"),
                     "KVM failed guest entry"
                 );
                 std::thread::sleep(Duration::from_millis(10));
@@ -540,14 +511,7 @@ fn log_vcpu_shutdown_snapshot(vcpu: &VcpuFd, reason: &'static str) {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn dispatch_pio(
-    pio_bus: &PioBus,
-    direction: u8,
-    port: u16,
-    size: u8,
-    count: u32,
-    data_ptr: *mut u8,
-) {
+fn dispatch_pio(pio_bus: &PioBus, direction: u8, port: u16, size: u8, count: u32, data_ptr: *mut u8) {
     let size_usize = size as usize;
     if direction == 0 {
         // KVM_EXIT_IO_IN

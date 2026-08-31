@@ -3,9 +3,7 @@ use std::collections::HashMap;
 
 #[test]
 fn repeated_plugin_policy_snapshots_share_one_allocation() {
-    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
-        PluginPolicy::new(),
-    )));
+    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(PluginPolicy::new())));
 
     let first = snapshot_plugin_policy(&policy);
     let second = snapshot_plugin_policy(&policy);
@@ -18,9 +16,7 @@ fn repeated_plugin_policy_snapshots_share_one_allocation() {
 
 #[test]
 fn replacing_plugin_policy_snapshot_is_visible_to_later_readers() {
-    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
-        PluginPolicy::new(),
-    )));
+    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(PluginPolicy::new())));
     let before = snapshot_plugin_policy(&policy);
     let mut replacement = PluginPolicy::new();
     replacement.insert(
@@ -107,10 +103,7 @@ fn corp_override_bool() {
     let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_ALLOW)
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -136,14 +129,8 @@ fn corp_override_network_mechanics_ports() {
 
 #[test]
 fn corp_override_number() {
-    let user = file_with(vec![(
-        "vm.resources.max_body_capture",
-        SettingValue::Number(8192),
-    )]);
-    let corp = file_with(vec![(
-        "vm.resources.max_body_capture",
-        SettingValue::Number(1024),
-    )]);
+    let user = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(8192))]);
+    let corp = file_with(vec![("vm.resources.max_body_capture", SettingValue::Number(1024))]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
@@ -157,29 +144,17 @@ fn corp_override_number() {
 fn corp_override_api_key() {
     let user = file_with(vec![(
         SETTING_GITHUB_TOKEN,
-        SettingValue::Text(
-            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
     )]);
     let corp = file_with(vec![(
         SETTING_GITHUB_TOKEN,
-        SettingValue::Text(
-            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
     )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert_eq!(
         s.effective_value,
-        SettingValue::Text(
-            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                .into()
-        )
+        SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into())
     );
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -187,15 +162,9 @@ fn corp_override_api_key() {
 #[test]
 fn corp_override_guest_env() {
     let user = file_with(vec![("guest.env.EDITOR", SettingValue::Text("vim".into()))]);
-    let corp = file_with(vec![(
-        "guest.env.EDITOR",
-        SettingValue::Text("nano".into()),
-    )]);
+    let corp = file_with(vec![("guest.env.EDITOR", SettingValue::Text("nano".into()))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "guest.env.EDITOR")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "guest.env.EDITOR").unwrap();
     assert_eq!(s.effective_value, SettingValue::Text("nano".into()));
     assert_eq!(s.source, PolicySource::Corp);
 }
@@ -213,25 +182,16 @@ fn corp_override_mixed_categories() {
     ]);
     let resolved = resolve_settings(&user, &corp);
 
-    let repo = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_ALLOW)
-        .unwrap();
+    let repo = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
     assert_eq!(repo.effective_value, SettingValue::Bool(false));
     assert_eq!(repo.source, PolicySource::Corp);
 
-    let log = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let log = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(log.effective_value, SettingValue::Bool(false));
     assert_eq!(log.source, PolicySource::Corp);
 
     // appearance.dark_mode not in corp -> user value
-    let dark = resolved
-        .iter()
-        .find(|s| s.id == "appearance.dark_mode")
-        .unwrap();
+    let dark = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
     assert_eq!(dark.effective_value, SettingValue::Bool(false));
     assert_eq!(dark.source, PolicySource::User);
 }
@@ -241,35 +201,17 @@ fn corp_overrides_all_registry_and_repository_toggles() {
     let corp = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(false)),
-        (
-            "security.services.registry.npm.allow",
-            SettingValue::Bool(false),
-        ),
-        (
-            "security.services.registry.pypi.allow",
-            SettingValue::Bool(false),
-        ),
-        (
-            "security.services.registry.crates.allow",
-            SettingValue::Bool(false),
-        ),
-        (
-            "security.services.registry.debian.allow",
-            SettingValue::Bool(false),
-        ),
+        ("security.services.registry.npm.allow", SettingValue::Bool(false)),
+        ("security.services.registry.pypi.allow", SettingValue::Bool(false)),
+        ("security.services.registry.crates.allow", SettingValue::Bool(false)),
+        ("security.services.registry.debian.allow", SettingValue::Bool(false)),
     ]);
     let resolved = resolve_settings(&empty_file(), &corp);
     for s in &resolved {
-        let is_registry_toggle =
-            s.id.starts_with("security.services.registry.") && s.id.ends_with(".allow");
+        let is_registry_toggle = s.id.starts_with("security.services.registry.") && s.id.ends_with(".allow");
         let is_repo_toggle = s.id == SETTING_GITHUB_ALLOW || s.id == SETTING_GITLAB_ALLOW;
         if is_registry_toggle || is_repo_toggle {
-            assert_eq!(
-                s.effective_value,
-                SettingValue::Bool(false),
-                "failed for {}",
-                s.id
-            );
+            assert_eq!(s.effective_value, SettingValue::Bool(false), "failed for {}", s.id);
             assert_eq!(s.source, PolicySource::Corp);
         }
     }
@@ -284,10 +226,7 @@ fn user_cannot_enable_blocked_provider() {
     let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_ALLOW)
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert!(s.corp_locked);
 }
@@ -315,29 +254,17 @@ fn user_cannot_change_corp_network_mechanics_ports() {
 fn user_cannot_override_corp_api_key() {
     let user = file_with(vec![(
         SETTING_GITHUB_TOKEN,
-        SettingValue::Text(
-            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
     )]);
     let corp = file_with(vec![(
         SETTING_GITHUB_TOKEN,
-        SettingValue::Text(
-            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
     )]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert_eq!(
         s.effective_value,
-        SettingValue::Text(
-            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                .into()
-        )
+        SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into())
     );
     assert!(s.corp_locked);
 }
@@ -389,10 +316,7 @@ fn write_local_settings_preserves_other_settings() {
     write_settings_file(&path, &file).unwrap();
 
     // Update one setting
-    file.settings
-        .get_mut("vm.resources.log_bodies")
-        .unwrap()
-        .value = SettingValue::Bool(true);
+    file.settings.get_mut("vm.resources.log_bodies").unwrap().value = SettingValue::Bool(true);
     write_settings_file(&path, &file).unwrap();
 
     let loaded = load_settings_file(&path).unwrap();
@@ -401,11 +325,7 @@ fn write_local_settings_preserves_other_settings() {
         SettingValue::Bool(true),
     );
     assert_eq!(
-        loaded
-            .settings
-            .get("vm.resources.log_bodies")
-            .unwrap()
-            .value,
+        loaded.settings.get("vm.resources.log_bodies").unwrap().value,
         SettingValue::Bool(true),
     );
 }
@@ -455,11 +375,7 @@ fn default_registries_allowed() {
         "security.services.registry.crates.allow",
     ] {
         let s = resolved.iter().find(|s| s.id == *id).unwrap();
-        assert_eq!(
-            s.effective_value,
-            SettingValue::Bool(true),
-            "expected {id} to be true"
-        );
+        assert_eq!(s.effective_value, SettingValue::Bool(true), "expected {id} to be true");
     }
 }
 
@@ -476,10 +392,7 @@ fn default_web_session_appearance() {
         SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434])
     );
 
-    let lb = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let lb = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(lb.effective_value, SettingValue::Bool(false));
 
     let mbc = resolved
@@ -488,22 +401,13 @@ fn default_web_session_appearance() {
         .unwrap();
     assert_eq!(mbc.effective_value, SettingValue::Number(4096));
 
-    let rd = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.retention_days")
-        .unwrap();
+    let rd = resolved.iter().find(|s| s.id == "vm.resources.retention_days").unwrap();
     assert_eq!(rd.effective_value, SettingValue::Number(30));
 
-    let dm = resolved
-        .iter()
-        .find(|s| s.id == "appearance.dark_mode")
-        .unwrap();
+    let dm = resolved.iter().find(|s| s.id == "appearance.dark_mode").unwrap();
     assert_eq!(dm.effective_value, SettingValue::Bool(true));
 
-    let fs = resolved
-        .iter()
-        .find(|s| s.id == "appearance.font_size")
-        .unwrap();
+    let fs = resolved.iter().find(|s| s.id == "appearance.font_size").unwrap();
     assert_eq!(fs.effective_value, SettingValue::Number(14));
 }
 
@@ -524,11 +428,7 @@ fn definitions_have_unique_ids() {
 #[test]
 fn definitions_have_nonempty_descriptions() {
     for def in setting_definitions() {
-        assert!(
-            !def.description.is_empty(),
-            "empty description for {}",
-            def.id
-        );
+        assert!(!def.description.is_empty(), "empty description for {}", def.id);
         assert!(!def.name.is_empty(), "empty name for {}", def.id);
     }
 }
@@ -577,10 +477,7 @@ fn web_mechanics_ports_are_int_list_setting() {
 #[test]
 fn source_default() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(s.source, PolicySource::Default);
     assert!(s.modified.is_none());
 }
@@ -589,10 +486,7 @@ fn source_default() {
 fn source_user() {
     let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(s.source, PolicySource::User);
     assert!(s.modified.is_some());
 }
@@ -601,10 +495,7 @@ fn source_user() {
 fn source_corp() {
     let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let resolved = resolve_settings(&empty_file(), &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(s.source, PolicySource::Corp);
     assert!(s.modified.is_some());
 }
@@ -614,10 +505,7 @@ fn source_corp_beats_user() {
     let user = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     let corp = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert_eq!(s.source, PolicySource::Corp);
     assert_eq!(s.effective_value, SettingValue::Bool(false));
 }
@@ -646,10 +534,7 @@ fn is_setting_corp_locked_test() {
 fn enabled_by_parent_on_child_enabled() {
     let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let child = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let child = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert!(child.enabled);
     assert_eq!(child.enabled_by, Some(SETTING_GITHUB_ALLOW.to_string()));
 }
@@ -658,20 +543,14 @@ fn enabled_by_parent_on_child_enabled() {
 fn enabled_by_parent_off_child_disabled() {
     let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let child = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let child = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert!(!child.enabled);
 }
 
 #[test]
 fn enabled_by_none_always_enabled() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.resources.log_bodies").unwrap();
     assert!(s.enabled);
     assert!(s.enabled_by.is_none());
 }
@@ -680,19 +559,13 @@ fn enabled_by_none_always_enabled() {
 fn enabled_by_chain_not_supported() {
     let mut user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let key = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let key = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert!(!key.enabled);
 
     // Turn on the toggle -> key is enabled
     user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
-    let key = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let key = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert!(key.enabled);
 }
 
@@ -731,10 +604,7 @@ fn settings_file_toml_roundtrip() {
     let parsed: SettingsFile = toml::from_str(&toml_str).unwrap();
     assert_eq!(file.settings.len(), parsed.settings.len());
     for (key, entry) in &file.settings {
-        assert_eq!(
-            &entry.value, &parsed.settings[key].value,
-            "mismatch for {key}"
-        );
+        assert_eq!(&entry.value, &parsed.settings[key].value, "mismatch for {key}");
     }
 }
 
@@ -755,12 +625,7 @@ fn settings_file_disk_roundtrip() {
 fn empty_files_use_defaults() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     for s in &resolved {
-        assert_eq!(
-            s.source,
-            PolicySource::Default,
-            "non-default source for {}",
-            s.id
-        );
+        assert_eq!(s.source, PolicySource::Default, "non-default source for {}", s.id);
     }
 }
 
@@ -786,17 +651,13 @@ fn parse_real_user_toml_format() {
 "ai.anthropic.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
 "ai.anthropic.api_key" = { value = "sk-ant-test-key", modified = "2026-02-25T00:00:00Z" }
 "#;
-    let file: SettingsFile =
-        toml::from_str(toml_str).expect("should parse real settings.toml format");
+    let file: SettingsFile = toml::from_str(toml_str).expect("should parse real settings.toml format");
     assert_eq!(file.settings.len(), 3);
     assert_eq!(
         file.settings["ai.google.api_key"].value,
         SettingValue::Text("AIzaSyTest1234".into()),
     );
-    assert_eq!(
-        file.settings["ai.anthropic.allow"].value,
-        SettingValue::Bool(true),
-    );
+    assert_eq!(file.settings["ai.anthropic.allow"].value, SettingValue::Bool(true),);
     assert_eq!(
         file.settings["ai.anthropic.api_key"].value,
         SettingValue::Text("sk-ant-test-key".into()),
@@ -813,10 +674,7 @@ fn parse_toml_mixed_value_types() {
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
     let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
-    assert_eq!(
-        file.settings["vm.resources.log_bodies"].value,
-        SettingValue::Bool(true)
-    );
+    assert_eq!(file.settings["vm.resources.log_bodies"].value, SettingValue::Bool(true));
     assert_eq!(
         file.settings["vm.resources.max_body_capture"].value,
         SettingValue::Number(8192)
@@ -825,10 +683,7 @@ fn parse_toml_mixed_value_types() {
         file.settings["security.web.http_upstream_ports"].value,
         SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434])
     );
-    assert_eq!(
-        file.settings["appearance.font_size"].value,
-        SettingValue::Number(16)
-    );
+    assert_eq!(file.settings["appearance.font_size"].value, SettingValue::Number(16));
 }
 
 #[test]
@@ -876,11 +731,7 @@ fn parse_toml_extra_fields_ignored() {
     let result: Result<SettingsFile, _> = toml::from_str(toml_str);
     // By default serde does NOT deny unknown fields, so this should succeed.
     // If it fails, SettingEntry is using deny_unknown_fields.
-    assert!(
-        result.is_ok(),
-        "extra fields should be ignored: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "extra fields should be ignored: {:?}", result.err());
 }
 
 #[test]
@@ -891,10 +742,7 @@ fn parse_toml_wrong_value_type_fails() {
 "ai.anthropic.allow" = { value = { nested = { deep = true } }, modified = "2026-01-01T00:00:00Z" }
 "#;
     let result: Result<SettingsFile, _> = toml::from_str(toml_str);
-    assert!(
-        result.is_err(),
-        "nested table value should fail deserialization"
-    );
+    assert!(result.is_err(), "nested table value should fail deserialization");
 }
 
 #[test]
@@ -910,10 +758,7 @@ fn parse_toml_list_values() {
         file.settings["domains"].value,
         SettingValue::StringList(vec!["a.com".into(), "b.com".into()])
     );
-    assert_eq!(
-        file.settings["counts"].value,
-        SettingValue::IntList(vec![1, 2, 3])
-    );
+    assert_eq!(file.settings["counts"].value, SettingValue::IntList(vec![1, 2, 3]));
 }
 
 #[test]
@@ -956,8 +801,7 @@ fn parse_toml_api_key_with_special_chars() {
 [settings]
 "ai.anthropic.api_key" = { value = "sk-ant-api03-ABCD_1234-efgh-5678", modified = "2026-01-01T00:00:00Z" }
 "#;
-    let file: SettingsFile =
-        toml::from_str(toml_str).expect("should parse API key with special chars");
+    let file: SettingsFile = toml::from_str(toml_str).expect("should parse API key with special chars");
     assert_eq!(
         file.settings["ai.anthropic.api_key"].value,
         SettingValue::Text("sk-ant-api03-ABCD_1234-efgh-5678".into()),
@@ -975,10 +819,7 @@ fn parse_toml_resolves_with_api_key_type() {
 "#;
     let user: SettingsFile = toml::from_str(toml_str).unwrap();
     let resolved = resolve_settings(&user, &empty_file());
-    let s = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == SETTING_GITHUB_TOKEN).unwrap();
     assert_eq!(
         s.setting_type,
         SettingType::ApiKey,
@@ -986,10 +827,7 @@ fn parse_toml_resolves_with_api_key_type() {
     );
     assert_eq!(
         s.effective_value,
-        SettingValue::Text(
-            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                .into()
-        )
+        SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into())
     );
 }
 
@@ -1000,23 +838,18 @@ fn parse_toml_serialized_format_roundtrips() {
         (
             SETTING_GITHUB_TOKEN,
             SettingValue::Text(
-                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                    .into(),
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             ),
         ),
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ("vm.resources.max_body_capture", SettingValue::Number(4096)),
     ]);
     let serialized = toml::to_string_pretty(&file).unwrap();
-    let parsed: SettingsFile = toml::from_str(&serialized).unwrap_or_else(|e| {
-        panic!("failed to re-parse serialized TOML:\n{serialized}\nerror: {e}")
-    });
+    let parsed: SettingsFile = toml::from_str(&serialized)
+        .unwrap_or_else(|e| panic!("failed to re-parse serialized TOML:\n{serialized}\nerror: {e}"));
     assert_eq!(file.settings.len(), parsed.settings.len());
     for (key, entry) in &file.settings {
-        assert_eq!(
-            &entry.value, &parsed.settings[key].value,
-            "mismatch for {key}"
-        );
+        assert_eq!(&entry.value, &parsed.settings[key].value, "mismatch for {key}");
     }
 }
 
@@ -1030,10 +863,7 @@ fn json_metadata_fields_present_when_empty() {
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
 
     // Find a setting with sparse metadata (e.g., a token setting)
-    let api_key = parsed
-        .iter()
-        .find(|v| v["id"] == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let api_key = parsed.iter().find(|v| v["id"] == SETTING_GITHUB_TOKEN).unwrap();
     let meta = &api_key["metadata"];
 
     // These fields MUST be present in JSON (even when empty) or the
@@ -1150,10 +980,7 @@ fn vm_settings_default_ram() {
 
 #[test]
 fn vm_settings_from_user() {
-    let user = file_with(vec![(
-        "vm.resources.scratch_disk_size_gb",
-        SettingValue::Number(32),
-    )]);
+    let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
     let resolved = resolve_settings(&user, &empty_file());
     let vs = settings_to_vm_settings(&resolved);
     assert_eq!(vs.scratch_disk_size_gb, Some(32));
@@ -1169,14 +996,8 @@ fn vm_settings_ram_from_user() {
 
 #[test]
 fn vm_settings_corp_overrides_user() {
-    let user = file_with(vec![(
-        "vm.resources.scratch_disk_size_gb",
-        SettingValue::Number(32),
-    )]);
-    let corp = file_with(vec![(
-        "vm.resources.scratch_disk_size_gb",
-        SettingValue::Number(4),
-    )]);
+    let user = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(32))]);
+    let corp = file_with(vec![("vm.resources.scratch_disk_size_gb", SettingValue::Number(4))]);
     let resolved = resolve_settings(&user, &corp);
     let vs = settings_to_vm_settings(&resolved);
     assert_eq!(vs.scratch_disk_size_gb, Some(4));
@@ -1216,10 +1037,7 @@ fn vm_settings_cpu_corp_overrides_user() {
 fn api_key_not_materialized_when_toggle_on() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
-        (
-            "ai.anthropic.api_key",
-            SettingValue::Text("sk-test-123".into()),
-        ),
+        ("ai.anthropic.api_key", SettingValue::Text("sk-test-123".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1384,10 +1202,7 @@ fn brokered_provider_discovery_does_not_mutate_settings() {
 fn api_key_not_materialized_when_toggle_off() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(false)),
-        (
-            "ai.anthropic.api_key",
-            SettingValue::Text("sk-test-123".into()),
-        ),
+        ("ai.anthropic.api_key", SettingValue::Text("sk-test-123".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1403,10 +1218,7 @@ fn api_key_not_injected_when_empty() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
     assert!(!has_key, "empty API key should not be injected");
 }
 
@@ -1427,10 +1239,7 @@ fn google_api_key_does_not_set_gemini_env_var() {
 fn openai_api_key_not_materialized_when_toggle_off() {
     let user = file_with(vec![
         ("ai.openai.allow", SettingValue::Bool(false)),
-        (
-            "ai.openai.api_key",
-            SettingValue::Text("sk-oai-test".into()),
-        ),
+        ("ai.openai.api_key", SettingValue::Text("sk-oai-test".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1473,16 +1282,22 @@ fn brokered_provider_credentials_never_materialize_as_boot_env() {
     let user = file_with(vec![
         (
             "ai.anthropic.api_key",
-            SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
+            SettingValue::Text(
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
+            ),
         ),
         (
             "ai.openai.api_key",
-            SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
+            SettingValue::Text(
+                "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into(),
+            ),
         ),
         ("ai.google.allow", SettingValue::Bool(false)),
         (
             "ai.google.api_key",
-            SettingValue::Text("credential:blake3:3333333333333333333333333333333333333333333333333333333333333333".into()),
+            SettingValue::Text(
+                "credential:blake3:3333333333333333333333333333333333333333333333333333333333333333".into(),
+            ),
         ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
@@ -1566,14 +1381,8 @@ fn empty_keys_skipped_regardless_of_toggle() {
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     // Only dynamic env vars from defaults might exist, but no API keys.
-    let has_ant = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
-    let has_oai = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("OPENAI_API_KEY"));
+    let has_ant = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_oai = gc.env.as_ref().is_some_and(|e| e.contains_key("OPENAI_API_KEY"));
     assert!(!has_ant, "empty anthropic key should not be injected");
     assert!(!has_oai, "empty openai key should not be injected");
 }
@@ -1622,9 +1431,7 @@ fn ai_cli_boot_file_user_overrides_are_not_materialized_from_settings() {
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let files = gc.files.unwrap_or_default();
-    assert!(!files
-        .iter()
-        .any(|f| f.path == "/root/.gemini/settings.json"));
+    assert!(!files.iter().any(|f| f.path == "/root/.gemini/settings.json"));
     assert!(!files.iter().any(|f| f.path == "/root/.codex/config.toml"));
 }
 
@@ -1714,15 +1521,9 @@ fn shell_boot_files_have_correct_mode() {
 #[test]
 fn filetype_metadata_propagated() {
     let defs = setting_definitions();
-    let bashrc = defs
-        .iter()
-        .find(|d| d.id == "vm.environment.shell.bashrc")
-        .unwrap();
+    let bashrc = defs.iter().find(|d| d.id == "vm.environment.shell.bashrc").unwrap();
     assert_eq!(bashrc.metadata.filetype.as_deref(), Some("bash"));
-    let tmux = defs
-        .iter()
-        .find(|d| d.id == "vm.environment.shell.tmux_conf")
-        .unwrap();
+    let tmux = defs.iter().find(|d| d.id == "vm.environment.shell.tmux_conf").unwrap();
     assert_eq!(tmux.metadata.filetype.as_deref(), Some("conf"));
 }
 
@@ -1756,10 +1557,7 @@ fn ai_cli_json_settings_are_not_settings() {
 #[test]
 fn shell_boot_files_are_file_type() {
     let defs = setting_definitions();
-    let def = defs
-        .iter()
-        .find(|d| d.id == "vm.environment.shell.bashrc")
-        .unwrap();
+    let def = defs.iter().find(|d| d.id == "vm.environment.shell.bashrc").unwrap();
     assert_eq!(def.setting_type, SettingType::File);
     let (path, content) = def.default_value.as_file().expect("should be File value");
     assert_eq!(path, "/root/.bashrc");
@@ -1866,10 +1664,7 @@ fn validate_non_file_settings_pass_through() {
 fn file_type_resolved_setting_has_file_value() {
     // The resolved setting for a File type should have a File value with path.
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let s = resolved
-        .iter()
-        .find(|s| s.id == "vm.environment.shell.bashrc")
-        .unwrap();
+    let s = resolved.iter().find(|s| s.id == "vm.environment.shell.bashrc").unwrap();
     assert_eq!(s.setting_type, SettingType::File);
     let (path, _content) = s.effective_value.as_file().expect("should be a File value");
     assert_eq!(path, "/root/.bashrc");
@@ -1882,11 +1677,7 @@ fn file_type_resolved_setting_has_file_value() {
 #[test]
 fn api_key_settings_do_not_drive_guest_env_vars() {
     let defs = setting_definitions();
-    for id in [
-        "ai.anthropic.api_key",
-        "ai.openai.api_key",
-        "ai.google.api_key",
-    ] {
+    for id in ["ai.anthropic.api_key", "ai.openai.api_key", "ai.google.api_key"] {
         assert!(
             defs.iter().all(|d| d.id != id),
             "{id} must not be a settings-owned provider credential"
@@ -1901,9 +1692,7 @@ fn builtin_env_settings_exist() {
     let defs = setting_definitions();
     let required = ["TERM", "HOME", "PATH", "LANG"];
     for var in &required {
-        let found = defs
-            .iter()
-            .any(|d| d.metadata.env_vars.contains(&var.to_string()));
+        let found = defs.iter().any(|d| d.metadata.env_vars.contains(&var.to_string()));
         assert!(found, "no setting definition injects env var {var}");
     }
 }
@@ -1915,9 +1704,7 @@ fn ca_bundle_setting_injects_three_env_vars() {
     let defs = setting_definitions();
     let ca_vars = ["REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
     for var in &ca_vars {
-        let found = defs
-            .iter()
-            .any(|d| d.metadata.env_vars.contains(&var.to_string()));
+        let found = defs.iter().any(|d| d.metadata.env_vars.contains(&var.to_string()));
         assert!(found, "no setting definition injects env var {var}");
     }
 }
@@ -1926,10 +1713,7 @@ fn ca_bundle_setting_injects_three_env_vars() {
 fn brokered_credential_setting_metadata_does_not_materialize_guest_env() {
     let user = file_with(vec![(
         "ai.anthropic.api_key",
-        SettingValue::Text(
-            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
     )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -1983,10 +1767,7 @@ fn user_can_override_builtin_env() {
         .iter()
         .find(|d| d.metadata.env_vars.contains(&"PATH".to_string()))
         .unwrap();
-    let user = file_with(vec![(
-        &path_def.id,
-        SettingValue::Text("/custom/bin".into()),
-    )]);
+    let user = file_with(vec![(&path_def.id, SettingValue::Text("/custom/bin".into()))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
@@ -1996,16 +1777,10 @@ fn user_can_override_builtin_env() {
 #[test]
 fn empty_env_var_setting_not_injected() {
     // A setting with env_vars metadata but empty value should not be injected.
-    let user = file_with(vec![(
-        "ai.anthropic.api_key",
-        SettingValue::Text("".into()),
-    )]);
+    let user = file_with(vec![("ai.anthropic.api_key", SettingValue::Text("".into()))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
+    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("ANTHROPIC_API_KEY"));
     assert!(!has_key, "empty API key should not be injected");
 }
 
@@ -2096,25 +1871,16 @@ fn settings_rejects_blocked_env_var() {
     )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("LD_PRELOAD"));
+    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_PRELOAD"));
     assert!(!has_key, "LD_PRELOAD should be dropped by validation");
 }
 
 #[test]
 fn settings_rejects_ld_library_path() {
-    let user = file_with(vec![(
-        "guest.env.LD_LIBRARY_PATH",
-        SettingValue::Text("/evil".into()),
-    )]);
+    let user = file_with(vec![("guest.env.LD_LIBRARY_PATH", SettingValue::Text("/evil".into()))]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let has_key = gc
-        .env
-        .as_ref()
-        .is_some_and(|e| e.contains_key("LD_LIBRARY_PATH"));
+    let has_key = gc.env.as_ref().is_some_and(|e| e.contains_key("LD_LIBRARY_PATH"));
     assert!(!has_key, "LD_LIBRARY_PATH should be dropped by validation");
 }
 
@@ -2170,10 +1936,7 @@ fn default_http_allow_is_security_rule_not_network_policy() {
 #[test]
 fn default_http_upstream_ports_in_network_policy() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    assert_eq!(
-        m.network.http_upstream_ports,
-        vec![80, 3128, 3713, 8080, 11434]
-    );
+    assert_eq!(m.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
 }
 
 #[test]
@@ -2197,10 +1960,7 @@ fn corp_http_upstream_ports_override_user_network_policy() {
         SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434]),
     )]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(
-        m.network.http_upstream_ports,
-        vec![80, 3128, 3713, 8080, 11434]
-    );
+    assert_eq!(m.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
 }
 
 #[test]
@@ -2234,10 +1994,7 @@ fn settings_guest_config_does_not_inject_mcp_into_ai_cli_files() {
 fn toml_registry_parses() {
     // The embedded defaults.toml must parse without panicking.
     let defs = setting_definitions();
-    assert!(
-        !defs.is_empty(),
-        "defaults.toml must produce at least one setting"
-    );
+    assert!(!defs.is_empty(), "defaults.toml must produce at least one setting");
 }
 
 #[test]
@@ -2257,11 +2014,7 @@ fn toml_registry_ids_from_path() {
     // IDs are dot-separated paths derived from the TOML table nesting.
     let defs = setting_definitions();
     for def in &defs {
-        assert!(
-            def.id.contains('.'),
-            "setting id '{}' should be a dotted path",
-            def.id,
-        );
+        assert!(def.id.contains('.'), "setting id '{}' should be a dotted path", def.id,);
     }
 }
 
@@ -2499,9 +2252,7 @@ fn config_lint_file_path_no_traversal() {
         None,
     );
     let issues = config_lint(&[s]);
-    assert!(issues
-        .iter()
-        .any(|i| i.severity == "error" && i.message.contains("..")));
+    assert!(issues.iter().any(|i| i.severity == "error" && i.message.contains("..")));
 }
 
 #[test]
@@ -2528,13 +2279,7 @@ fn config_lint_number_in_range_ok() {
         max: Some(128),
         ..Default::default()
     };
-    let s = make_resolved(
-        "vm.cpu",
-        SettingType::Number,
-        SettingValue::Number(4),
-        meta,
-        None,
-    );
+    let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(4), meta, None);
     let issues = config_lint(&[s]);
     assert!(issues.is_empty());
 }
@@ -2546,13 +2291,7 @@ fn config_lint_number_below_min_error() {
         max: Some(128),
         ..Default::default()
     };
-    let s = make_resolved(
-        "vm.cpu",
-        SettingType::Number,
-        SettingValue::Number(0),
-        meta,
-        None,
-    );
+    let s = make_resolved("vm.cpu", SettingType::Number, SettingValue::Number(0), meta, None);
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2566,13 +2305,7 @@ fn config_lint_number_above_max_error() {
         max: Some(128),
         ..Default::default()
     };
-    let s = make_resolved(
-        "vm.disk",
-        SettingType::Number,
-        SettingValue::Number(256),
-        meta,
-        None,
-    );
+    let s = make_resolved("vm.disk", SettingType::Number, SettingValue::Number(256), meta, None);
     let issues = config_lint(&[s]);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, "error");
@@ -2593,13 +2326,7 @@ fn config_lint_number_at_boundary_ok() {
         meta.clone(),
         None,
     );
-    let s2 = make_resolved(
-        "vm.max",
-        SettingType::Number,
-        SettingValue::Number(128),
-        meta,
-        None,
-    );
+    let s2 = make_resolved("vm.max", SettingType::Number, SettingValue::Number(128), meta, None);
     let issues = config_lint(&[s1, s2]);
     assert!(issues.is_empty());
 }
@@ -2748,10 +2475,7 @@ fn config_lint_apikey_empty_when_disabled_ok() {
         Some("ai.provider.allow"),
     );
     let issues = config_lint(&[toggle, key]);
-    assert!(
-        issues.is_empty(),
-        "disabled provider with empty key is fine"
-    );
+    assert!(issues.is_empty(), "disabled provider with empty key is fine");
 }
 
 #[test]
@@ -2833,13 +2557,7 @@ fn config_lint_all_issues_serialize_deserialize() {
         max: Some(10),
         ..Default::default()
     };
-    let s = make_resolved(
-        "v.n",
-        SettingType::Number,
-        SettingValue::Number(99),
-        meta,
-        None,
-    );
+    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
     let issues = config_lint(&[s]);
     let json = serde_json::to_string(&issues).unwrap();
     let roundtrip: Vec<ConfigIssue> = serde_json::from_str(&json).unwrap();
@@ -2853,13 +2571,7 @@ fn config_lint_issue_messages_are_nonempty() {
         max: Some(10),
         ..Default::default()
     };
-    let s = make_resolved(
-        "v.n",
-        SettingType::Number,
-        SettingValue::Number(99),
-        meta,
-        None,
-    );
+    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
     let issues = config_lint(&[s]);
     for issue in &issues {
         assert!(!issue.message.is_empty());
@@ -2894,10 +2606,7 @@ fn config_lint_default_config_has_no_errors() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let issues = config_lint(&resolved);
     let errors: Vec<_> = issues.iter().filter(|i| i.severity == "error").collect();
-    assert!(
-        errors.is_empty(),
-        "default config should have no errors: {errors:?}"
-    );
+    assert!(errors.is_empty(), "default config should have no errors: {errors:?}");
 }
 
 #[test]
@@ -2907,13 +2616,7 @@ fn config_lint_returns_multiple_issues() {
         max: Some(10),
         ..Default::default()
     };
-    let s1 = make_resolved(
-        "v.n",
-        SettingType::Number,
-        SettingValue::Number(99),
-        meta_num,
-        None,
-    );
+    let s1 = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta_num, None);
     let s2 = make_resolved(
         "v.f",
         SettingType::File,
@@ -2948,14 +2651,8 @@ fn config_lint_empty_key_has_docs_url() {
         Some("ai.provider.allow"),
     );
     let issues = config_lint(&[toggle, key]);
-    let empty_key_issue = issues
-        .iter()
-        .find(|i| i.message.contains("not set"))
-        .unwrap();
-    assert_eq!(
-        empty_key_issue.docs_url.as_deref(),
-        Some("https://example.com/keys")
-    );
+    let empty_key_issue = issues.iter().find(|i| i.message.contains("not set")).unwrap();
+    assert_eq!(empty_key_issue.docs_url.as_deref(), Some("https://example.com/keys"));
 }
 
 #[test]
@@ -2965,20 +2662,11 @@ fn config_lint_non_key_issue_no_docs_url() {
         max: Some(10),
         ..Default::default()
     };
-    let s = make_resolved(
-        "v.n",
-        SettingType::Number,
-        SettingValue::Number(99),
-        meta,
-        None,
-    );
+    let s = make_resolved("v.n", SettingType::Number, SettingValue::Number(99), meta, None);
     let issues = config_lint(&[s]);
     assert!(!issues.is_empty());
     for issue in &issues {
-        assert!(
-            issue.docs_url.is_none(),
-            "non-key issues should not have docs_url"
-        );
+        assert!(issue.docs_url.is_none(), "non-key issues should not have docs_url");
     }
 }
 
@@ -3039,11 +2727,7 @@ fn settings_tree_contains_all_definitions() {
 
     let leaf_ids = collect_leaf_ids(&tree);
     for def in &defs {
-        assert!(
-            leaf_ids.contains(&def.id),
-            "tree missing definition: {}",
-            def.id,
-        );
+        assert!(leaf_ids.contains(&def.id), "tree missing definition: {}", def.id,);
     }
 }
 
@@ -3075,10 +2759,7 @@ fn settings_tree_groups_have_expected_names() {
         "Environment",
         "Resources",
     ] {
-        assert!(
-            names.contains(&expected.to_string()),
-            "tree missing group: {expected}",
-        );
+        assert!(names.contains(&expected.to_string()), "tree missing group: {expected}",);
     }
 }
 
@@ -3105,12 +2786,10 @@ fn settings_tree_dynamic_env_appended_to_guest() {
                 if name == group_name {
                     return children.iter().any(|c| match c {
                         SettingsNode::Leaf(s) => s.id == leaf_id,
-                        SettingsNode::Group { children, .. } => {
-                            children.iter().any(|cc| match cc {
-                                SettingsNode::Leaf(s) => s.id == leaf_id,
-                                _ => false,
-                            })
-                        }
+                        SettingsNode::Group { children, .. } => children.iter().any(|cc| match cc {
+                            SettingsNode::Leaf(s) => s.id == leaf_id,
+                            _ => false,
+                        }),
                         _ => false,
                     });
                 }
@@ -3135,10 +2814,7 @@ fn settings_tree_enabled_by_on_groups() {
 
     fn find_group(nodes: &[SettingsNode], key: &str) -> Option<SettingsNode> {
         for node in nodes {
-            if let SettingsNode::Group {
-                key: k, children, ..
-            } = node
-            {
+            if let SettingsNode::Group { key: k, children, .. } = node {
                 if k == key {
                     return Some(node.clone());
                 }
@@ -3151,10 +2827,7 @@ fn settings_tree_enabled_by_on_groups() {
     }
 
     let github = find_group(&tree, "repository.providers.github");
-    assert!(
-        github.is_some(),
-        "should find repository.providers.github group"
-    );
+    assert!(github.is_some(), "should find repository.providers.github group");
     if let Some(SettingsNode::Group { enabled_by, .. }) = github {
         assert_eq!(enabled_by, Some(SETTING_GITHUB_ALLOW.to_string()));
     }
@@ -3207,14 +2880,8 @@ fn action_nodes_not_in_setting_definitions() {
 #[test]
 fn dark_mode_has_side_effect() {
     let defs = setting_definitions();
-    let dark_mode = defs
-        .iter()
-        .find(|d| d.id == "appearance.dark_mode")
-        .unwrap();
-    assert_eq!(
-        dark_mode.metadata.side_effect,
-        Some(SideEffect::ToggleTheme)
-    );
+    let dark_mode = defs.iter().find(|d| d.id == "appearance.dark_mode").unwrap();
+    assert_eq!(dark_mode.metadata.side_effect, Some(SideEffect::ToggleTheme));
 }
 
 // -----------------------------------------------------------------------
@@ -3330,10 +2997,7 @@ fn batch_update_rejects_unknown_setting_id() {
 fn batch_update_settings_rejects_profile_owned_setting_ids() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            "vm.resources.cpu_count".to_string(),
-            SettingValue::Number(8),
-        );
+        changes.insert("vm.resources.cpu_count".to_string(), SettingValue::Number(8));
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("profile-owned setting"));
@@ -3363,10 +3027,7 @@ fn batch_update_rejects_retired_web_decision_setting_ids() {
 fn batch_update_rejects_dynamic_guest_env() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            "guest.env.MY_VAR".to_string(),
-            SettingValue::Text("hello".into()),
-        );
+        changes.insert("guest.env.MY_VAR".to_string(), SettingValue::Text("hello".into()));
         let result = loader::batch_update_settings(&changes);
         assert!(
             result.is_err(),
@@ -3409,8 +3070,7 @@ fn git_credentials_not_generated_from_github_token_settings() {
         (
             SETTING_GITHUB_TOKEN,
             SettingValue::Text(
-                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                    .into(),
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             ),
         ),
     ]);
@@ -3428,15 +3088,11 @@ fn git_credentials_not_generated_from_multiple_provider_settings() {
         (
             SETTING_GITHUB_TOKEN,
             SettingValue::Text(
-                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                    .into(),
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             ),
         ),
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
-        (
-            SETTING_GITLAB_TOKEN,
-            SettingValue::Text("glpat-test456".into()),
-        ),
+        (SETTING_GITLAB_TOKEN, SettingValue::Text("glpat-test456".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3449,10 +3105,7 @@ fn git_credentials_not_generated_from_multiple_provider_settings() {
 fn git_credentials_not_generated_when_allow_false() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
-        (
-            SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test123".into()),
-        ),
+        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3460,10 +3113,7 @@ fn git_credentials_not_generated_when_allow_false() {
         .files
         .as_ref()
         .is_some_and(|f| f.iter().any(|f| f.path == "/root/.git-credentials"));
-    assert!(
-        !has_creds,
-        ".git-credentials should not be generated when allow=false"
-    );
+    assert!(!has_creds, ".git-credentials should not be generated when allow=false");
 }
 
 #[test]
@@ -3483,10 +3133,7 @@ fn git_credentials_not_generated_when_token_empty() {
 
 #[test]
 fn git_credentials_not_generated_when_corp_blocks() {
-    let user = file_with(vec![(
-        SETTING_GITHUB_TOKEN,
-        SettingValue::Text("ghp_test123".into()),
-    )]);
+    let user = file_with(vec![(SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test123".into()))]);
     let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
     let gc = settings_to_guest_config(&resolved);
@@ -3505,10 +3152,7 @@ fn git_credentials_rejects_token_with_special_chars() {
     // Newlines
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (
-            SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test\ninjected".into()),
-        ),
+        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test\ninjected".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3524,10 +3168,7 @@ fn git_credentials_rejects_token_with_special_chars() {
     // @ sign (could inject a different host)
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (
-            SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test@evil.com".into()),
-        ),
+        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test@evil.com".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3543,10 +3184,7 @@ fn git_credentials_rejects_token_with_special_chars() {
     // : colon (could break URL structure)
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
-        (
-            SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test:injected".into()),
-        ),
+        (SETTING_GITHUB_TOKEN, SettingValue::Text("ghp_test:injected".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
@@ -3574,10 +3212,7 @@ fn git_credentials_gitconfig_not_generated_without_tokens() {
         .files
         .as_ref()
         .is_some_and(|f| f.iter().any(|f| f.path == "/root/.gitconfig"));
-    assert!(
-        !has_creds,
-        ".git-credentials should not exist without tokens"
-    );
+    assert!(!has_creds, ".git-credentials should not exist without tokens");
     assert!(!has_gitconfig, ".gitconfig should not exist without tokens");
 }
 
@@ -3647,25 +3282,16 @@ fn repository_settings_exist_in_definitions() {
         SETTING_GITLAB_TOKEN,
     ];
     for id in &ids {
-        assert!(
-            defs.iter().any(|d| d.id == *id),
-            "missing setting definition: {id}"
-        );
+        assert!(defs.iter().any(|d| d.id == *id), "missing setting definition: {id}");
     }
 }
 
 #[test]
 fn default_github_allowed_gitlab_not() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gh = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITHUB_ALLOW)
-        .unwrap();
+    let gh = resolved.iter().find(|s| s.id == SETTING_GITHUB_ALLOW).unwrap();
     assert_eq!(gh.effective_value, SettingValue::Bool(true));
-    let gl = resolved
-        .iter()
-        .find(|s| s.id == SETTING_GITLAB_ALLOW)
-        .unwrap();
+    let gl = resolved.iter().find(|s| s.id == SETTING_GITLAB_ALLOW).unwrap();
     assert_eq!(gl.effective_value, SettingValue::Bool(false));
 }
 
@@ -3697,8 +3323,7 @@ fn gh_token_not_materialized_when_github_enabled() {
         (
             SETTING_GITHUB_TOKEN,
             SettingValue::Text(
-                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                    .into(),
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             ),
         ),
     ]);
@@ -3716,8 +3341,7 @@ fn gitlab_token_not_materialized_when_gitlab_enabled() {
         (
             SETTING_GITLAB_TOKEN,
             SettingValue::Text(
-                "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                    .into(),
+                "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into(),
             ),
         ),
     ]);
@@ -3820,10 +3444,7 @@ fn migrate_does_not_clobber_existing_new_keys() {
 // Q: MergedPolicies basic construction (6)
 // -----------------------------------------------------------------------
 
-fn file_with_mcp(
-    entries: Vec<(&str, SettingValue)>,
-    mcp: crate::mcp::policy::McpProfileConfig,
-) -> SettingsFile {
+fn file_with_mcp(entries: Vec<(&str, SettingValue)>, mcp: crate::mcp::policy::McpProfileConfig) -> SettingsFile {
     let mut f = file_with(entries);
     f.mcp = Some(mcp);
     f
@@ -3840,10 +3461,7 @@ fn merged_defaults_only() {
 fn merged_user_enables_provider() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
@@ -3876,10 +3494,7 @@ fn corp_forces_provider_on() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
@@ -3894,17 +3509,11 @@ fn corp_forces_provider_off() {
 fn corp_sets_api_key() {
     let user = file_with(vec![(
         "ai.openai.api_key",
-        SettingValue::Text(
-            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
     )]);
     let corp = file_with(vec![(
         "ai.openai.api_key",
-        SettingValue::Text(
-            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
-                .into(),
-        ),
+        SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
     )]);
     let m = MergedPolicies::from_files(&user, &corp);
     let env = m.guest.env.unwrap_or_default();
@@ -3936,10 +3545,7 @@ fn retired_web_decision_settings_are_not_resolved() {
             "security.web.custom_allow",
             SettingValue::Text("internal.corp.com".into()),
         ),
-        (
-            "security.web.custom_block",
-            SettingValue::Text("evil.com".into()),
-        ),
+        ("security.web.custom_block", SettingValue::Text("evil.com".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     for retired_id in [
@@ -3976,10 +3582,7 @@ fn merged_from_missing_corp_toml() {
     let corp = load_settings_file(&nonexistent).unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
@@ -4014,10 +3617,7 @@ fn merged_from_invalid_corp_toml() {
     let corp = result.unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
@@ -4028,34 +3628,22 @@ fn merged_ignores_unknown_setting_ids() {
     ]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, anthropic should still work
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
 fn merged_wrong_type_for_bool_setting() {
     // SettingValue::Text for a Bool-type setting -- resolve will use default
-    let user = file_with(vec![(
-        "ai.anthropic.allow",
-        SettingValue::Text("yes".into()),
-    )]);
+    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Text("yes".into()))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Provider detection/default rules are independent from legacy allow
     // toggles; malformed toggle values do not create network decisions.
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
 fn merged_wrong_type_for_number_setting() {
-    let user = file_with(vec![(
-        "vm.resources.cpu_count",
-        SettingValue::Text("four".into()),
-    )]);
+    let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Text("four".into()))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // as_number() returns None -> falls back to default (4)
     assert_eq!(m.vm.cpu_count, Some(4));
@@ -4063,10 +3651,7 @@ fn merged_wrong_type_for_number_setting() {
 
 #[test]
 fn merged_retired_custom_allow_setting_is_ignored() {
-    let user = file_with(vec![(
-        "security.web.custom_allow",
-        SettingValue::Text("".into()),
-    )]);
+    let user = file_with(vec![("security.web.custom_allow", SettingValue::Text("".into()))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, empty string -> no domains added
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
@@ -4122,12 +3707,8 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
             }),
         );
 
-        let error = loader::batch_update_settings_json(&changes)
-            .expect_err("old policy writes must reject");
-        assert!(
-            error.contains(&format!("unknown setting: {retired_key}")),
-            "{error}"
-        );
+        let error = loader::batch_update_settings_json(&changes).expect_err("old policy writes must reject");
+        assert!(error.contains(&format!("unknown setting: {retired_key}")), "{error}");
         let loaded = loader::load_settings_file(user_path).unwrap();
         assert!(
             loaded.settings.is_empty(),
@@ -4155,11 +3736,9 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     .expect("provider security rules parse inside settings file");
 
     assert!(file.ai.contains_key("openai"));
-    let rules = ProviderRuleProfile {
-        ai: file.ai.clone(),
-    }
-    .compile_rule_set(SecurityRuleSource::User)
-    .expect("provider security rules compile");
+    let rules = ProviderRuleProfile { ai: file.ai.clone() }
+        .compile_rule_set(SecurityRuleSource::User)
+        .expect("provider security rules compile");
     assert!(rules
         .rules()
         .iter()
@@ -4361,10 +3940,7 @@ fn settings_loader_rejects_raw_provider_credentials_but_accepts_broker_refs() {
 fn batch_update_settings_rejects_raw_provider_credentials_atomically() {
     with_temp_configs(vec![], vec![], |user_path, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            "ai.openai.api_key".to_string(),
-            serde_json::json!("sk-raw-openai"),
-        );
+        changes.insert("ai.openai.api_key".to_string(), serde_json::json!("sk-raw-openai"));
 
         let result = loader::batch_update_settings_json(&changes);
         let error = result.expect_err("retired API key writes must be rejected");
@@ -4477,11 +4053,7 @@ fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
 
     assert_eq!(
         enforcement_rules.first(),
-        Some(&(
-            "corp.rules.block_local_deny_target",
-            SecurityRuleAction::Block,
-            -100
-        )),
+        Some(&("corp.rules.block_local_deny_target", SecurityRuleAction::Block, -100)),
         "corp block must be the first enforcement decision before profile defaults: {enforcement_rules:?}"
     );
 }
@@ -4508,9 +4080,7 @@ match = 'http.host == "llm.internal.example"'
     let policies = MergedPolicies::from_files(&user, &SettingsFile::default());
 
     assert_eq!(
-        policies
-            .model_endpoints
-            .protocol_for_host("llm.internal.example"),
+        policies.model_endpoints.protocol_for_host("llm.internal.example"),
         Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi)
     );
     assert_eq!(
@@ -4518,15 +4088,11 @@ match = 'http.host == "llm.internal.example"'
         Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi)
     );
     assert_eq!(
-        policies
-            .model_endpoints
-            .protocol_for_target("company-openai", 8443),
+        policies.model_endpoints.protocol_for_target("company-openai", 8443),
         Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi)
     );
     assert_eq!(
-        policies
-            .model_endpoints
-            .protocol_for_target("company-openai", 11434),
+        policies.model_endpoints.protocol_for_target("company-openai", 11434),
         None
     );
     let endpoint = policies
@@ -4609,9 +4175,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 
     let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
         &ProviderRuleProfile::default(),
-        &ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
+        &ProviderRuleProfile { ai: corp.ai.clone() },
     )
     .expect("provider rules merge");
     let rules = merged
@@ -4730,8 +4294,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     let _settings_home = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
-    let serialized =
-        serde_json::to_value(load_settings_response()).expect("settings response serializes");
+    let serialized = serde_json::to_value(load_settings_response()).expect("settings response serializes");
     assert!(
         serialized.get("providers").is_none(),
         "settings response must not expose provider status"
@@ -4758,8 +4321,7 @@ fn load_settings_response_exposes_settings_tree_only() {
     let _settings_home = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
-    let serialized =
-        serde_json::to_value(load_settings_response()).expect("settings response serializes");
+    let serialized = serde_json::to_value(load_settings_response()).expect("settings response serializes");
     assert!(
         serialized.get("tree").is_some(),
         "settings response must expose the settings tree"
@@ -4768,10 +4330,7 @@ fn load_settings_response_exposes_settings_tree_only() {
         serialized.get("issues").is_some(),
         "settings response must expose config issues"
     );
-    let tree = serialized
-        .get("tree")
-        .expect("settings tree is present")
-        .to_string();
+    let tree = serialized.get("tree").expect("settings tree is present").to_string();
     assert!(
         !tree.contains("\"mcp\"") && !tree.contains("MCP Servers"),
         "settings response must not expose profile-owned MCP configuration"
@@ -4810,10 +4369,7 @@ fn merged_partial_settings_only() {
     assert!(user.mcp.is_none());
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Settings applied
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.ai_anthropic_http_api"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
 #[test]
@@ -4844,25 +4400,10 @@ mode = "disable"
 
     let merged = MergedPolicies::from_files(&user, &corp);
 
-    assert_eq!(
-        merged.plugins["dummy_pre"].mode,
-        SecurityPluginMode::Rewrite
-    );
-    assert_eq!(
-        merged.plugins["dummy_pre"].detection_level,
-        DetectionLevel::Medium
-    );
+    assert_eq!(merged.plugins["dummy_pre"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(merged.plugins["dummy_pre"].detection_level, DetectionLevel::Medium);
     assert_eq!(merged.plugins["dummy_post"].mode, SecurityPluginMode::Block);
-    assert_eq!(
-        merged.plugins["dummy_post"].detection_level,
-        DetectionLevel::Critical
-    );
-    assert_eq!(
-        merged.plugins["dummy_disabled"].mode,
-        SecurityPluginMode::Disable
-    );
-    assert_eq!(
-        merged.plugins["dummy_disabled"].active_detection_level(),
-        None
-    );
+    assert_eq!(merged.plugins["dummy_post"].detection_level, DetectionLevel::Critical);
+    assert_eq!(merged.plugins["dummy_disabled"].mode, SecurityPluginMode::Disable);
+    assert_eq!(merged.plugins["dummy_disabled"].active_detection_level(), None);
 }

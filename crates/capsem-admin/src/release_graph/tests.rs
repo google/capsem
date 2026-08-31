@@ -35,8 +35,7 @@ fn release_graph_enums_reject_unknown_status_values() {
         .expect_err("removed is absence from a newer graph, not a status");
 
     assert!(
-        error.to_string().contains("unknown variant")
-            || error.to_string().contains("expected one of"),
+        error.to_string().contains("unknown variant") || error.to_string().contains("expected one of"),
         "{error}"
     );
 }
@@ -71,8 +70,8 @@ fn release_graph_manifest_records_use_version_not_schema_version() {
         "url": "/manifests/stable/1.4.0/manifest.json",
         "digest": digest_json()
     });
-    let error = serde_json::from_value::<ManifestRecord>(invalid)
-        .expect_err("manifest records must not use schema_version");
+    let error =
+        serde_json::from_value::<ManifestRecord>(invalid).expect_err("manifest records must not use schema_version");
 
     assert!(error.to_string().contains("schema_version"), "{error}");
 }
@@ -116,10 +115,7 @@ fn release_graph_channels_catalog_lists_manifest_records() {
 
     let parsed: ChannelsCatalog = serde_json::from_value(catalog).expect("channels catalog parses");
     assert_eq!(parsed.channels["stable"].manifests.len(), 2);
-    assert_eq!(
-        parsed.channels["nightly"].manifests[0].status,
-        Status::Current
-    );
+    assert_eq!(parsed.channels["nightly"].manifests[0].status, Status::Current);
     parsed.validate().expect("catalog validates");
 }
 
@@ -148,15 +144,11 @@ fn release_graph_channels_catalog_rejects_duplicate_manifest_versions() {
             }
         }
     });
-    let parsed: ChannelsCatalog =
-        serde_json::from_value(catalog).expect("JSON shape parses before validation");
+    let parsed: ChannelsCatalog = serde_json::from_value(catalog).expect("JSON shape parses before validation");
     let error = parsed
         .validate()
         .expect_err("duplicate manifest versions are ambiguous");
-    assert!(
-        error.to_string().contains("duplicate manifest version"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("duplicate manifest version"), "{error}");
 }
 
 #[test]
@@ -181,8 +173,7 @@ fn release_graph_channels_catalog_rejects_bad_digest_shape() {
             }
         }
     });
-    let parsed: ChannelsCatalog =
-        serde_json::from_value(catalog).expect("JSON shape parses before validation");
+    let parsed: ChannelsCatalog = serde_json::from_value(catalog).expect("JSON shape parses before validation");
     let error = parsed.validate().expect_err("bad sha256 rejected");
     assert!(error.to_string().contains("sha256"), "{error}");
 }
@@ -231,17 +222,10 @@ fn release_graph_revoked_manifest_is_listed_but_not_selectable() {
     }))
     .expect("catalog shape");
 
-    catalog
-        .validate()
-        .expect("revoked manifests remain auditable");
-    let selected = catalog
-        .select_manifest("stable")
-        .expect("supported fallback selected");
+    catalog.validate().expect("revoked manifests remain auditable");
+    let selected = catalog.select_manifest("stable").expect("supported fallback selected");
     assert_eq!(selected.version, "1.3.0");
-    assert_eq!(
-        catalog.channels["stable"].manifests[0].status,
-        Status::Revoked
-    );
+    assert_eq!(catalog.channels["stable"].manifests[0].status, Status::Revoked);
 }
 
 #[test]
@@ -277,9 +261,7 @@ fn release_graph_current_manifest_is_preferred_over_supported_and_deprecated() {
     }))
     .expect("catalog shape");
 
-    let selected = catalog
-        .select_manifest("nightly")
-        .expect("manifest selected");
+    let selected = catalog.select_manifest("nightly").expect("manifest selected");
     assert_eq!(selected.version, "1.5.0-nightly.current");
 }
 
@@ -324,14 +306,8 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
     manifest
         .validate_inventory_shape()
         .expect("package and binary inventory is valid");
-    assert_ne!(
-        manifest.packages[0].name,
-        manifest.packages[0].binaries[0].name
-    );
-    assert_eq!(
-        manifest.packages[0].binaries[0].installed_path,
-        "/usr/local/bin/capsem"
-    );
+    assert_ne!(manifest.packages[0].name, manifest.packages[0].binaries[0].name);
+    assert_eq!(manifest.packages[0].binaries[0].installed_path, "/usr/local/bin/capsem");
 }
 
 #[test]
@@ -444,19 +420,16 @@ fn package_and_machine_architecture_enums_reject_each_others_vocabulary() {
 #[test]
 fn package_architecture_parser_rejects_aliases_and_filename_lies() {
     assert_eq!(
-        PackageArchitecture::from_package_name("Capsem_1.4.0_amd64.deb")
-            .expect("amd64 Debian filename"),
+        PackageArchitecture::from_package_name("Capsem_1.4.0_amd64.deb").expect("amd64 Debian filename"),
         PackageArchitecture::Amd64
     );
     assert_eq!(
-        PackageArchitecture::from_package_name("Capsem_1.4.0_arm64.deb")
-            .expect("arm64 Debian filename"),
+        PackageArchitecture::from_package_name("Capsem_1.4.0_arm64.deb").expect("arm64 Debian filename"),
         PackageArchitecture::Arm64
     );
     PackageArchitecture::from_package_name("Capsem_1.4.0_x86_64.deb")
         .expect_err("machine alias is forbidden in package filenames");
-    PackageArchitecture::from_package_name("Capsem_1.4.0.deb")
-        .expect_err("missing Debian architecture is rejected");
+    PackageArchitecture::from_package_name("Capsem_1.4.0.deb").expect_err("missing Debian architecture is rejected");
 
     let package = PackageInventoryRow {
         name: "Capsem_1.4.0_amd64.deb".to_string(),
@@ -475,10 +448,7 @@ fn package_architecture_parser_rejects_aliases_and_filename_lies() {
     let error = package
         .validate()
         .expect_err("filename and graph architecture mismatch is rejected");
-    assert!(
-        format!("{error:#}").contains("filename architecture"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("filename architecture"), "{error:#}");
 }
 
 #[test]
@@ -596,10 +566,7 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
         },
     ];
     let sbom_refs = BTreeMap::from([
-        (
-            "/usr/local/bin/capsem".to_string(),
-            "SPDXRef-File-capsem".to_string(),
-        ),
+        ("/usr/local/bin/capsem".to_string(), "SPDXRef-File-capsem".to_string()),
         (
             "/usr/local/share/capsem/bin/capsem-service".to_string(),
             "SPDXRef-File-capsem-service".to_string(),
@@ -611,14 +578,8 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].name, "capsem");
     assert_eq!(rows[0].installed_path, "/usr/local/bin/capsem");
-    assert_eq!(
-        rows[0].digest.sha256,
-        format!("{:x}", Sha256::digest(b"capsem-bin"))
-    );
-    assert_eq!(
-        rows[0].digest.blake3,
-        blake3::hash(b"capsem-bin").to_hex().to_string()
-    );
+    assert_eq!(rows[0].digest.sha256, format!("{:x}", Sha256::digest(b"capsem-bin")));
+    assert_eq!(rows[0].digest.blake3, blake3::hash(b"capsem-bin").to_hex().to_string());
     assert_eq!(rows[0].sbom_component_ref, "SPDXRef-File-capsem");
     assert_eq!(rows[1].sbom_component_ref, "SPDXRef-File-capsem-service");
 }
@@ -695,9 +656,8 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
             "SPDXRef-File-macos-capsem-service".to_string(),
         ),
     ]);
-    let macos_rows =
-        executable_inventory_from_package_files(&macos_package, &macos_files, &macos_sbom_refs)
-            .expect("macOS package rows");
+    let macos_rows = executable_inventory_from_package_files(&macos_package, &macos_files, &macos_sbom_refs)
+        .expect("macOS package rows");
     verify_package_contents_match_binary_inventory(&macos_package, &macos_files, &macos_rows)
         .expect("macOS package contents match manifest inventory");
 
@@ -730,18 +690,14 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
         },
     ];
     let deb_sbom_refs = BTreeMap::from([
-        (
-            "/usr/bin/capsem".to_string(),
-            "SPDXRef-File-deb-capsem".to_string(),
-        ),
+        ("/usr/bin/capsem".to_string(), "SPDXRef-File-deb-capsem".to_string()),
         (
             "/usr/bin/capsem-service".to_string(),
             "SPDXRef-File-deb-capsem-service".to_string(),
         ),
     ]);
     let deb_rows =
-        executable_inventory_from_package_files(&deb_package, &deb_files, &deb_sbom_refs)
-            .expect("deb package rows");
+        executable_inventory_from_package_files(&deb_package, &deb_files, &deb_sbom_refs).expect("deb package rows");
     verify_package_contents_match_binary_inventory(&deb_package, &deb_files, &deb_rows)
         .expect("deb package contents match manifest inventory");
 }
@@ -768,27 +724,17 @@ fn executable_inventory_rejects_package_content_hash_drift() {
         installed_path: "/usr/bin/capsem".to_string(),
         bytes: b"deb-capsem".to_vec(),
     }];
-    let sbom_refs = BTreeMap::from([(
-        "/usr/bin/capsem".to_string(),
-        "SPDXRef-File-deb-capsem".to_string(),
-    )]);
-    let mut rows =
-        executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
+    let sbom_refs = BTreeMap::from([("/usr/bin/capsem".to_string(), "SPDXRef-File-deb-capsem".to_string())]);
+    let mut rows = executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
     rows[0].digest.sha256 = "0".repeat(64);
 
     let error = verify_package_contents_match_binary_inventory(&package, &files, &rows)
         .expect_err("tampered package content hash must be rejected");
 
-    assert!(
-        format!("{error:#}").contains("sha256 mismatch"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("sha256 mismatch"), "{error:#}");
 }
 
-fn profile_with_image_artifacts(
-    revision: &str,
-    artifacts: Vec<ProfileImageArtifactRef>,
-) -> ProfileDocument {
+fn profile_with_image_artifacts(revision: &str, artifacts: Vec<ProfileImageArtifactRef>) -> ProfileDocument {
     ProfileDocument {
         version: revision.to_string(),
         id: "co-work".to_string(),
@@ -802,10 +748,7 @@ fn profile_with_image_artifacts(
     }
 }
 
-fn profile_architecture(
-    revision: &str,
-    artifacts: Vec<ProfileImageArtifactRef>,
-) -> ProfileArchitectureImages {
+fn profile_architecture(revision: &str, artifacts: Vec<ProfileImageArtifactRef>) -> ProfileArchitectureImages {
     ProfileArchitectureImages {
         architecture: Architecture::Arm64,
         software: vec![software_row()],
@@ -838,11 +781,7 @@ fn profile_architecture(
     }
 }
 
-fn profile_image_artifact(
-    kind: ProfileImageArtifactKind,
-    name: &str,
-    revision: &str,
-) -> ProfileImageArtifactRef {
+fn profile_image_artifact(kind: ProfileImageArtifactKind, name: &str, revision: &str) -> ProfileImageArtifactRef {
     ProfileImageArtifactRef {
         kind,
         name: name.to_string(),
@@ -894,10 +833,7 @@ fn profile_image_artifact_sets_require_kernel_initrd_and_rootfs() {
         .validate_profile_ownership()
         .expect_err("profile image sets must include every required image kind");
 
-    assert!(
-        error.to_string().contains("images missing kernel"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("images missing kernel"), "{error}");
 }
 
 #[test]
@@ -915,9 +851,7 @@ fn profile_image_evidence_must_match_owning_architecture() {
         .expect_err("image evidence must stay scoped to its owning architecture");
 
     assert!(
-        error
-            .to_string()
-            .contains("evidence abom url must include /arm64/"),
+        error.to_string().contains("evidence abom url must include /arm64/"),
         "{error}"
     );
 }
@@ -936,10 +870,7 @@ fn profile_image_versions_removed_image_is_absent_not_status_removed() {
     let error = diff_profile_image_artifacts(&previous, &next)
         .expect_err("required image artifacts cannot be omitted from a profile revision");
 
-    assert!(
-        error.to_string().contains("images missing initrd"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("images missing initrd"), "{error}");
 
     let invalid_removed_status = serde_json::json!({
         "kind": "initrd",
@@ -1048,8 +979,7 @@ fn profile_json_ownership_has_min_capsem_not_current_binary() {
                 },
                 EvidenceRef {
                     kind: "software_inventory".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
-                        .to_string(),
+                    url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json".to_string(),
                     digest: digest_set_with('c', 'd'),
                 },
             ],
@@ -1098,10 +1028,7 @@ fn profile_json_ownership_rejects_software_machine_architecture_mismatch() {
         .validate_profile_ownership()
         .expect_err("software rows must use their owning machine architecture");
 
-    assert!(
-        error.to_string().contains("architecture mismatch"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("architecture mismatch"), "{error}");
 }
 
 #[test]
@@ -1128,9 +1055,7 @@ fn profile_json_ownership_rejects_reused_software_inventory_digest() {
         .expect_err("software rows must not reuse inventory file digests");
 
     assert!(
-        error
-            .to_string()
-            .contains("reuses software_inventory evidence digest"),
+        error.to_string().contains("reuses software_inventory evidence digest"),
         "{error}"
     );
 }
@@ -1151,8 +1076,7 @@ fn profile_json_ownership_rejects_current_binary_and_assets() {
     let error = serde_json::from_value::<ProfileDocument>(invalid)
         .expect_err("profile JSON must not contain channel-owned current binary/assets");
     assert!(
-        error.to_string().contains("current_binary")
-            || error.to_string().contains("current_assets"),
+        error.to_string().contains("current_binary") || error.to_string().contains("current_assets"),
         "{error}"
     );
 }
@@ -1233,8 +1157,7 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
                     },
                     EvidenceRef {
                         kind: "software_inventory".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
-                            .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json".to_string(),
                         digest: digest_set_with('c', 'd'),
                     },
                 ],
@@ -1282,14 +1205,10 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
 
     let ledger = ReleaseLedger::derive(&catalog, &manifests);
     assert!(ledger.entries.iter().any(|entry| {
-        entry.channel == "stable"
-            && entry.kind == ReleaseLedgerKind::Package
-            && entry.name == "Capsem-1.4.0.pkg"
+        entry.channel == "stable" && entry.kind == ReleaseLedgerKind::Package && entry.name == "Capsem-1.4.0.pkg"
     }));
     assert!(ledger.entries.iter().any(|entry| {
-        entry.channel == "stable"
-            && entry.kind == ReleaseLedgerKind::Binary
-            && entry.name == "capsem"
+        entry.channel == "stable" && entry.kind == ReleaseLedgerKind::Binary && entry.name == "capsem"
     }));
     assert!(ledger.entries.iter().any(|entry| {
         entry.channel == "stable"
@@ -1328,9 +1247,7 @@ fn profile_revision_must_be_semver() {
 fn dated_profile_revisions_are_rejected() {
     // The scheme this replaces. Four components is not semver, and the
     // leading date lied about when the assets were built.
-    let error = parse_profile_revision("2026.06.08.9")
-        .unwrap_err()
-        .to_string();
+    let error = parse_profile_revision("2026.06.08.9").unwrap_err().to_string();
     assert!(
         error.contains("2026.06.08.9"),
         "rejection must name the offending revision: {error}"
@@ -1371,9 +1288,7 @@ fn semver_may_replace_a_published_legacy_revision_once() {
 
 #[test]
 fn republishing_the_same_revision_is_rejected() {
-    let error = ensure_revision_advances("0.6.0", "0.6.0")
-        .unwrap_err()
-        .to_string();
+    let error = ensure_revision_advances("0.6.0", "0.6.0").unwrap_err().to_string();
     assert!(
         error.contains("0.6.0"),
         "rejection must name the revision that failed to advance: {error}"
@@ -1404,8 +1319,5 @@ fn a_profile_revision_is_not_a_capsem_version() {
     // separate axes. A profile at 0.3.2 may require capsem >= 0.6.0.
     let revision = parse_profile_revision("0.3.2").unwrap();
     let minimum = semver::Version::parse("0.6.0").unwrap();
-    assert!(
-        revision < minimum,
-        "these are different axes, not comparable state"
-    );
+    assert!(revision < minimum, "these are different axes, not comparable state");
 }

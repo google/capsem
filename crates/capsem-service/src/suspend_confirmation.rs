@@ -8,10 +8,7 @@ pub(super) enum SuspendConfirmation {
     TimedOut,
 }
 
-pub(super) fn observe_suspend_message(
-    message: ProcessToService,
-    suspended: &mut bool,
-) -> Option<SuspendConfirmation> {
+pub(super) fn observe_suspend_message(message: ProcessToService, suspended: &mut bool) -> Option<SuspendConfirmation> {
     match message {
         ProcessToService::StateChanged { state, .. } if state == "Suspended" => {
             *suspended = true;

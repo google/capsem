@@ -39,9 +39,9 @@ pub fn validate_identifier(kind: &str, value: &str) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(IdentifierError::Empty) => Err(format!("{kind} must not be empty")),
         Err(IdentifierError::TooLong) => Err(format!("{kind} must be at most 64 characters")),
-        Err(IdentifierError::InvalidCharacters) => Err(format!(
-            "{kind} must use only lowercase a-z, 0-9, '_' or '-': {value}"
-        )),
+        Err(IdentifierError::InvalidCharacters) => {
+            Err(format!("{kind} must use only lowercase a-z, 0-9, '_' or '-': {value}"))
+        }
     }
 }
 

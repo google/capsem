@@ -16,9 +16,6 @@ async fn local_http_recorder_captures_request_shape() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].method, Method::POST);
     assert_eq!(requests[0].uri.path(), "/credential/capture");
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer local-secret")
-    );
+    assert_eq!(requests[0].header("authorization"), Some("Bearer local-secret"));
     assert_eq!(requests[0].body, b"payload");
 }

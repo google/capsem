@@ -50,12 +50,7 @@ fn read_avail_event(mem: &GuestMemory, used_ring_gpa: u64, size: u16) -> u16 {
 }
 
 // Helper: write avail ring entry
-fn write_avail_ring_entry(
-    mem: &GuestMemory,
-    avail_ring_gpa: u64,
-    ring_index: u16,
-    desc_idx: u16,
-) {
+fn write_avail_ring_entry(mem: &GuestMemory, avail_ring_gpa: u64, ring_index: u16, desc_idx: u16) {
     let offset = (avail_ring_gpa - RAM_BASE) + 4 + u64::from(ring_index) * 2;
     mem.write_at(offset, &desc_idx.to_le_bytes()).unwrap();
 }

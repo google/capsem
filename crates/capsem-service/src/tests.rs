@@ -78,8 +78,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     )
     .unwrap();
 
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
 
     assert_eq!(status.checked_at, Some(1000));
     assert!(!status.stale);
@@ -91,10 +90,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         status.channel_hash.as_deref(),
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
-    assert_eq!(
-        status.supply_chain.manifest.origin.as_deref(),
-        Some("update")
-    );
+    assert_eq!(status.supply_chain.manifest.origin.as_deref(), Some("update"));
     assert_eq!(
         status.supply_chain.manifest.source.as_deref(),
         Some("https://release.capsem.org/assets/stable/manifest.json")
@@ -138,10 +134,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     assert_eq!(status.binary.current.as_deref(), Some("1.3.1782582155"));
     assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
     assert_eq!(status.binary.state, api::UpdateTrackState::UpdateAvailable);
-    assert_eq!(
-        status.binary.compatibility,
-        api::UpdateCompatibilityState::Compatible
-    );
+    assert_eq!(status.binary.compatibility, api::UpdateCompatibilityState::Compatible);
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
     assert_eq!(status.assets.latest.as_deref(), Some("2026.0628.1"));
     assert_eq!(status.assets.state, api::UpdateTrackState::UpdateAvailable);
@@ -175,11 +168,7 @@ fn current_asset_state_keeps_independent_release_graph_profiles() {
             }
         }
     });
-    std::fs::write(
-        assets_dir.join("manifest.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(assets_dir.join("manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
     let expected = capsem_assets::asset_manager::release_graph_profile_state(&manifest).unwrap();
 
     assert_eq!(
@@ -214,26 +203,13 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
     )
     .unwrap();
 
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
 
-    assert_eq!(
-        status.profiles.current.as_deref(),
-        Some("profiles-2030.0101.0")
-    );
-    assert_eq!(
-        status.profiles.latest.as_deref(),
-        Some("profiles-2030.0101.1")
-    );
+    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
+    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
     assert!(status.profiles.update_available);
-    assert_eq!(
-        status.profiles.state,
-        api::UpdateTrackState::UpdateAvailable
-    );
-    assert_eq!(
-        status.profiles.compatibility,
-        api::UpdateCompatibilityState::Compatible
-    );
+    assert_eq!(status.profiles.state, api::UpdateTrackState::UpdateAvailable);
+    assert_eq!(status.profiles.compatibility, api::UpdateCompatibilityState::Compatible);
     assert_eq!(status.profiles.blocked_reason, None);
     assert_eq!(status.images.latest.as_deref(), Some("images-2030.0101.1"));
     assert!(!status.images.update_available);
@@ -264,23 +240,13 @@ fn update_status_reports_blocked_profile_track_from_release_cache() {
     )
     .unwrap();
 
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
 
-    assert_eq!(
-        status.profiles.current.as_deref(),
-        Some("profiles-2030.0101.0")
-    );
-    assert_eq!(
-        status.profiles.latest.as_deref(),
-        Some("profiles-2030.0101.1")
-    );
+    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
+    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
     assert!(!status.profiles.update_available);
     assert_eq!(status.profiles.state, api::UpdateTrackState::Unknown);
-    assert_eq!(
-        status.profiles.compatibility,
-        api::UpdateCompatibilityState::Unknown
-    );
+    assert_eq!(status.profiles.compatibility, api::UpdateCompatibilityState::Unknown);
     assert_eq!(
         status.profiles.blocked_reason.as_deref(),
         Some("requires binary 1.4.0 or newer")
@@ -327,17 +293,13 @@ fn update_status_reports_blocked_asset_track_from_release_cache() {
     )
     .unwrap();
 
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
 
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
     assert_eq!(status.assets.latest.as_deref(), Some("2030.0101.1"));
     assert!(!status.assets.update_available);
     assert_eq!(status.assets.state, api::UpdateTrackState::Unknown);
-    assert_eq!(
-        status.assets.compatibility,
-        api::UpdateCompatibilityState::Unknown
-    );
+    assert_eq!(status.assets.compatibility, api::UpdateCompatibilityState::Unknown);
     assert_eq!(
         status.assets.blocked_reason.as_deref(),
         Some("requires binary 99.99.99 or newer")
@@ -454,8 +416,7 @@ fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
     )
     .unwrap();
 
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &metadata_path, 1200);
+    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &metadata_path, 1200);
 
     assert_eq!(status.checked_at, Some(1100));
     assert_eq!(
@@ -469,10 +430,7 @@ fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
         Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
     );
     assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
-    assert_eq!(
-        status.profiles.state,
-        api::UpdateTrackState::UpdateAvailable
-    );
+    assert_eq!(status.profiles.state, api::UpdateTrackState::UpdateAvailable);
     assert_eq!(
         status.supply_chain.manifest.source.as_deref(),
         Some("https://release.capsem.org/assets/stable/manifest.json")
@@ -501,10 +459,7 @@ fn system_status_documents_preserve_exact_installed_manifest_and_metadata() {
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
 
-    assert_eq!(
-        read_installed_status_document(&manifest_path).unwrap(),
-        manifest
-    );
+    assert_eq!(read_installed_status_document(&manifest_path).unwrap(), manifest);
     assert_eq!(
         read_manifest_metadata_status_document(&metadata_path).unwrap(),
         metadata
@@ -599,10 +554,7 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
         .iter()
         .find(|profile| profile["id"] == "code")
         .unwrap();
-    assert_eq!(
-        code["description"],
-        "Optimized for coding and long-running agents."
-    );
+    assert_eq!(code["description"], "Optimized for coding and long-running agents.");
     assert_eq!(body["updates"]["checked_at"], 1100);
 }
 
@@ -708,14 +660,10 @@ fn snapshot_status_from_session_dir_reads_snapshot_metadata_without_db() {
     assert!(status
         .snapshots
         .iter()
-        .any(|snapshot| snapshot.origin == "manual"
-            && snapshot.name.as_deref() == Some("manual_check")));
+        .any(|snapshot| snapshot.origin == "manual" && snapshot.name.as_deref() == Some("manual_check")));
 
     let db_path = session.join("session.db");
-    assert!(
-        !db_path.exists(),
-        "snapshot route backing must not require session.db"
-    );
+    assert!(!db_path.exists(), "snapshot route backing must not require session.db");
 }
 
 #[test]
@@ -737,11 +685,7 @@ fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
   1742 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(
-        pids,
-        vec![1742],
-        "must not match neighbouring test run dirs"
-    );
+    assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
 }
 
 #[test]
@@ -753,11 +697,7 @@ fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
   1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(
-        pids,
-        vec![1502],
-        "match must require 'capsem-process' in the line"
-    );
+    assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");
 }
 
 #[test]
@@ -793,19 +733,12 @@ fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleI
     Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
 }
 
-fn test_profile_mcp_default_cache(
-) -> Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>> {
-    Mutex::new(
-        build_profile_mcp_default_cache(None).expect("test profile MCP default cache should build"),
-    )
+fn test_profile_mcp_default_cache() -> Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>> {
+    Mutex::new(build_profile_mcp_default_cache(None).expect("test profile MCP default cache should build"))
 }
 
-fn test_profile_plugin_policy_cache(
-) -> Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>> {
-    Mutex::new(
-        build_profile_plugin_policy_cache(None)
-            .expect("test profile plugin policy cache should build"),
-    )
+fn test_profile_plugin_policy_cache() -> Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>> {
+    Mutex::new(build_profile_plugin_policy_cache(None).expect("test profile plugin policy cache should build"))
 }
 
 fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
@@ -882,8 +815,7 @@ pub(crate) async fn route_request(
     let json = if bytes.is_empty() {
         serde_json::Value::Null
     } else {
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&bytes).to_string() }))
+        serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&bytes).to_string() }))
     };
     (status, json)
 }
@@ -949,13 +881,7 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     let assets_dir = dir.path().join("assets");
     write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
     let app = build_service_router(make_asset_state(assets_dir));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::POST,
-        "/update/check",
-        Some(json!({})),
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::POST, "/update/check", Some(json!({}))).await;
     match previous {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
         None => std::env::remove_var("CAPSEM_CLI"),
@@ -964,7 +890,10 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--check"]));
-    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --check\n");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(),
+        "update --check\n"
+    );
 }
 
 #[tokio::test]
@@ -986,19 +915,10 @@ async fn update_route_apply_dry_run_plans_one_atomic_update() {
 #[tokio::test]
 async fn update_route_apply_requires_confirmation_for_live_command() {
     let app = build_service_router(make_test_state());
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({})),
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::POST, "/update/apply", Some(json!({}))).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body["error"],
-        "update apply requires confirmed=true or dry_run=true"
-    );
+    assert_eq!(body["error"], "update apply requires confirmed=true or dry_run=true");
 }
 
 #[tokio::test]
@@ -1061,7 +981,10 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(),
+        "update --yes\n"
+    );
 }
 
 #[tokio::test]
@@ -1103,12 +1026,7 @@ async fn update_route_live_commands_share_one_serial_lock() {
         "/update/apply",
         Some(json!({ "confirmed": true })),
     );
-    let second = route_request(
-        app,
-        axum::http::Method::POST,
-        "/update/check",
-        Some(json!({})),
-    );
+    let second = route_request(app, axum::http::Method::POST, "/update/check", Some(json!({})));
     let (first, second) = tokio::join!(first, second);
     match previous {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
@@ -1157,23 +1075,13 @@ async fn update_runtime_reloads_profile_only_activation_without_restart() {
 
     assert_eq!(disposition, UpdateRuntimeDisposition::Reloaded);
     assert_eq!(
-        state
-            .manifest
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .assets
-            .current,
+        state.manifest.read().unwrap().as_ref().unwrap().assets.current,
         "profiles-2"
     );
     assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(10),
-            state.update_restart.notified()
-        )
-        .await
-        .is_err(),
+        tokio::time::timeout(std::time::Duration::from_millis(10), state.update_restart.notified())
+            .await
+            .is_err(),
         "profile-only activation must not restart a current binary"
     );
 }
@@ -1190,21 +1098,11 @@ async fn update_runtime_requests_restart_after_binary_activation() {
     assert_eq!(disposition, UpdateRuntimeDisposition::RestartRequested);
     // Already pending, so this asks whether it arrives, not how fast. The 10ms
     // sibling above stays: there the timeout firing *is* the assertion.
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        state.update_restart.notified(),
-    )
-    .await
-    .expect("binary activation must request a managed service restart");
+    tokio::time::timeout(std::time::Duration::from_secs(10), state.update_restart.notified())
+        .await
+        .expect("binary activation must request a managed service restart");
     assert_eq!(
-        state
-            .manifest
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .binaries
-            .current,
+        state.manifest.read().unwrap().as_ref().unwrap().binaries.current,
         "9.9.9"
     );
 }
@@ -1221,14 +1119,7 @@ fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
 
     assert!(error.1.contains("validate activated update manifest"));
     assert_eq!(
-        state
-            .manifest
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .assets
-            .current,
+        state.manifest.read().unwrap().as_ref().unwrap().assets.current,
         "profiles-1"
     );
 }
@@ -1260,15 +1151,15 @@ fn automatic_update_setting_defaults_on_and_honors_false() {
     use capsem_core::net::policy_config::SettingValue;
 
     assert!(automatic_updates_enabled_from_resolved(&[]));
-    assert!(automatic_updates_enabled_from_resolved(&[
-        resolved_automatic_update(SettingValue::Bool(true))
-    ]));
-    assert!(!automatic_updates_enabled_from_resolved(&[
-        resolved_automatic_update(SettingValue::Bool(false))
-    ]));
-    assert!(automatic_updates_enabled_from_resolved(&[
-        resolved_automatic_update(SettingValue::Text("false".to_string()))
-    ]));
+    assert!(automatic_updates_enabled_from_resolved(&[resolved_automatic_update(
+        SettingValue::Bool(true)
+    )]));
+    assert!(!automatic_updates_enabled_from_resolved(&[resolved_automatic_update(
+        SettingValue::Bool(false)
+    )]));
+    assert!(automatic_updates_enabled_from_resolved(&[resolved_automatic_update(
+        SettingValue::Text("false".to_string())
+    )]));
 }
 
 #[test]
@@ -1385,7 +1276,10 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
         outcome,
         AutomaticUpdateOutcome::Succeeded(UpdateRuntimeDisposition::Reloaded)
     );
-    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(),
+        "update --yes\n"
+    );
 }
 
 #[tokio::test]
@@ -1393,11 +1287,7 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let cli = dir.path().join("capsem");
-    std::fs::write(
-        &cli,
-        "#!/bin/sh\nprintf 'network unavailable\\n' >&2\nexit 7\n",
-    )
-    .unwrap();
+    std::fs::write(&cli, "#!/bin/sh\nprintf 'network unavailable\\n' >&2\nexit 7\n").unwrap();
     let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&cli, permissions).unwrap();
@@ -1419,9 +1309,7 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     assert!(error.contains("network unavailable"), "{error}");
 }
 
-async fn decode_response_json<T: serde::de::DeserializeOwned>(
-    response: axum::response::Response,
-) -> T {
+async fn decode_response_json<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
@@ -1437,9 +1325,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(
-            assets_dir.join("persistent_registry.json"),
-        )),
+        persistent_registry: Mutex::new(PersistentRegistry::load(assets_dir.join("persistent_registry.json"))),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir,
         run_dir: run_dir.clone(),
@@ -1479,20 +1365,10 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 }
 
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
-    insert_fake_instance_with_session_dir(
-        state,
-        id,
-        pid,
-        PathBuf::from(format!("/tmp/sessions/{}", id)),
-    );
+    insert_fake_instance_with_session_dir(state, id, pid, PathBuf::from(format!("/tmp/sessions/{}", id)));
 }
 
-pub(crate) fn insert_fake_instance_with_session_dir(
-    state: &ServiceState,
-    id: &str,
-    pid: u32,
-    session_dir: PathBuf,
-) {
+pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &str, pid: u32, session_dir: PathBuf) {
     insert_fake_instance_with_session_dir_and_pins(
         state,
         id,
@@ -1546,8 +1422,7 @@ fn materialized_test_profile() -> ProfileConfigFile {
 
 fn materialized_test_profile_for(profile_id: &str) -> ProfileConfigFile {
     let profile_path = checked_in_profile_dir(profile_id).join("profile.toml");
-    let mut profile: ProfileConfigFile =
-        toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+    let mut profile: ProfileConfigFile = toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
     let hash = format!("blake3:{}", blake3::hash(b"test-asset").to_hex());
     let size = b"test-asset".len() as u64;
     for arch_assets in profile.assets.arch.values_mut() {
@@ -1640,10 +1515,8 @@ fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry 
 /// failure nobody could place -- the message identified neither which file
 /// nor which side of the copy.
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst)
-        .unwrap_or_else(|e| panic!("create {}: {e}", dst.display()));
-    let entries = std::fs::read_dir(src)
-        .unwrap_or_else(|e| panic!("read dir {}: {e}", src.display()));
+    std::fs::create_dir_all(dst).unwrap_or_else(|e| panic!("create {}: {e}", dst.display()));
+    let entries = std::fs::read_dir(src).unwrap_or_else(|e| panic!("read dir {}: {e}", src.display()));
     for entry in entries {
         let entry = entry.unwrap_or_else(|e| panic!("read entry under {}: {e}", src.display()));
         let ty = entry
@@ -1654,16 +1527,10 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
             copy_dir_all(&entry.path(), &target);
         } else {
             if target.exists() {
-                std::fs::remove_file(&target)
-                    .unwrap_or_else(|e| panic!("replace {}: {e}", target.display()));
+                std::fs::remove_file(&target).unwrap_or_else(|e| panic!("replace {}: {e}", target.display()));
             }
-            std::fs::copy(entry.path(), &target).unwrap_or_else(|e| {
-                panic!(
-                    "copy {} -> {}: {e}",
-                    entry.path().display(),
-                    target.display()
-                )
-            });
+            std::fs::copy(entry.path(), &target)
+                .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", entry.path().display(), target.display()));
         }
     }
 }
@@ -1832,18 +1699,10 @@ fn add_profile_enforcement_rule(
     let enforcement_path = profile_dir.join("enforcement.toml");
     let content = std::fs::read_to_string(&enforcement_path).unwrap();
     let mut rule_profile = SecurityRuleProfile::parse_toml(&content).unwrap();
-    rule_profile
-        .profiles
-        .rules
-        .insert(rule_id.to_string(), rule);
-    std::fs::write(
-        &enforcement_path,
-        toml::to_string_pretty(&rule_profile).unwrap(),
-    )
-    .unwrap();
+    rule_profile.profiles.rules.insert(rule_id.to_string(), rule);
+    std::fs::write(&enforcement_path, toml::to_string_pretty(&rule_profile).unwrap()).unwrap();
     let mut profile: ProfileConfigFile =
-        toml::from_str(&std::fs::read_to_string(profile_dir.join("profile.toml")).unwrap())
-            .unwrap();
+        toml::from_str(&std::fs::read_to_string(profile_dir.join("profile.toml")).unwrap()).unwrap();
     write_file_descriptor_profile(&mut profile, config_root, &enforcement_path);
     std::fs::write(
         profile_dir.join("profile.toml"),
@@ -1868,8 +1727,7 @@ async fn profile_status_rejects_tampered_pinned_profile_files() {
     let state = make_asset_state(dir.path().join("assets"));
     let app = build_service_router(state);
 
-    let (status, body) =
-        route_request(app, axum::http::Method::GET, "/profiles/status", None).await;
+    let (status, body) = route_request(app, axum::http::Method::GET, "/profiles/status", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["profile_count"], 1);
     assert_eq!(body["ready_count"], 0);
@@ -1893,17 +1751,15 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
     let app = build_service_router(state);
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
-    let rootfs_target = assets_dir
-        .join(arch)
-        .join(capsem_assets::asset_manager::hash_filename(
-            &rootfs.name,
-            rootfs
-                .hash
-                .as_deref()
-                .expect("rootfs hash")
-                .strip_prefix("blake3:")
-                .unwrap(),
-        ));
+    let rootfs_target = assets_dir.join(arch).join(capsem_assets::asset_manager::hash_filename(
+        &rootfs.name,
+        rootfs
+            .hash
+            .as_deref()
+            .expect("rootfs hash")
+            .strip_prefix("blake3:")
+            .unwrap(),
+    ));
 
     let (status, before) = route_request(
         app.clone(),
@@ -1950,10 +1806,7 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
         cached_after_tamper["ready"], true,
         "hot asset status is cache-backed and must not re-hash large assets per route poll"
     );
-    assert!(cached_after_tamper["invalid_assets"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(cached_after_tamper["invalid_assets"].as_array().unwrap().is_empty());
 
     let (status, repairing) = route_request(
         app.clone(),
@@ -2009,37 +1862,29 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     assert_eq!(edited["mutation"]["target_kind"], "mcp_tool");
     assert_eq!(edited["mutation"]["status"], "applied");
 
-    let enforcement = std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml"))
-        .expect("mutated enforcement file");
+    let enforcement =
+        std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml")).expect("mutated enforcement file");
     let rule_profile = SecurityRuleProfile::parse_toml(&enforcement).unwrap();
     let rule = rule_profile
         .profiles
         .rules
         .get("mcp_local_fetch_http_permission")
         .expect("profile-managed MCP permission rule");
-    assert_eq!(
-        rule.action,
-        capsem_core::net::policy_config::SecurityRuleAction::Ask
-    );
+    assert_eq!(rule.action, capsem_core::net::policy_config::SecurityRuleAction::Ask);
     assert_eq!(
         rule.condition,
         r#"mcp.server.name == "local" && mcp.tool_call.name == "fetch_http""#
     );
 
-    let profile: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     let descriptor = profile.files.enforcement.expect("updated enforcement pin");
     assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
     assert_eq!(
         descriptor.hash,
         Some(format!(
             "blake3:{}",
-            capsem_assets::asset_manager::hash_file(
-                &config_root.join("profiles/code/enforcement.toml")
-            )
-            .unwrap()
+            capsem_assets::asset_manager::hash_file(&config_root.join("profiles/code/enforcement.toml")).unwrap()
         ))
     );
 
@@ -2059,14 +1904,7 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
     assert_eq!(
         rows["rows"][0],
-        json!([
-            "code",
-            "mcp",
-            "mcp_tool",
-            "local/fetch_http",
-            "permission",
-            "applied"
-        ])
+        json!(["code", "mcp", "mcp_tool", "local/fetch_http", "permission", "applied"])
     );
 
     let (status, tools) = route_request(
@@ -2134,14 +1972,11 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(edited["mutation"]["rule_id"], "default.mcp");
     assert_eq!(edited["mutation"]["status"], "applied");
 
-    let enforcement = std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml"))
-        .expect("mutated enforcement file");
+    let enforcement =
+        std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml")).expect("mutated enforcement file");
     let rule_profile = SecurityRuleProfile::parse_toml(&enforcement).unwrap();
     let default = rule_profile.default.get("mcp").expect("default mcp rule");
-    assert_eq!(
-        default.action,
-        capsem_core::net::policy_config::SecurityRuleAction::Ask
-    );
+    assert_eq!(default.action, capsem_core::net::policy_config::SecurityRuleAction::Ask);
 
     let (status, refreshed) = route_request(
         app.clone(),
@@ -2155,20 +1990,15 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(refreshed["source"], "default");
     assert_eq!(refreshed["rule_id"], "default.mcp");
 
-    let profile: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     let descriptor = profile.files.enforcement.expect("updated enforcement pin");
     assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
     assert_eq!(
         descriptor.hash,
         Some(format!(
             "blake3:{}",
-            capsem_assets::asset_manager::hash_file(
-                &config_root.join("profiles/code/enforcement.toml")
-            )
-            .unwrap()
+            capsem_assets::asset_manager::hash_file(&config_root.join("profiles/code/enforcement.toml")).unwrap()
         ))
     );
 
@@ -2188,14 +2018,7 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
     assert_eq!(
         rows["rows"][0],
-        json!([
-            "code",
-            "mcp",
-            "mcp_default",
-            "default.mcp",
-            "permission",
-            "applied"
-        ])
+        json!(["code", "mcp", "mcp_default", "default.mcp", "permission", "applied"])
     );
 
     let (status, tools) = route_request(
@@ -2210,13 +2033,8 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(tools[0]["permission_source"], "default");
     assert!(tools[0].get("approved").is_none(), "{tools}");
 
-    let (status, default_info) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/profiles/code/mcp/default/info",
-        None,
-    )
-    .await;
+    let (status, default_info) =
+        route_request(app, axum::http::Method::GET, "/profiles/code/mcp/default/info", None).await;
     assert_eq!(status, StatusCode::OK, "{default_info}");
     assert_eq!(default_info["action"], "ask");
 }
@@ -2249,28 +2067,21 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
     assert_eq!(edited["enabled"], true);
     assert_eq!(edited["mutation"]["category"], "mcp");
     assert_eq!(edited["mutation"]["filename"], "profile.toml");
-    assert_eq!(
-        edited["mutation"]["affected_path"],
-        "profiles/code/profile.toml"
-    );
+    assert_eq!(edited["mutation"]["affected_path"], "profiles/code/profile.toml");
     assert_eq!(edited["mutation"]["target_kind"], "mcp_server");
     assert_eq!(edited["mutation"]["target_key"], "github");
     assert_eq!(edited["mutation"]["operation"], "upsert");
     assert_eq!(edited["mutation"]["status"], "applied");
 
-    let profile: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     assert!(profile
         .mcp
         .as_ref()
         .unwrap()
         .servers
         .iter()
-        .any(|server| server.name == "github"
-            && server.url == "https://mcp.invalid/github"
-            && server.enabled));
+        .any(|server| server.name == "github" && server.url == "https://mcp.invalid/github" && server.enabled));
 
     let (status, servers) = route_request(
         app.clone(),
@@ -2303,10 +2114,8 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
     assert_eq!(deleted["mutation"]["operation"], "delete");
     assert_eq!(deleted["mutation"]["status"], "applied");
 
-    let profile: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     assert!(!profile
         .mcp
         .as_ref()
@@ -2488,12 +2297,7 @@ async fn security_routes_read_security_ledger_from_session_db() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("vm-ledger");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "vm-ledger",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "vm-ledger", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let db_path_for_writer = db_path.clone();
@@ -2552,10 +2356,7 @@ async fn security_routes_read_security_ledger_from_session_db() {
     assert_eq!(stats.by_event_type[0].count, 1);
     assert_eq!(stats.by_level[0].detection_level, "informational");
     assert_eq!(stats.by_level[0].count, 1);
-    assert_eq!(
-        stats.by_rule[0].rule_id,
-        "profiles.rules.ai_ollama_model_api"
-    );
+    assert_eq!(stats.by_rule[0].rule_id, "profiles.rules.ai_ollama_model_api");
     assert_eq!(stats.by_rule[0].rule_action, "allow");
     assert_eq!(stats.by_rule[0].detection_level, "informational");
     assert_eq!(stats.by_rule[0].count, 1);
@@ -2569,29 +2370,22 @@ async fn history_routes_read_history_ledger_from_session_db() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("history-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "history-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "history-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let marker = "history-ledger-marker";
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
     writer
-        .write(capsem_logger::WriteOp::ExecEvent(
-            capsem_logger::ExecEvent {
-                event_id: None,
-                timestamp: std::time::SystemTime::now(),
-                exec_id: 41,
-                command: format!("echo {marker}"),
-                source: "api".to_string(),
-                trace_id: Some("trace-history".to_string()),
-                process_name: Some("bash".to_string()),
-                credential_ref: None,
-            },
-        ))
+        .write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            exec_id: 41,
+            command: format!("echo {marker}"),
+            source: "api".to_string(),
+            trace_id: Some("trace-history".to_string()),
+            process_name: Some("bash".to_string()),
+            credential_ref: None,
+        }))
         .await;
     writer
         .write(capsem_logger::WriteOp::ExecEventComplete(
@@ -2608,26 +2402,24 @@ async fn history_routes_read_history_ledger_from_session_db() {
         ))
         .await;
     writer
-        .write(capsem_logger::WriteOp::AuditEvent(
-            capsem_logger::AuditEvent {
-                event_id: None,
-                timestamp: std::time::SystemTime::now(),
-                pid: 123,
-                ppid: 1,
-                uid: 0,
-                exe: "/usr/bin/bash".to_string(),
-                comm: Some("bash".to_string()),
-                argv: format!("bash -lc 'echo {marker}'"),
-                cwd: Some("/root".to_string()),
-                tty: None,
-                session_id: Some(1),
-                audit_id: Some("audit-history".to_string()),
-                exec_event_id: Some(41),
-                parent_exe: Some("/usr/bin/sh".to_string()),
-                trace_id: Some("trace-history".to_string()),
-                credential_ref: None,
-            },
-        ))
+        .write(capsem_logger::WriteOp::AuditEvent(capsem_logger::AuditEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            pid: 123,
+            ppid: 1,
+            uid: 0,
+            exe: "/usr/bin/bash".to_string(),
+            comm: Some("bash".to_string()),
+            argv: format!("bash -lc 'echo {marker}'"),
+            cwd: Some("/root".to_string()),
+            tty: None,
+            session_id: Some(1),
+            audit_id: Some("audit-history".to_string()),
+            exec_event_id: Some(41),
+            parent_exe: Some("/usr/bin/sh".to_string()),
+            trace_id: Some("trace-history".to_string()),
+            credential_ref: None,
+        }))
         .await;
     writer.shutdown_blocking();
 
@@ -2664,13 +2456,8 @@ async fn history_routes_read_history_ledger_from_session_db() {
         && entry["command"].as_str().unwrap().contains(marker)
         && entry["details"]["exe"] == "/usr/bin/bash"));
 
-    let (status, processes) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/history-vm/history/processes",
-        None,
-    )
-    .await;
+    let (status, processes) =
+        route_request(app, axum::http::Method::GET, "/vms/history-vm/history/processes", None).await;
     assert_eq!(status, StatusCode::OK, "{processes}");
     assert_eq!(processes["processes"][0]["exe"], "/usr/bin/bash");
     assert_eq!(processes["processes"][0]["command_count"], 1);
@@ -2683,12 +2470,7 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("detect-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "detect-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "detect-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -2725,8 +2507,9 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
         .recent_security_rule_events(10)
         .unwrap();
     assert_eq!(direct_rows.len(), 2);
-    assert!(direct_rows.iter().any(|row| row.event_id == "bbbbbb000000"
-        && row.detection_level == capsem_logger::SecurityDetectionLevel::High));
+    assert!(direct_rows.iter().any(
+        |row| row.event_id == "bbbbbb000000" && row.detection_level == capsem_logger::SecurityDetectionLevel::High
+    ));
     let (status, detection) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -2750,12 +2533,8 @@ async fn detection_latest_route_filters_non_detection_rule_rows() {
     assert_eq!(status, StatusCode::OK, "{enforcement}");
     let enforcement_rows = enforcement.as_array().unwrap();
     assert_eq!(enforcement_rows.len(), 2, "{enforcement}");
-    assert!(enforcement_rows
-        .iter()
-        .any(|row| row["event_id"] == "aaaaaa000000"));
-    assert!(enforcement_rows
-        .iter()
-        .any(|row| row["event_id"] == "bbbbbb000000"));
+    assert!(enforcement_rows.iter().any(|row| row["event_id"] == "aaaaaa000000"));
+    assert!(enforcement_rows.iter().any(|row| row["event_id"] == "bbbbbb000000"));
 }
 
 #[tokio::test]
@@ -2765,28 +2544,21 @@ async fn timeline_route_reads_timeline_ledger_from_session_db() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("timeline-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "timeline-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "timeline-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
     writer
-        .write(capsem_logger::WriteOp::ExecEvent(
-            capsem_logger::ExecEvent {
-                event_id: Some("ccc111000000".to_string()),
-                timestamp: std::time::SystemTime::now(),
-                exec_id: 77,
-                command: "echo timeline-marker".to_string(),
-                source: "api".to_string(),
-                trace_id: Some("trace-timeline".to_string()),
-                process_name: Some("bash".to_string()),
-                credential_ref: None,
-            },
-        ))
+        .write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+            event_id: Some("ccc111000000".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            exec_id: 77,
+            command: "echo timeline-marker".to_string(),
+            source: "api".to_string(),
+            trace_id: Some("trace-timeline".to_string()),
+            process_name: Some("bash".to_string()),
+            credential_ref: None,
+        }))
         .await;
     writer
         .write(capsem_logger::WriteOp::ExecEventComplete(
@@ -2878,12 +2650,7 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("triage-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "triage-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "triage-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -2945,18 +2712,16 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
         }))
         .await;
     writer
-        .write(capsem_logger::WriteOp::ExecEvent(
-            capsem_logger::ExecEvent {
-                event_id: Some("ccc111000000".to_string()),
-                timestamp: std::time::SystemTime::now(),
-                exec_id: 91,
-                command: "false".to_string(),
-                source: "api".to_string(),
-                trace_id: Some("trace-triage".to_string()),
-                process_name: Some("bash".to_string()),
-                credential_ref: None,
-            },
-        ))
+        .write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+            event_id: Some("ccc111000000".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            exec_id: 91,
+            command: "false".to_string(),
+            source: "api".to_string(),
+            trace_id: Some("trace-triage".to_string()),
+            process_name: Some("bash".to_string()),
+            credential_ref: None,
+        }))
         .await;
     writer
         .write(capsem_logger::WriteOp::ExecEventComplete(
@@ -2977,52 +2742,29 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
     let db = state
         .register_session_db_handle("triage-vm", &session_dir)
         .expect("test installs external DB reader after the process writer created session.db");
-    let direct_triage = session_db_triage("triage-vm", &db, &db_path, 5)
-        .await
-        .unwrap();
+    let direct_triage = session_db_triage("triage-vm", &db, &db_path, 5).await.unwrap();
     assert_eq!(
-        direct_triage["denied_net"]["rows"]
-            .as_array()
-            .unwrap()
-            .len(),
+        direct_triage["denied_net"]["rows"].as_array().unwrap().len(),
         1,
         "{direct_triage}"
     );
     assert_eq!(
-        direct_triage["tool_errors"]["rows"]
-            .as_array()
-            .unwrap()
-            .len(),
+        direct_triage["tool_errors"]["rows"].as_array().unwrap().len(),
         1,
         "{direct_triage}"
     );
     assert_eq!(
-        direct_triage["exec_failures"]["rows"]
-            .as_array()
-            .unwrap()
-            .len(),
+        direct_triage["exec_failures"]["rows"].as_array().unwrap().len(),
         1,
         "{direct_triage}"
     );
 
-    let (status, triage) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/triage?id=triage-vm&limit=5",
-        None,
-    )
-    .await;
+    let (status, triage) = route_request(app, axum::http::Method::GET, "/triage?id=triage-vm&limit=5", None).await;
     assert_eq!(status, StatusCode::OK, "{triage}");
     assert_eq!(triage["session_id"], "triage-vm");
     assert_eq!(
         triage["session"]["denied_net"]["columns"],
-        json!([
-            "timestamp",
-            "domain",
-            "decision",
-            "status_code",
-            "duration_ms"
-        ])
+        json!(["timestamp", "domain", "decision", "status_code", "duration_ms"])
     );
     let denied_net = triage["session"]["denied_net"]["rows"].as_array().unwrap();
     assert_eq!(denied_net.len(), 1, "{triage}");
@@ -3057,17 +2799,9 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
 
     assert_eq!(
         triage["session"]["exec_failures"]["columns"],
-        json!([
-            "timestamp",
-            "exec_id",
-            "command",
-            "exit_code",
-            "duration_ms"
-        ])
+        json!(["timestamp", "exec_id", "command", "exit_code", "duration_ms"])
     );
-    let exec_failures = triage["session"]["exec_failures"]["rows"]
-        .as_array()
-        .unwrap();
+    let exec_failures = triage["session"]["exec_failures"]["rows"].as_array().unwrap();
     assert_eq!(exec_failures.len(), 1, "{triage}");
     assert_eq!(exec_failures[0][1], 91);
     assert_eq!(exec_failures[0][2], "false");
@@ -3115,12 +2849,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     let app = build_service_router(Arc::clone(&state));
     let session_dir = sessions_dir.join("winterfell-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "winterfell-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "winterfell-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -3137,22 +2866,18 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         .with_detection_level(capsem_logger::SecurityDetectionLevel::High)
         .with_trace_id("trace-winterfell")
         .with_turn_id("trace-winterfell")
-        .with_credential_ref(
-            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        ),
+        .with_credential_ref("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
     ));
-    writer.write_blocking(capsem_logger::WriteOp::ExecEvent(
-        capsem_logger::ExecEvent {
-            event_id: Some("abcdef123451".to_string()),
-            timestamp: std::time::SystemTime::now(),
-            exec_id: 501,
-            command: "echo winterfell".to_string(),
-            source: "api".to_string(),
-            trace_id: Some("trace-winterfell".to_string()),
-            process_name: Some("bash".to_string()),
-            credential_ref: None,
-        },
-    ));
+    writer.write_blocking(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+        event_id: Some("abcdef123451".to_string()),
+        timestamp: std::time::SystemTime::now(),
+        exec_id: 501,
+        command: "echo winterfell".to_string(),
+        source: "api".to_string(),
+        trace_id: Some("trace-winterfell".to_string()),
+        process_name: Some("bash".to_string()),
+        credential_ref: None,
+    }));
     writer.write_blocking(capsem_logger::WriteOp::ExecEventComplete(
         capsem_logger::ExecEventComplete {
             exec_id: 501,
@@ -3194,59 +2919,60 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         policy_reason: None,
         trace_id: Some("trace-winterfell".to_string()),
         credential_ref: Some(
-            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .to_string(),
+            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         ),
     }));
-    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
-        capsem_logger::ModelCall {
-            event_id: Some("abcdef123453".to_string()),
-            timestamp: std::time::SystemTime::now(),
-            provider: "openai".to_string(),
-            protocol: Some("openai".to_string()),
-            model: Some("gpt-5-nano".to_string()),
-            process_name: Some("codex".to_string()),
-            pid: Some(777),
-            method: "POST".to_string(),
-            path: "/v1/responses".to_string(),
-            stream: false,
-            system_prompt_preview: None,
-            messages_count: 1,
-            tools_count: 1,
-            request_bytes: 64,
-            request_body_preview: Some(r#"{"input":"write winterfell"}"#.to_string()),
-            request_body_full: Some(r#"{"input":"write winterfell"}"#.to_string()),
-            message_id: Some("msg-winterfell".to_string()),
-            status_code: Some(200),
-            text_content: Some("the wall holds".to_string()),
-            thinking_content: Some("prepare ledger proof".to_string()),
-            response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
-            stop_reason: Some("end_turn".to_string()),
-            input_tokens: Some(9),
-            output_tokens: Some(4),
-            usage_details: BTreeMap::new(),
-            duration_ms: 31,
-            response_bytes: 33,
-            estimated_cost_usd: 0.00001,
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(capsem_logger::ModelCall {
+        event_id: Some("abcdef123453".to_string()),
+        timestamp: std::time::SystemTime::now(),
+        provider: "openai".to_string(),
+        protocol: Some("openai".to_string()),
+        model: Some("gpt-5-nano".to_string()),
+        process_name: Some("codex".to_string()),
+        pid: Some(777),
+        method: "POST".to_string(),
+        path: "/v1/responses".to_string(),
+        stream: false,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 1,
+        request_bytes: 64,
+        request_body_preview: Some(r#"{"input":"write winterfell"}"#.to_string()),
+        request_body_full: Some(r#"{"input":"write winterfell"}"#.to_string()),
+        message_id: Some("msg-winterfell".to_string()),
+        status_code: Some(200),
+        text_content: Some("the wall holds".to_string()),
+        thinking_content: Some("prepare ledger proof".to_string()),
+        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        stop_reason: Some("end_turn".to_string()),
+        input_tokens: Some(9),
+        output_tokens: Some(4),
+        usage_details: BTreeMap::new(),
+        duration_ms: 31,
+        response_bytes: 33,
+        estimated_cost_usd: 0.00001,
+        trace_id: Some("trace-winterfell".to_string()),
+        credential_ref: Some(
+            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        ),
+        tool_calls: vec![capsem_logger::ToolCallEntry {
+            call_index: 0,
+            call_id: "tool-winterfell".to_string(),
+            tool_name: "Write".to_string(),
+            arguments: Some(r#"{"path":"/root/winterfell.md"}"#.to_string()),
+            origin: "model".to_string(),
             trace_id: Some("trace-winterfell".to_string()),
-            credential_ref: Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
-            tool_calls: vec![capsem_logger::ToolCallEntry {
-                call_index: 0,
-                call_id: "tool-winterfell".to_string(),
-                tool_name: "Write".to_string(),
-                arguments: Some(r#"{"path":"/root/winterfell.md"}"#.to_string()),
-                origin: "model".to_string(),
-                trace_id: Some("trace-winterfell".to_string()),
-            }],
-            tool_responses: vec![capsem_logger::ToolResponseEntry {
-                call_id: "tool-winterfell".to_string(),
-                content_preview: Some("Wrote winterfell.md".to_string()),
-                is_error: false,
-                trace_id: Some("trace-winterfell".to_string()),
-                credential_ref: Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
-            }],
-        },
-    ));
+        }],
+        tool_responses: vec![capsem_logger::ToolResponseEntry {
+            call_id: "tool-winterfell".to_string(),
+            content_preview: Some("Wrote winterfell.md".to_string()),
+            is_error: false,
+            trace_id: Some("trace-winterfell".to_string()),
+            credential_ref: Some(
+                "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            ),
+        }],
+    }));
     writer.flush().await;
     tokio::task::spawn_blocking(move || writer.shutdown_blocking())
         .await
@@ -3281,16 +3007,10 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{detail}");
-    assert_eq!(
-        detail["model_events"][0]["event_id"], "abcdef123453",
-        "{detail}"
-    );
+    assert_eq!(detail["model_events"][0]["event_id"], "abcdef123453", "{detail}");
     assert_eq!(detail["model_events"][0]["provider"], "openai", "{detail}");
     assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
-    assert_eq!(
-        detail["tool_events"][0]["call_id"], "tool-winterfell",
-        "{detail}"
-    );
+    assert_eq!(detail["tool_events"][0]["call_id"], "tool-winterfell", "{detail}");
     assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
     assert_eq!(
         detail["body_blobs"]["abcdef123453"][0]["body"],
@@ -3332,8 +3052,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     assert_eq!(status, StatusCode::OK, "{timeline}");
     let rows = timeline["rows"].as_array().unwrap();
     assert!(
-        rows.iter()
-            .any(|row| row[1] == "exec" && row[3] == "echo winterfell"),
+        rows.iter().any(|row| row[1] == "exec" && row[3] == "echo winterfell"),
         "{timeline}"
     );
     assert!(
@@ -3348,9 +3067,9 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     );
     assert!(
         rows.iter().any(|row| row[1] == "tool"
-            && row[3].as_str().is_some_and(
-                |summary| summary.contains("Write") && summary.contains("tool-winterfell")
-            )),
+            && row[3]
+                .as_str()
+                .is_some_and(|summary| summary.contains("Write") && summary.contains("tool-winterfell"))),
         "{timeline}"
     );
 }
@@ -3369,10 +3088,7 @@ fn profile_update_asset_summary_reflects_effective_contract() {
 
     assert_eq!(summary.id, "code");
     assert_eq!(summary.name, "Code");
-    assert_eq!(
-        summary.description,
-        "Optimized for coding and long-running agents."
-    );
+    assert_eq!(summary.description, "Optimized for coding and long-running agents.");
     assert_eq!(summary.source, "built_in");
     assert_eq!(summary.plugin_count, 3);
     assert_eq!(
@@ -3515,15 +3231,9 @@ async fn profiles_status_byte_cache_refreshes_when_asset_manifest_appears() {
     let refreshed_status: serde_json::Value = decode_response_json(refreshed_response).await;
 
     assert_eq!(refreshed_status["asset_manifest"]["origin"], "installed");
-    assert_eq!(
-        refreshed_status["asset_manifest"]["validation_status"],
-        "valid"
-    );
+    assert_eq!(refreshed_status["asset_manifest"]["validation_status"], "valid");
     assert_eq!(refreshed_status["asset_manifest"]["format"], 2);
-    assert_eq!(
-        refreshed_status["asset_manifest"]["assets_current"],
-        "2099.0101.1"
-    );
+    assert_eq!(refreshed_status["asset_manifest"]["assets_current"], "2099.0101.1");
 }
 
 #[test]
@@ -3531,9 +3241,7 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     let dir = tempfile::tempdir().unwrap();
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let state = make_asset_state(dir.path().join("assets"));
-    let profile =
-        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
-            .unwrap();
+    let profile = capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code")).unwrap();
     profile
         .download_assets(
             &state.assets_dir,
@@ -3556,13 +3264,7 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
         status["profiles"][0]["profile_payload_hash"],
         profile_payload_hash(profile.config()).unwrap()
     );
-    assert_eq!(
-        status["profiles"][0]["missing_assets"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(status["profiles"][0]["missing_assets"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -3573,9 +3275,7 @@ async fn vm_list_omits_legacy_global_asset_health_when_profiles_are_authoritativ
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let state = make_asset_state(dir.path().join("assets"));
-    let profile =
-        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
-            .unwrap();
+    let profile = capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code")).unwrap();
     profile
         .download_assets(
             &state.assets_dir,
@@ -3584,20 +3284,10 @@ async fn vm_list_omits_legacy_global_asset_health_when_profiles_are_authoritativ
         .unwrap();
     let app = build_service_router(state);
 
-    let (status, profiles) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/status",
-        None,
-    )
-    .await;
+    let (status, profiles) = route_request(app.clone(), axum::http::Method::GET, "/profiles/status", None).await;
     assert_eq!(status, StatusCode::OK, "{profiles}");
     assert_eq!(profiles["ready_count"], 1, "{profiles}");
-    assert_eq!(
-        profiles["profiles"][0]["missing_assets"],
-        json!([]),
-        "{profiles}"
-    );
+    assert_eq!(profiles["profiles"][0]["missing_assets"], json!([]), "{profiles}");
 
     let (status, list) = route_request(app, axum::http::Method::GET, "/vms/list", None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
@@ -3632,10 +3322,7 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
 
     assert_eq!(status["profile_count"], 2);
     assert!(profile_ids.contains(&"code".to_string()), "{profile_ids:?}");
-    assert!(
-        profile_ids.contains(&"co-work".to_string()),
-        "{profile_ids:?}"
-    );
+    assert!(profile_ids.contains(&"co-work".to_string()), "{profile_ids:?}");
     for profile in status["profiles"].as_array().expect("profiles array") {
         assert!(
             profile["profile_payload_hash"]
@@ -3668,21 +3355,13 @@ async fn reload_refreshes_session_runtime_profile_from_source_profile() {
     install_test_profile_catalog(&state, &profile);
     let session_dir = state.run_dir.join("sessions/runtime-refresh");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "runtime-refresh",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "runtime-refresh", std::process::id(), session_dir.clone());
 
     state
         .refresh_active_profiles(Some("code"))
         .expect("initial runtime profile materialization");
     let active_profile = session_dir.join("vm/active_profile.toml");
-    assert!(
-        active_profile.exists(),
-        "session must carry one active profile file"
-    );
+    assert!(active_profile.exists(), "session must carry one active profile file");
     assert!(
         !std::fs::read_to_string(&active_profile)
             .unwrap()
@@ -3803,22 +3482,10 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
         (axum::http::Method::GET, "/profiles/{profile}/info"),
         (axum::http::Method::GET, "/profiles/{profile}/assets/status"),
         (axum::http::Method::GET, "/profiles/{profile}/assets/info"),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/enforcement/info",
-        ),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/enforcement/rules/list",
-        ),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/detection/info",
-        ),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/detection/rules/list",
-        ),
+        (axum::http::Method::GET, "/profiles/{profile}/enforcement/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/enforcement/rules/list"),
+        (axum::http::Method::GET, "/profiles/{profile}/detection/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/detection/rules/list"),
         (axum::http::Method::GET, "/profiles/{profile}/plugins/info"),
         (axum::http::Method::GET, "/profiles/{profile}/plugins/list"),
         (
@@ -3834,14 +3501,8 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
             "/profiles/{profile}/plugins/credential_broker/credentials/reload",
         ),
         (axum::http::Method::GET, "/profiles/{profile}/mcp/info"),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/mcp/default/info",
-        ),
-        (
-            axum::http::Method::GET,
-            "/profiles/{profile}/mcp/servers/list",
-        ),
+        (axum::http::Method::GET, "/profiles/{profile}/mcp/default/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/mcp/servers/list"),
         (axum::http::Method::GET, "/profiles/{profile}/skills/info"),
         (axum::http::Method::GET, "/profiles/{profile}/skills/list"),
     ];
@@ -3849,13 +3510,8 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
     for profile in ["code", "co-work"] {
         for (method, route) in routes.iter() {
             let path = route.replace("{profile}", profile);
-            let (status, body) = route_request(
-                build_service_router(Arc::clone(&state)),
-                method.clone(),
-                &path,
-                None,
-            )
-            .await;
+            let (status, body) =
+                route_request(build_service_router(Arc::clone(&state)), method.clone(), &path, None).await;
             assert!(
                 status.is_success(),
                 "{path} should be registered and backed by profile data; got {status} body={body}"
@@ -3920,24 +3576,12 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
         "skill mutation payloads must reject credential/provider theater fields"
     );
 
-    let (status, info) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/skills/info",
-        None,
-    )
-    .await;
+    let (status, info) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/skills/info", None).await;
     assert_eq!(status, StatusCode::OK, "{info}");
     assert_eq!(info["profile_id"], "code");
     assert_eq!(info["skill_count"], 0);
 
-    let (status, list) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/skills/list",
-        None,
-    )
-    .await;
+    let (status, list) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/skills/list", None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(list["profile_id"], "code");
     assert!(list["skills"].as_array().unwrap().is_empty());
@@ -3977,13 +3621,7 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     assert_eq!(edited["skill_id"], "review");
     assert_eq!(edited["mutation"]["operation"], "edit");
 
-    let (status, list) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/skills/list",
-        None,
-    )
-    .await;
+    let (status, list) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/skills/list", None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(
         list["skills"],
@@ -4001,10 +3639,8 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     assert_eq!(deleted["skill_id"], "review");
     assert_eq!(deleted["mutation"]["operation"], "delete");
 
-    let profile: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     assert!(profile.skills.paths.is_empty());
 
     state
@@ -4024,33 +3660,9 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     let rows = rows["rows"].as_array().expect("mutation rows");
     assert_eq!(rows.len(), 3, "{rows:?}");
     for expected in [
-        json!([
-            "code",
-            "skills",
-            "profile.toml",
-            "skill",
-            "security",
-            "add",
-            "applied"
-        ]),
-        json!([
-            "code",
-            "skills",
-            "profile.toml",
-            "skill",
-            "review",
-            "edit",
-            "applied"
-        ]),
-        json!([
-            "code",
-            "skills",
-            "profile.toml",
-            "skill",
-            "review",
-            "delete",
-            "applied"
-        ]),
+        json!(["code", "skills", "profile.toml", "skill", "security", "add", "applied"]),
+        json!(["code", "skills", "profile.toml", "skill", "review", "edit", "applied"]),
+        json!(["code", "skills", "profile.toml", "skill", "review", "delete", "applied"]),
     ] {
         assert!(rows.contains(&expected), "missing {expected}: {rows:?}");
     }
@@ -4185,12 +3797,9 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 #[tokio::test]
 async fn profile_mcp_tools_reject_unknown_profile_server() {
     let state = make_test_state();
-    let err = handle_profile_mcp_server_tools(
-        State(state),
-        Path(("code".to_string(), "settings-only".to_string())),
-    )
-    .await
-    .expect_err("profile MCP tools must reject servers not configured in the profile");
+    let err = handle_profile_mcp_server_tools(State(state), Path(("code".to_string(), "settings-only".to_string())))
+        .await
+        .expect_err("profile MCP tools must reject servers not configured in the profile");
 
     assert_eq!(err.0, StatusCode::NOT_FOUND);
     assert!(err.1.contains("MCP server not found in profile code"));
@@ -4230,10 +3839,9 @@ async fn service_wide_ledger_routes_are_db_backed_and_empty_without_session_dbs(
 
 #[tokio::test]
 async fn t1_adversarial_route_inputs_fail_closed() {
-    let unknown_profile =
-        handle_profile_plugins_info(State(make_test_state()), Path("strict".to_string()))
-            .await
-            .unwrap_err();
+    let unknown_profile = handle_profile_plugins_info(State(make_test_state()), Path("strict".to_string()))
+        .await
+        .unwrap_err();
     assert_eq!(unknown_profile.0, StatusCode::NOT_FOUND);
 
     let bad_rule = capsem_core::net::policy_config::SecurityRule {
@@ -4299,8 +3907,7 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
     let state = make_test_state();
     let app = build_service_router(state);
 
-    let (status, profiles) =
-        route_request(app.clone(), axum::http::Method::GET, "/profiles/list", None).await;
+    let (status, profiles) = route_request(app.clone(), axum::http::Method::GET, "/profiles/list", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(profiles["profiles"]
         .as_array()
@@ -4308,24 +3915,12 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
         .iter()
         .any(|profile| profile["id"] == "code" && profile["name"].is_string()));
 
-    let (status, profile) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/info",
-        None,
-    )
-    .await;
+    let (status, profile) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(profile["profile"]["id"], "code");
     assert!(profile["profile"]["description"].is_string());
 
-    let (status, status_body) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/status",
-        None,
-    )
-    .await;
+    let (status, status_body) = route_request(app.clone(), axum::http::Method::GET, "/profiles/status", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(status_body["profile_count"].as_u64().unwrap() > 0);
 
@@ -4340,39 +3935,24 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
     assert_eq!(validation["valid"], true);
     assert_eq!(validation["profile_id"], "code");
 
-    let (status, assets_info) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/assets/info",
-        None,
-    )
-    .await;
+    let (status, assets_info) =
+        route_request(app.clone(), axum::http::Method::GET, "/profiles/code/assets/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(assets_info["profile_id"], "code");
     assert_eq!(assets_info["format"], "profile-assets.v1");
-    assert_eq!(
-        assets_info["current_assets"]["rootfs"]["name"],
-        "rootfs.erofs"
-    );
+    assert_eq!(assets_info["current_assets"]["rootfs"]["name"], "rootfs.erofs");
     assert!(
         assets_info.get("filesystem").is_none() && assets_info.get("compression").is_none(),
         "assets route must not expose build-only filesystem/compression metadata: {assets_info}"
     );
 
-    let (status, mcp_info) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/mcp/info",
-        None,
-    )
-    .await;
+    let (status, mcp_info) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/mcp/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(mcp_info["profile_id"], "code");
     assert_eq!(mcp_info["manual_server_count"], 0);
     assert_eq!(mcp_info["builtin_local_enabled"], true);
 
-    let (status, settings) =
-        route_request(app.clone(), axum::http::Method::GET, "/settings/info", None).await;
+    let (status, settings) = route_request(app.clone(), axum::http::Method::GET, "/settings/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         settings.get("tree").is_some() || settings.get("issues").is_some(),
@@ -4427,23 +4007,13 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
         .into_iter()
         .collect(),
     });
-    std::fs::write(
-        profile_dir.join("profile.toml"),
-        toml::to_string(&profile).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(profile_dir.join("profile.toml"), toml::to_string(&profile).unwrap()).unwrap();
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", &profiles_dir);
 
     let state = make_test_state();
     let app = build_service_router(state);
 
-    let (status, info) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/info",
-        None,
-    )
-    .await;
+    let (status, info) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(info["obom"]["hash"], format!("blake3:{obom_hash}"));
     assert_eq!(info["obom"]["scope"], "base_image");
@@ -4453,8 +4023,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
     );
     assert_eq!(info["obom"]["route"], "/profiles/code/obom");
 
-    let (status, obom) =
-        route_request(app, axum::http::Method::GET, "/profiles/code/obom", None).await;
+    let (status, obom) = route_request(app, axum::http::Method::GET, "/profiles/code/obom", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(obom["profile_id"], "code");
     assert_eq!(obom["current_arch"], arch);
@@ -4515,8 +4084,7 @@ sigma = "corp/detection.yaml"
     assert!(written.contains("[corp_rule_files]"));
     assert!(written.contains("enforcement = \"corp/enforcement.toml\""));
 
-    let (status, info) =
-        route_request(app.clone(), axum::http::Method::GET, "/corp/info", None).await;
+    let (status, info) = route_request(app.clone(), axum::http::Method::GET, "/corp/info", None).await;
     assert_eq!(status, StatusCode::OK, "{info}");
     assert_eq!(info["installed"], true);
     assert_eq!(info["source"]["refresh_interval_hours"], 24);
@@ -4601,8 +4169,7 @@ match = 'file.import.content.contains("EICAR")'
         .as_array()
         .unwrap()
         .iter()
-        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar"
-            && detection["plugin_mode"] == "rewrite"));
+        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar" && detection["plugin_mode"] == "rewrite"));
 
     let (status, disabled) = route_request(
         app.clone(),
@@ -4648,8 +4215,7 @@ match = 'file.import.content.contains("EICAR")'
         .as_array()
         .unwrap()
         .iter()
-        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar"
-            && detection["detection_level"] == "critical"));
+        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar" && detection["detection_level"] == "critical"));
 }
 
 #[tokio::test]
@@ -4705,13 +4271,7 @@ async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
         "builtin MCP list entries are static profile capability, not live server lifecycle"
     );
 
-    let (status, mcp_info) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/mcp/info",
-        None,
-    )
-    .await;
+    let (status, mcp_info) = route_request(app.clone(), axum::http::Method::GET, "/profiles/code/mcp/info", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(mcp_info["builtin_local_enabled"], true);
 
@@ -4944,10 +4504,7 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
 
     assert_eq!(response.profile_id, "code");
     assert!(
-        response
-            .rules
-            .iter()
-            .all(|rule| rule.detection_level.is_some()),
+        response.rules.iter().all(|rule| rule.detection_level.is_some()),
         "detection inventory must not include non-reporting enforcement rules"
     );
     assert!(response
@@ -5038,15 +4595,11 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     .expect("list plugins");
     assert_eq!(list.scope.profile_id, "code");
     assert!(
-        list.plugins
-            .iter()
-            .any(|plugin| plugin.id == "dummy_pre_eicar"),
+        list.plugins.iter().any(|plugin| plugin.id == "dummy_pre_eicar"),
         "built-in plugin list must include dummy_pre_eicar"
     );
     assert!(
-        list.plugins
-            .iter()
-            .any(|plugin| plugin.id == "log_sanitizer"),
+        list.plugins.iter().any(|plugin| plugin.id == "log_sanitizer"),
         "built-in plugin list must include the logging-stage sanitizer"
     );
     assert!(
@@ -5062,9 +4615,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         "plugin catalog must expose postprocess plugins"
     );
     assert!(
-        list.plugins
-            .iter()
-            .any(|plugin| plugin.stage == PluginStage::Logging),
+        list.plugins.iter().any(|plugin| plugin.stage == PluginStage::Logging),
         "plugin catalog must expose logging plugins"
     );
     let dummy_pre = list
@@ -5097,10 +4648,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         .expect("built-in plugin list must include credential_broker");
     assert_eq!(broker.stage, PluginStage::Preprocess);
     assert_eq!(broker.version, "1");
-    assert_eq!(
-        broker.capabilities.event_families,
-        vec!["http", "file", "mcp"]
-    );
+    assert_eq!(broker.capabilities.event_families, vec!["http", "file", "mcp"]);
     assert_eq!(
         broker.capabilities.credential_providers,
         vec!["anthropic", "google", "openai", "github", "mcp"]
@@ -5116,18 +4664,12 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
     assert_eq!(broker.detail_routes.len(), 2);
     assert_eq!(broker.detail_routes[0].id, "credential_broker_credentials");
-    assert_eq!(
-        broker.detail_routes[0].kind,
-        PluginDetailRouteKind::CredentialBroker
-    );
+    assert_eq!(broker.detail_routes[0].kind, PluginDetailRouteKind::CredentialBroker);
     assert_eq!(
         broker.detail_routes[0].path,
         "/profiles/code/plugins/credential_broker/credentials/info"
     );
-    assert_eq!(
-        broker.detail_routes[1].id,
-        "credential_broker_credentials_reload"
-    );
+    assert_eq!(broker.detail_routes[1].id, "credential_broker_credentials_reload");
     assert_eq!(
         broker.detail_routes[1].path,
         "/profiles/code/plugins/credential_broker/credentials/reload"
@@ -5196,15 +4738,15 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     let default_disabled_event = &default_disabled["event"];
     assert_eq!(default_disabled_event["decision"]["effective"], "allow");
     let default_disabled_detections = default_disabled_event["detections"].as_array().unwrap();
-    assert!(default_disabled_detections.iter().any(|detection| {
-        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
-    }));
-    assert!(!default_disabled_detections.iter().any(|detection| {
-        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
-    }));
-    assert!(!default_disabled_detections.iter().any(|detection| {
-        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"
-    }));
+    assert!(default_disabled_detections
+        .iter()
+        .any(|detection| { detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar" }));
+    assert!(!default_disabled_detections
+        .iter()
+        .any(|detection| { detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar" }));
+    assert!(!default_disabled_detections
+        .iter()
+        .any(|detection| { detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow" }));
     assert!(
         default_disabled_event.get("http").is_some(),
         "wire DTO must expose every first-party root, even when null"
@@ -5251,19 +4793,16 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     let enabled: serde_json::Value = decode_response_json(enabled_response).await;
     let enabled_event = &enabled["event"];
     assert_eq!(enabled_event["decision"]["effective"], "allow");
-    assert_eq!(
-        enabled_event["file"]["import_content"],
-        "[capsem-rewritten-eicar]"
-    );
+    assert_eq!(enabled_event["file"]["import_content"], "[capsem-rewritten-eicar]");
     let enabled_detections = enabled_event["detections"].as_array().unwrap();
     assert!(enabled_detections.iter().any(|detection| {
         detection["source"] == "plugin"
             && detection["plugin_id"] == "dummy_pre_eicar"
             && detection["plugin_mode"] == "rewrite"
     }));
-    assert!(enabled_detections.iter().any(|detection| {
-        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"
-    }));
+    assert!(enabled_detections
+        .iter()
+        .any(|detection| { detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow" }));
 
     let Json(disabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
@@ -5291,12 +4830,12 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     let after_disable_event = &after_disable["event"];
     assert_eq!(after_disable_event["decision"]["effective"], "allow");
     let after_disable_detections = after_disable_event["detections"].as_array().unwrap();
-    assert!(after_disable_detections.iter().any(|detection| {
-        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
-    }));
-    assert!(!after_disable_detections.iter().any(|detection| {
-        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
-    }));
+    assert!(after_disable_detections
+        .iter()
+        .any(|detection| { detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar" }));
+    assert!(!after_disable_detections
+        .iter()
+        .any(|detection| { detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar" }));
 
     let unknown_plugin_info = handle_profile_plugin_info(
         State(Arc::clone(&state)),
@@ -5375,12 +4914,10 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
     let state = make_test_state();
 
-    let Json(detail) = handle_profile_credential_broker_credentials_info(
-        State(Arc::clone(&state)),
-        Path("code".to_string()),
-    )
-    .await
-    .expect("credential broker detail");
+    let Json(detail) =
+        handle_profile_credential_broker_credentials_info(State(Arc::clone(&state)), Path("code".to_string()))
+            .await
+            .expect("credential broker detail");
 
     assert_eq!(detail.scope.profile_id, "code");
     assert_eq!(detail.plugin_id, "credential_broker");
@@ -5410,10 +4947,7 @@ async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
 async fn service_status_reports_ready_empty_credential_store_without_inventory_counters() {
     let _lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let _store_guard = EnvVarGuard::set(
-        "CAPSEM_CREDENTIAL_STORE_PATH",
-        dir.path().join("credential-store.json"),
-    );
+    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_STORE_PATH", dir.path().join("credential-store.json"));
     capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store().unwrap();
 
     let state = make_test_state();
@@ -5444,12 +4978,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     let app = build_service_router(Arc::clone(&state));
     let session_dir = dir.path().join("sessions").join("broker-reload-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "broker-reload-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "broker-reload-vm", std::process::id(), session_dir.clone());
 
     let credential_ref = capsem_logger::credential_reference("google", "ya29.reload-route");
     let store_json = serde_json::json!({
@@ -5458,11 +4987,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
             &credential_ref,
         ): "ya29.reload-route"
     });
-    std::fs::write(
-        &test_store,
-        serde_json::to_string_pretty(&store_json).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&test_store, serde_json::to_string_pretty(&store_json).unwrap()).unwrap();
 
     let event_json = format!(
         r#"{{
@@ -5549,12 +5074,7 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("broker-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "broker-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "broker-vm", std::process::id(), session_dir.clone());
 
     let event_json = r#"{
         "event_type": "http.request",
@@ -5599,9 +5119,7 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
         .recent_security_rule_events(10)
         .unwrap();
     assert_eq!(direct_rows.len(), 1);
-    assert!(direct_rows[0]
-        .event_json
-        .contains("credential_observations"));
+    assert!(direct_rows[0].event_json.contains("credential_observations"));
     let (status, list) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -5635,18 +5153,9 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
         broker["runtime"]["brokered_credentials"][0]["credential_ref"],
         "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
     );
-    assert_eq!(
-        broker["runtime"]["brokered_credentials"][0]["provider"],
-        "google"
-    );
-    assert_eq!(
-        broker["runtime"]["brokered_credentials"][0]["observed_count"],
-        1
-    );
-    assert_eq!(
-        broker["runtime"]["brokered_credentials"][0]["injected_count"],
-        1
-    );
+    assert_eq!(broker["runtime"]["brokered_credentials"][0]["provider"], "google");
+    assert_eq!(broker["runtime"]["brokered_credentials"][0]["observed_count"], 1);
+    assert_eq!(broker["runtime"]["brokered_credentials"][0]["injected_count"], 1);
     assert_eq!(
         broker["runtime"]["brokered_credentials"][0]["replay_available"], false,
         "security event evidence alone must not imply the broker can replay the credential"
@@ -5849,17 +5358,13 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     );
 
     let enforcement_path = config_root.join("profiles/code/enforcement.toml");
-    let loaded =
-        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
-            .unwrap();
+    let loaded = SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap()).unwrap();
     assert_eq!(
         loaded.profiles.rules["eicar_block"].action,
         capsem_core::net::policy_config::SecurityRuleAction::Block
     );
-    let profile_after_save: ProfileConfigFile = toml::from_str(
-        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
-    )
-    .unwrap();
+    let profile_after_save: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap()).unwrap();
     assert_eq!(
         profile_after_save.files.enforcement.unwrap().hash,
         Some(format!(
@@ -5868,16 +5373,14 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         ))
     );
 
-    let Json(reload) =
-        handle_enforcement_reload(State(Arc::clone(&state)), Path("code".to_string()))
-            .await
-            .expect("reload alias should broadcast to zero instances");
+    let Json(reload) = handle_enforcement_reload(State(Arc::clone(&state)), Path("code".to_string()))
+        .await
+        .expect("reload alias should broadcast to zero instances");
     assert_eq!(reload["success"], serde_json::json!(true));
     assert_eq!(reload["reloaded"], serde_json::json!(0));
 
     let mut bad_priority = rule.clone();
-    bad_priority.priority =
-        Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
+    bad_priority.priority = Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
     let err = handle_enforcement_rule_upsert(
         State(Arc::clone(&state)),
         Path(("code".to_string(), "bad_negative_priority".to_string())),
@@ -5903,9 +5406,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect_err("user rule endpoint must not create corp-locked rules");
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
 
-    let loaded =
-        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
-            .unwrap();
+    let loaded = SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap()).unwrap();
     assert!(
         !loaded.profiles.rules.contains_key("bad_negative_priority"),
         "rejected rule must not be persisted"
@@ -5940,17 +5441,12 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
             .all(|rule| rule.rule_id != "profiles.rules.eicar_block"),
         "deleted rule must disappear from cached rules/list route"
     );
-    let loaded =
-        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
-            .unwrap();
+    let loaded = SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap()).unwrap();
     assert!(!loaded.profiles.rules.contains_key("eicar_block"));
 
-    let err = handle_enforcement_rule_delete(
-        State(state),
-        Path(("code".to_string(), "eicar_block".to_string())),
-    )
-    .await
-    .expect_err("deleting a missing rule should return not found");
+    let err = handle_enforcement_rule_delete(State(state), Path(("code".to_string(), "eicar_block".to_string())))
+        .await
+        .expect_err("deleting a missing rule should return not found");
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 
@@ -5965,12 +5461,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     let app = build_service_router(Arc::clone(&state));
     let session_dir = dir.path().join("sessions").join("route-ledger-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "route-ledger-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "route-ledger-vm", std::process::id(), session_dir.clone());
 
     let rule = capsem_core::net::policy_config::SecurityRule {
         name: "openai_http_observed".to_string(),
@@ -5998,18 +5489,11 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .await
         .expect("detection route should respond");
     assert_eq!(save_response.status(), StatusCode::OK);
-    let save_body = to_bytes(save_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let save_body = to_bytes(save_response.into_body(), usize::MAX).await.unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&save_body).unwrap();
-    assert_eq!(
-        saved["compiled_rule_id"],
-        "profiles.rules.openai_http_observed"
-    );
+    assert_eq!(saved["compiled_rule_id"], "profiles.rules.openai_http_observed");
 
-    let profile =
-        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
-            .unwrap();
+    let profile = capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code")).unwrap();
     let compiled = profile
         .config()
         .security_rule_profile_from_files(profile.config_root())
@@ -6018,8 +5502,8 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .expect("route-authored rules compile for runtime");
     let rule_set = SecurityRuleSet::new(compiled);
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    let event_id = capsem_core::security_engine::SecurityEventId::parse("abcdef123456")
-        .expect("fixed event id is 12 hex");
+    let event_id =
+        capsem_core::security_engine::SecurityEventId::parse("abcdef123456").expect("fixed event id is 12 hex");
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_route_authored_detection")
         .with_http(capsem_core::security_engine::HttpSecurityEvent {
@@ -6058,11 +5542,8 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .await
         .expect("security latest route should respond");
     assert_eq!(latest_response.status(), StatusCode::OK);
-    let latest_body = to_bytes(latest_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> =
-        serde_json::from_slice(&latest_body).unwrap();
+    let latest_body = to_bytes(latest_response.into_body(), usize::MAX).await.unwrap();
+    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&latest_body).unwrap();
     let event = events
         .iter()
         .find(|event| event.rule_id == "profiles.rules.openai_http_observed")
@@ -6076,10 +5557,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     );
     assert!(event.rule_json.contains("openai_http_observed"));
     assert!(event.event_json.contains(r#""api.openai.com""#));
-    assert_eq!(
-        event.trace_id.as_deref(),
-        Some("trace_route_authored_detection")
-    );
+    assert_eq!(event.trace_id.as_deref(), Some("trace_route_authored_detection"));
 
     let detection_response = app
         .oneshot(
@@ -6092,11 +5570,8 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .await
         .expect("detection latest route should respond");
     assert_eq!(detection_response.status(), StatusCode::OK);
-    let detection_body = to_bytes(detection_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let detection_events: Vec<capsem_logger::SecurityRuleEvent> =
-        serde_json::from_slice(&detection_body).unwrap();
+    let detection_body = to_bytes(detection_response.into_body(), usize::MAX).await.unwrap();
+    let detection_events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&detection_body).unwrap();
     assert!(detection_events
         .iter()
         .any(|detection| detection.rule_id == event.rule_id));
@@ -6112,12 +5587,7 @@ async fn route_enforcement_evaluate_is_dry_run_and_does_not_write_ledger_rows() 
     let app = build_service_router(Arc::clone(&state));
     let session_dir = dir.path().join("sessions").join("dry-run-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "dry-run-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "dry-run-vm", std::process::id(), session_dir.clone());
     capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16)
         .unwrap()
         .shutdown_blocking();
@@ -6150,9 +5620,7 @@ match = 'file.import.content.contains("EICAR")'
         .await
         .expect("evaluate route should respond");
     assert_eq!(eval_response.status(), StatusCode::OK);
-    let eval_body = to_bytes(eval_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let eval_body = to_bytes(eval_response.into_body(), usize::MAX).await.unwrap();
     let evaluated: serde_json::Value = serde_json::from_slice(&eval_body).unwrap();
     assert_eq!(evaluated["event"]["decision"]["effective"], "block");
 
@@ -6167,11 +5635,8 @@ match = 'file.import.content.contains("EICAR")'
         .await
         .expect("latest route should respond");
     assert_eq!(latest_response.status(), StatusCode::OK);
-    let latest_body = to_bytes(latest_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> =
-        serde_json::from_slice(&latest_body).unwrap();
+    let latest_body = to_bytes(latest_response.into_body(), usize::MAX).await.unwrap();
+    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&latest_body).unwrap();
     assert!(
         events.is_empty(),
         "evaluate routes are dry-run only; runtime boundaries must own ledger writes"
@@ -6190,13 +5655,9 @@ async fn handle_enforcement_evaluate_reuses_cached_raw_body_response() {
     let request = EnforcementEvaluateRequest::eicar_fixture();
     let body = enforcement_evaluate_body(&request);
 
-    let first_response = handle_enforcement_evaluate(
-        State(Arc::clone(&state)),
-        Path("code".to_string()),
-        body.clone(),
-    )
-    .await
-    .expect("first evaluate");
+    let first_response = handle_enforcement_evaluate(State(Arc::clone(&state)), Path("code".to_string()), body.clone())
+        .await
+        .expect("first evaluate");
     let first: serde_json::Value = decode_response_json(first_response).await;
     assert_eq!(first["event"]["event_type"], "file.import");
 
@@ -6221,12 +5682,7 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("service-ledger-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "service-ledger-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "service-ledger-vm", std::process::id(), session_dir.clone());
 
     let rule_set = SecurityRuleSet::new(
         SecurityRuleProfile {
@@ -6238,12 +5694,8 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
                         action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
                         condition: r#"http.host.contains("example.com")"#.to_string(),
                         enabled: true,
-                        detection_level: Some(
-                            capsem_core::net::policy_config::DetectionLevel::Informational,
-                        ),
-                        priority: Some(
-                            capsem_core::net::policy_config::SecurityRulePriority::Explicit(10),
-                        ),
+                        detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+                        priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
                         corp_locked: false,
                         reason: Some("service ledger route proof".to_string()),
                         managed: None,
@@ -6291,18 +5743,11 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
         assert_eq!(rows.len(), 1, "{uri}: {rows:?}");
         assert_eq!(rows[0]["vm_id"], "service-ledger-vm");
         assert_eq!(rows[0]["event"]["event_id"], "123abc456def");
-        assert_eq!(
-            rows[0]["event"]["rule_id"],
-            "profiles.rules.service_http_detect"
-        );
+        assert_eq!(rows[0]["event"]["rule_id"], "profiles.rules.service_http_detect");
         assert_eq!(rows[0]["event"]["detection_level"], "informational");
     }
 
-    for uri in [
-        "/security/status",
-        "/enforcement/status",
-        "/detection/status",
-    ] {
+    for uri in ["/security/status", "/enforcement/status", "/detection/status"] {
         let (status, body) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
         assert_eq!(body["total"], 1, "{uri}: {body}");
@@ -6344,11 +5789,7 @@ fn asset_status_reports_reconcile_progress_fields() {
     let state = make_asset_state(dir.path().to_path_buf());
     let profile = materialized_test_profile();
     let arch_assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [
-        &arch_assets.kernel,
-        &arch_assets.initrd,
-        &arch_assets.rootfs,
-    ] {
+    for asset in [&arch_assets.kernel, &arch_assets.initrd, &arch_assets.rootfs] {
         std::fs::write(
             arch_dir.join(profile_asset_hash_name(asset).expect("profile asset hash name")),
             b"asset",
@@ -6422,13 +5863,11 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
                 .as_str()
                 .is_some_and(|name| name.starts_with("vmlinuz-"))
             && asset["status"] == "present"
-            && asset["hash"]
-                .as_str()
-                .is_some_and(|hash| hash.starts_with("blake3:"))
+            && asset["hash"].as_str().is_some_and(|hash| hash.starts_with("blake3:"))
     }));
-    assert!(assets.iter().any(|asset| {
-        asset["kind"] == "initrd" && asset["name"] == "initrd.img" && asset["status"] == "missing"
-    }));
+    assert!(assets
+        .iter()
+        .any(|asset| { asset["kind"] == "initrd" && asset["name"] == "initrd.img" && asset["status"] == "missing" }));
     assert!(assets.iter().any(|asset| {
         asset["kind"] == "rootfs"
             && asset["name"] == "rootfs.erofs"
@@ -6524,18 +5963,9 @@ fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
     let status = profile_asset_status_value(&state, &profile);
 
     assert_eq!(status["manifest"]["origin"], "package");
-    assert_eq!(
-        status["manifest"]["path"],
-        manifest_path.display().to_string()
-    );
-    assert_eq!(
-        status["manifest"]["origin_path"],
-        origin_path.display().to_string()
-    );
-    assert_eq!(
-        status["manifest"]["origin_source"],
-        "/tmp/corp/manifest.json"
-    );
+    assert_eq!(status["manifest"]["path"], manifest_path.display().to_string());
+    assert_eq!(status["manifest"]["origin_path"], origin_path.display().to_string());
+    assert_eq!(status["manifest"]["origin_source"], "/tmp/corp/manifest.json");
     assert_eq!(status["manifest"]["packaged_at"], "2026-06-09T12:00:00Z");
     assert_eq!(status["manifest"]["blake3"], expected_hash);
     assert_eq!(status["manifest"]["validation_status"], "valid");
@@ -6594,14 +6024,8 @@ fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
 
     assert_eq!(status["manifest"]["origin"], "installed");
     assert_eq!(status["manifest"]["validation_status"], "invalid");
-    assert!(!status["manifest"]["validation_error"]
-        .as_str()
-        .unwrap()
-        .is_empty());
-    assert_eq!(
-        status["manifest"]["path"],
-        manifest_path.display().to_string()
-    );
+    assert!(!status["manifest"]["validation_error"].as_str().unwrap().is_empty());
+    assert_eq!(status["manifest"]["path"], manifest_path.display().to_string());
     assert!(status["manifest"].get("assets_current").is_none());
     assert!(status["manifest"].get("binaries_current").is_none());
 }
@@ -6628,8 +6052,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     }
 
     let mut pins = test_asset_pins();
-    pins.rootfs.hash =
-        "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
+    pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
     let mut registry = PersistentRegistry::load(registry_path);
     registry.data.vms.insert(
@@ -6672,9 +6095,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     let mut preserve = profile_catalog_asset_filenames(&catalog);
     preserve.extend(persistent_registry_asset_filenames(&registry));
 
-    let removed =
-        capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
-            .unwrap();
+    let removed = capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve).unwrap();
 
     assert_eq!(removed, vec![base.join(disposable_rootfs)]);
     assert!(base.join(catalog_rootfs).exists());
@@ -6693,8 +6114,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     }
 
     let mut pins = test_asset_pins();
-    pins.rootfs.hash =
-        "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
+    pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
     let mut registry = PersistentRegistry::load(registry_path);
     registry.data.vms.insert(
@@ -6771,9 +6191,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     };
     let preserve = persistent_registry_asset_filenames(&registry);
 
-    let removed =
-        capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
-            .unwrap();
+    let removed = capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve).unwrap();
 
     assert_eq!(removed, vec![base.join(deprecated_unpinned_rootfs)]);
     assert!(base.join(pinned_rootfs).exists());
@@ -6788,11 +6206,7 @@ fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     let arch_dir = dir.path().join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
     let arch_assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [
-        &arch_assets.kernel,
-        &arch_assets.initrd,
-        &arch_assets.rootfs,
-    ] {
+    for asset in [&arch_assets.kernel, &arch_assets.initrd, &arch_assets.rootfs] {
         let hash = asset
             .hash
             .as_deref()
@@ -6887,10 +6301,7 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
 
     let status = profile_asset_status_value(&state, &profile);
     assert_eq!(status["ready"], true);
-    assert_eq!(
-        status["profile_payload_hash"],
-        profile_payload_hash(&profile).unwrap()
-    );
+    assert_eq!(status["profile_payload_hash"], profile_payload_hash(&profile).unwrap());
     let assets = status["assets"].as_array().unwrap();
     assert!(assets.iter().all(|asset| asset["status"] == "present"));
     assert!(assets.iter().any(|asset| {
@@ -7046,22 +6457,15 @@ async fn ensure_assets_without_manifest_is_noop_success() {
 async fn ensure_assets_rejects_concurrent_reconcile() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    state
-        .asset_reconcile_inflight
-        .store(true, Ordering::Release);
+    state.asset_reconcile_inflight.store(true, Ordering::Release);
 
     let err = ensure_assets_for_state(Arc::clone(&state))
         .await
         .expect_err("second reconcile must be rejected");
 
-    assert!(
-        err.contains("already in progress"),
-        "unexpected error: {err}"
-    );
+    assert!(err.contains("already in progress"), "unexpected error: {err}");
     assert!(state.asset_reconcile_inflight.load(Ordering::Acquire));
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
+    state.asset_reconcile_inflight.store(false, Ordering::Release);
 }
 
 // -----------------------------------------------------------------------
@@ -7284,26 +6688,29 @@ fn preserve_renames_session_dir_and_keeps_logs() {
         .preserve_failed_session_dir(&session_dir, "vm-abc")
         .expect("session evidence should be preserved");
 
-    assert!(
-        !session_dir.exists(),
-        "original dir should have been renamed"
-    );
+    assert!(!session_dir.exists(), "original dir should have been renamed");
     let entries: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
         .unwrap()
         .flatten()
         .collect();
     let failed = entries
         .iter()
-        .find(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("vm-abc-failed-")
-        })
+        .find(|e| e.file_name().to_string_lossy().starts_with("vm-abc-failed-"))
         .expect("a vm-abc-failed-* dir must exist");
     let preserved = failed.path().join("process.log");
-    assert_eq!(capsem_foundation::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail(&preserved, usize::MAX)
+            .unwrap()
+            .into_bytes(),
+        b"boot failed: ..."
+    );
     let preserved_serial = failed.path().join("serial.log");
-    assert_eq!(capsem_foundation::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail(&preserved_serial, usize::MAX)
+            .unwrap()
+            .into_bytes(),
+        b"kernel panic"
+    );
 }
 
 #[test]
@@ -7322,8 +6729,7 @@ fn cull_keeps_newest_and_prunes_oldest() {
         std::fs::create_dir_all(&p).unwrap();
         std::fs::write(p.join("process.log"), format!("run {i}")).unwrap();
         // Older i -> older mtime.
-        let when = std::time::SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1_700_000_000 + i as u64 * 10);
+        let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + i as u64 * 10);
         filetime::set_file_mtime(&p, filetime::FileTime::from_system_time(when)).unwrap();
     }
 
@@ -7343,17 +6749,11 @@ fn cull_keeps_newest_and_prunes_oldest() {
     // Oldest two (i=0, i=1) must be pruned; newest MAX_FAILED_SESSIONS kept.
     for i in 0..2 {
         let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
-        assert!(
-            !remaining.contains(&name),
-            "oldest dir {name} should have been culled"
-        );
+        assert!(!remaining.contains(&name), "oldest dir {name} should have been culled");
     }
     for i in 2..total {
         let name = format!("vm-{i}-failed-20260101-00000{i}-aaaa");
-        assert!(
-            remaining.contains(&name),
-            "newer dir {name} should have been kept"
-        );
+        assert!(remaining.contains(&name), "newer dir {name} should have been kept");
     }
 }
 
@@ -7390,10 +6790,7 @@ fn cull_ignores_non_failed_dirs() {
 
     state.cull_failed_sessions().unwrap();
 
-    assert!(
-        sessions.join("vm-alive").exists(),
-        "active VM dir must not be culled"
-    );
+    assert!(sessions.join("vm-alive").exists(), "active VM dir must not be culled");
 }
 
 #[tokio::test]
@@ -7418,13 +6815,7 @@ async fn delete_route_destroys_retained_state_before_success() {
         .insert(name.into(), entry);
 
     let app = build_service_router(Arc::clone(&state));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::DELETE,
-        &format!("/vms/{id}/delete"),
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::DELETE, &format!("/vms/{id}/delete"), None).await;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["success"], true);
@@ -7436,25 +6827,14 @@ async fn delete_route_destroys_retained_state_before_success() {
     let failed_dirs: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
         .unwrap()
         .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(&failed_prefix)
-        })
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&failed_prefix))
         .collect();
     assert!(
         failed_dirs.is_empty(),
         "clean DELETE must destroy state, not relabel it as failed: {failed_dirs:?}"
     );
     assert!(
-        !state
-            .persistent_registry
-            .lock()
-            .unwrap()
-            .data
-            .vms
-            .contains_key(name),
+        !state.persistent_registry.lock().unwrap().data.vms.contains_key(name),
         "DELETE must unregister the retained session"
     );
 }
@@ -7483,13 +6863,7 @@ async fn delete_route_accepts_canonical_alias_to_trusted_run_dir() {
         .insert(name.into(), entry);
 
     let app = build_service_router(Arc::clone(&state));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::DELETE,
-        &format!("/vms/{id}/delete"),
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::DELETE, &format!("/vms/{id}/delete"), None).await;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["success"], true);
@@ -7520,13 +6894,7 @@ async fn delete_route_rejects_registry_path_outside_run_dir() {
         .insert(name.into(), entry);
 
     let app = build_service_router(Arc::clone(&state));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::DELETE,
-        &format!("/vms/{id}/delete"),
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::DELETE, &format!("/vms/{id}/delete"), None).await;
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert!(
@@ -7534,13 +6902,7 @@ async fn delete_route_rejects_registry_path_outside_run_dir() {
         "a registry path outside the service run directory must never be deleted"
     );
     assert!(
-        state
-            .persistent_registry
-            .lock()
-            .unwrap()
-            .data
-            .vms
-            .contains_key(name),
+        state.persistent_registry.lock().unwrap().data.vms.contains_key(name),
         "an unsafe path rejection must leave the registry entry intact"
     );
 }
@@ -7569,13 +6931,7 @@ async fn delete_route_rejects_symlinked_session_root() {
         .insert(name.into(), entry);
 
     let app = build_service_router(Arc::clone(&state));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::DELETE,
-        &format!("/vms/{id}/delete"),
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::DELETE, &format!("/vms/{id}/delete"), None).await;
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert!(
@@ -7583,13 +6939,7 @@ async fn delete_route_rejects_symlinked_session_root() {
         "a symlinked service root must never redirect recursive deletion"
     );
     assert!(
-        state
-            .persistent_registry
-            .lock()
-            .unwrap()
-            .data
-            .vms
-            .contains_key(name),
+        state.persistent_registry.lock().unwrap().data.vms.contains_key(name),
         "a symlink-root rejection must leave the registry entry intact"
     );
 }
@@ -7642,8 +6992,7 @@ fn provision_request_empty_name() {
 #[test]
 fn provision_request_name_with_path_separator() {
     // This is a security edge case -- names with / could create path traversal
-    let json =
-        serde_json::json!({"name": "../escape", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"name": "../escape", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(req.name.unwrap(), "../escape");
     // Note: the service SHOULD reject this, but currently doesn't validate
@@ -7857,10 +7206,7 @@ fn provision_persistent_rejects_duplicate_name() {
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("already exists"),
-        "expected duplicate error, got: {err}"
-    );
+    assert!(err.contains("already exists"), "expected duplicate error, got: {err}");
     assert!(err.contains("resume"), "should suggest resume, got: {err}");
 }
 
@@ -7926,13 +7272,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
     }
 
     let app = build_service_router(Arc::clone(&state));
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::POST,
-        "/purge",
-        Some(json!({ "all": false })),
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::POST, "/purge", Some(json!({ "all": false }))).await;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["purged"], 1);
@@ -8327,11 +7667,7 @@ fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances()
     let mut active_profile: ActiveProfileFile =
         toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
     active_profile.revision = "older-supported-revision".to_string();
-    std::fs::write(
-        &active_profile_path,
-        toml::to_string_pretty(&active_profile).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&active_profile_path, toml::to_string_pretty(&active_profile).unwrap()).unwrap();
     let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
@@ -8354,9 +7690,7 @@ fn persistent_resume_rejects_a_corrupt_saved_active_profile() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/corrupt-saved-profile");
-    let active_profile = session_dir
-        .join(ACTIVE_PROFILE_DIR)
-        .join(ACTIVE_PROFILE_FILE);
+    let active_profile = session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
     std::fs::create_dir_all(active_profile.parent().unwrap()).unwrap();
     std::fs::write(&active_profile, "not = [valid toml").unwrap();
     let entry = test_persistent_entry("corrupt-saved-profile", session_dir);
@@ -8386,12 +7720,7 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
         .set_len(u64::from(runtime_profile.config().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
         .unwrap();
     let entry = test_persistent_entry("deprecated-pin", session_dir);
-    let hash = entry
-        .asset_pins
-        .rootfs
-        .hash
-        .strip_prefix("blake3:")
-        .unwrap();
+    let hash = entry.asset_pins.rootfs.hash.strip_prefix("blake3:").unwrap();
     let manifest_path = state.assets_dir.join("manifest.json");
     std::fs::write(
         &manifest_path,
@@ -8419,15 +7748,9 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
         "deprecation blocks new selection, not an existing VM pin"
     );
 
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["profiles"]["code"]["architectures"][0]["images"][0]["status"] =
-        serde_json::json!("revoked");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&manifest).unwrap(),
-    )
-    .unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["profiles"]["code"]["architectures"][0]["images"][0]["status"] = serde_json::json!("revoked");
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
     let (status, can_resume, reason) = state.persistent_entry_resume_state_cached(&entry);
     assert_eq!(status, VmLifecycleState::Incompatible);
     assert!(!can_resume);
@@ -8450,9 +7773,7 @@ fn resume_rejects_profile_payload_hash_drift() {
                 name: "payload-hash-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
-                profile_payload_hash:
-                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
-                        .into(),
+                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -8486,8 +7807,7 @@ async fn handle_fork_rejects_asset_pin_drift() {
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
     let mut pins = test_asset_pins();
-    pins.rootfs.hash =
-        "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
+    pins.rootfs.hash = "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
     let vm_id = new_persistent_vm_id();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
@@ -8552,10 +7872,7 @@ fn provision_rejects_nonexistent_source_sandbox() {
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("not found"),
-        "expected sandbox not found, got: {err}"
-    );
+    assert!(err.contains("not found"), "expected sandbox not found, got: {err}");
 }
 
 #[test]
@@ -8762,10 +8079,7 @@ async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
 
     let Json(info) = handle_info(State(state), Path(vm_id)).await.unwrap();
     let storage = info.storage.expect("info must include storage diagnostics");
-    assert_eq!(
-        storage.rootfs_image_path,
-        rootfs.to_string_lossy().to_string()
-    );
+    assert_eq!(storage.rootfs_image_path, rootfs.to_string_lossy().to_string());
     assert_eq!(storage.rootfs_image_logical_bytes, 8 * 1024 * 1024 * 1024);
     assert!(
         storage.rootfs_image_physical_bytes < storage.rootfs_image_logical_bytes,
@@ -8792,13 +8106,8 @@ async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
     }
 
     let Json(status) = handle_vm_status(State(state), Path(vm_id)).await.unwrap();
-    let storage = status
-        .storage
-        .expect("status must include storage diagnostics");
-    assert_eq!(
-        storage.rootfs_image_path,
-        rootfs.to_string_lossy().to_string()
-    );
+    let storage = status.storage.expect("status must include storage diagnostics");
+    assert_eq!(storage.rootfs_image_path, rootfs.to_string_lossy().to_string());
     assert_eq!(storage.rootfs_image_logical_bytes, 4 * 1024 * 1024 * 1024);
     assert!(storage.host_free_bytes > 0);
     assert_eq!(storage.guest_overlay_device, "/dev/vdb");
@@ -8814,13 +8123,11 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
         reg.data.vms.insert(
             "payload-drift".into(),
             PersistentVmEntry {
-            id: new_persistent_vm_id(),
+                id: new_persistent_vm_id(),
                 name: "payload-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
-                profile_payload_hash:
-                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
-                        .into(),
+                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -8868,9 +8175,7 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
                 name: "payload-drift-info".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
-                profile_payload_hash:
-                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
-                        .into(),
+                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -8941,10 +8246,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
     assert_eq!(vm.status, VmLifecycleState::Incompatible);
     assert!(!vm.can_resume);
     let reason = vm.resume_blocked_reason.as_deref().unwrap_or_default();
-    assert!(
-        reason.contains("rootfs.img logical size mismatch"),
-        "{reason}"
-    );
+    assert!(reason.contains("rootfs.img logical size mismatch"), "{reason}");
     assert!(reason.contains("2 GiB"), "{reason}");
     assert!(reason.contains("64 GiB"), "{reason}");
     assert_eq!(
@@ -8952,9 +8254,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         VmLifecycleState::Incompatible.available_actions(false)
     );
 
-    let Json(info) = handle_info(State(state.clone()), Path(vm.id.clone()))
-        .await
-        .unwrap();
+    let Json(info) = handle_info(State(state.clone()), Path(vm.id.clone())).await.unwrap();
     assert_eq!(info.status, VmLifecycleState::Incompatible);
     assert!(!info.can_resume);
     assert!(info
@@ -8963,9 +8263,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         .unwrap_or_default()
         .contains("rootfs.img logical size mismatch"));
 
-    let Json(status) = handle_vm_status(State(state), Path(vm.id.clone()))
-        .await
-        .unwrap();
+    let Json(status) = handle_vm_status(State(state), Path(vm.id.clone())).await.unwrap();
     assert_eq!(status.status, VmLifecycleState::Incompatible);
     assert!(!status.can_resume);
     assert!(status
@@ -9099,10 +8397,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
         "archived checkpoint should exist: {}",
         archived.display()
     );
-    let archived_complete = session_dir.join(format!(
-        "{}.complete",
-        archived.file_name().unwrap().to_string_lossy()
-    ));
+    let archived_complete = session_dir.join(format!("{}.complete", archived.file_name().unwrap().to_string_lossy()));
     assert!(
         archived_complete.exists(),
         "archived completion marker should exist: {}",
@@ -9121,10 +8416,7 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    let uds_path = state
-        .run_dir
-        .join("instances")
-        .join(format!("{vm_id}.sock"));
+    let uds_path = state.run_dir.join("instances").join(format!("{vm_id}.sock"));
     std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
     std::fs::write(&uds_path, b"stale socket").unwrap();
     std::fs::write(uds_path.with_extension("ready"), b"stale ready").unwrap();
@@ -9270,11 +8562,7 @@ fn main_db_path_resolves_to_sessions_dir() {
     let state = make_test_state();
     // run_dir = /tmp/capsem-test-svc => parent = /tmp => main.db = /tmp/sessions/main.db
     let path = state.main_db_path();
-    assert!(
-        path.ends_with("sessions/main.db"),
-        "got: {}",
-        path.display()
-    );
+    assert!(path.ends_with("sessions/main.db"), "got: {}", path.display());
 }
 
 #[test]
@@ -9294,9 +8582,7 @@ fn profile_mutation_db_startup_initializes_session_index_schema() {
     assert_eq!(session_count, 0);
 
     let mutation_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM profile_mutation_events", [], |row| {
-            row.get(0)
-        })
+        .query_row("SELECT COUNT(*) FROM profile_mutation_events", [], |row| row.get(0))
         .unwrap();
     assert_eq!(mutation_count, 0);
 }
@@ -9310,31 +8596,17 @@ fn session_index_start_records_uuid_id_not_display_name() {
     let display_name = "code-1";
 
     state
-        .record_session_index_start(
-            &id,
-            false,
-            16,
-            2048,
-            Some("blake3:abc"),
-            Some("1.3.1782496403"),
-            None,
-        )
+        .record_session_index_start(&id, false, 16, 2048, Some("blake3:abc"), Some("1.3.1782496403"), None)
         .unwrap();
 
     let conn = rusqlite::Connection::open(state.main_db_path()).unwrap();
     let by_id: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-            [&id],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM sessions WHERE id = ?1", [&id], |row| row.get(0))
         .unwrap();
     let by_name: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-            [display_name],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM sessions WHERE id = ?1", [display_name], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(by_id, 1);
     assert_eq!(by_name, 0);
@@ -9346,13 +8618,7 @@ fn session_index_start_records_uuid_id_not_display_name() {
 
 #[test]
 fn sandbox_info_new_defaults_telemetry_to_none() {
-    let info = SandboxInfo::new(
-        "test".into(),
-        "code".into(),
-        1,
-        VmLifecycleState::Running,
-        false,
-    );
+    let info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
     assert_eq!(info.id, "test");
     assert_eq!(info.pid, 1);
     assert!(!info.persistent);
@@ -9387,8 +8653,7 @@ async fn vm_list_and_info_are_in_memory_only() {
     .unwrap();
     insert_fake_instance_with_session_dir(&state, "list-hot-vm", 4242, session_dir);
 
-    let list: ListResponse =
-        decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
     let listed = list
         .sandboxes
         .iter()
@@ -9416,12 +8681,7 @@ fn vm_lifecycle_available_actions_are_contractual() {
 
     assert_eq!(
         VmLifecycleState::Running.available_actions(false),
-        vec![
-            VmAction::Pause,
-            VmAction::Stop,
-            VmAction::Fork,
-            VmAction::Delete
-        ]
+        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
     );
     assert_eq!(
         VmLifecycleState::Stopped.available_actions(true),
@@ -9451,13 +8711,7 @@ fn vm_lifecycle_available_actions_are_contractual() {
 
 #[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
-    let mut info = SandboxInfo::new(
-        "test".into(),
-        "code".into(),
-        1,
-        VmLifecycleState::Running,
-        false,
-    );
+    let mut info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
@@ -9469,13 +8723,7 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
 
 #[test]
 fn sandbox_info_telemetry_fields_omitted_when_none() {
-    let info = SandboxInfo::new(
-        "test".into(),
-        "code".into(),
-        1,
-        VmLifecycleState::Running,
-        false,
-    );
+    let info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("total_input_tokens"));
     assert!(!json.contains("total_estimated_cost"));
@@ -9497,10 +8745,7 @@ fn profile_vm_resources_drive_new_session_defaults() {
     let default_resources = resolve_profile_vm_resources(&profile, None, None);
     assert_eq!(default_resources.cpus, profile.vm.cpu_count);
     assert_eq!(default_resources.ram_mb, u64::from(profile.vm.ram_gb) * 1024);
-    assert_eq!(
-        default_resources.scratch_disk_size_gb,
-        profile.vm.scratch_disk_size_gb
-    );
+    assert_eq!(default_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb);
 
     let customized_resources = resolve_profile_vm_resources(&profile, Some(3072), Some(2));
     assert_eq!(customized_resources.cpus, 2);
@@ -9620,69 +8865,57 @@ async fn stats_detail_route_reads_session_db_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("stats-detail-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "stats-detail-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "stats-detail-vm", std::process::id(), session_dir.clone());
 
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
-        capsem_logger::ModelCall {
-            event_id: Some("abc123abc123".to_string()),
-            timestamp: std::time::SystemTime::now(),
-            provider: "google".to_string(),
-            protocol: Some("google".to_string()),
-            model: Some("gemini-3.5-flash".to_string()),
-            process_name: Some("agy".to_string()),
-            pid: Some(42),
-            method: "POST".to_string(),
-            path: "/v1internal:streamGenerateContent".to_string(),
-            stream: true,
-            system_prompt_preview: None,
-            messages_count: 1,
-            tools_count: 1,
-            request_bytes: 32,
-            request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
-            request_body_full: Some(
-                r#"{"contents":[{"text":"write full bounded body"}]}"#.to_string(),
-            ),
-            message_id: Some("msg-1".to_string()),
-            status_code: Some(200),
-            text_content: Some("created poem.md".to_string()),
-            thinking_content: Some("plan file write".to_string()),
-            response_body_full: Some(
-                r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
-                    .to_string(),
-            ),
-            stop_reason: Some("end_turn".to_string()),
-            input_tokens: Some(12),
-            output_tokens: Some(7),
-            usage_details: BTreeMap::from([("thinking".to_string(), 5)]),
-            duration_ms: 25,
-            response_bytes: 64,
-            estimated_cost_usd: 0.001,
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(capsem_logger::ModelCall {
+        event_id: Some("abc123abc123".to_string()),
+        timestamp: std::time::SystemTime::now(),
+        provider: "google".to_string(),
+        protocol: Some("google".to_string()),
+        model: Some("gemini-3.5-flash".to_string()),
+        process_name: Some("agy".to_string()),
+        pid: Some(42),
+        method: "POST".to_string(),
+        path: "/v1internal:streamGenerateContent".to_string(),
+        stream: true,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 1,
+        request_bytes: 32,
+        request_body_preview: Some(r#"{"contents":[{"text":"write"}]}"#.to_string()),
+        request_body_full: Some(r#"{"contents":[{"text":"write full bounded body"}]}"#.to_string()),
+        message_id: Some("msg-1".to_string()),
+        status_code: Some(200),
+        text_content: Some("created poem.md".to_string()),
+        thinking_content: Some("plan file write".to_string()),
+        response_body_full: Some(r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#.to_string()),
+        stop_reason: Some("end_turn".to_string()),
+        input_tokens: Some(12),
+        output_tokens: Some(7),
+        usage_details: BTreeMap::from([("thinking".to_string(), 5)]),
+        duration_ms: 25,
+        response_bytes: 64,
+        estimated_cost_usd: 0.001,
+        trace_id: Some("trace-stats-detail".to_string()),
+        credential_ref: None,
+        tool_calls: vec![capsem_logger::ToolCallEntry {
+            call_index: 0,
+            call_id: "tool-1".to_string(),
+            tool_name: "Create".to_string(),
+            arguments: Some(r#"{"path":"/root/poem.md"}"#.to_string()),
+            origin: "native".to_string(),
+            trace_id: Some("trace-stats-detail".to_string()),
+        }],
+        tool_responses: vec![capsem_logger::ToolResponseEntry {
+            call_id: "tool-1".to_string(),
+            content_preview: Some("Wrote 4 lines to poem.md".to_string()),
+            is_error: false,
             trace_id: Some("trace-stats-detail".to_string()),
             credential_ref: None,
-            tool_calls: vec![capsem_logger::ToolCallEntry {
-                call_index: 0,
-                call_id: "tool-1".to_string(),
-                tool_name: "Create".to_string(),
-                arguments: Some(r#"{"path":"/root/poem.md"}"#.to_string()),
-                origin: "native".to_string(),
-                trace_id: Some("trace-stats-detail".to_string()),
-            }],
-            tool_responses: vec![capsem_logger::ToolResponseEntry {
-                call_id: "tool-1".to_string(),
-                content_preview: Some("Wrote 4 lines to poem.md".to_string()),
-                is_error: false,
-                trace_id: Some("trace-stats-detail".to_string()),
-                credential_ref: None,
-            }],
-        },
-    ));
+        }],
+    }));
     writer
         .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
             event_id: Some("def456def456".to_string()),
@@ -9705,12 +8938,9 @@ async fn stats_detail_route_reads_session_db_ledger() {
             request_body_preview: Some(r#"{"model":"gemini-3.5-flash"}"#.to_string()),
             response_body_preview: Some(r#"{"ok":true}"#.to_string()),
             request_body_full: Some(
-                r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
-                    .to_string(),
+                r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.to_string(),
             ),
-            response_body_full: Some(
-                r#"{"ok":true,"body":"full response body from gateway"}"#.to_string(),
-            ),
+            response_body_full: Some(r#"{"ok":true,"body":"full response body from gateway"}"#.to_string()),
             conn_type: Some("https".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -9742,54 +8972,30 @@ async fn stats_detail_route_reads_session_db_ledger() {
         body["model_stats"][0]["call_count"].as_u64().unwrap() as usize,
         "model_stats.call_count must agree with model_events"
     );
-    assert!(body["model_events"][0]
-        .get("request_body_preview")
-        .is_none());
-    assert!(body["model_events"][0]
-        .get("response_body_preview")
-        .is_none());
+    assert!(body["model_events"][0].get("request_body_preview").is_none());
+    assert!(body["model_events"][0].get("response_body_preview").is_none());
     assert_eq!(body["tool_events"][0]["tool_name"], "Create");
     assert_eq!(body["tool_events"][0]["call_id"], "tool-1");
     assert_eq!(body["tool_events"][0]["source"], "native");
     assert_eq!(body["tool_events"][0]["model_parent_missing"], 0);
     assert!(body["tool_events"][0]["model_call_id"].as_i64().is_some());
-    assert_eq!(
-        body["tool_events"][0]["arguments"],
-        r#"{"path":"/root/poem.md"}"#
-    );
-    assert_eq!(
-        body["tool_events"][0]["response_preview"],
-        "Wrote 4 lines to poem.md"
-    );
+    assert_eq!(body["tool_events"][0]["arguments"], r#"{"path":"/root/poem.md"}"#);
+    assert_eq!(body["tool_events"][0]["response_preview"], "Wrote 4 lines to poem.md");
     assert_eq!(body["http_events"][0]["event_id"], "def456def456");
-    assert_eq!(
-        body["http_events"][0]["domain"],
-        "generativelanguage.googleapis.com"
-    );
+    assert_eq!(body["http_events"][0]["domain"], "generativelanguage.googleapis.com");
     assert!(body["http_events"][0].get("request_body_preview").is_none());
-    assert!(body["http_events"][0]
-        .get("response_body_preview")
-        .is_none());
-    assert_eq!(
-        body["body_blobs"]["abc123abc123"][0]["direction"],
-        "request"
-    );
+    assert!(body["http_events"][0].get("response_body_preview").is_none());
+    assert_eq!(body["body_blobs"]["abc123abc123"][0]["direction"], "request");
     assert_eq!(
         body["body_blobs"]["abc123abc123"][0]["body"],
         r#"{"contents":[{"text":"write full bounded body"}]}"#
     );
-    assert_eq!(
-        body["body_blobs"]["abc123abc123"][1]["direction"],
-        "response"
-    );
+    assert_eq!(body["body_blobs"]["abc123abc123"][1]["direction"], "response");
     assert_eq!(
         body["body_blobs"]["abc123abc123"][1]["body"],
         r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
     );
-    assert_eq!(
-        body["body_blobs"]["def456def456"][0]["direction"],
-        "request"
-    );
+    assert_eq!(body["body_blobs"]["def456def456"][0]["direction"], "request");
     assert_eq!(
         body["body_blobs"]["def456def456"][0]["body"],
         r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
@@ -9798,10 +9004,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
         body["body_blobs"]["def456def456"][0]["stored_bytes"],
         r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.len()
     );
-    assert_eq!(
-        body["body_blobs"]["def456def456"][1]["direction"],
-        "response"
-    );
+    assert_eq!(body["body_blobs"]["def456def456"][1]["direction"], "response");
     assert_eq!(
         body["body_blobs"]["def456def456"][1]["body"],
         r#"{"ok":true,"body":"full response body from gateway"}"#
@@ -9830,13 +9033,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
         "toolbar summary must remain compact and agree with the session ledger"
     );
 
-    let (status, info) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/stats-detail-vm/info",
-        None,
-    )
-    .await;
+    let (status, info) = route_request(app, axum::http::Method::GET, "/vms/stats-detail-vm/info", None).await;
     assert_eq!(status, StatusCode::OK, "{info}");
     assert_eq!(
         info.get("model_call_count"),
@@ -9848,49 +9045,42 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(info.get("total_tool_calls"), None);
 }
 
-async fn write_test_model_call(
-    db_path: &std::path::Path,
-    provider: &str,
-    model: &str,
-    event_id: &str,
-) {
+async fn write_test_model_call(db_path: &std::path::Path, provider: &str, model: &str, event_id: &str) {
     let writer = capsem_logger::DbWriter::open(db_path, 16).unwrap();
-    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
-        capsem_logger::ModelCall {
-            event_id: Some(event_id.to_string()),
-            timestamp: std::time::SystemTime::now(),
-            provider: provider.to_string(),
-            protocol: Some(provider.to_string()),
-            model: Some(model.to_string()),
-            process_name: Some("agy".to_string()),
-            pid: Some(42),
-            method: "POST".to_string(),
-            path: "/v1internal:streamGenerateContent".to_string(),
-            stream: true,
-            system_prompt_preview: None,
-            messages_count: 1,
-            tools_count: 0,
-            request_bytes: 32,
-            request_body_preview: None,
-            request_body_full: None,
-            message_id: Some(format!("{event_id}-message")),
-            status_code: Some(200),
-            text_content: Some("ok".to_string()),
-            thinking_content: None,
-            response_body_full: None,
-            stop_reason: Some("end_turn".to_string()),
-            input_tokens: Some(12),
-            output_tokens: Some(7),
-            usage_details: BTreeMap::new(),
-            duration_ms: 25,
-            response_bytes: 64,
-            estimated_cost_usd: 0.001,
-            trace_id: Some(format!("trace-{event_id}")),
-            credential_ref: None,
-            tool_calls: vec![],
-            tool_responses: vec![],
-        },
-    ));
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(capsem_logger::ModelCall {
+        event_id: Some(event_id.to_string()),
+        timestamp: std::time::SystemTime::now(),
+        provider: provider.to_string(),
+        protocol: Some(provider.to_string()),
+        model: Some(model.to_string()),
+        process_name: Some("agy".to_string()),
+        pid: Some(42),
+        method: "POST".to_string(),
+        path: "/v1internal:streamGenerateContent".to_string(),
+        stream: true,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 0,
+        request_bytes: 32,
+        request_body_preview: None,
+        request_body_full: None,
+        message_id: Some(format!("{event_id}-message")),
+        status_code: Some(200),
+        text_content: Some("ok".to_string()),
+        thinking_content: None,
+        response_body_full: None,
+        stop_reason: Some("end_turn".to_string()),
+        input_tokens: Some(12),
+        output_tokens: Some(7),
+        usage_details: BTreeMap::new(),
+        duration_ms: 25,
+        response_bytes: 64,
+        estimated_cost_usd: 0.001,
+        trace_id: Some(format!("trace-{event_id}")),
+        credential_ref: None,
+        tool_calls: vec![],
+        tool_responses: vec![],
+    }));
     writer.shutdown_blocking();
 }
 
@@ -9922,28 +9112,14 @@ async fn stats_detail_route_reopens_session_db_handle_when_vm_id_rebinds_to_new_
     let direct_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM model_calls", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(
-        direct_count, 1,
-        "selected DB fixture must contain one model call"
-    );
+    assert_eq!(direct_count, 1, "selected DB fixture must contain one model call");
 
     state
         .register_session_db_handle("co-work1", &old_session_dir)
         .expect("test installs stale cached DB handle");
-    insert_fake_instance_with_session_dir(
-        &state,
-        "co-work1",
-        std::process::id(),
-        selected_session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "co-work1", std::process::id(), selected_session_dir.clone());
 
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/co-work1/stats/detail",
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/co-work1/stats/detail", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["model_stats"][0]["provider"], "google",
@@ -9974,8 +9150,7 @@ async fn persistent_session_routes_keep_uuid_id_separate_from_display_name() {
         .vms
         .insert("co-work1".to_string(), entry);
 
-    let listing: ListResponse =
-        decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let listing: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
     let row = listing
         .sandboxes
         .iter()
@@ -9991,10 +9166,7 @@ async fn persistent_session_routes_keep_uuid_id_separate_from_display_name() {
     assert_eq!(info.id, vm_id);
     assert_eq!(info.name.as_deref(), Some("co-work1"));
 
-    let status = handle_vm_status(State(state), Path(vm_id.to_string()))
-        .await
-        .unwrap()
-        .0;
+    let status = handle_vm_status(State(state), Path(vm_id.to_string())).await.unwrap().0;
     assert_eq!(status.id, vm_id);
 }
 
@@ -10055,9 +9227,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
-        .set_len(
-            u64::from(materialized_test_profile().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024,
-        )
+        .set_len(u64::from(materialized_test_profile().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
         .unwrap();
     let mut entry = test_persistent_entry("resume-size", session_dir);
     entry.id = vm_id.clone();
@@ -10082,10 +9252,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
         .windows(2)
         .find(|window| window[0] == "--scratch-disk-size-gb")
         .map(|window| window[1]);
-    let expected_size = materialized_test_profile()
-        .vm
-        .scratch_disk_size_gb
-        .to_string();
+    let expected_size = materialized_test_profile().vm.scratch_disk_size_gb.to_string();
     assert_eq!(
         size_flag,
         Some(expected_size.as_str()),
@@ -10119,12 +9286,7 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("db-handle-route-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "db-handle-route-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "db-handle-route-vm", std::process::id(), session_dir.clone());
 
     assert!(
         state.session_db_handle("db-handle-route-vm").is_none(),
@@ -10180,12 +9342,7 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("sessions").join("broken-db-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "broken-db-vm",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "broken-db-vm", std::process::id(), session_dir.clone());
     let db_path = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
     writer.shutdown_blocking();
@@ -10195,13 +9352,7 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
         .unwrap();
     drop(conn);
 
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/broken-db-vm/stats/detail",
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/broken-db-vm/stats/detail", None).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     let body_text = body.to_string();
     assert!(
@@ -10246,12 +9397,7 @@ async fn session_db_handle_state_contract() {
     std::fs::create_dir_all(&session_dir).unwrap();
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
     writer.shutdown_blocking();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "db-state-old",
-        std::process::id(),
-        session_dir.clone(),
-    );
+    insert_fake_instance_with_session_dir(&state, "db-state-old", std::process::id(), session_dir.clone());
     state
         .register_session_db_handle("db-state-old", &session_dir)
         .expect("test installs external reader after session.db exists");
@@ -10342,8 +9488,7 @@ async fn status_reports_db_readiness() {
     writer.shutdown_blocking();
     insert_fake_instance_with_session_dir(&state, "status-db-vm", std::process::id(), session_dir);
 
-    let (status, body) =
-        route_request(app, axum::http::Method::GET, "/vms/status-db-vm/info", None).await;
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/status-db-vm/info", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["session_db"]["ready"], true,
@@ -10365,64 +9510,51 @@ async fn info_route_reports_db_readiness_without_inline_ledger_stats() {
     usage_details.insert("thinking".to_string(), 3);
     usage_details.insert("reasoning".to_string(), 4);
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
-        capsem_logger::ModelCall {
-            event_id: Some("abc123abc123".to_string()),
-            timestamp: std::time::SystemTime::now(),
-            provider: "openai".to_string(),
-            protocol: Some("openai".to_string()),
-            model: Some("gpt-5-demo".to_string()),
-            process_name: Some("codex".to_string()),
-            pid: Some(42),
-            method: "POST".to_string(),
-            path: "/v1/responses".to_string(),
-            stream: false,
-            system_prompt_preview: None,
-            messages_count: 1,
-            tools_count: 1,
-            request_bytes: 32,
-            request_body_preview: None,
-            request_body_full: None,
-            message_id: Some("msg-toolbar".to_string()),
-            status_code: Some(200),
-            text_content: Some("done".to_string()),
-            thinking_content: Some("checking stats".to_string()),
-            response_body_full: None,
-            stop_reason: Some("end_turn".to_string()),
-            input_tokens: Some(12),
-            output_tokens: Some(7),
-            usage_details,
-            duration_ms: 25,
-            response_bytes: 64,
-            estimated_cost_usd: 0.001,
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(capsem_logger::ModelCall {
+        event_id: Some("abc123abc123".to_string()),
+        timestamp: std::time::SystemTime::now(),
+        provider: "openai".to_string(),
+        protocol: Some("openai".to_string()),
+        model: Some("gpt-5-demo".to_string()),
+        process_name: Some("codex".to_string()),
+        pid: Some(42),
+        method: "POST".to_string(),
+        path: "/v1/responses".to_string(),
+        stream: false,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 1,
+        request_bytes: 32,
+        request_body_preview: None,
+        request_body_full: None,
+        message_id: Some("msg-toolbar".to_string()),
+        status_code: Some(200),
+        text_content: Some("done".to_string()),
+        thinking_content: Some("checking stats".to_string()),
+        response_body_full: None,
+        stop_reason: Some("end_turn".to_string()),
+        input_tokens: Some(12),
+        output_tokens: Some(7),
+        usage_details,
+        duration_ms: 25,
+        response_bytes: 64,
+        estimated_cost_usd: 0.001,
+        trace_id: Some("trace-toolbar".to_string()),
+        credential_ref: None,
+        tool_calls: vec![capsem_logger::ToolCallEntry {
+            call_index: 0,
+            call_id: "tool-toolbar".to_string(),
+            tool_name: "Read".to_string(),
+            arguments: Some(r#"{"path":"/root/demo.md"}"#.to_string()),
+            origin: "model".to_string(),
             trace_id: Some("trace-toolbar".to_string()),
-            credential_ref: None,
-            tool_calls: vec![capsem_logger::ToolCallEntry {
-                call_index: 0,
-                call_id: "tool-toolbar".to_string(),
-                tool_name: "Read".to_string(),
-                arguments: Some(r#"{"path":"/root/demo.md"}"#.to_string()),
-                origin: "model".to_string(),
-                trace_id: Some("trace-toolbar".to_string()),
-            }],
-            tool_responses: vec![],
-        },
-    ));
+        }],
+        tool_responses: vec![],
+    }));
     writer.shutdown_blocking();
-    insert_fake_instance_with_session_dir(
-        &state,
-        "toolbar-stats-vm",
-        std::process::id(),
-        session_dir,
-    );
+    insert_fake_instance_with_session_dir(&state, "toolbar-stats-vm", std::process::id(), session_dir);
 
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/toolbar-stats-vm/info",
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/toolbar-stats-vm/info", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["session_db"]["ready"], true);
     assert!(
@@ -10464,13 +9596,7 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         "startup hydration must not install a ready handle for malformed session schema"
     );
 
-    let (status, body) = route_request(
-        app,
-        axum::http::Method::GET,
-        &format!("/vms/{vm_id}/info"),
-        None,
-    )
-    .await;
+    let (status, body) = route_request(app, axum::http::Method::GET, &format!("/vms/{vm_id}/info"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["session_db"]["ready"], false,
@@ -10480,9 +9606,7 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .as_str()
         .expect("broken DB status must carry the explicit DB readiness error");
     assert!(
-        error.contains("not ready")
-            || error.contains("missing required column")
-            || error.contains("no such column"),
+        error.contains("not ready") || error.contains("missing required column") || error.contains("no such column"),
         "broken DB status must expose the schema failure, got: {error}"
     );
 }
@@ -10506,8 +9630,7 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
          per-session ledgers written by capsem-process."
     );
     assert!(
-        source.contains("fn register_session_db_handle(")
-            && source.contains("DbHandle::open_external_reader("),
+        source.contains("fn register_session_db_handle(") && source.contains("DbHandle::open_external_reader("),
         "the session-state registration method must own the external DB reader lifecycle"
     );
     assert!(
@@ -10638,8 +9761,7 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
         "/vms/{{id}}/info stays lifecycle/storage only; stats/detail is the ledger surface"
     );
     assert!(
-        info.get("model_call_count").is_none()
-            || info["model_call_count"] == serde_json::Value::Null,
+        info.get("model_call_count").is_none() || info["model_call_count"] == serde_json::Value::Null,
         "orphan tool diagnostics must not invent a model count"
     );
 
@@ -10691,10 +9813,7 @@ fn ensure_test_builtin_mcp_binary() -> TestBuiltinMcpBinaryGuard {
     if remove_on_drop {
         std::fs::write(&path, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
     }
-    TestBuiltinMcpBinaryGuard {
-        path,
-        remove_on_drop,
-    }
+    TestBuiltinMcpBinaryGuard { path, remove_on_drop }
 }
 
 impl EnvVarGuard {
@@ -10774,10 +9893,7 @@ async fn handle_get_settings_returns_tree() {
     let Json(val) = handle_get_settings().await;
     assert!(val.get("tree").is_some(), "response must have 'tree'");
     assert!(val.get("issues").is_some(), "response must have 'issues'");
-    assert!(
-        val.get("presets").is_none(),
-        "settings must not expose presets"
-    );
+    assert!(val.get("presets").is_none(), "settings must not expose presets");
     assert!(
         val.get("policy").is_none(),
         "retired policy compatibility payload must not be emitted"
@@ -10836,9 +9952,7 @@ async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
     );
 }
 
-fn make_test_state_with_tempdir_at(
-    dir: tempfile::TempDir,
-) -> (Arc<ServiceState>, tempfile::TempDir) {
+fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>, tempfile::TempDir) {
     let run_dir = dir.path().join("run");
     let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
@@ -11060,12 +10174,7 @@ fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &
     setup_vm_with_workspace_and_uds(state, dir, vm_id, PathBuf::from("/tmp/test.sock"));
 }
 
-fn setup_vm_with_workspace_and_uds(
-    state: &ServiceState,
-    dir: &std::path::Path,
-    vm_id: &str,
-    uds_path: PathBuf,
-) {
+fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, vm_id: &str, uds_path: PathBuf) {
     let session_dir = dir.join("session");
     let workspace = session_dir.join("guest/workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -11117,11 +10226,7 @@ async fn spawn_file_boundary_ipc(
             let std_stream = stream.into_std().unwrap();
             let std_stream = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(
-                    &mut std_stream,
-                    "capsem-process-test",
-                    "",
-                )?;
+                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
                 Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
             })
             .await
@@ -11178,8 +10283,7 @@ async fn spawn_file_boundary_ipc(
 async fn upload_logs_file_import_before_writing_workspace_file() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "up-ledger-vm", uds_path);
 
     let result = handle_upload_file(
@@ -11221,8 +10325,7 @@ async fn upload_logs_file_import_before_writing_workspace_file() {
 async fn download_logs_file_export_before_returning_response() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "dl-ledger-vm", uds_path);
     let workspace_file = dir.path().join("session/guest/workspace/report.txt");
     std::fs::write(&workspace_file, b"export through ledger").unwrap();
@@ -11261,8 +10364,7 @@ async fn download_logs_file_export_before_returning_response() {
 async fn download_file_content_does_not_wait_on_stats_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "fast-file-vm", uds_path);
     std::fs::write(
         dir.path().join("session/guest/workspace/latency.txt"),
@@ -11304,8 +10406,7 @@ async fn download_file_content_does_not_wait_on_stats_rebuild() {
 async fn mounted_file_import_export_routes_log_boundary_events() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "file-route-vm", uds_path);
     let app = build_service_router(state);
 
@@ -11321,9 +10422,7 @@ async fn mounted_file_import_export_routes_log_boundary_events() {
         .await
         .expect("upload route should respond");
     assert_eq!(upload_response.status(), StatusCode::OK);
-    let upload_body = to_bytes(upload_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let upload_body = to_bytes(upload_response.into_body(), usize::MAX).await.unwrap();
     let upload_json: serde_json::Value = serde_json::from_slice(&upload_body).unwrap();
     assert_eq!(upload_json["success"], true);
     assert_eq!(
@@ -11392,11 +10491,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
         let std_stream = stream.into_std().unwrap();
         let std_stream = tokio::task::spawn_blocking(move || {
             let mut std_stream = std_stream;
-            capsem_foundation::ipc_handshake::negotiate_responder(
-                &mut std_stream,
-                "capsem-process-test",
-                "",
-            )?;
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
             Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
         })
         .await
@@ -11440,9 +10535,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     let msg = ipc.await.unwrap();
     assert!(matches!(msg, ServiceToProcess::LogFileBoundary { .. }));
     assert!(
-        !dir.path()
-            .join("session/guest/workspace/blocked.txt")
-            .exists(),
+        !dir.path().join("session/guest/workspace/blocked.txt").exists(),
         "upload must not write bytes when import ledger fails"
     );
 }
@@ -11450,8 +10543,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn write_file_logs_import_before_guest_write() {
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
     state.instances.lock().unwrap().insert(
         "write-ledger-vm".into(),
         InstanceInfo {
@@ -11512,8 +10604,7 @@ async fn write_file_logs_import_before_guest_write() {
 async fn write_file_ipc_failure_names_vm_and_completion_stage() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) =
-        spawn_file_boundary_ipc(2, WriteFileIpcReply::Disconnect).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Disconnect).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "diagnostic-vm", uds_path);
 
     let error = handle_write_file(
@@ -11530,11 +10621,7 @@ async fn write_file_ipc_failure_names_vm_and_completion_stage() {
     let messages = ipc.await.unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(
-        error.1.contains("VM diagnostic-vm write_file"),
-        "{}",
-        error.1
-    );
+    assert!(error.1.contains("VM diagnostic-vm write_file"), "{}", error.1);
     assert!(
         error.1.contains("awaiting the guest completion response"),
         "{}",
@@ -11582,10 +10669,7 @@ fn upload_creates_file_with_content() {
     let (_, target) = resolve_workspace_path(&state, "up-vm", "new.txt").unwrap();
     std::fs::write(&target, b"uploaded").unwrap();
 
-    assert_eq!(
-        std::fs::read_to_string(ws.join("new.txt")).unwrap(),
-        "uploaded"
-    );
+    assert_eq!(std::fs::read_to_string(ws.join("new.txt")).unwrap(), "uploaded");
 }
 
 #[test]
@@ -11682,12 +10766,7 @@ fn launchd_transient_rejects_partial_match() {
 #[test]
 fn classify_ready_outcome_succeeds() {
     let uds = PathBuf::from("/tmp/x.sock");
-    match classify_attempt_decision(
-        ProvisionAttemptOutcome::Ready {
-            uds_path: uds.clone(),
-        },
-        "vm-1",
-    ) {
+    match classify_attempt_decision(ProvisionAttemptOutcome::Ready { uds_path: uds.clone() }, "vm-1") {
         AttemptDecision::Succeed(p) => assert_eq!(p, uds),
         other => panic!("expected Succeed, got {other:?}"),
     }
@@ -11697,9 +10776,7 @@ fn classify_ready_outcome_succeeds() {
 fn classify_still_booting_timeout_succeeds_with_uds() {
     let uds = PathBuf::from("/tmp/y.sock");
     match classify_attempt_decision(
-        ProvisionAttemptOutcome::StillBootingTimedOut {
-            uds_path: uds.clone(),
-        },
+        ProvisionAttemptOutcome::StillBootingTimedOut { uds_path: uds.clone() },
         "vm-2",
     ) {
         AttemptDecision::Succeed(p) => assert_eq!(p, uds),
@@ -11720,18 +10797,12 @@ fn classify_launchd_transient_routes_to_retry() {
 #[test]
 fn classify_boot_crash_bails_with_500_and_tail() {
     let tail = "Error: failed to boot VM\n\nCaused by:\n    bogus".to_string();
-    match classify_attempt_decision(
-        ProvisionAttemptOutcome::BootCrash { tail: tail.clone() },
-        "vm-4",
-    ) {
+    match classify_attempt_decision(ProvisionAttemptOutcome::BootCrash { tail: tail.clone() }, "vm-4") {
         AttemptDecision::BailWithError(AppError(status, msg)) => {
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
             assert!(msg.contains("vm-4"), "msg should embed the id: {msg}");
             assert!(msg.contains(&tail), "msg should embed the log tail: {msg}");
-            assert!(
-                msg.contains("capsem logs vm-4"),
-                "msg should hint at follow-up cmd"
-            );
+            assert!(msg.contains("capsem logs vm-4"), "msg should hint at follow-up cmd");
         }
         other => panic!("expected BailWithError(500), got {other:?}"),
     }
@@ -11742,8 +10813,11 @@ fn classify_provision_error_already_exists_returns_409() {
     let err = anyhow::anyhow!("persistent VM \"vm-5\" already exists. Use `capsem resume vm-5`.");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-5") {
         AttemptDecision::BailWithError(AppError(status, _)) => {
-            assert_eq!(status, StatusCode::CONFLICT,
-                "duplicate-name errors must return 409 so clients can distinguish from server failures");
+            assert_eq!(
+                status,
+                StatusCode::CONFLICT,
+                "duplicate-name errors must return 409 so clients can distinguish from server failures"
+            );
         }
         other => panic!("expected BailWithError(409) for already-exists, got {other:?}"),
     }
@@ -11755,10 +10829,7 @@ fn classify_provision_error_other_returns_500() {
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-6") {
         AttemptDecision::BailWithError(AppError(status, msg)) => {
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-            assert!(
-                msg.contains("rootfs not found"),
-                "underlying error preserved: {msg}"
-            );
+            assert!(msg.contains("rootfs not found"), "underlying error preserved: {msg}");
         }
         other => panic!("expected BailWithError(500), got {other:?}"),
     }
@@ -11825,7 +10896,15 @@ fn apple_vz_host_lock_is_required_only_on_macos() {
 
 /// Substrings that mark a variable as likely secret-bearing.
 const SECRET_MARKERS: &[&str] = &[
-    "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "SESSION", "COOKIE",
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "AUTH",
+    "SESSION",
+    "COOKIE",
 ];
 
 /// The one allowlisted name that trips the marker scan without carrying a

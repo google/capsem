@@ -100,9 +100,7 @@ fn kvm_save_state_requires_pause() {
 
     let err = handle.save_state(&path).unwrap_err();
 
-    assert!(err
-        .to_string()
-        .contains("KVM VM must be paused before save_state"));
+    assert!(err.to_string().contains("KVM VM must be paused before save_state"));
     assert!(!path.exists());
 }
 
@@ -143,9 +141,7 @@ fn kvm_save_state_restores_paused_state_after_error() {
     handle.pause().unwrap();
     let err = handle.save_state(&path).unwrap_err();
 
-    assert!(err
-        .to_string()
-        .contains("checkpoint parent directory does not exist"));
+    assert!(err.to_string().contains("checkpoint parent directory does not exist"));
     assert_eq!(handle.state(), VmState::Paused);
 }
 
@@ -207,11 +203,7 @@ fn kvm_drop_joins_vsock_workers_before_releasing_resources() {
             worker_exited.store(true, Ordering::SeqCst);
         })
     };
-    handle
-        ._vsock_listener_handles
-        .get_mut()
-        .unwrap()
-        .push(worker);
+    handle._vsock_listener_handles.get_mut().unwrap().push(worker);
 
     drop(handle);
 
@@ -252,8 +244,7 @@ fn mmio_slot(slot: u32, device_type: u32) -> checkpoint::MmioDeviceSnapshot {
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn restore_rejects_duplicate_mmio_slots_before_device_activation() {
-    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(4, 26), mmio_slot(4, 26)])
-        .unwrap_err();
+    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(4, 26), mmio_slot(4, 26)]).unwrap_err();
 
     assert!(err.to_string().contains("duplicate MMIO slot"), "{err:#}");
 }
@@ -269,8 +260,7 @@ fn restore_rejects_missing_mmio_slot_before_device_activation() {
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn restore_rejects_mmio_device_type_mismatch_before_preparation() {
-    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(0, 3), mmio_slot(4, 19)])
-        .unwrap_err();
+    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(0, 3), mmio_slot(4, 19)]).unwrap_err();
 
     assert!(err.to_string().contains("topology mismatch"), "{err:#}");
     assert!(err.to_string().contains("device type"), "{err:#}");
@@ -313,11 +303,7 @@ impl virtio_mmio::VirtioDevice for RestoreOrderDevice {
         Ok(())
     }
 
-    fn restore_activate(
-        &mut self,
-        _mem: memory::GuestMemoryRef,
-        _queues: &[virtio_mmio::QueueConfig],
-    ) -> Result<()> {
+    fn restore_activate(&mut self, _mem: memory::GuestMemoryRef, _queues: &[virtio_mmio::QueueConfig]) -> Result<()> {
         let events = self.events.lock().unwrap();
         ensure!(
             events.len() >= 2,
@@ -390,17 +376,11 @@ fn restore_prepares_complete_mmio_graph_before_any_activation() {
 
     restore_mmio_device_graph(
         &transports,
-        &[
-            active_mmio_slot(0, 40, 0x100),
-            active_mmio_slot(4, 41, 0x900),
-        ],
+        &[active_mmio_slot(0, 40, 0x100), active_mmio_slot(4, 41, 0x900)],
     )
     .unwrap();
 
-    assert_eq!(
-        *events.lock().unwrap(),
-        vec!["prepare-first", "prepare-second"]
-    );
+    assert_eq!(*events.lock().unwrap(), vec!["prepare-first", "prepare-second"]);
     assert!(first_activated.load(Ordering::SeqCst));
     assert!(second_activated.load(Ordering::SeqCst));
 }
@@ -443,10 +423,7 @@ fn restore_rejects_queue_memory_overlap_across_mmio_slots_before_preparation() {
 
     let err = restore_mmio_device_graph(
         &transports,
-        &[
-            active_mmio_slot(0, 40, 0x100),
-            active_mmio_slot(4, 41, 0x100),
-        ],
+        &[active_mmio_slot(0, 40, 0x100), active_mmio_slot(4, 41, 0x100)],
     )
     .unwrap_err();
 
@@ -494,17 +471,11 @@ fn restore_preparation_failure_leaves_earlier_device_inactive() {
 
     let err = restore_mmio_device_graph(
         &transports,
-        &[
-            active_mmio_slot(0, 40, 0x100),
-            active_mmio_slot(4, 41, 0x900),
-        ],
+        &[active_mmio_slot(0, 40, 0x100), active_mmio_slot(4, 41, 0x900)],
     )
     .unwrap_err();
 
-    assert!(
-        err.to_string().contains("rejected device identity"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("rejected device identity"), "{err:#}");
     assert!(!first_activated.load(Ordering::SeqCst));
     assert!(!second_activated.load(Ordering::SeqCst));
 }

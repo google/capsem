@@ -15,11 +15,10 @@ use tracing::{debug, info, warn};
 
 use super::memory::{self, GuestMemoryRef};
 use super::sys::{
-    self, IoctlRequest, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState,
-    VHOST_GET_FEATURES,
-    VHOST_GET_VRING_BASE, VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER,
-    VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK,
-    VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
+    self, IoctlRequest, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_GET_FEATURES,
+    VHOST_GET_VRING_BASE, VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER, VHOST_SET_VRING_ADDR,
+    VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID,
+    VHOST_VSOCK_SET_RUNNING,
 };
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use crate::hypervisor::VsockConnection;
@@ -39,8 +38,7 @@ const VSOCK_CHECKPOINT_VERSION: u32 = 2;
 const VSOCK_CHECKPOINT_HEADER_BYTES: usize =
     std::mem::size_of::<u32>() + std::mem::size_of::<u64>() + std::mem::size_of::<u8>();
 const VSOCK_CHECKPOINT_BASES_BYTES: usize = std::mem::size_of::<u32>() * VHOST_VSOCK_BACKEND_QUEUES;
-const VSOCK_CHECKPOINT_WITH_BASES_BYTES: usize =
-    VSOCK_CHECKPOINT_HEADER_BYTES + VSOCK_CHECKPOINT_BASES_BYTES;
+const VSOCK_CHECKPOINT_WITH_BASES_BYTES: usize = VSOCK_CHECKPOINT_HEADER_BYTES + VSOCK_CHECKPOINT_BASES_BYTES;
 
 /// Reserved CIDs: 0 = hypervisor, 1 = reserved, 2 = host.
 const MIN_GUEST_CID: u32 = 3;
@@ -155,25 +153,15 @@ impl VhostVsockDevice {
             .as_raw_fd();
 
         // 1. Set owner
-        ioctl
-            .call(vhost_fd, VHOST_SET_OWNER, 0)
-            .context("VHOST_SET_OWNER")?;
+        ioctl.call(vhost_fd, VHOST_SET_OWNER, 0).context("VHOST_SET_OWNER")?;
 
         let mut backend_features = 0u64;
         ioctl
-            .call(
-                vhost_fd,
-                VHOST_GET_FEATURES,
-                &mut backend_features as *mut u64 as u64,
-            )
+            .call(vhost_fd, VHOST_GET_FEATURES, &mut backend_features as *mut u64 as u64)
             .context("VHOST_GET_FEATURES")?;
         let enabled_features = backend_features & self.features();
         ioctl
-            .call(
-                vhost_fd,
-                VHOST_SET_FEATURES,
-                &enabled_features as *const u64 as u64,
-            )
+            .call(vhost_fd, VHOST_SET_FEATURES, &enabled_features as *const u64 as u64)
             .context("VHOST_SET_FEATURES")?;
         debug!(
             backend_features = format_args!("{backend_features:#x}"),
@@ -217,11 +205,7 @@ impl VhostVsockDevice {
                 num: u32::from(queue.size),
             };
             ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_SET_VRING_NUM,
-                    &vring_state as *const _ as u64,
-                )
+                .call(vhost_fd, VHOST_SET_VRING_NUM, &vring_state as *const _ as u64)
                 .context("VHOST_SET_VRING_NUM")?;
 
             // Set base index to the next descriptor vhost should consume.
@@ -232,10 +216,8 @@ impl VhostVsockDevice {
             let base = if let Some(bases) = restore_vring_bases {
                 bases[i]
             } else {
-                let used_idx =
-                    queue_used_idx(mem, queue).context("read vhost-vsock used ring idx")?;
-                let avail_idx =
-                    queue_avail_idx(mem, queue).context("read vhost-vsock avail ring idx")?;
+                let used_idx = queue_used_idx(mem, queue).context("read vhost-vsock used ring idx")?;
+                let avail_idx = queue_avail_idx(mem, queue).context("read vhost-vsock avail ring idx")?;
                 let base = if i == 0 { used_idx } else { avail_idx };
                 debug!(
                     queue_index = i,
@@ -249,20 +231,14 @@ impl VhostVsockDevice {
             };
             debug!(queue_index = i, base, "vhost-vsock vring base configured");
             ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_SET_VRING_BASE,
-                    &vring_base as *const _ as u64,
-                )
+                .call(vhost_fd, VHOST_SET_VRING_BASE, &vring_base as *const _ as u64)
                 .context("VHOST_SET_VRING_BASE")?;
 
             // Translate GPA -> HVA for vring addresses
-            let desc_hva = mem
-                .gpa_to_host(queue.desc_addr)
-                .context("desc_addr GPA out of range")? as u64;
-            let avail_hva =
-                mem.gpa_to_host(queue.driver_addr)
-                    .context("driver_addr (avail) GPA out of range")? as u64;
+            let desc_hva = mem.gpa_to_host(queue.desc_addr).context("desc_addr GPA out of range")? as u64;
+            let avail_hva = mem
+                .gpa_to_host(queue.driver_addr)
+                .context("driver_addr (avail) GPA out of range")? as u64;
             let used_hva = mem
                 .gpa_to_host(queue.device_addr)
                 .context("device_addr (used) GPA out of range")? as u64;
@@ -276,11 +252,7 @@ impl VhostVsockDevice {
                 log_guest_addr: 0,
             };
             ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_SET_VRING_ADDR,
-                    &vring_addr as *const _ as u64,
-                )
+                .call(vhost_fd, VHOST_SET_VRING_ADDR, &vring_addr as *const _ as u64)
                 .context("VHOST_SET_VRING_ADDR")?;
 
             // Set kick eventfd (guest -> vhost notification)
@@ -289,11 +261,7 @@ impl VhostVsockDevice {
                 fd: self.kick_fds[i].as_raw_fd(),
             };
             ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_SET_VRING_KICK,
-                    &kick_file as *const _ as u64,
-                )
+                .call(vhost_fd, VHOST_SET_VRING_KICK, &kick_file as *const _ as u64)
                 .context("VHOST_SET_VRING_KICK")?;
 
             // Set call eventfd (vhost -> guest interrupt)
@@ -302,31 +270,19 @@ impl VhostVsockDevice {
                 fd: self.call_fds[i].as_raw_fd(),
             };
             ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_SET_VRING_CALL,
-                    &call_file as *const _ as u64,
-                )
+                .call(vhost_fd, VHOST_SET_VRING_CALL, &call_file as *const _ as u64)
                 .context("VHOST_SET_VRING_CALL")?;
         }
 
         // 4. Set guest CID
         let cid = self.guest_cid;
         ioctl
-            .call(
-                vhost_fd,
-                VHOST_VSOCK_SET_GUEST_CID,
-                &cid as *const u64 as u64,
-            )
+            .call(vhost_fd, VHOST_VSOCK_SET_GUEST_CID, &cid as *const u64 as u64)
             .context("VHOST_VSOCK_SET_GUEST_CID")?;
 
         let running: libc::c_int = 1;
         ioctl
-            .call(
-                vhost_fd,
-                VHOST_VSOCK_SET_RUNNING,
-                &running as *const libc::c_int as u64,
-            )
+            .call(vhost_fd, VHOST_VSOCK_SET_RUNNING, &running as *const libc::c_int as u64)
             .context("VHOST_VSOCK_SET_RUNNING=1")?;
 
         Ok(())
@@ -349,11 +305,7 @@ impl VhostVsockDevice {
         // complete before GET_VRING_BASE and before the caller copies RAM.
         let running: libc::c_int = 0;
         ioctl
-            .call(
-                vhost_fd,
-                VHOST_VSOCK_SET_RUNNING,
-                &running as *const libc::c_int as u64,
-            )
+            .call(vhost_fd, VHOST_VSOCK_SET_RUNNING, &running as *const libc::c_int as u64)
             .context("VHOST_VSOCK_SET_RUNNING=0")?;
 
         let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
@@ -416,10 +368,7 @@ struct VsockCheckpointState {
     vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
 }
 
-fn encode_vsock_checkpoint(
-    guest_cid: u64,
-    vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
-) -> Vec<u8> {
+fn encode_vsock_checkpoint(guest_cid: u64, vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>) -> Vec<u8> {
     let capacity = if vring_bases.is_some() {
         VSOCK_CHECKPOINT_WITH_BASES_BYTES
     } else {
@@ -486,10 +435,7 @@ fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<VsockCheckpointState> {
         }
         flag => bail!("invalid vhost-vsock bases-present flag: {flag}"),
     };
-    Ok(VsockCheckpointState {
-        guest_cid,
-        vring_bases,
-    })
+    Ok(VsockCheckpointState { guest_cid, vring_bases })
 }
 
 fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
@@ -544,9 +490,7 @@ pub(super) fn spawn_call_irq_bridges(
         let handle = thread::Builder::new()
             .name(format!("vhost-vsock-callirq-{queue_index}"))
             .spawn(move || {
-                if let Err(e) =
-                    call_irq_bridge_loop(queue_index, call_fd, irq_fd, interrupt_status, shutdown)
-                {
+                if let Err(e) = call_irq_bridge_loop(queue_index, call_fd, irq_fd, interrupt_status, shutdown) {
                     warn!(
                         queue_index,
                         error = format!("{e:#}"),
@@ -659,10 +603,7 @@ fn build_vhost_memory_regions(mem: &GuestMemoryRef) -> Result<Vec<VhostMemoryReg
     build_vhost_memory_regions_from_parts(mem.size(), hva)
 }
 
-fn build_vhost_memory_regions_from_parts(
-    ram_size: u64,
-    hva_base: u64,
-) -> Result<Vec<VhostMemoryRegion>> {
+fn build_vhost_memory_regions_from_parts(ram_size: u64, hva_base: u64) -> Result<Vec<VhostMemoryRegion>> {
     #[cfg(target_arch = "x86_64")]
     {
         if ram_size <= memory::PCI_HOLE_START {
@@ -747,10 +688,7 @@ impl VirtioDevice for VhostVsockDevice {
         let idx = queue_index as usize;
         if idx >= VHOST_VSOCK_BACKEND_QUEUES {
             if idx < VSOCK_NUM_QUEUES {
-                debug!(
-                    queue_index,
-                    "ignoring virtio-vsock event queue notification"
-                );
+                debug!(queue_index, "ignoring virtio-vsock event queue notification");
             }
             return false;
         }
@@ -878,10 +816,7 @@ impl BoundVsockListeners {
     }
 }
 
-pub(super) fn bind_vsock_listeners_for_vm(
-    logical_ports: &[u32],
-    seed: u32,
-) -> Result<BoundVsockListeners> {
+pub(super) fn bind_vsock_listeners_for_vm(logical_ports: &[u32], seed: u32) -> Result<BoundVsockListeners> {
     if logical_ports.is_empty() {
         return Ok(BoundVsockListeners {
             offset: 0,
@@ -925,10 +860,7 @@ pub(super) fn bind_vsock_listeners_for_vm(
     bail!("no free KVM vsock port block found: {detail}")
 }
 
-fn try_bind_vsock_port_block(
-    logical_ports: &[u32],
-    offset: u32,
-) -> std::io::Result<Vec<BoundVsockListener>> {
+fn try_bind_vsock_port_block(logical_ports: &[u32], offset: u32) -> std::io::Result<Vec<BoundVsockListener>> {
     let mut listeners = Vec::with_capacity(logical_ports.len());
     for &logical_port in logical_ports {
         let physical_port = physical_vsock_port(logical_port, offset)?;
@@ -943,9 +875,9 @@ fn try_bind_vsock_port_block(
 }
 
 fn physical_vsock_port(logical_port: u32, offset: u32) -> std::io::Result<u32> {
-    let physical_port = logical_port.checked_add(offset).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "vsock port overflow")
-    })?;
+    let physical_port = logical_port
+        .checked_add(offset)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "vsock port overflow"))?;
     if physical_port > u32::from(u16::MAX) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1075,12 +1007,7 @@ fn vsock_listener_loop(
             continue;
         }
 
-        debug!(
-            logical_port,
-            physical_port,
-            fd = conn_fd,
-            "vsock: accepted connection"
-        );
+        debug!(logical_port, physical_port, fd = conn_fd, "vsock: accepted connection");
 
         let anchor = VsockSocketAnchor(unsafe { OwnedFd::from_raw_fd(conn_fd) });
         let conn = VsockConnection::new(conn_fd, logical_port, Box::new(anchor));

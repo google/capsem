@@ -92,10 +92,7 @@ fn shutdown_flag_stops_loop_concept() {
     shutdown.store(true, Ordering::SeqCst);
 
     let iters = handle.join().unwrap();
-    assert!(
-        iters < 10000,
-        "thread should have stopped, ran {iters} iterations"
-    );
+    assert!(iters < 10000, "thread should have stopped, ran {iters} iterations");
 }
 
 #[test]
@@ -272,9 +269,5 @@ fn dispatch_pio_respects_count() {
                              // Simulate string I/O out: 4 bytes written 1 byte at a time
     dispatch_pio(&bus, 1, 0x3F8, 1, 4, data.as_mut_ptr());
 
-    assert_eq!(
-        dev.writes.load(Ordering::SeqCst),
-        4,
-        "PIO dispatch ignored count > 1"
-    );
+    assert_eq!(dev.writes.load(Ordering::SeqCst), 4, "PIO dispatch ignored count > 1");
 }

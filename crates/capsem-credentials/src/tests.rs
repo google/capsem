@@ -73,9 +73,7 @@ fn hydration_restores_the_runtime_cache_from_disk() {
 
     assert_eq!(store.hydrate_from_durable_store().unwrap(), 1);
     assert_eq!(
-        store
-            .resolve(CredentialProvider::Github, &reference)
-            .unwrap(),
+        store.resolve(CredentialProvider::Github, &reference).unwrap(),
         Some("gh-secret".to_string())
     );
 }

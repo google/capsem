@@ -286,10 +286,8 @@ pub struct ReleaseLedgerEntry {
 
 impl DigestSet {
     fn validate(&self, context: &str) -> Result<()> {
-        validate_hex_digest(&self.sha256, 64)
-            .with_context(|| format!("{context} sha256 digest is invalid"))?;
-        validate_hex_digest(&self.blake3, 64)
-            .with_context(|| format!("{context} blake3 digest is invalid"))?;
+        validate_hex_digest(&self.sha256, 64).with_context(|| format!("{context} sha256 digest is invalid"))?;
+        validate_hex_digest(&self.blake3, 64).with_context(|| format!("{context} blake3 digest is invalid"))?;
         Ok(())
     }
 
@@ -311,23 +309,16 @@ impl ManifestRecord {
         if self.version.trim().is_empty() {
             bail!("channel {channel} manifest version must not be empty");
         }
-        if self.version.contains('/') || self.version.contains('\\') || self.version.contains("..")
-        {
+        if self.version.contains('/') || self.version.contains('\\') || self.version.contains("..") {
             bail!(
                 "channel {channel} manifest version contains a path separator: {}",
                 self.version
             );
         }
         if self.url.trim().is_empty() {
-            bail!(
-                "channel {channel} manifest {} url must not be empty",
-                self.version
-            );
+            bail!("channel {channel} manifest {} url must not be empty", self.version);
         }
-        if !(self.url.starts_with('/')
-            || self.url.starts_with("https://")
-            || self.url.starts_with("http://"))
-        {
+        if !(self.url.starts_with('/') || self.url.starts_with("https://") || self.url.starts_with("http://")) {
             bail!(
                 "channel {channel} manifest {} url must be release-site relative or http(s): {}",
                 self.version,
@@ -345,10 +336,8 @@ impl EvidenceRef {
         if self.kind.trim().is_empty() {
             bail!("{context} evidence kind must not be empty");
         }
-        validate_url_like(&self.url)
-            .with_context(|| format!("{context} evidence url is invalid"))?;
-        self.digest
-            .validate(&format!("{context} evidence {}", self.kind))?;
+        validate_url_like(&self.url).with_context(|| format!("{context} evidence url is invalid"))?;
+        self.digest.validate(&format!("{context} evidence {}", self.kind))?;
         Ok(())
     }
 }
@@ -386,12 +375,8 @@ impl PackageInventoryRow {
             }
             _ => {}
         }
-        validate_url_like(&self.url).with_context(|| {
-            format!(
-                "package {} {} download url is invalid",
-                self.name, self.version
-            )
-        })?;
+        validate_url_like(&self.url)
+            .with_context(|| format!("package {} {} download url is invalid", self.name, self.version))?;
         if self.bytes == 0 {
             bail!("package {} bytes must be non-zero", self.name);
         }
@@ -421,11 +406,7 @@ impl PackageInventoryRow {
                 );
             }
             if binary.architecture != self.architecture {
-                bail!(
-                    "package {} binary {} architecture mismatch",
-                    self.name,
-                    binary.name
-                );
+                bail!("package {} binary {} architecture mismatch", self.name, binary.name);
             }
         }
         for evidence in &self.evidence {
@@ -479,22 +460,13 @@ pub fn executable_inventory_from_package_files(
             bail!("packaged executable name must not be empty");
         }
         if file.installed_path.trim().is_empty() {
-            bail!(
-                "packaged executable {} installed_path must not be empty",
-                file.name
-            );
+            bail!("packaged executable {} installed_path must not be empty", file.name);
         }
         if !installed_paths.insert(file.installed_path.as_str()) {
-            bail!(
-                "duplicate packaged executable installed_path {}",
-                file.installed_path
-            );
+            bail!("duplicate packaged executable installed_path {}", file.installed_path);
         }
         if file.bytes.is_empty() {
-            bail!(
-                "packaged executable {} must not be empty",
-                file.installed_path
-            );
+            bail!("packaged executable {} must not be empty", file.installed_path);
         }
         let sbom_component_ref = sbom_component_refs
             .get(&file.installed_path)
@@ -534,10 +506,7 @@ pub fn verify_package_contents_match_binary_inventory(
 ) -> Result<()> {
     let mut rows_by_path = BTreeMap::new();
     for row in binaries {
-        if rows_by_path
-            .insert(row.installed_path.as_str(), row)
-            .is_some()
-        {
+        if rows_by_path.insert(row.installed_path.as_str(), row).is_some() {
             bail!(
                 "binary inventory has duplicate installed_path {} for package {}",
                 row.installed_path,
@@ -548,15 +517,13 @@ pub fn verify_package_contents_match_binary_inventory(
 
     let mut seen_paths = std::collections::BTreeSet::new();
     for file in files {
-        let row = rows_by_path
-            .get(file.installed_path.as_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "package {} executable {} missing from binary inventory",
-                    package.name,
-                    file.installed_path
-                )
-            })?;
+        let row = rows_by_path.get(file.installed_path.as_str()).ok_or_else(|| {
+            anyhow!(
+                "package {} executable {} missing from binary inventory",
+                package.name,
+                file.installed_path
+            )
+        })?;
         if row.name != file.name {
             bail!(
                 "binary inventory name mismatch for {}: expected {}, got {}",
@@ -582,30 +549,18 @@ pub fn verify_package_contents_match_binary_inventory(
             );
         }
         if row.architecture != package.architecture {
-            bail!(
-                "binary inventory architecture mismatch for {}",
-                file.installed_path
-            );
+            bail!("binary inventory architecture mismatch for {}", file.installed_path);
         }
         if row.bytes != file.bytes.len() as u64 {
-            bail!(
-                "binary inventory byte count mismatch for {}",
-                file.installed_path
-            );
+            bail!("binary inventory byte count mismatch for {}", file.installed_path);
         }
         let sha256 = format!("{:x}", Sha256::digest(&file.bytes));
         if row.digest.sha256 != sha256 {
-            bail!(
-                "binary inventory sha256 mismatch for {}",
-                file.installed_path
-            );
+            bail!("binary inventory sha256 mismatch for {}", file.installed_path);
         }
         let blake3 = blake3::hash(&file.bytes).to_hex().to_string();
         if row.digest.blake3 != blake3 {
-            bail!(
-                "binary inventory blake3 mismatch for {}",
-                file.installed_path
-            );
+            bail!("binary inventory blake3 mismatch for {}", file.installed_path);
         }
         if row.sbom_component_ref.trim().is_empty() {
             bail!(
@@ -645,10 +600,7 @@ impl ReleaseManifest {
 }
 
 impl ReleaseLedger {
-    pub fn derive(
-        catalog: &ChannelsCatalog,
-        manifests: &BTreeMap<String, BTreeMap<String, ReleaseManifest>>,
-    ) -> Self {
+    pub fn derive(catalog: &ChannelsCatalog, manifests: &BTreeMap<String, BTreeMap<String, ReleaseManifest>>) -> Self {
         let mut entries = Vec::new();
         for (channel, record) in &catalog.channels {
             for manifest_record in &record.manifests {
@@ -719,9 +671,7 @@ impl ReleaseManifest {
                         version: profile.revision.clone(),
                         status: artifact.status,
                         profile: Some(profile_id.clone()),
-                        architecture: Some(ReleaseLedgerArchitecture::Machine(
-                            architecture.architecture,
-                        )),
+                        architecture: Some(ReleaseLedgerArchitecture::Machine(architecture.architecture)),
                     });
                 }
             }
@@ -744,10 +694,8 @@ impl ProfileDocument {
         if self.revision.trim().is_empty() {
             bail!("profile {} revision must not be empty", self.id);
         }
-        validate_profile_semver(&self.version)
-            .with_context(|| format!("profile {} version is invalid", self.id))?;
-        validate_profile_semver(&self.revision)
-            .with_context(|| format!("profile {} revision is invalid", self.id))?;
+        validate_profile_semver(&self.version).with_context(|| format!("profile {} version is invalid", self.id))?;
+        validate_profile_semver(&self.revision).with_context(|| format!("profile {} revision is invalid", self.id))?;
         if self.architectures.is_empty() {
             bail!("profile {} must list architecture records", self.id);
         }
@@ -779,17 +727,9 @@ impl ProfileVersionHistory {
     pub fn append_version(&mut self, next: ProfileDocument) -> Result<()> {
         next.validate_profile_ownership()?;
         if next.id != self.profile_id {
-            bail!(
-                "profile history {} cannot append profile {}",
-                self.profile_id,
-                next.id
-            );
+            bail!("profile history {} cannot append profile {}", self.profile_id, next.id);
         }
-        if self
-            .versions
-            .iter()
-            .any(|profile| profile.revision == next.revision)
-        {
+        if self.versions.iter().any(|profile| profile.revision == next.revision) {
             bail!(
                 "profile history {} already contains revision {}",
                 self.profile_id,
@@ -801,10 +741,7 @@ impl ProfileVersionHistory {
     }
 }
 
-pub fn diff_profile_image_artifacts(
-    previous: &ProfileDocument,
-    next: &ProfileDocument,
-) -> Result<ProfileImageDiff> {
+pub fn diff_profile_image_artifacts(previous: &ProfileDocument, next: &ProfileDocument) -> Result<ProfileImageDiff> {
     if previous.id != next.id {
         bail!(
             "cannot diff profile images for different profiles: {} vs {}",
@@ -823,9 +760,7 @@ pub fn diff_profile_image_artifacts(
     })
 }
 
-fn profile_image_artifact_keys(
-    profile: &ProfileDocument,
-) -> std::collections::BTreeSet<ProfileImageArtifactKey> {
+fn profile_image_artifact_keys(profile: &ProfileDocument) -> std::collections::BTreeSet<ProfileImageArtifactKey> {
     let mut keys = std::collections::BTreeSet::new();
     for architecture in &profile.architectures {
         for artifact in &architecture.artifacts {
@@ -845,34 +780,20 @@ impl SoftwareInventoryRow {
             bail!("profile {profile} software name must not be empty");
         }
         if self.version.trim().is_empty() {
-            bail!(
-                "profile {profile} software {} version must not be empty",
-                self.name
-            );
+            bail!("profile {profile} software {} version must not be empty", self.name);
         }
         let version = self.version.trim();
         if matches!(
             version.to_ascii_lowercase().as_str(),
             "unversioned" | "unknown" | "latest"
         ) {
-            bail!(
-                "profile {profile} software {} version is {}",
-                self.name,
-                self.version
-            );
+            bail!("profile {profile} software {} version is {}", self.name, self.version);
         }
         if self.source.trim().is_empty() {
-            bail!(
-                "profile {profile} software {} source must not be empty",
-                self.name
-            );
+            bail!("profile {profile} software {} source must not be empty", self.name);
         }
-        validate_url_like(&self.evidence).with_context(|| {
-            format!(
-                "profile {profile} software {} evidence is invalid",
-                self.name
-            )
-        })?;
+        validate_url_like(&self.evidence)
+            .with_context(|| format!("profile {profile} software {} evidence is invalid", self.name))?;
         self.digest
             .validate(&format!("profile {profile} software {}", self.name))?;
         Ok(())
@@ -882,22 +803,12 @@ impl SoftwareInventoryRow {
 impl ProfileConfigRef {
     fn validate(&self, profile: &str) -> Result<()> {
         if self.path.trim().is_empty() {
-            bail!(
-                "profile {profile} config {} path must not be empty",
-                self.kind.as_str()
-            );
+            bail!("profile {profile} config {} path must not be empty", self.kind.as_str());
         }
-        validate_url_like(&self.url).with_context(|| {
-            format!(
-                "profile {profile} config {} url is invalid",
-                self.kind.as_str()
-            )
-        })?;
+        validate_url_like(&self.url)
+            .with_context(|| format!("profile {profile} config {} url is invalid", self.kind.as_str()))?;
         if self.bytes == 0 {
-            bail!(
-                "profile {profile} config {} bytes must be non-zero",
-                self.kind.as_str()
-            );
+            bail!("profile {profile} config {} bytes must be non-zero", self.kind.as_str());
         }
         self.digest
             .validate(&format!("profile {profile} config {}", self.kind.as_str()))?;
@@ -972,11 +883,7 @@ impl ProfileArchitectureImages {
             bail!("profile {profile} image set must list artifacts");
         }
         for required_kind in REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS {
-            if !self
-                .artifacts
-                .iter()
-                .any(|artifact| artifact.kind == required_kind)
-            {
+            if !self.artifacts.iter().any(|artifact| artifact.kind == required_kind) {
                 bail!(
                     "profile {profile} architecture {:?} images missing {}",
                     self.architecture,
@@ -989,9 +896,7 @@ impl ProfileArchitectureImages {
         }
         for evidence in &self.evidence {
             let kind = evidence.kind.as_str();
-            if matches!(kind, "abom" | "obom")
-                && !evidence_url_matches_architecture(&evidence.url, self.architecture)
-            {
+            if matches!(kind, "abom" | "obom") && !evidence_url_matches_architecture(&evidence.url, self.architecture) {
                 bail!(
                     "profile {profile} architecture {:?} evidence {} url must include /{}/",
                     self.architecture,
@@ -1025,17 +930,10 @@ impl ProfileImageArtifactRef {
         if self.name.trim().is_empty() {
             bail!("profile {profile} image artifact name must not be empty");
         }
-        validate_url_like(&self.url).with_context(|| {
-            format!(
-                "profile {profile} image artifact {} url is invalid",
-                self.name
-            )
-        })?;
+        validate_url_like(&self.url)
+            .with_context(|| format!("profile {profile} image artifact {} url is invalid", self.name))?;
         if self.bytes == 0 {
-            bail!(
-                "profile {profile} image artifact {} bytes must be non-zero",
-                self.name
-            );
+            bail!("profile {profile} image artifact {} bytes must be non-zero", self.name);
         }
         self.digest
             .validate(&format!("profile {profile} image artifact {}", self.name))?;
@@ -1148,9 +1046,8 @@ fn validate_url_like(value: &str) -> Result<()> {
 /// when a human last edited the field rather than when the assets were built,
 /// and text comparison ranks `0.10.0` below `0.9.0`.
 pub fn parse_profile_revision(revision: &str) -> Result<Version> {
-    Version::parse(revision).with_context(|| {
-        format!("profile revision must be semver MAJOR.MINOR.PATCH, got {revision:?}")
-    })
+    Version::parse(revision)
+        .with_context(|| format!("profile revision must be semver MAJOR.MINOR.PATCH, got {revision:?}"))
 }
 
 /// Recognize the one revision shape used by profiles published before 0.6.
@@ -1161,9 +1058,9 @@ pub fn parse_profile_revision(revision: &str) -> Result<Version> {
 pub fn is_legacy_profile_revision(revision: &str) -> bool {
     let components = revision.split('.').collect::<Vec<_>>();
     components.len() == 4
-        && components.iter().all(|component| {
-            !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
-        })
+        && components
+            .iter()
+            .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// Reject a publication whose revision does not advance past what is published.

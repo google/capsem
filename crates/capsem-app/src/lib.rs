@@ -28,8 +28,7 @@ fn log_frontend(level: String, message: String) {
 #[tauri::command]
 async fn dump_frontend_logs() -> Result<String, String> {
     let dir = capsem_home_dir().join("logs");
-    let entries =
-        std::fs::read_dir(&dir).map_err(|e| format!("read_dir({}): {e}", dir.display()))?;
+    let entries = std::fs::read_dir(&dir).map_err(|e| format!("read_dir({}): {e}", dir.display()))?;
     let mut latest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
     for entry in entries.flatten() {
         let p = entry.path();
@@ -80,9 +79,7 @@ async fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
         // string is surfaced back into the webview console.
         return Err("refused: only http, https and mailto URLs can be opened".into());
     }
-    app.opener()
-        .open_url(&url, None::<&str>)
-        .map_err(|e| e.to_string())
+    app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
 // ---------- Deep link handling (--connect <vm_id>) ----------
@@ -250,8 +247,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             .with_span_events(FmtSpan::CLOSE)
     });
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("capsem_app=info,frontend=info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("capsem_app=info,frontend=info"));
 
     let stdout_layer = tracing_subscriber::fmt::layer().with_span_events(FmtSpan::CLOSE);
 
@@ -303,9 +299,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
         .setup(move |app| {
             if let Some(id) = connect_id.clone() {
                 let action = initial_action.clone();
-                let window = app
-                    .get_webview_window("main")
-                    .expect("main window must exist");
+                let window = app.get_webview_window("main").expect("main window must exist");
                 tauri::async_runtime::spawn(async move {
                     // Let the frontend mount __capsemDeepLink before dispatching.
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
@@ -317,11 +311,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             let _ = app.handle().emit("capsem-ready", ());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            log_frontend,
-            open_url,
-            dump_frontend_logs,
-        ])
+        .invoke_handler(tauri::generate_handler![log_frontend, open_url, dump_frontend_logs,])
         .run(context)
         .expect("error while running tauri application");
 }

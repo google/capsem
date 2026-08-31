@@ -17,8 +17,7 @@ pub fn resolve_settings(user: &SettingsFile, corp: &SettingsFile) -> Vec<Resolve
     let mut resolved = Vec::new();
 
     for def in &defs {
-        let (effective_value, source, modified) =
-            resolve_value(&def.id, &def.default_value, user, corp);
+        let (effective_value, source, modified) = resolve_value(&def.id, &def.default_value, user, corp);
         let corp_locked = corp.settings.contains_key(&def.id);
 
         resolved.push(ResolvedSetting {
@@ -83,17 +82,9 @@ fn resolve_value(
     corp: &SettingsFile,
 ) -> (SettingValue, PolicySource, Option<String>) {
     if let Some(entry) = corp.settings.get(id) {
-        (
-            entry.value.clone(),
-            PolicySource::Corp,
-            Some(entry.modified.clone()),
-        )
+        (entry.value.clone(), PolicySource::Corp, Some(entry.modified.clone()))
     } else if let Some(entry) = user.settings.get(id) {
-        (
-            entry.value.clone(),
-            PolicySource::User,
-            Some(entry.modified.clone()),
-        )
+        (entry.value.clone(), PolicySource::User, Some(entry.modified.clone()))
     } else {
         (default.clone(), PolicySource::Default, None)
     }

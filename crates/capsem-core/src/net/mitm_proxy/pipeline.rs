@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use super::events::{Event, ALL_KINDS, KIND_COUNT};
 use super::hooks::{
-    ArcChunkHook, ArcHook, ChunkCtx, ChunkEndFuture, ConnMeta, DynEmitter, EmitError, HookCtx,
-    HookOutcome, HookState, Registration, StopAction,
+    ArcChunkHook, ArcHook, ChunkCtx, ChunkEndFuture, ConnMeta, DynEmitter, EmitError, HookCtx, HookOutcome, HookState,
+    Registration, StopAction,
 };
 use super::metrics as m;
 use bytes::{Bytes, BytesMut};
@@ -156,15 +156,9 @@ impl Pipeline {
         if self.chunk_hooks.is_empty() {
             return;
         }
-        let mut ctx = ChunkCtx {
-            state,
-            conn,
-            trace_id,
-        };
+        let mut ctx = ChunkCtx { state, conn, trace_id };
         for hook in self.chunk_hooks.iter() {
-            self.run_chunk(hook.as_ref(), "request", &mut ctx, |h, c| {
-                h.on_request_chunk(chunk, c)
-            });
+            self.run_chunk(hook.as_ref(), "request", &mut ctx, |h, c| h.on_request_chunk(chunk, c));
         }
     }
 
@@ -179,11 +173,7 @@ impl Pipeline {
         if self.chunk_hooks.is_empty() {
             return;
         }
-        let mut ctx = ChunkCtx {
-            state,
-            conn,
-            trace_id,
-        };
+        let mut ctx = ChunkCtx { state, conn, trace_id };
         for hook in self.chunk_hooks.iter() {
             self.run_chunk(hook.as_ref(), "response", &mut ctx, |h, c| {
                 h.on_response_chunk(chunk, c)
@@ -192,24 +182,13 @@ impl Pipeline {
     }
 
     /// Notify ChunkHooks the request body has finished.
-    pub fn dispatch_request_end(
-        &self,
-        state: &mut HookState,
-        conn: &ConnMeta,
-        trace_id: Option<&str>,
-    ) {
+    pub fn dispatch_request_end(&self, state: &mut HookState, conn: &ConnMeta, trace_id: Option<&str>) {
         if self.chunk_hooks.is_empty() {
             return;
         }
-        let mut ctx = ChunkCtx {
-            state,
-            conn,
-            trace_id,
-        };
+        let mut ctx = ChunkCtx { state, conn, trace_id };
         for hook in self.chunk_hooks.iter() {
-            self.run_chunk(hook.as_ref(), "request_end", &mut ctx, |h, c| {
-                h.on_request_end(c)
-            });
+            self.run_chunk(hook.as_ref(), "request_end", &mut ctx, |h, c| h.on_request_end(c));
         }
     }
 
@@ -226,11 +205,7 @@ impl Pipeline {
                 pending: Vec::new(),
             };
         }
-        let mut ctx = ChunkCtx {
-            state,
-            conn,
-            trace_id,
-        };
+        let mut ctx = ChunkCtx { state, conn, trace_id };
         let mut tail = Bytes::new();
         let mut pending = Vec::new();
         for hook in self.chunk_hooks.iter() {
@@ -239,9 +214,7 @@ impl Pipeline {
                     h.on_response_chunk(&mut tail, c)
                 });
             }
-            self.run_chunk(hook.as_ref(), "response_end", &mut ctx, |h, c| {
-                h.on_response_end(c)
-            });
+            self.run_chunk(hook.as_ref(), "response_end", &mut ctx, |h, c| h.on_response_end(c));
             if let Some(future) = hook.take_response_end_future(&mut ctx) {
                 pending.push(future);
             }
@@ -263,13 +236,8 @@ impl Pipeline {
     /// Common timing + counter wrapper for sync chunk-hook calls. Cheap
     /// (one Instant::now + one closure call) so it can run on the
     /// per-chunk hot path without burning the budget.
-    fn run_chunk<F>(
-        &self,
-        hook: &dyn super::hooks::ChunkHook,
-        kind: &'static str,
-        ctx: &mut ChunkCtx<'_>,
-        f: F,
-    ) where
+    fn run_chunk<F>(&self, hook: &dyn super::hooks::ChunkHook, kind: &'static str, ctx: &mut ChunkCtx<'_>, f: F)
+    where
         F: FnOnce(&dyn super::hooks::ChunkHook, &mut ChunkCtx<'_>),
     {
         let name = hook.name();
@@ -360,10 +328,7 @@ impl Pipeline {
                 let _enter = span.enter();
                 trace!(target: "mitm.hook", hook = hook_name, "on_enter");
                 let started = Instant::now();
-                let outcome = hook_arc
-                    .on_event(&mut ev, &mut ctx)
-                    .instrument(span.clone())
-                    .await;
+                let outcome = hook_arc.on_event(&mut ev, &mut ctx).instrument(span.clone()).await;
                 let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
                 ::metrics::histogram!(m::HOOK_DURATION_MS, "hook" => hook_name).record(elapsed_ms);
                 let decision_str = match &outcome {
@@ -437,10 +402,7 @@ unsafe impl Send for ConnPtr {}
 unsafe impl Sync for ConnPtr {}
 
 impl DynEmitter for PipelineEmitter {
-    fn emit<'a, 'b>(
-        &'b mut self,
-        ev: Event<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
+    fn emit<'a, 'b>(&'b mut self, ev: Event<'a>) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
     where
         'a: 'b,
     {
@@ -466,11 +428,7 @@ impl DynEmitter for PipelineEmitter {
 /// without holding a long-lived `HookState` or building a `ConnMeta`
 /// by hand. Defaults the `ConnMeta` to its `Default` (empty
 /// domain, port=0, no process name).
-pub async fn dispatch_one(
-    pipeline: &Pipeline,
-    ev: Event<'_>,
-    trace_id: Option<String>,
-) -> DispatchOutcome {
+pub async fn dispatch_one(pipeline: &Pipeline, ev: Event<'_>, trace_id: Option<String>) -> DispatchOutcome {
     let mut state = HookState::default();
     let conn = ConnMeta::default();
     pipeline.dispatch(ev, &mut state, trace_id, &conn).await

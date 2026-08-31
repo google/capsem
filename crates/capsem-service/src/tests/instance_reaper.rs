@@ -48,9 +48,7 @@ fn child_reapers_start_after_instance_registration() {
         let insertion = body
             .find("instances.insert(")
             .expect("launch function registers its instance");
-        let reaper = body
-            .find(reaper)
-            .expect("launch function starts its child reaper");
+        let reaper = body.find(reaper).expect("launch function starts its child reaper");
 
         assert!(
             insertion < reaper,

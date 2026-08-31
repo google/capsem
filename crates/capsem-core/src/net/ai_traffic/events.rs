@@ -31,11 +31,7 @@ pub enum LlmEvent {
     /// Incremental thinking/reasoning output.
     ThinkingDelta { index: u32, text: String },
     /// A tool call content block started.
-    ToolCallStart {
-        index: u32,
-        call_id: String,
-        name: String,
-    },
+    ToolCallStart { index: u32, call_id: String, name: String },
     /// Incremental tool call arguments (JSON fragment).
     ToolCallArgumentDelta { index: u32, delta: String },
     /// A tool call content block finished.
@@ -52,10 +48,7 @@ pub enum LlmEvent {
     /// Stream finished.
     MessageEnd { stop_reason: Option<StopReason> },
     /// Unrecognized event (logged but not parsed).
-    Unknown {
-        event_type: Option<String>,
-        raw: String,
-    },
+    Unknown { event_type: Option<String>, raw: String },
 }
 
 /// A completed tool call extracted from the stream.
@@ -135,11 +128,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
             LlmEvent::ThinkingDelta { text: t, .. } => {
                 thinking.push_str(t);
             }
-            LlmEvent::ToolCallStart {
-                index,
-                call_id,
-                name,
-            } => {
+            LlmEvent::ToolCallStart { index, call_id, name } => {
                 builders.push((*index, call_id.clone(), name.clone(), String::new()));
             }
             LlmEvent::ToolCallArgumentDelta { index, delta } => {
@@ -228,12 +217,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
 pub fn parse_non_streaming_usage(
     kind: super::provider::ModelProtocol,
     body: &[u8],
-) -> (
-    Option<String>,
-    Option<u64>,
-    Option<u64>,
-    BTreeMap<String, u64>,
-) {
+) -> (Option<String>, Option<u64>, Option<u64>, BTreeMap<String, u64>) {
     let Some(json) = parse_response_json(body) else {
         return (None, None, None, BTreeMap::new());
     };
@@ -241,14 +225,9 @@ pub fn parse_non_streaming_usage(
     match kind {
         super::provider::ModelProtocol::Google => {
             let json = google_response_envelope(&json);
-            let model = json
-                .get("modelVersion")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let model = json.get("modelVersion").and_then(|v| v.as_str()).map(|s| s.to_string());
             let usage = json.get("usageMetadata");
-            let input = usage
-                .and_then(|u| u.get("promptTokenCount"))
-                .and_then(|v| v.as_u64());
+            let input = usage.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64());
             let output = usage
                 .and_then(|u| u.get("candidatesTokenCount"))
                 .and_then(|v| v.as_u64());
@@ -259,26 +238,16 @@ pub fn parse_non_streaming_usage(
             {
                 details.insert("cache_read".into(), v);
             }
-            if let Some(v) = usage
-                .and_then(|u| u.get("thoughtsTokenCount"))
-                .and_then(|v| v.as_u64())
-            {
+            if let Some(v) = usage.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()) {
                 details.insert("thinking".into(), v);
             }
             (model, input, output, details)
         }
         super::provider::ModelProtocol::Anthropic => {
-            let model = json
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
             let usage = json.get("usage");
-            let input = usage
-                .and_then(|u| u.get("input_tokens"))
-                .and_then(|v| v.as_u64());
-            let output = usage
-                .and_then(|u| u.get("output_tokens"))
-                .and_then(|v| v.as_u64());
+            let input = usage.and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64());
+            let output = usage.and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64());
             let mut details = BTreeMap::new();
             if let Some(v) = usage
                 .and_then(|u| u.get("cache_read_input_tokens"))
@@ -289,10 +258,7 @@ pub fn parse_non_streaming_usage(
             (model, input, output, details)
         }
         super::provider::ModelProtocol::OpenAi => {
-            let model = json
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
             let usage = json.get("usage");
             let input = usage.and_then(|u| {
                 u.get("prompt_tokens")
@@ -324,10 +290,7 @@ pub fn parse_non_streaming_usage(
             (model, input, output, details)
         }
         super::provider::ModelProtocol::Ollama => {
-            let model = json
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let model = json.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
             let input = json.get("prompt_eval_count").and_then(|v| v.as_u64());
             let output = json.get("eval_count").and_then(|v| v.as_u64());
             (model, input, output, BTreeMap::new())
@@ -336,17 +299,12 @@ pub fn parse_non_streaming_usage(
 }
 
 /// Parse model-native tool calls from a non-streaming JSON response body.
-pub fn parse_non_streaming_tool_calls(
-    kind: super::provider::ModelProtocol,
-    body: &[u8],
-) -> Vec<ToolCall> {
+pub fn parse_non_streaming_tool_calls(kind: super::provider::ModelProtocol, body: &[u8]) -> Vec<ToolCall> {
     let Some(json) = parse_response_json(body) else {
         return Vec::new();
     };
     match kind {
-        super::provider::ModelProtocol::Google => {
-            google_non_streaming_tool_calls(google_response_envelope(&json))
-        }
+        super::provider::ModelProtocol::Google => google_non_streaming_tool_calls(google_response_envelope(&json)),
         super::provider::ModelProtocol::OpenAi => openai_non_streaming_tool_calls(&json),
         super::provider::ModelProtocol::Anthropic => anthropic_non_streaming_tool_calls(&json),
         _ => Vec::new(),
@@ -365,9 +323,7 @@ pub fn parse_non_streaming_response_summary(
     };
     match kind {
         super::provider::ModelProtocol::OpenAi => openai_non_streaming_response_summary(&json),
-        super::provider::ModelProtocol::Anthropic => {
-            anthropic_non_streaming_response_summary(&json)
-        }
+        super::provider::ModelProtocol::Anthropic => anthropic_non_streaming_response_summary(&json),
         super::provider::ModelProtocol::Google => {
             google_non_streaming_response_summary(google_response_envelope(&json))
         }
@@ -504,25 +460,19 @@ fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreami
             for item in output {
                 match item.get("type").and_then(|value| value.as_str()) {
                     Some("message") => {
-                        if let Some(content) =
-                            item.get("content").and_then(|value| value.as_array())
-                        {
+                        if let Some(content) = item.get("content").and_then(|value| value.as_array()) {
                             for part in content {
                                 append_openai_content(&mut summary.text, Some(part));
                             }
                         }
                     }
                     Some("reasoning") => {
-                        if let Some(summary_parts) =
-                            item.get("summary").and_then(|value| value.as_array())
-                        {
+                        if let Some(summary_parts) = item.get("summary").and_then(|value| value.as_array()) {
                             for part in summary_parts {
                                 append_openai_content(&mut summary.thinking, Some(part));
                             }
                         }
-                        if let Some(content) =
-                            item.get("content").and_then(|value| value.as_array())
-                        {
+                        if let Some(content) = item.get("content").and_then(|value| value.as_array()) {
                             for part in content {
                                 append_openai_content(&mut summary.thinking, Some(part));
                             }
@@ -550,9 +500,7 @@ fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreami
     summary
 }
 
-fn anthropic_non_streaming_response_summary(
-    json: &serde_json::Value,
-) -> NonStreamingResponseSummary {
+fn anthropic_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
     let mut summary = NonStreamingResponseSummary {
         stop_reason: json
             .get("stop_reason")
@@ -584,10 +532,7 @@ fn google_non_streaming_response_summary(json: &serde_json::Value) -> NonStreami
         return summary;
     };
     for candidate in candidates {
-        if let Some(reason) = candidate
-            .get("finishReason")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(reason) = candidate.get("finishReason").and_then(|value| value.as_str()) {
             summary.stop_reason = Some(stop_reason_from_provider_string(reason));
         }
         let Some(parts) = candidate
@@ -613,11 +558,7 @@ fn ollama_non_streaming_response_summary(json: &serde_json::Value) -> NonStreami
         append_json_string(&mut summary.text, message.get("content"));
         append_json_string(&mut summary.thinking, message.get("thinking"));
     }
-    if json
-        .get("done")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-    {
+    if json.get("done").and_then(|value| value.as_bool()).unwrap_or(false) {
         summary.stop_reason = Some(StopReason::EndTurn);
     }
     summary

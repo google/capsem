@@ -11,12 +11,14 @@ pub use capsem_config::model::{ModelProtocol, ProviderKind};
 
 /// Create an SSE stream parser for the selected wire protocol.
 pub fn create_parser(protocol: ModelProtocol) -> Box<dyn ProviderStreamParser + Send> {
-        match protocol {
-            ModelProtocol::Anthropic => Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new()),
-            ModelProtocol::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
-            ModelProtocol::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
-            ModelProtocol::Ollama => Box::new(NativeOllamaStreamParser),
+    match protocol {
+        ModelProtocol::Anthropic => {
+            Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new())
         }
+        ModelProtocol::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
+        ModelProtocol::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
+        ModelProtocol::Ollama => Box::new(NativeOllamaStreamParser),
+    }
 }
 
 struct NativeOllamaStreamParser;
@@ -45,11 +47,7 @@ pub trait Provider: Send + Sync {
 
     /// Inject the real API key into the outgoing reqwest::RequestBuilder.
     /// Returns the modified builder.
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder;
+    fn inject_key(&self, builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder;
 }
 
 struct OllamaProvider;
@@ -63,11 +61,7 @@ impl Provider for OllamaProvider {
         "http://127.0.0.1:11434"
     }
 
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        _api_key: &str,
-    ) -> reqwest::RequestBuilder {
+    fn inject_key(&self, builder: reqwest::RequestBuilder, _api_key: &str) -> reqwest::RequestBuilder {
         builder
     }
 }

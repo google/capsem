@@ -5,10 +5,7 @@ use super::*;
 #[test]
 fn test_extract_model_field() {
     let body = br#"{"model":"claude-3-opus-20240229","messages":[]}"#;
-    assert_eq!(
-        extract_model_field(body),
-        Some("claude-3-opus-20240229".to_string())
-    );
+    assert_eq!(extract_model_field(body), Some("claude-3-opus-20240229".to_string()));
 
     let truncated = br#"{"model": "gpt-4o", "messages": [{"role": "user", "content": "..."#;
     assert_eq!(extract_model_field(truncated), Some("gpt-4o".to_string()));
@@ -25,10 +22,7 @@ fn model_field_regex_is_reused_across_fallback_parses() {
     let compiled = std::sync::LazyLock::force(&MODEL_FIELD_REGEX) as *const regex::Regex;
 
     for _ in 0..10 {
-        assert_eq!(
-            extract_model_field(br#"{"model":"gpt-4o""#).as_deref(),
-            Some("gpt-4o")
-        );
+        assert_eq!(extract_model_field(br#"{"model":"gpt-4o""#).as_deref(), Some("gpt-4o"));
         assert_eq!(
             std::sync::LazyLock::force(&MODEL_FIELD_REGEX) as *const regex::Regex,
             compiled
@@ -38,8 +32,7 @@ fn model_field_regex_is_reused_across_fallback_parses() {
 
 #[test]
 fn test_truncated_json_fallback() {
-    let truncated =
-        br#"{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "con"#;
+    let truncated = br#"{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "con"#;
     let meta = parse_request(ModelProtocol::Anthropic, truncated);
     assert_eq!(meta.model.as_deref(), Some("claude-3-5-sonnet-20240620"));
     assert_eq!(meta.messages_count, 0); // parsing failed, but model was extracted
@@ -85,10 +78,7 @@ fn anthropic_system_as_blocks() {
     }"#;
 
     let meta = parse_request(ModelProtocol::Anthropic, body);
-    assert_eq!(
-        meta.system_prompt_preview.as_deref(),
-        Some("Block system prompt.")
-    );
+    assert_eq!(meta.system_prompt_preview.as_deref(), Some("Block system prompt."));
 }
 
 #[test]
@@ -149,10 +139,7 @@ fn openai_chat_completions_request() {
     let meta = parse_request(ModelProtocol::OpenAi, body);
     assert_eq!(meta.model.as_deref(), Some("gpt-4o"));
     assert!(meta.stream);
-    assert_eq!(
-        meta.system_prompt_preview.as_deref(),
-        Some("You help with code.")
-    );
+    assert_eq!(meta.system_prompt_preview.as_deref(), Some("You help with code."));
     assert_eq!(meta.messages_count, 2);
     assert_eq!(meta.tools_count, 1);
 }
@@ -219,10 +206,7 @@ fn openai_responses_api_function_call_output_is_tool_response() {
     assert_eq!(meta.tools_count, 1);
     assert_eq!(meta.tool_results.len(), 1);
     assert_eq!(meta.tool_results[0].call_id, "call_codex_write_poem");
-    assert_eq!(
-        meta.tool_results[0].content_preview,
-        "Process exited with code 0"
-    );
+    assert_eq!(meta.tool_results[0].content_preview, "Process exited with code 0");
     assert!(!meta.tool_results[0].is_error);
 }
 
@@ -263,9 +247,7 @@ fn google_function_response() {
 
     let meta = parse_request(ModelProtocol::Google, body);
     assert_eq!(meta.tool_results.len(), 1);
-    assert!(meta.tool_results[0]
-        .call_id
-        .starts_with("gemini_get_weather_"));
+    assert!(meta.tool_results[0].call_id.starts_with("gemini_get_weather_"));
     assert!(meta.tool_results[0].content_preview.contains("72F"));
 }
 
@@ -342,8 +324,7 @@ fn long_system_prompt_passes_through_untruncated() {
 
 #[test]
 fn request_without_stream_field_defaults_false() {
-    let body =
-        br#"{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}]}"#;
+    let body = br#"{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}]}"#;
     let meta = parse_request(ModelProtocol::Anthropic, body);
     assert!(!meta.stream);
 }
@@ -405,12 +386,8 @@ fn google_duplicate_function_name_unique_call_ids() {
     assert_eq!(meta.tool_results.len(), 2);
     // call_ids must be distinct
     assert_ne!(meta.tool_results[0].call_id, meta.tool_results[1].call_id);
-    assert!(meta.tool_results[0]
-        .call_id
-        .starts_with("gemini_get_weather_"));
-    assert!(meta.tool_results[1]
-        .call_id
-        .starts_with("gemini_get_weather_"));
+    assert!(meta.tool_results[0].call_id.starts_with("gemini_get_weather_"));
+    assert!(meta.tool_results[1].call_id.starts_with("gemini_get_weather_"));
 }
 
 #[test]
@@ -525,9 +502,7 @@ fn anthropic_tool_result_mixed_text_and_non_text_blocks() {
     let meta = parse_request(ModelProtocol::Anthropic, body);
     assert_eq!(meta.tool_results.len(), 1);
     assert!(
-        meta.tool_results[0]
-            .content_preview
-            .contains("Loaded 2 tools"),
+        meta.tool_results[0].content_preview.contains("Loaded 2 tools"),
         "text blocks take priority, got: {}",
         meta.tool_results[0].content_preview
     );
@@ -784,11 +759,7 @@ fn google_multiple_function_responses_in_single_part() {
     assert_eq!(meta.tool_results.len(), 3);
     // All should have unique call_ids
     let ids: std::collections::HashSet<_> = meta.tool_results.iter().map(|r| &r.call_id).collect();
-    assert_eq!(
-        ids.len(),
-        3,
-        "all 3 function responses should have unique call_ids"
-    );
+    assert_eq!(ids.len(), 3, "all 3 function responses should have unique call_ids");
 }
 
 // ── Ollama native ───────────────────────────────────────────────

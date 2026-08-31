@@ -2,12 +2,11 @@ use super::*;
 
 #[test]
 fn parent_watch_is_optional_but_parsed_when_a_launcher_owns_the_server() {
-    let standalone = Args::try_parse_from(["capsem-mock-server"])
-        .expect("standalone mock server arguments");
+    let standalone = Args::try_parse_from(["capsem-mock-server"]).expect("standalone mock server arguments");
     assert_eq!(standalone.parent_pid, None);
 
-    let guarded = Args::try_parse_from(["capsem-mock-server", "--parent-pid", "4242"])
-        .expect("guarded mock server arguments");
+    let guarded =
+        Args::try_parse_from(["capsem-mock-server", "--parent-pid", "4242"]).expect("guarded mock server arguments");
     assert_eq!(guarded.parent_pid, Some(4242));
 }
 
@@ -69,8 +68,8 @@ fn malformed_request_bodies_parse_to_an_empty_object_not_a_panic() {
         &b""[..],
         &b"not json"[..],
         &b"{\"unterminated\": "[..],
-        &b"\xff\xfe\xfd"[..],       // invalid UTF-8
-        &b"[1,2,3]"[..],            // valid JSON, wrong shape
+        &b"\xff\xfe\xfd"[..], // invalid UTF-8
+        &b"[1,2,3]"[..],      // valid JSON, wrong shape
     ] {
         let parsed = parse_json(body);
         assert!(
@@ -104,9 +103,9 @@ fn google_model_is_read_from_the_path_and_falls_back_when_absent() {
     // routing test asserting on the model must therefore assert on a path that
     // actually carries one, or it proves nothing.
     for path in [
-        "/v1/generateContent",   // no /models/ segment
-        "/v1/models/",           // empty model
-        "/v1/models/:generate",  // empty before the colon
+        "/v1/generateContent",  // no /models/ segment
+        "/v1/models/",          // empty model
+        "/v1/models/:generate", // empty before the colon
         "",
     ] {
         assert_eq!(
@@ -120,10 +119,7 @@ fn google_model_is_read_from_the_path_and_falls_back_when_absent() {
 #[test]
 fn google_model_takes_the_first_segment_after_models() {
     // A second /models/ later in the path must not win.
-    assert_eq!(
-        google_model_from_path("/v1/models/first:x/models/second"),
-        "first"
-    );
+    assert_eq!(google_model_from_path("/v1/models/first:x/models/second"), "first");
 }
 
 #[test]

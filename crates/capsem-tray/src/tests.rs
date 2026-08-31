@@ -27,10 +27,7 @@ fn direct_binary_with_action_requires_vm_id() {
     let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
     let (program, args) = build_launch_invocation(Some(&binary), Some("vm-42"), Some("save"));
     assert_eq!(program, binary.as_os_str());
-    assert_eq!(
-        args,
-        vec![os("--connect"), os("vm-42"), os("--action"), os("save")]
-    );
+    assert_eq!(args, vec![os("--connect"), os("vm-42"), os("--action"), os("save")]);
 }
 
 #[test]
@@ -52,13 +49,7 @@ fn fallback_open_forwards_vm_id() {
     assert_eq!(program, os("open"));
     assert_eq!(
         args,
-        vec![
-            os("-a"),
-            os("Capsem"),
-            os("--args"),
-            os("--connect"),
-            os("vm-9")
-        ]
+        vec![os("-a"), os("Capsem"), os("--args"), os("--connect"), os("vm-9")]
     );
 }
 

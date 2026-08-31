@@ -29,22 +29,10 @@ fn checkpoint_failure_stays_distinct_from_timeout() {
         None
     );
     assert!(suspended);
-    assert_eq!(
-        observe_suspend_message(ProcessToService::Pong, &mut suspended),
-        None
-    );
-    assert_eq!(
-        suspend_channel_closed(suspended),
-        SuspendConfirmation::Suspended
-    );
-    assert_eq!(
-        suspend_channel_closed(false),
-        SuspendConfirmation::ChannelClosed
-    );
-    assert_ne!(
-        SuspendConfirmation::ChannelClosed,
-        SuspendConfirmation::TimedOut
-    );
+    assert_eq!(observe_suspend_message(ProcessToService::Pong, &mut suspended), None);
+    assert_eq!(suspend_channel_closed(suspended), SuspendConfirmation::Suspended);
+    assert_eq!(suspend_channel_closed(false), SuspendConfirmation::ChannelClosed);
+    assert_ne!(SuspendConfirmation::ChannelClosed, SuspendConfirmation::TimedOut);
     assert_eq!(suspend_failure(SuspendConfirmation::Suspended), None);
     assert_eq!(
         suspend_failure(SuspendConfirmation::Failed("checkpoint cause".into())),

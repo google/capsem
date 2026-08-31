@@ -108,11 +108,7 @@ pub fn build_servfail(query_bytes: &[u8]) -> Result<Vec<u8>> {
 /// `ttl` flows verbatim into every answer record. Callers should
 /// keep it short (~60s) so guest resolvers re-query promptly when
 /// the redirect rule changes.
-pub fn build_redirect_response(
-    query_bytes: &[u8],
-    answers: &[IpAddr],
-    ttl: u32,
-) -> Result<Vec<u8>> {
+pub fn build_redirect_response(query_bytes: &[u8], answers: &[IpAddr], ttl: u32) -> Result<Vec<u8>> {
     let request = Message::from_vec(query_bytes).context("failed to decode DNS message")?;
     let qtype = request
         .queries
@@ -152,9 +148,7 @@ fn build_synthetic_response(query_bytes: &[u8], rcode: ResponseCode) -> Result<V
     response.metadata.recursion_available = true;
     response.metadata.response_code = rcode;
     response.add_queries(request.queries.iter().cloned());
-    response
-        .to_vec()
-        .context("failed to encode synthetic DNS response")
+    response.to_vec().context("failed to encode synthetic DNS response")
 }
 
 #[cfg(test)]

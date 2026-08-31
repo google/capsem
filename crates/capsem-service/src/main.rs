@@ -6,26 +6,24 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_core::{
     mcp::{
         policy::{McpManualServer, McpProfileConfig},
         ToolCacheEntry,
     },
     net::policy_config::{
-        skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile,
-        ProfileAssetDescriptor, ProfileCatalog, ProfileCatalogSource, ProfileConfigFile,
-        ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode, SecurityRule,
-        SecurityRuleAction, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+        skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor,
+        ProfileCatalog, ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
+        SecurityPluginMode, SecurityRule, SecurityRuleAction, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
         SecurityRuleSource, SettingsFile,
     },
     security_engine::{
-        DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent,
-        ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry,
-        SecurityEmitError, SecurityEvent, SecurityEventEmitter, SecurityEventEngine,
-        SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
+        DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent, ModelSecurityEvent,
+        ProcessSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError, SecurityEvent,
+        SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
     },
 };
+use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use clap::Parser;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -45,9 +43,7 @@ mod instance_reaper;
 mod proctable;
 mod profile_status_cache;
 mod session_cleanup;
-use session_cleanup::{
-    finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result,
-};
+use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod shutdown_policy;
 mod startup;
 mod suspend_confirmation;
@@ -55,9 +51,7 @@ mod update_command;
 
 use profile_status_cache::*;
 use shutdown_policy::*;
-use suspend_confirmation::{
-    observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation,
-};
+use suspend_confirmation::{observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation};
 use update_command::{update_command_plan, UpdateCommandKind};
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
@@ -122,7 +116,6 @@ impl Drop for ServicePidfile {
         }
     }
 }
-
 
 #[cfg(test)]
 thread_local! {
@@ -255,8 +248,7 @@ struct ServiceState {
     profile_rule_cache: Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>>,
     /// Route-owned default MCP permission readbacks loaded with the profile
     /// rule cache. Hot MCP routes must not reload and verify enforcement files.
-    profile_mcp_default_cache:
-        Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>>,
+    profile_mcp_default_cache: Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>>,
     /// Route-owned profile plugin configs loaded once at service startup and
     /// refreshed by profile/corp mutation routes. Hot plugin/profile routes
     /// must not re-read profile TOML just to list effective plugin modes.
@@ -601,9 +593,7 @@ match = 'file.import.content.contains("EICAR")'
             .to_string(),
             event: EnforcementEventInput {
                 event_type: "file.import".to_string(),
-                file_import_content: Some(
-                    capsem_core::security_engine::DUMMY_EICAR_TEST_STRING.to_string(),
-                ),
+                file_import_content: Some(capsem_core::security_engine::DUMMY_EICAR_TEST_STRING.to_string()),
                 ..Default::default()
             },
         }
@@ -795,21 +785,9 @@ fn prewarm_vm_asset_hash_cache(
         return;
     };
     for (kind, path, hash) in [
-        (
-            "kernel",
-            resolved.kernel.as_path(),
-            expected.kernel.as_str(),
-        ),
-        (
-            "initrd",
-            resolved.initrd.as_path(),
-            expected.initrd.as_str(),
-        ),
-        (
-            "rootfs",
-            resolved.rootfs.as_path(),
-            expected.rootfs.as_str(),
-        ),
+        ("kernel", resolved.kernel.as_path(), expected.kernel.as_str()),
+        ("initrd", resolved.initrd.as_path(), expected.initrd.as_str()),
+        ("rootfs", resolved.rootfs.as_path(), expected.rootfs.as_str()),
     ] {
         match capsem_core::VmConfig::verify_hash(path, hash) {
             Ok(()) => info!(
@@ -857,23 +835,15 @@ impl ServiceState {
         main_db_path_for_run_dir(&self.run_dir)
     }
 
-    fn open_profile_mutation_db_handle(
-        run_dir: &StdPath,
-    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+    fn open_profile_mutation_db_handle(run_dir: &StdPath) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = main_db_path_for_run_dir(run_dir);
-        capsem_logger::ensure_session_index_schema(&db_path).with_context(|| {
-            format!(
-                "failed to initialize session index in main.db: {}",
-                db_path.display()
-            )
-        })?;
+        capsem_logger::ensure_session_index_schema(&db_path)
+            .with_context(|| format!("failed to initialize session index in main.db: {}", db_path.display()))?;
         let started = std::time::Instant::now();
-        let handle = Arc::new(capsem_logger::DbHandle::open(&db_path).with_context(|| {
-            format!(
-                "failed to open profile mutation DB handle: {}",
-                db_path.display()
-            )
-        })?);
+        let handle = Arc::new(
+            capsem_logger::DbHandle::open(&db_path)
+                .with_context(|| format!("failed to open profile mutation DB handle: {}", db_path.display()))?,
+        );
         info!(
             db_path = %db_path.display(),
             operation = "open_profile_mutation_db_handle",
@@ -896,12 +866,7 @@ impl ServiceState {
     ) -> anyhow::Result<()> {
         let record = capsem_core::session::SessionRecord {
             id: id.to_string(),
-            mode: if persistent {
-                "persistent"
-            } else {
-                "ephemeral"
-            }
-            .to_string(),
+            mode: if persistent { "persistent" } else { "ephemeral" }.to_string(),
             command: None,
             status: "running".to_string(),
             created_at: capsem_core::session::now_iso(),
@@ -968,13 +933,7 @@ impl ServiceState {
     }
 
     fn storage_diagnostics_cached(&self, session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-        if let Some(cached) = self
-            .storage_diagnostics_cache
-            .lock()
-            .unwrap()
-            .get(session_dir)
-            .cloned()
-        {
+        if let Some(cached) = self.storage_diagnostics_cache.lock().unwrap().get(session_dir).cloned() {
             return Some(cached);
         }
 
@@ -1161,10 +1120,7 @@ impl ServiceState {
         if info.persistent {
             info!(id, "persistent VM process died, preserving session dir");
         } else {
-            info!(
-                id,
-                "ephemeral VM process died, preserving session dir for post-mortem"
-            );
+            info!(id, "ephemeral VM process died, preserving session dir for post-mortem");
             let _ = self.preserve_failed_session_dir(&info.session_dir, id);
         }
         let _ = std::fs::remove_file(&info.uds_path);
@@ -1208,9 +1164,7 @@ impl ServiceState {
 
         let updates: Vec<(String, String)> = candidates
             .into_iter()
-            .filter_map(|(name, session_dir)| {
-                read_boot_failure_tail(&session_dir).map(|tail| (name, tail))
-            })
+            .filter_map(|(name, session_dir)| read_boot_failure_tail(&session_dir).map(|tail| (name, tail)))
             .collect();
         if updates.is_empty() {
             return;
@@ -1262,16 +1216,8 @@ impl ServiceState {
     /// etc.) we `warn!` with the specific error and fall back to
     /// `remove_dir_all` so disk isn't leaked when the filesystem is
     /// already unhappy.
-    fn preserve_failed_session_dir(
-        &self,
-        session_dir: &std::path::Path,
-        id: &str,
-    ) -> Option<PathBuf> {
-        let failed_id = format!(
-            "{}-failed-{}",
-            id,
-            capsem_core::session::generate_session_id(),
-        );
+    fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
+        let failed_id = format!("{}-failed-{}", id, capsem_core::session::generate_session_id(),);
         let failed_dir = self.run_dir.join("sessions").join(&failed_id);
         match std::fs::rename(session_dir, &failed_dir) {
             Ok(()) => {
@@ -1315,8 +1261,8 @@ impl ServiceState {
             return Ok(());
         }
         let mut failed_dirs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
-        let entries = std::fs::read_dir(&sessions_dir)
-            .with_context(|| format!("read_dir({})", sessions_dir.display()))?;
+        let entries =
+            std::fs::read_dir(&sessions_dir).with_context(|| format!("read_dir({})", sessions_dir.display()))?;
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -1362,10 +1308,7 @@ impl ServiceState {
                 session_dir.display()
             )
         })?;
-        let allowed_parents = [
-            self.run_dir.join("sessions"),
-            self.run_dir.join("persistent"),
-        ];
+        let allowed_parents = [self.run_dir.join("sessions"), self.run_dir.join("persistent")];
 
         let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
             format!(
@@ -1434,12 +1377,8 @@ impl ServiceState {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "inspect session path before delete: {}",
-                        session_dir.display()
-                    )
-                });
+                return Err(error)
+                    .with_context(|| format!("inspect session path before delete: {}", session_dir.display()));
             }
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -1466,12 +1405,8 @@ impl ServiceState {
         // alias. This keeps a legitimate macOS /var -> /private/var spelling
         // difference working without giving a mutable alias another path
         // resolution opportunity at the destructive operation.
-        std::fs::remove_dir_all(&canonical_session).with_context(|| {
-            format!(
-                "delete canonical session directory: {}",
-                canonical_session.display()
-            )
-        })
+        std::fs::remove_dir_all(&canonical_session)
+            .with_context(|| format!("delete canonical session directory: {}", canonical_session.display()))
     }
 
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
@@ -1488,8 +1423,7 @@ impl ServiceState {
             from,
             description,
         } = options;
-        validate_profile_route_id(profile_id.clone())
-            .map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
+        validate_profile_route_id(profile_id.clone()).map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -1592,18 +1526,12 @@ impl ServiceState {
         }
 
         let runtime_profile = self.cached_profile_for_runtime(&profile_id)?;
-        let active_profile_path =
-            self.materialize_active_profile(&runtime_profile, &session_dir)?;
+        let active_profile_path = self.materialize_active_profile(&runtime_profile, &session_dir)?;
         let profile = runtime_profile.config();
         let profile_revision = profile.revision.clone();
         let profile_payload_hash = profile_payload_hash(profile)?;
         let asset_pins = profile_asset_pins(profile)?;
-        self.validate_profile_pins(
-            profile,
-            &profile_revision,
-            &profile_payload_hash,
-            &asset_pins,
-        )?;
+        self.validate_profile_pins(profile, &profile_revision, &profile_payload_hash, &asset_pins)?;
         let resolved = self.resolve_profile_asset_paths(profile)?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
@@ -1628,9 +1556,7 @@ impl ServiceState {
         // hostname must remain the opaque route id.
         let guest_name = if persistent { name } else { id };
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_VM_NAME={}", guest_name));
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -1665,9 +1591,8 @@ impl ServiceState {
             child_cmd
                 .env(
                     "RUST_LOG",
-                    std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                        capsem_foundation::telemetry::with_subsys_targets("capsem=info")
-                    }),
+                    std::env::var("RUST_LOG")
+                        .unwrap_or_else(|_| capsem_foundation::telemetry::with_subsys_targets("capsem=info")),
                 )
                 .arg("--id")
                 .arg(id)
@@ -1734,36 +1659,32 @@ impl ServiceState {
         }
 
         if persistent {
-            let registration =
-                self.persistent_registry
-                    .lock()
-                    .unwrap()
-                    .register(PersistentVmEntry {
-                        id: id.to_string(),
-                        name: name.to_string(),
-                        profile_id: profile_id.clone(),
-                        profile_revision: profile_revision.clone(),
-                        profile_payload_hash: profile_payload_hash.clone(),
-                        asset_pins: asset_pins.clone(),
-                        ram_mb,
-                        cpus,
-                        base_version: version.clone(),
-                        created_at: format!(
-                            "{}",
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs()
-                        ),
-                        session_dir: session_dir.clone(),
-                        forked_from: from.clone(),
-                        description: description.clone(),
-                        suspended: false,
-                        defunct: false,
-                        last_error: None,
-                        checkpoint_path: None,
-                        env: env.clone(),
-                    });
+            let registration = self.persistent_registry.lock().unwrap().register(PersistentVmEntry {
+                id: id.to_string(),
+                name: name.to_string(),
+                profile_id: profile_id.clone(),
+                profile_revision: profile_revision.clone(),
+                profile_payload_hash: profile_payload_hash.clone(),
+                asset_pins: asset_pins.clone(),
+                ram_mb,
+                cpus,
+                base_version: version.clone(),
+                created_at: format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
+                session_dir: session_dir.clone(),
+                forked_from: from.clone(),
+                description: description.clone(),
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: env.clone(),
+            });
             if let Err(error) = registration {
                 instance_reaper::kill_and_reap(child);
                 return Err(error);
@@ -1895,12 +1816,8 @@ impl ServiceState {
         }
 
         // Inject VM identity so the guest knows its own name/ID.
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_VM_ID={}", vm_id));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_VM_NAME={}", name));
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
+        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
@@ -1949,9 +1866,8 @@ impl ServiceState {
             child_cmd
                 .env(
                     "RUST_LOG",
-                    std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                        capsem_foundation::telemetry::with_subsys_targets("capsem=info")
-                    }),
+                    std::env::var("RUST_LOG")
+                        .unwrap_or_else(|_| capsem_foundation::telemetry::with_subsys_targets("capsem=info")),
                 )
                 .arg("--id")
                 .arg(&vm_id)
@@ -2072,8 +1988,7 @@ impl ServiceState {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let archived_path =
-            session_dir.join(format!("{checkpoint_name}.failed-restore-{epoch_ms}"));
+        let archived_path = session_dir.join(format!("{checkpoint_name}.failed-restore-{epoch_ms}"));
 
         match std::fs::rename(&checkpoint_path, &archived_path) {
             Ok(()) => {
@@ -2166,14 +2081,12 @@ impl ServiceState {
     fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
         #[cfg(test)]
         let catalog = if let Some(path) = test_profile_dir_override() {
-            ProfileCatalog::load_from_dir(&path)
-                .map_err(|e| anyhow!("load profile catalog: {e}"))?
+            ProfileCatalog::load_from_dir(&path).map_err(|e| anyhow!("load profile catalog: {e}"))?
         } else {
             ProfileCatalog::builtin()
         };
         #[cfg(not(test))]
-        let catalog =
-            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        let catalog = ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
         catalog
             .get(profile_id)
             .cloned()
@@ -2190,23 +2103,18 @@ impl ServiceState {
     }
 
     fn cached_profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
-        Ok(self
-            .cached_profile_for_runtime(profile_id)?
-            .config()
-            .clone())
+        Ok(self.cached_profile_for_runtime(profile_id)?.config().clone())
     }
 
     fn profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
         #[cfg(test)]
         let catalog = if let Some(path) = test_profile_dir_override() {
-            ProfileCatalog::load_from_dir(&path)
-                .map_err(|e| anyhow!("load profile catalog: {e}"))?
+            ProfileCatalog::load_from_dir(&path).map_err(|e| anyhow!("load profile catalog: {e}"))?
         } else {
             ProfileCatalog::builtin()
         };
         #[cfg(not(test))]
-        let catalog =
-            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        let catalog = ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
         let profile = catalog
             .get(profile_id)
             .cloned()
@@ -2225,21 +2133,13 @@ impl ServiceState {
                         profiles_dir.display()
                     )
                 })?;
-                Profile::from_config(
-                    config_root.to_path_buf(),
-                    profiles_dir.join(profile_id),
-                    profile,
-                )
-                .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
+                Profile::from_config(config_root.to_path_buf(), profiles_dir.join(profile_id), profile)
+                    .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
             }
         }
     }
 
-    fn materialize_active_profile(
-        &self,
-        profile: &Profile,
-        session_dir: &StdPath,
-    ) -> Result<PathBuf> {
+    fn materialize_active_profile(&self, profile: &Profile, session_dir: &StdPath) -> Result<PathBuf> {
         let config = profile.config();
         let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
         let plugins = self
@@ -2281,13 +2181,7 @@ impl ServiceState {
                         .map(|profile_id| info.profile_id == profile_id)
                         .unwrap_or(true)
                 })
-                .map(|(id, info)| {
-                    (
-                        id.clone(),
-                        info.profile_id.clone(),
-                        info.session_dir.clone(),
-                    )
-                })
+                .map(|(id, info)| (id.clone(), info.profile_id.clone(), info.session_dir.clone()))
                 .collect::<Vec<_>>()
         };
 
@@ -2358,12 +2252,10 @@ impl ServiceState {
         profile: &ProfileConfigFile,
     ) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
         let arch = capsem_core::net::policy_config::current_profile_arch();
-        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
-            anyhow!(
-                "profile {} has no assets for architecture {arch}",
-                profile.id
-            )
-        })?;
+        let arch_assets = profile
+            .assets
+            .current_arch_assets()
+            .ok_or_else(|| anyhow!("profile {} has no assets for architecture {arch}", profile.id))?;
 
         Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel)?,
@@ -2380,12 +2272,7 @@ impl ServiceState {
         pinned_profile_payload_hash: &str,
         pins: &BootAssetPins,
     ) -> Result<()> {
-        self.validate_profile_identity_and_pins(
-            profile,
-            profile_revision,
-            pinned_profile_payload_hash,
-            pins,
-        )?;
+        self.validate_profile_identity_and_pins(profile, profile_revision, pinned_profile_payload_hash, pins)?;
         self.validate_profile_asset_files(profile, pins)
     }
 
@@ -2425,11 +2312,7 @@ impl ServiceState {
         Ok(())
     }
 
-    fn validate_profile_asset_files(
-        &self,
-        profile: &ProfileConfigFile,
-        pins: &BootAssetPins,
-    ) -> Result<()> {
+    fn validate_profile_asset_files(&self, profile: &ProfileConfigFile, pins: &BootAssetPins) -> Result<()> {
         let resolved = self.resolve_profile_asset_paths(profile)?;
         validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
         validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
@@ -2438,10 +2321,7 @@ impl ServiceState {
     }
 
     fn persistent_active_profile_path(&self, entry: &PersistentVmEntry) -> Result<PathBuf> {
-        let active_profile_path = entry
-            .session_dir
-            .join(ACTIVE_PROFILE_DIR)
-            .join(ACTIVE_PROFILE_FILE);
+        let active_profile_path = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
         if active_profile_path.exists() {
             validate_saved_active_profile(&active_profile_path, entry)?;
             return Ok(active_profile_path);
@@ -2459,10 +2339,7 @@ impl ServiceState {
 
     fn validate_persistent_profile_authority(&self, entry: &PersistentVmEntry) -> Result<()> {
         reject_revoked_persistent_pins(&self.assets_dir, entry)?;
-        let active_profile_path = entry
-            .session_dir
-            .join(ACTIVE_PROFILE_DIR)
-            .join(ACTIVE_PROFILE_FILE);
+        let active_profile_path = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
         if active_profile_path.exists() {
             validate_saved_active_profile(&active_profile_path, entry)?;
             return Ok(());
@@ -2503,10 +2380,7 @@ impl ServiceState {
         Ok(actual)
     }
 
-    fn resolve_pinned_asset_paths(
-        &self,
-        pins: &BootAssetPins,
-    ) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
+    fn resolve_pinned_asset_paths(&self, pins: &BootAssetPins) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
         let arch = capsem_core::net::policy_config::current_profile_arch();
         Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: boot_asset_pin_path(&self.assets_dir, arch, &pins.kernel),
@@ -2526,10 +2400,7 @@ impl ServiceState {
         validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)
     }
 
-    fn persistent_entry_resume_state(
-        &self,
-        entry: &PersistentVmEntry,
-    ) -> (VmLifecycleState, bool, Option<String>) {
+    fn persistent_entry_resume_state(&self, entry: &PersistentVmEntry) -> (VmLifecycleState, bool, Option<String>) {
         if entry.defunct {
             return (VmLifecycleState::Defunct, false, entry.last_error.clone());
         }
@@ -2563,13 +2434,7 @@ impl ServiceState {
     ) -> (VmLifecycleState, bool, Option<String>) {
         let vm_id = persistent_entry_vm_id(entry);
         let fingerprint = persistent_resume_state_fingerprint(self, entry);
-        if let Some(cached) = self
-            .persistent_resume_state_cache
-            .lock()
-            .unwrap()
-            .get(&vm_id)
-            .cloned()
-        {
+        if let Some(cached) = self.persistent_resume_state_cache.lock().unwrap().get(&vm_id).cloned() {
             if cached.fingerprint == fingerprint {
                 return cached.state;
             }
@@ -2588,11 +2453,7 @@ impl ServiceState {
 }
 
 fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
-    run_dir
-        .parent()
-        .unwrap_or(run_dir)
-        .join("sessions")
-        .join("main.db")
+    run_dir.parent().unwrap_or(run_dir).join("sessions").join("main.db")
 }
 
 fn gib(bytes: u64) -> u64 {
@@ -2601,13 +2462,8 @@ fn gib(bytes: u64) -> u64 {
 
 fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
     let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs).with_context(|| {
-        format!(
-            "VM '{}' rootfs.img unavailable at {}",
-            entry.name,
-            rootfs.display()
-        )
-    })?;
+    let metadata = std::fs::metadata(&rootfs)
+        .with_context(|| format!("VM '{}' rootfs.img unavailable at {}", entry.name, rootfs.display()))?;
     let gib_bytes = 1024_u64 * 1024 * 1024;
     if metadata.len() == 0 || metadata.len() % gib_bytes != 0 {
         return Err(anyhow!(
@@ -2626,10 +2482,10 @@ fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
 }
 
 fn validate_saved_active_profile(path: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read saved active profile {}", path.display()))?;
-    let active: ActiveProfileFile = toml::from_str(&text)
-        .with_context(|| format!("parse saved active profile {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("read saved active profile {}", path.display()))?;
+    let active: ActiveProfileFile =
+        toml::from_str(&text).with_context(|| format!("parse saved active profile {}", path.display()))?;
     active
         .validate()
         .map_err(anyhow::Error::msg)
@@ -2717,9 +2573,7 @@ fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &PersistentVmEntr
                 .get("status")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
-            let hash = image
-                .pointer("/digest/blake3")
-                .and_then(serde_json::Value::as_str)?;
+            let hash = image.pointer("/digest/blake3").and_then(serde_json::Value::as_str)?;
             (revoked && pinned_hashes.contains(hash)).then_some(hash)
         });
     if let Some(hash) = revoked_hash {
@@ -2734,12 +2588,10 @@ fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &PersistentVmEntr
 
 fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
     let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
-        anyhow!(
-            "profile {} has no assets for architecture {arch}",
-            profile.id
-        )
-    })?;
+    let arch_assets = profile
+        .assets
+        .current_arch_assets()
+        .ok_or_else(|| anyhow!("profile {} has no assets for architecture {arch}", profile.id))?;
     Ok(BootAssetPins {
         kernel: descriptor_pin(&arch_assets.kernel)?,
         initrd: descriptor_pin(&arch_assets.initrd)?,
@@ -2761,20 +2613,12 @@ fn descriptor_pin(asset: &ProfileAssetDescriptor) -> Result<BootAssetPin> {
 
 fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
     if !path.exists() {
-        return Err(anyhow!(
-            "{kind} asset '{}' is missing at {}",
-            pin.name,
-            path.display()
-        ));
+        return Err(anyhow!("{kind} asset '{}' is missing at {}", pin.name, path.display()));
     }
     Ok(())
 }
 
-fn profile_asset_descriptor_path(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
+fn profile_asset_descriptor_path(assets_dir: &StdPath, arch: &str, asset: &ProfileAssetDescriptor) -> Result<PathBuf> {
     let hash_name = profile_asset_hash_name(asset)?;
     let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
 
@@ -2795,21 +2639,16 @@ fn profile_asset_descriptor_path(
 }
 
 fn required_profile_asset_hash(asset: &ProfileAssetDescriptor) -> Result<&str> {
-    asset.hash.as_deref().ok_or_else(|| {
-        anyhow!(
-            "profile asset '{}' is missing a materialized hash",
-            asset.name
-        )
-    })
+    asset
+        .hash
+        .as_deref()
+        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized hash", asset.name))
 }
 
 fn required_profile_asset_size(asset: &ProfileAssetDescriptor) -> Result<u64> {
-    asset.size.ok_or_else(|| {
-        anyhow!(
-            "profile asset '{}' is missing a materialized size",
-            asset.name
-        )
-    })
+    asset
+        .size
+        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized size", asset.name))
 }
 
 fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
@@ -2857,11 +2696,7 @@ fn persistent_registry_asset_filenames(registry: &PersistentRegistry) -> HashSet
     filenames
 }
 
-fn profile_asset_download_target(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
+fn profile_asset_download_target(assets_dir: &StdPath, arch: &str, asset: &ProfileAssetDescriptor) -> Result<PathBuf> {
     Ok(assets_dir.join(arch).join(profile_asset_hash_name(asset)?))
 }
 
@@ -2888,8 +2723,7 @@ fn profile_asset_download_target(
 /// string is stable across VZ releases since it comes from VZ's
 /// localized string table, not our code.
 fn is_launchd_cleanup_transient(process_log_tail: &str) -> bool {
-    process_log_tail.contains("com.apple.security.virtualization")
-        && process_log_tail.contains("entitlement")
+    process_log_tail.contains("com.apple.security.virtualization") && process_log_tail.contains("entitlement")
 }
 
 fn is_boot_fatal_log_tail(tail: &str) -> bool {
@@ -2907,15 +2741,9 @@ fn is_boot_fatal_log_tail(tail: &str) -> bool {
 /// and made the crate look like it already used the shared one. `serial.log`
 /// is written through `CappedLogWriter` and rotates, so the bare name holds
 /// only the newest slice.
-fn read_session_log_lines(
-    session_dir: &std::path::Path,
-    file_name: &str,
-    n: usize,
-) -> Option<String> {
-    let content = capsem_foundation::telemetry::read_log_tail(
-        &session_dir.join(file_name),
-        SESSION_LOG_TAIL_MAX_BYTES,
-    )?;
+fn read_session_log_lines(session_dir: &std::path::Path, file_name: &str, n: usize) -> Option<String> {
+    let content =
+        capsem_foundation::telemetry::read_log_tail(&session_dir.join(file_name), SESSION_LOG_TAIL_MAX_BYTES)?;
     let lines: Vec<&str> = content.lines().collect();
     let start = lines.len().saturating_sub(n);
     Some(lines[start..].join("\n"))
@@ -2992,11 +2820,7 @@ use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
 /// Resolve a sanitized relative path to an absolute workspace path on the host.
 /// Returns (workspace_root, resolved_path). Verifies the resolved path is
 /// inside the workspace via canonicalize + starts_with.
-fn resolve_workspace_path(
-    state: &ServiceState,
-    id: &str,
-    sanitized: &str,
-) -> Result<(PathBuf, PathBuf), AppError> {
+fn resolve_workspace_path(state: &ServiceState, id: &str, sanitized: &str) -> Result<(PathBuf, PathBuf), AppError> {
     let session_dir = {
         let instances = state.instances.lock().unwrap();
         if let Some(info) = instances.get(id) {
@@ -3010,9 +2834,7 @@ fn resolve_workspace_path(
                 .get(id)
                 .or_else(|| reg.data.vms.values().find(|e| e.name == id))
                 .map(|e| e.session_dir.clone())
-                .ok_or_else(|| {
-                    AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
-                })?
+                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
         }
     };
     let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
@@ -3026,12 +2848,9 @@ fn resolve_workspace_path(
         // For upload: parent must exist and be inside workspace
         if let Some(parent) = target.parent() {
             if parent.exists() {
-                let canon_parent = parent.canonicalize().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("canonicalize: {e}"),
-                    )
-                })?;
+                let canon_parent = parent
+                    .canonicalize()
+                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
                 let ws_canon = workspace_root.canonicalize().map_err(|e| {
                     AppError(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -3039,22 +2858,14 @@ fn resolve_workspace_path(
                     )
                 })?;
                 if !canon_parent.starts_with(&ws_canon) {
-                    return Err(AppError(
-                        StatusCode::FORBIDDEN,
-                        "path outside workspace".into(),
-                    ));
+                    return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
                 }
                 return Ok((workspace_root, target));
             }
         }
         return Ok((workspace_root, target));
     }
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("canonicalize: {e}"),
-        )
-    })?;
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
 
     let ws_canon = workspace_root.canonicalize().map_err(|e| {
         AppError(
@@ -3063,10 +2874,7 @@ fn resolve_workspace_path(
         )
     })?;
     if !canonical.starts_with(&ws_canon) {
-        return Err(AppError(
-            StatusCode::FORBIDDEN,
-            "path outside workspace".into(),
-        ));
+        return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
     }
     Ok((workspace_root, canonical))
 }
@@ -3110,9 +2918,7 @@ fn list_dir_recursive(
     items.sort_by(|a, b| {
         let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        b_is_dir
-            .cmp(&a_is_dir)
-            .then_with(|| a.file_name().cmp(&b.file_name()))
+        b_is_dir.cmp(&a_is_dir).then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
     for item in items {
@@ -3204,9 +3010,7 @@ async fn handle_list_files(
                     .get(&id)
                     .or_else(|| reg.data.vms.values().find(|e| e.name == id))
                     .map(|e| e.session_dir.clone())
-                    .ok_or_else(|| {
-                        AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
-                    })?
+                    .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
             }
         };
         let ws = capsem_core::guest_share_dir(&session_dir).join("workspace");
@@ -3234,16 +3038,12 @@ async fn handle_list_files(
         // Clone Arc to move into blocking task
         let state_clone = Arc::clone(&state);
         let target = target.clone();
-        tokio::task::spawn_blocking(move || {
-            list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika)
-        })
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
+        tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika))
+            .await
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
     };
 
-    Ok(Json(FileListResponse {
-        entries: magika_ref,
-    }))
+    Ok(Json(FileListResponse { entries: magika_ref }))
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -3255,15 +3055,12 @@ fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
 
 fn active_instance_uds_path(state: &Arc<ServiceState>, id: &str) -> Result<PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
-    instances
-        .get(id)
-        .map(|i| i.uds_path.clone())
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::CONFLICT,
-                "file import/export requires a running sandbox security ledger".into(),
-            )
-        })
+    instances.get(id).map(|i| i.uds_path.clone()).ok_or_else(|| {
+        AppError(
+            StatusCode::CONFLICT,
+            "file import/export requires a running sandbox security ledger".into(),
+        )
+    })
 }
 
 async fn log_file_boundary(
@@ -3298,9 +3095,7 @@ async fn log_file_boundary(
 
     match res {
         ProcessToService::LogFileBoundaryResult {
-            success: true,
-            data,
-            ..
+            success: true, data, ..
         } => Ok(data),
         ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3330,11 +3125,7 @@ async fn handle_download_file(
     if meta.len() > MAX_FILE_SIZE {
         return Err(AppError(
             StatusCode::PAYLOAD_TOO_LARGE,
-            format!(
-                "file too large: {} bytes (max {})",
-                meta.len(),
-                MAX_FILE_SIZE
-            ),
+            format!("file too large: {} bytes (max {})", meta.len(), MAX_FILE_SIZE),
         ));
     }
 
@@ -3401,16 +3192,8 @@ async fn handle_upload_file(
     let preview = file_security_preview_bytes(&data);
     let target_for_write = target.clone();
 
-    if let Some(rewritten) = log_file_boundary(
-        &state,
-        &id,
-        FileBoundaryAction::Import,
-        sanitized,
-        preview,
-        size,
-        None,
-    )
-    .await?
+    if let Some(rewritten) =
+        log_file_boundary(&state, &id, FileBoundaryAction::Import, sanitized, preview, size, None).await?
     {
         data = rewritten;
     }
@@ -3521,12 +3304,7 @@ async fn handle_fork(
         .cached_profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     state
-        .validate_profile_pins(
-            &profile,
-            &profile_revision,
-            &profile_payload_hash,
-            &asset_pins,
-        )
+        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Flush the guest root filesystem so the ext4 system overlay (/dev/vdb
@@ -3561,24 +3339,19 @@ async fn handle_fork(
     // Offload to the blocking pool so axum worker threads aren't starved under
     // concurrent fork load.
     let clone_dst = new_session_dir.clone();
-    let size_bytes = tokio::task::spawn_blocking(move || {
-        capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst)
-    })
-    .await
-    .map_err(|e| {
-        capsem_service::app_error_logged!(
-            error,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "fork: clone-task panic: {e}"
-        )
-    })?
-    .map_err(|e| {
-        capsem_service::app_error_logged!(
-            error,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "fork: clone failed: {e}"
-        )
-    })?;
+    let size_bytes =
+        tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst))
+            .await
+            .map_err(|e| {
+                capsem_service::app_error_logged!(
+                    error,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "fork: clone-task panic: {e}"
+                )
+            })?
+            .map_err(|e| {
+                capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
+            })?;
 
     // Register as persistent VM
     {
@@ -3649,8 +3422,7 @@ enum AttemptDecision {
 /// match the pre-refactor handle_provision response shape.
 fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> AttemptDecision {
     match outcome {
-        ProvisionAttemptOutcome::Ready { uds_path }
-        | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
+        ProvisionAttemptOutcome::Ready { uds_path } | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
             AttemptDecision::Succeed(uds_path)
         }
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
@@ -3688,10 +3460,7 @@ fn existing_session_names(state: &ServiceState) -> Vec<String> {
             .list()
             .map(|entry| entry.name.clone()),
     );
-    for dir in [
-        state.run_dir.join("sessions"),
-        state.run_dir.join("persistent"),
-    ] {
+    for dir in [state.run_dir.join("sessions"), state.run_dir.join("persistent")] {
         if let Ok(entries) = std::fs::read_dir(dir) {
             existing.extend(
                 entries
@@ -3718,10 +3487,7 @@ async fn handle_provision(
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     });
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
-    if existing_session_names(&state)
-        .iter()
-        .any(|existing| existing == &name)
-    {
+    if existing_session_names(&state).iter().any(|existing| existing == &name) {
         return Err(AppError(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", name),
@@ -3776,10 +3542,7 @@ async fn handle_provision(
                 let _ = registry.unregister(&name);
                 drop(registry);
                 state.instances.lock().unwrap().remove(&id);
-                warn!(
-                    id,
-                    attempt, "retrying provision after launchd-cleanup transient"
-                );
+                warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 
             let outcome = provision_attempt(
@@ -3902,9 +3665,7 @@ async fn provision_attempt(
     .await
     {
         Ok(r) => r,
-        Err(e) => {
-            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"))
-        }
+        Err(e) => return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}")),
     };
 
     if let Err(e) = provision_result {
@@ -3932,13 +3693,15 @@ async fn provision_attempt(
             // find_failed_session_dir for ephemeral VMs whose dir was
             // renamed to `-failed-*`.
             let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail =
-                cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
-                    Some(dir) => read_process_log_tail(&dir, 20),
-                    None => "(no preserved log found)".to_string(),
-                });
+            let tail = cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            });
             return if is_launchd_cleanup_transient(&tail) {
-                warn!(id, "provision: detected launchd-cleanup transient (misleading 'entitlement' error)");
+                warn!(
+                    id,
+                    "provision: detected launchd-cleanup transient (misleading 'entitlement' error)"
+                );
                 ProvisionAttemptOutcome::LaunchdTransient
             } else {
                 ProvisionAttemptOutcome::BootCrash { tail }
@@ -4095,8 +3858,7 @@ fn build_list_response(state: &ServiceState) -> ListResponse {
     };
     for entry in inactive_persistent {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) =
-            state.persistent_entry_resume_state_cached(&entry);
+        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -4179,8 +3941,7 @@ async fn handle_info(
     let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) =
-            state.persistent_entry_resume_state_cached(&entry);
+        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -4203,10 +3964,7 @@ async fn handle_info(
         return Ok(Json(info));
     }
 
-    Err(AppError(
-        StatusCode::NOT_FOUND,
-        format!("sandbox not found: {id}"),
-    ))
+    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
 async fn handle_vm_status(
@@ -4237,8 +3995,7 @@ async fn handle_vm_status(
     {
         if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
             let vm_id = persistent_entry_vm_id(&entry);
-            let (status, can_resume, blocked_reason) =
-                state.persistent_entry_resume_state_cached(&entry);
+            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
             return Ok(Json(api::VmStatusResponse {
                 id: vm_id,
                 name: entry.name.clone(),
@@ -4264,10 +4021,7 @@ async fn handle_vm_status(
         }
     }
 
-    Err(AppError(
-        StatusCode::NOT_FOUND,
-        format!("sandbox not found: {id}"),
-    ))
+    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
 async fn handle_vm_snapshots_status(
@@ -4279,13 +4033,9 @@ async fn handle_vm_snapshots_status(
         instances.get(&id).map(|instance| instance.uds_path.clone())
     } {
         let request_id = state.job_counter.fetch_add(1, Ordering::SeqCst);
-        let response = send_ipc_command(
-            &uds_path,
-            ServiceToProcess::SnapshotStatus { id: request_id },
-            Some(5),
-        )
-        .await
-        .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
+        let response = send_ipc_command(&uds_path, ServiceToProcess::SnapshotStatus { id: request_id }, Some(5))
+            .await
+            .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
         return match response {
             ProcessToService::SnapshotStatusResult {
                 id: response_id,
@@ -4313,9 +4063,7 @@ async fn handle_vm_snapshots_list(
     })))
 }
 
-fn snapshot_status_from_session_dir(
-    session_dir: &std::path::Path,
-) -> capsem_proto::ipc::SnapshotStatus {
+fn snapshot_status_from_session_dir(session_dir: &std::path::Path) -> capsem_proto::ipc::SnapshotStatus {
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.to_path_buf(),
         10,
@@ -4382,9 +4130,7 @@ async fn handle_vm_fork_status(
 }
 
 /// GET /stats -- return global stats from the canonical ledger.
-async fn handle_stats(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<impl IntoResponse, AppError> {
+async fn handle_stats(State(state): State<Arc<ServiceState>>) -> Result<impl IntoResponse, AppError> {
     let body = read_stats_response_from_main_db_handle(&state).await?;
     Ok((
         StatusCode::OK,
@@ -4432,11 +4178,7 @@ async fn handle_stats_summary(
         allowed_requests: stats.net_allowed,
         denied_requests: stats.net_denied,
         total_input_tokens: stats.total_input_tokens,
-        total_thinking_tokens: stats
-            .total_usage_details
-            .get("thinking")
-            .copied()
-            .unwrap_or_default(),
+        total_thinking_tokens: stats.total_usage_details.get("thinking").copied().unwrap_or_default(),
         total_output_tokens: stats.total_output_tokens,
         total_tool_calls: stats.total_tool_calls,
         total_estimated_cost: stats.total_estimated_cost_usd,
@@ -4463,12 +4205,7 @@ async fn handle_logs(
                     // which is exactly when logs matter most.
                     match find_failed_session_dir(&state.run_dir, &id) {
                         Some(dir) => dir,
-                        None => {
-                            return Err(AppError(
-                                StatusCode::NOT_FOUND,
-                                format!("sandbox not found: {id}"),
-                            ))
-                        }
+                        None => return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))),
                     }
                 }
             }
@@ -4483,23 +4220,12 @@ async fn handle_logs(
     // arbitrarily large -- reading the whole bare file lost the rotated slice
     // and let the guest choose the allocation.
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = capsem_foundation::telemetry::read_log_tail(
-            &serial_log_path,
-            SESSION_LOG_TAIL_MAX_BYTES,
-        );
-        let process = capsem_foundation::telemetry::read_log_tail(
-            &process_log_path,
-            SESSION_LOG_TAIL_MAX_BYTES,
-        );
+        let serial = capsem_foundation::telemetry::read_log_tail(&serial_log_path, SESSION_LOG_TAIL_MAX_BYTES);
+        let process = capsem_foundation::telemetry::read_log_tail(&process_log_path, SESSION_LOG_TAIL_MAX_BYTES);
         (serial, process)
     })
     .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("log read failed: {e}"),
-        )
-    })?;
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
     Ok(Json(LogsResponse {
         logs: serial_logs.as_deref().unwrap_or("").to_string(),
@@ -4571,22 +4297,13 @@ async fn handle_triage(
         if let Some(path) = triage::host_log_path(&run_dir, binary) {
             let bin_label = format!("capsem-{binary}");
             panics.extend(triage::scan_panics_in_file(&path, &bin_label, since_unix));
-            errors.extend(triage::scan_errors_in_file(
-                &path, &bin_label, since_unix, limit,
-            ));
-            slow_ops.extend(triage::scan_slow_ops_in_file(
-                &path, &bin_label, since_unix, 500,
-            ));
+            errors.extend(triage::scan_errors_in_file(&path, &bin_label, since_unix, limit));
+            slow_ops.extend(triage::scan_slow_ops_in_file(&path, &bin_label, since_unix, 500));
         }
     }
     if let Some(path) = triage::latest_app_log(&home) {
         panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
-        errors.extend(triage::scan_errors_in_file(
-            &path,
-            "capsem-app",
-            since_unix,
-            limit,
-        ));
+        errors.extend(triage::scan_errors_in_file(&path, "capsem-app", since_unix, limit));
     }
 
     panics.truncate(limit);
@@ -4614,11 +4331,7 @@ async fn handle_triage(
             p.message.chars().take(120).collect::<String>(),
         ));
     }
-    for e in errors
-        .iter()
-        .filter(|e| e.target.as_deref() == Some("ipc"))
-        .take(3)
-    {
+    for e in errors.iter().filter(|e| e.target.as_deref() == Some("ipc")).take(3) {
         rank.push(format!(
             "ipc-warn {} in {} -- {}",
             e.ts.as_str().chars().take(19).collect::<String>(),
@@ -4709,8 +4422,7 @@ async fn session_db_triage(
 
     let denied_net_v = read_query(db, vm_id, db_path, "denied_net", &denied_net_sql).await?;
     let tool_errors_v = read_query(db, vm_id, db_path, "tool_errors", &tool_errors_sql).await?;
-    let exec_failures_v =
-        read_query(db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
+    let exec_failures_v = read_query(db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
@@ -4740,11 +4452,7 @@ fn limit_triage_session_block(value: &serde_json::Value, limit: usize) -> serde_
     })
 }
 
-async fn triage_for_vm(
-    state: &ServiceState,
-    vm_id: &str,
-    limit: usize,
-) -> Result<serde_json::Value, AppError> {
+async fn triage_for_vm(state: &ServiceState, vm_id: &str, limit: usize) -> Result<serde_json::Value, AppError> {
     let session_dir = match resolve_session_dir(state, vm_id) {
         Ok(session_dir) => session_dir,
         Err(_) => {
@@ -4756,14 +4464,12 @@ async fn triage_for_vm(
         return Ok(json!({ "missing": true, "reason": "session not found" }));
     }
     let db = open_ready_session_db(state, vm_id, "triage", &db_path).await?;
-    let session = session_db_triage(vm_id, &db, &db_path, limit)
-        .await
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read triage ledger for {vm_id}: {error}"),
-            )
-        })?;
+    let session = session_db_triage(vm_id, &db, &db_path, limit).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read triage ledger for {vm_id}: {error}"),
+        )
+    })?;
     Ok(limit_triage_session_block(&session, limit))
 }
 
@@ -4805,22 +4511,13 @@ async fn handle_host_logs(
         capsem_foundation::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
     })
     .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("log read failed: {e}"),
-        )
-    })?;
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
     // Apply grep + tail post-filters here so the wire surface to the
     // capsem_host_logs MCP tool can avoid two round-trips.
     let mut text = text;
     if let Some(pat) = &params.grep {
-        text = text
-            .lines()
-            .filter(|l| l.contains(pat))
-            .collect::<Vec<_>>()
-            .join("\n");
+        text = text.lines().filter(|l| l.contains(pat)).collect::<Vec<_>>().join("\n");
     }
     if let Some(n) = params.tail {
         let lines: Vec<&str> = text.lines().collect();
@@ -4847,12 +4544,7 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
             .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
     })
     .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("log read failed: {e}"),
-        )
-    })?
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(text)
@@ -4883,8 +4575,7 @@ async fn send_ipc_command(
         .await
         .map_err(|e| format!("failed to send IPC command: {e}"))?;
 
-    let deadline =
-        timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
+    let deadline = timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
     loop {
         let msg = match deadline {
             Some(deadline) => match tokio::time::timeout_at(deadline, rx.recv()).await {
@@ -4951,8 +4642,7 @@ async fn wait_for_vm_ready(
     // gateway-ready) wait for remote processes with seconds-scale startup
     // where 500ms is appropriate; this poll is different.
     let opts = vm_ready_poll_opts(timeout_secs);
-    let died: Arc<std::sync::atomic::AtomicBool> =
-        Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let died: Arc<std::sync::atomic::AtomicBool> = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let res = capsem_foundation::poll::poll_until(opts, || {
         let ready = ready_path.clone();
         let state = state.cloned();
@@ -5037,10 +4727,8 @@ async fn handle_exec(
             truncated,
             ..
         } => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
             truncated,
         })),
@@ -5095,9 +4783,7 @@ async fn handle_write_file(
     .map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "VM {id} write_file failed while awaiting the guest completion response: {error}"
-            ),
+            format!("VM {id} write_file failed while awaiting the guest completion response: {error}"),
         )
     })?;
 
@@ -5170,9 +4856,7 @@ async fn handle_read_file(
     }
 }
 
-async fn handle_reload_config(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_reload_config(State(state): State<Arc<ServiceState>>) -> Result<Json<serde_json::Value>, AppError> {
     handle_reload_config_for_profile(state, None).await
 }
 
@@ -5224,10 +4908,7 @@ async fn handle_reload_config_for_profile(
     } else {
         Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "failed to reload config in some instances: {}",
-                failures.join(", ")
-            ),
+            format!("failed to reload config in some instances: {}", failures.join(", ")),
         ))
     }
 }
@@ -5261,15 +4942,8 @@ async fn handle_save_settings(
 }
 
 #[cfg(test)]
-fn profile_asset_status_value(
-    state: &ServiceState,
-    profile: &ProfileConfigFile,
-) -> serde_json::Value {
-    let reconcile = state
-        .asset_reconcile
-        .lock()
-        .map(|s| s.clone())
-        .unwrap_or_default();
+fn profile_asset_status_value(state: &ServiceState, profile: &ProfileConfigFile) -> serde_json::Value {
+    let reconcile = state.asset_reconcile.lock().map(|s| s.clone()).unwrap_or_default();
     let current_arch = capsem_core::net::policy_config::current_profile_arch();
     let Some(arch_assets) = profile.assets.current_arch_assets() else {
         let mut value = json!({
@@ -5294,18 +4968,12 @@ fn profile_asset_status_value(
     ]
     .into_iter()
     .map(|(kind, asset)| {
-        let (path, materialization_error) =
-            match profile_asset_descriptor_path(&state.assets_dir, current_arch, asset) {
-                Ok(path) => (path, None),
-                Err(error) => (
-                    state.assets_dir.join(current_arch).join(&asset.name),
-                    Some(error),
-                ),
-            };
-        let resolved_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(&asset.name);
+        let (path, materialization_error) = match profile_asset_descriptor_path(&state.assets_dir, current_arch, asset)
+        {
+            Ok(path) => (path, None),
+            Err(error) => (state.assets_dir.join(current_arch).join(&asset.name), Some(error)),
+        };
+        let resolved_name = path.file_name().and_then(|name| name.to_str()).unwrap_or(&asset.name);
         let error = materialization_error.map(|error| error.to_string());
         let status = if error.is_some() {
             "error"
@@ -5356,11 +5024,7 @@ fn profile_update_semantics_value() -> serde_json::Value {
 }
 
 fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::Value {
-    let reconcile = state
-        .asset_reconcile
-        .lock()
-        .map(|s| s.clone())
-        .unwrap_or_default();
+    let reconcile = state.asset_reconcile.lock().map(|s| s.clone()).unwrap_or_default();
     let current_arch = capsem_core::net::policy_config::current_profile_arch();
     let status = profile.readiness_status(&state.assets_dir, current_arch);
     let config = profile.config();
@@ -5482,14 +5146,8 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         }
     }
     if let (Some(metadata), Some(obj)) = (&manifest_metadata, value.as_object_mut()) {
-        obj.insert(
-            "origin_path".to_string(),
-            json!(metadata_path.display().to_string()),
-        );
-        if let Some(source) = metadata
-            .get("manifest_url")
-            .and_then(|value| value.as_str())
-        {
+        obj.insert("origin_path".to_string(), json!(metadata_path.display().to_string()));
+        if let Some(source) = metadata.get("manifest_url").and_then(|value| value.as_str()) {
             obj.insert("origin_source".to_string(), json!(source));
         }
         if let Some(packaged_at) = metadata.get("packaged_at").and_then(|value| value.as_str()) {
@@ -5508,10 +5166,7 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         obj.insert("format".to_string(), json!(manifest.format));
         obj.insert("refresh_policy".to_string(), json!(manifest.refresh_policy));
         obj.insert("assets_current".to_string(), json!(manifest.assets.current));
-        obj.insert(
-            "binaries_current".to_string(),
-            json!(manifest.binaries.current),
-        );
+        obj.insert("binaries_current".to_string(), json!(manifest.binaries.current));
     }
     value
 }
@@ -5598,15 +5253,10 @@ fn update_status_response_from_paths(
         .and_then(|cache| cache.source.clone())
         .or(manifest_channel);
     let channel_hash = cache.as_ref().and_then(|cache| cache.channel_hash.clone());
-    let validation_status = cache
-        .as_ref()
-        .and_then(|cache| cache.validation_status.clone());
-    let validation_error = cache
-        .as_ref()
-        .and_then(|cache| cache.validation_error.clone());
+    let validation_status = cache.as_ref().and_then(|cache| cache.validation_status.clone());
+    let validation_error = cache.as_ref().and_then(|cache| cache.validation_error.clone());
     let last_error = parse_error.or_else(|| validation_error.clone());
-    let supply_chain =
-        supply_chain_evidence_from_paths(assets_dir, channel_url.clone(), channel_hash.clone());
+    let supply_chain = supply_chain_evidence_from_paths(assets_dir, channel_url.clone(), channel_hash.clone());
 
     api::UpdateStatusResponse {
         checked_at,
@@ -5618,9 +5268,7 @@ fn update_status_response_from_paths(
         last_error,
         binary: update_track(
             Some(current_binary.to_string()),
-            cache
-                .as_ref()
-                .and_then(|cache| cache.latest_version.clone()),
+            cache.as_ref().and_then(|cache| cache.latest_version.clone()),
             cache.as_ref().is_some_and(|cache| cache.update_available),
         ),
         assets: cache
@@ -5747,19 +5395,14 @@ fn supply_chain_evidence_from_paths(
     }
 }
 
-fn read_update_check_cache(
-    path: &StdPath,
-) -> std::result::Result<Option<UpdateCheckCache>, String> {
+fn read_update_check_cache(path: &StdPath) -> std::result::Result<Option<UpdateCheckCache>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|error| format!("parse {}: {error}", path.display()))?;
-    if value.get("schema").and_then(serde_json::Value::as_str)
-        != Some("capsem.manifest_metadata.v1")
-    {
+    let content = std::fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&content).map_err(|error| format!("parse {}: {error}", path.display()))?;
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some("capsem.manifest_metadata.v1") {
         return Err(format!(
             "parse {}: expected schema capsem.manifest_metadata.v1",
             path.display()
@@ -5791,11 +5434,7 @@ fn manifest_channel_source(assets_dir: &StdPath) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn update_track(
-    current: Option<String>,
-    latest: Option<String>,
-    update_available: bool,
-) -> api::UpdateTrackStatus {
+fn update_track(current: Option<String>, latest: Option<String>, update_available: bool) -> api::UpdateTrackStatus {
     let state = if update_available {
         api::UpdateTrackState::UpdateAvailable
     } else if latest.is_some() || current.is_some() {
@@ -5858,9 +5497,7 @@ fn channel_update_track(
         },
         Some("update_available") => update_track(current, latest, true),
         Some("current") | Some("published") => update_track(current, latest, update_available),
-        _ if latest.is_some() || update_available => {
-            update_track(current, latest, update_available)
-        }
+        _ if latest.is_some() || update_available => update_track(current, latest, update_available),
         _ => not_published_update_track(),
     }
 }
@@ -5963,10 +5600,7 @@ fn vm_asset_block_reason(state: &ServiceState, profile_id: &str) -> Option<Strin
 }
 
 fn asset_status_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
-    run_dir
-        .parent()
-        .unwrap_or(run_dir)
-        .join("asset-status.json")
+    run_dir.parent().unwrap_or(run_dir).join("asset-status.json")
 }
 
 fn load_asset_reconcile_state(path: &StdPath) -> AssetReconcileState {
@@ -5991,26 +5625,19 @@ fn load_asset_reconcile_state(path: &StdPath) -> AssetReconcileState {
     status
 }
 
-fn persist_asset_reconcile_state(
-    path: &StdPath,
-    status: &AssetReconcileState,
-) -> Result<(), String> {
+fn persist_asset_reconcile_state(path: &StdPath, status: &AssetReconcileState) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_vec_pretty(status)
-        .map_err(|e| format!("serialize asset status {}: {e}", path.display()))?;
+    let json =
+        serde_json::to_vec_pretty(status).map_err(|e| format!("serialize asset status {}: {e}", path.display()))?;
     std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
     Ok(())
 }
 
-fn update_asset_reconcile_state<F>(
-    state: &ServiceState,
-    update: F,
-) -> Result<AssetReconcileState, String>
+fn update_asset_reconcile_state<F>(state: &ServiceState, update: F) -> Result<AssetReconcileState, String>
 where
     F: FnOnce(&mut AssetReconcileState),
 {
@@ -6033,7 +5660,6 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
 }
 
 async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, String> {
-
     let result: Result<usize, String> = async {
         let Some(manifest) = state.manifest.read().unwrap().as_ref().cloned() else {
             return Ok(0);
@@ -6060,15 +5686,9 @@ async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, St
                         status.bytes_total = progress.bytes_total;
                     }
                     if progress.done {
-                        let snapshot = state
-                            .asset_reconcile
-                            .lock()
-                            .map(|status| status.clone())
-                            .ok();
+                        let snapshot = state.asset_reconcile.lock().map(|status| status.clone()).ok();
                         if let Some(snapshot) = snapshot {
-                            if let Err(error) =
-                                persist_asset_reconcile_state(&state.asset_status_path, &snapshot)
-                            {
+                            if let Err(error) = persist_asset_reconcile_state(&state.asset_status_path, &snapshot) {
                                 warn!(error = %error, "failed to persist asset progress");
                             }
                         }
@@ -6106,9 +5726,7 @@ async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, St
     if let Err(error) = final_status {
         warn!(error = %error, "failed to persist final asset status");
     }
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
+    state.asset_reconcile_inflight.store(false, Ordering::Release);
     result
 }
 
@@ -6138,17 +5756,11 @@ async fn ensure_profile_assets_after_claim(
 ) -> Result<usize, String> {
     let result: Result<usize, String> = async {
         let arch = capsem_core::net::policy_config::current_profile_arch();
-        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
-            format!(
-                "profile {} has no assets for architecture {arch}",
-                profile.id
-            )
-        })?;
-        let assets = [
-            &arch_assets.kernel,
-            &arch_assets.initrd,
-            &arch_assets.rootfs,
-        ];
+        let arch_assets = profile
+            .assets
+            .current_arch_assets()
+            .ok_or_else(|| format!("profile {} has no assets for architecture {arch}", profile.id))?;
+        let assets = [&arch_assets.kernel, &arch_assets.initrd, &arch_assets.rootfs];
         update_asset_reconcile_state(&state, |status| {
             *status = AssetReconcileState {
                 in_progress: true,
@@ -6158,11 +5770,8 @@ async fn ensure_profile_assets_after_claim(
 
         let mut downloaded = 0usize;
         for asset in assets {
-            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset)
-                .map_err(|e| e.to_string())?;
-            let expected_hash = profile_asset_hash_hex(asset)
-                .map_err(|e| e.to_string())?
-                .to_string();
+            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset).map_err(|e| e.to_string())?;
+            let expected_hash = profile_asset_hash_hex(asset).map_err(|e| e.to_string())?.to_string();
             let expected_size = required_profile_asset_size(asset).map_err(|e| e.to_string())?;
             if resolved.exists() {
                 match capsem_assets::asset_manager::hash_file(&resolved) {
@@ -6176,8 +5785,8 @@ async fn ensure_profile_assets_after_claim(
                         continue;
                     }
                     Ok(_) | Err(_) => {
-                        let target = profile_asset_download_target(&state.assets_dir, arch, asset)
-                            .map_err(|e| e.to_string())?;
+                        let target =
+                            profile_asset_download_target(&state.assets_dir, arch, asset).map_err(|e| e.to_string())?;
                         if resolved == target {
                             let _ = std::fs::remove_file(&resolved);
                         }
@@ -6185,8 +5794,7 @@ async fn ensure_profile_assets_after_claim(
                 }
             }
 
-            let target = profile_asset_download_target(&state.assets_dir, arch, asset)
-                .map_err(|e| e.to_string())?;
+            let target = profile_asset_download_target(&state.assets_dir, arch, asset).map_err(|e| e.to_string())?;
             download_profile_asset(asset, &target, {
                 let state = Arc::clone(&state);
                 move |bytes_done, bytes_total, done| {
@@ -6197,15 +5805,9 @@ async fn ensure_profile_assets_after_claim(
                         status.bytes_total = bytes_total;
                     }
                     if done {
-                        let snapshot = state
-                            .asset_reconcile
-                            .lock()
-                            .map(|status| status.clone())
-                            .ok();
+                        let snapshot = state.asset_reconcile.lock().map(|status| status.clone()).ok();
                         if let Some(snapshot) = snapshot {
-                            if let Err(error) =
-                                persist_asset_reconcile_state(&state.asset_status_path, &snapshot)
-                            {
+                            if let Err(error) = persist_asset_reconcile_state(&state.asset_status_path, &snapshot) {
                                 warn!(error = %error, "failed to persist profile asset progress");
                             }
                         }
@@ -6239,17 +5841,11 @@ async fn ensure_profile_assets_after_claim(
     if let Err(error) = final_status {
         warn!(error = %error, "failed to persist final profile asset status");
     }
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
+    state.asset_reconcile_inflight.store(false, Ordering::Release);
     result
 }
 
-async fn download_profile_asset<F>(
-    asset: &ProfileAssetDescriptor,
-    target: &StdPath,
-    mut on_progress: F,
-) -> Result<()>
+async fn download_profile_asset<F>(asset: &ProfileAssetDescriptor, target: &StdPath, mut on_progress: F) -> Result<()>
 where
     F: FnMut(u64, Option<u64>, bool),
 {
@@ -6260,10 +5856,7 @@ where
     }
     let tmp = target.with_file_name(format!(
         "{}.tmp",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("asset")
+        target.file_name().and_then(|name| name.to_str()).unwrap_or("asset")
     ));
     let _ = std::fs::remove_file(&tmp);
     let mut output = tokio::fs::File::create(&tmp)
@@ -6336,8 +5929,7 @@ where
             actual
         );
     }
-    std::fs::rename(&tmp, target)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    std::fs::rename(&tmp, target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -6386,9 +5978,7 @@ async fn handle_profile_assets_ensure(
     Ok(Json(refresh_reconcile_fields(&state, status)))
 }
 
-async fn handle_profile_assets_info(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_profile_assets_info(Path(profile_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     let manifest = profile_manifest_for_route(profile_id)?;
     let current_arch = capsem_core::net::policy_config::current_profile_arch();
     let current_assets = manifest.assets.current_arch_assets();
@@ -6404,15 +5994,11 @@ async fn handle_profile_assets_info(
 }
 
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
-async fn handle_corp_config(
-    Json(payload): Json<CorpConfigRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_corp_config(Json(payload): Json<CorpConfigRequest>) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "HOME not set".into(),
-    ))?;
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt()
+        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
 
     if let Some(source) = &payload.source {
         // Use the existing provision function which handles fetch + install
@@ -6442,10 +6028,8 @@ async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
 fn corp_info_value() -> Result<serde_json::Value, AppError> {
     use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
 
-    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "HOME not set".into(),
-    ))?;
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt()
+        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
     let paths: Vec<_> = corp_config_paths()
         .into_iter()
         .map(|path| {
@@ -6464,9 +6048,7 @@ fn corp_info_value() -> Result<serde_json::Value, AppError> {
 }
 
 /// POST /corp/validate -- validate corporate config from URL or inline TOML without installing it.
-async fn handle_corp_validate(
-    Json(payload): Json<CorpConfigRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_corp_validate(Json(payload): Json<CorpConfigRequest>) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
     if let Some(source) = &payload.source {
@@ -6488,15 +6070,11 @@ async fn handle_corp_validate(
 }
 
 /// POST /corp/reload -- refresh/re-read corp overlay and notify running VMs.
-async fn handle_corp_reload(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_corp_reload(State(state): State<Arc<ServiceState>>) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "HOME not set".into(),
-    ))?;
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt()
+        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
     corp_provision::refresh_corp_config_if_stale(capsem_dir).await;
     handle_reload_config(State(state)).await
 }
@@ -6543,10 +6121,7 @@ fn builtin_profile_config_root() -> PathBuf {
         .collect()
 }
 
-fn profile_from_catalog_entry(
-    profile: &ProfileConfigFile,
-    source: &ProfileCatalogSource,
-) -> Result<Profile, AppError> {
+fn profile_from_catalog_entry(profile: &ProfileConfigFile, source: &ProfileCatalogSource) -> Result<Profile, AppError> {
     let (config_root, profile_dir) = match source {
         ProfileCatalogSource::BuiltIn => {
             let config_root = builtin_profile_config_root();
@@ -6577,20 +6152,14 @@ fn profile_from_catalog_entry(
 fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
     let catalog = load_profile_catalog_for_service()?;
-    let profile = catalog.get(&profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile not found: {profile_id}"),
-        )
-    })?;
+    let profile = catalog
+        .get(&profile_id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))?;
     profile_from_catalog_entry(profile, catalog.source())
 }
 
 #[cfg(test)]
-fn profile_catalog_status_value(
-    state: &ServiceState,
-    catalog: &ProfileCatalog,
-) -> serde_json::Value {
+fn profile_catalog_status_value(state: &ServiceState, catalog: &ProfileCatalog) -> serde_json::Value {
     build_profile_status_cache(state, catalog, profile_status_inputs(state)).catalog
 }
 
@@ -6678,15 +6247,8 @@ fn json_bytes_response(body: Bytes) -> axum::response::Response {
         .into_response()
 }
 
-fn refresh_reconcile_fields(
-    state: &ServiceState,
-    mut value: serde_json::Value,
-) -> serde_json::Value {
-    let reconcile = state
-        .asset_reconcile
-        .lock()
-        .map(|s| s.clone())
-        .unwrap_or_default();
+fn refresh_reconcile_fields(state: &ServiceState, mut value: serde_json::Value) -> serde_json::Value {
+    let reconcile = state.asset_reconcile.lock().map(|s| s.clone()).unwrap_or_default();
     if let Some(obj) = value.as_object_mut() {
         if obj.contains_key("downloading") {
             obj.insert("downloading".to_string(), json!(reconcile.in_progress));
@@ -6696,10 +6258,7 @@ fn refresh_reconcile_fields(
     value
 }
 
-fn cached_profile_status_for_route(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<serde_json::Value, AppError> {
+fn cached_profile_status_for_route(state: &ServiceState, profile_id: &str) -> Result<serde_json::Value, AppError> {
     let cached = state
         .profile_status_cache
         .lock()
@@ -6716,18 +6275,14 @@ fn cached_profile_status_for_route(
     }
 
     let cache = rebuild_profile_status_cache(state)?;
-    cache.profiles.get(profile_id).cloned().ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile not found: {profile_id}"),
-        )
-    })
+    cache
+        .profiles
+        .get(profile_id)
+        .cloned()
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))
 }
 
-fn cached_profile_status_body_for_route(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<Option<Bytes>, AppError> {
+fn cached_profile_status_body_for_route(state: &ServiceState, profile_id: &str) -> Result<Option<Bytes>, AppError> {
     let cache = profile_status_cache(state)?;
     if let Some(body) = cache.profile_bodies.get(profile_id).cloned() {
         return Ok(Some(body));
@@ -6859,12 +6414,7 @@ fn cached_profile_for_route(state: &ServiceState, profile_id: String) -> Result<
         })?
         .get(&profile_id)
         .cloned()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("profile not found: {profile_id}"),
-            )
-        })
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))
 }
 
 fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
@@ -7002,10 +6552,7 @@ fn build_profile_plugin_policy_cache(
     Ok(output)
 }
 
-fn profile_summary_with_live_plugin_count(
-    state: &ServiceState,
-    summary: &api::ProfileSummary,
-) -> api::ProfileSummary {
+fn profile_summary_with_live_plugin_count(state: &ServiceState, summary: &api::ProfileSummary) -> api::ProfileSummary {
     let mut summary = summary.clone();
     summary.plugin_count = effective_plugin_policy(state, &summary.id).len();
     summary
@@ -7029,9 +6576,7 @@ async fn handle_profiles_list(
     Ok(Json(api::ProfilesListResponse { profiles }))
 }
 
-async fn handle_profiles_status(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<axum::response::Response, AppError> {
+async fn handle_profiles_status(State(state): State<Arc<ServiceState>>) -> Result<axum::response::Response, AppError> {
     if !asset_reconcile_has_route_fields(&state) {
         return Ok(json_bytes_response(profile_status_catalog_body(&state)?));
     }
@@ -7046,9 +6591,7 @@ async fn handle_profiles_status(
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
-async fn handle_profiles_reload(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_profiles_reload(State(state): State<Arc<ServiceState>>) -> Result<Json<serde_json::Value>, AppError> {
     let cache = rebuild_profile_status_cache(&state)?;
     Ok(Json(json!({
         "reloaded": true,
@@ -7061,12 +6604,9 @@ async fn handle_profile_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::ProfileInfoResponse>, AppError> {
     let catalog = load_profile_catalog_for_service()?;
-    let manifest = catalog.get(&profile_id).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile not found: {profile_id}"),
-        )
-    })?;
+    let manifest = catalog
+        .get(&profile_id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))?;
     let summary = state
         .profile_summary_cache
         .lock()
@@ -7079,12 +6619,7 @@ async fn handle_profile_info(
         .iter()
         .find(|summary| summary.id == manifest.id)
         .map(|summary| profile_summary_with_live_plugin_count(&state, summary))
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("profile not found: {profile_id}"),
-            )
-        })?;
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))?;
     Ok(Json(api::ProfileInfoResponse {
         profile: summary,
         obom: profile_obom_info(manifest),
@@ -7115,17 +6650,12 @@ fn profile_obom_info(profile: &ProfileConfigFile) -> Option<api::ProfileObomInfo
     })
 }
 
-async fn handle_profile_obom(
-    Path(profile_id): Path<String>,
-) -> Result<Json<api::ProfileObomResponse>, AppError> {
+async fn handle_profile_obom(Path(profile_id): Path<String>) -> Result<Json<api::ProfileObomResponse>, AppError> {
     let profile = profile_manifest_for_route(profile_id)?;
     let obom = profile_obom_info(&profile).ok_or_else(|| {
         AppError(
             StatusCode::NOT_FOUND,
-            format!(
-                "profile {} has no OBOM for current architecture",
-                profile.id
-            ),
+            format!("profile {} has no OBOM for current architecture", profile.id),
         )
     })?;
     let document = if let Some(path) = obom.url.strip_prefix("file://") {
@@ -7141,10 +6671,7 @@ async fn handle_profile_obom(
     }))
 }
 
-fn read_local_profile_obom(
-    path: &StdPath,
-    info: &api::ProfileObomInfo,
-) -> Result<serde_json::Value, AppError> {
+fn read_local_profile_obom(path: &StdPath, info: &api::ProfileObomInfo) -> Result<serde_json::Value, AppError> {
     let bytes = std::fs::read(path).map_err(|error| {
         AppError(
             StatusCode::NOT_FOUND,
@@ -7191,12 +6718,10 @@ fn read_local_profile_obom(
 fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
     let catalog = load_profile_catalog_for_service()?;
-    catalog.get(&profile_id).cloned().ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile not found: {profile_id}"),
-        )
-    })
+    catalog
+        .get(&profile_id)
+        .cloned()
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))
 }
 
 async fn handle_profile_validate(
@@ -7205,12 +6730,8 @@ async fn handle_profile_validate(
 ) -> Result<Json<api::ProfileValidateResponse>, AppError> {
     let route_profile_id = validate_profile_route_id(profile_id)?;
     let profile = if let Some(toml) = request.toml {
-        toml::from_str::<ProfileConfigFile>(&toml).map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid profile TOML: {error}"),
-            )
-        })?
+        toml::from_str::<ProfileConfigFile>(&toml)
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid profile TOML: {error}")))?
     } else if let Some(profile) = request.profile {
         profile
     } else {
@@ -7234,9 +6755,7 @@ async fn handle_profile_validate(
     }))
 }
 
-async fn handle_profile_skills_info(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_profile_skills_info(Path(profile_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
         "profile_id": manifest.id,
@@ -7245,9 +6764,7 @@ async fn handle_profile_skills_info(
     })))
 }
 
-async fn handle_profile_skills_list(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_profile_skills_list(Path(profile_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
         "profile_id": manifest.id,
@@ -7263,13 +6780,7 @@ async fn handle_profile_skill_add(
     Path(profile_id): Path<String>,
     Json(request): Json<ProfileSkillAddRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request(
-        "profile_skill_add",
-        &profile_id,
-        "skill",
-        &request.path,
-        "add",
-    );
+    log_profile_mutation_route_request("profile_skill_add", &profile_id, "skill", &request.path, "add");
     let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "profile_skill_add",
@@ -7280,19 +6791,10 @@ async fn handle_profile_skill_add(
             &error.1,
         );
     })?;
-    let summary = profile
-        .add_skill_path(&request.path, "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "profile_skill_add",
-                &profile_id,
-                "skill",
-                &request.path,
-                "add",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
+    let summary = profile.add_skill_path(&request.path, "service-api").map_err(|error| {
+        log_profile_mutation_route_rejected("profile_skill_add", &profile_id, "skill", &request.path, "add", &error);
+        AppError(StatusCode::BAD_REQUEST, error)
+    })?;
     let event = write_profile_mutation_event(&state, summary).await?;
     log_profile_mutation_applied("profile_skill_add", &event);
     Ok(Json(json!({
@@ -7308,34 +6810,14 @@ async fn handle_profile_skill_edit(
     Path((profile_id, _skill_id)): Path<(String, String)>,
     Json(request): Json<ProfileSkillEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request(
-        "profile_skill_edit",
-        &profile_id,
-        "skill",
-        &_skill_id,
-        "edit",
-    );
+    log_profile_mutation_route_request("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit");
     let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_skill_edit",
-            &profile_id,
-            "skill",
-            &_skill_id,
-            "edit",
-            &error.1,
-        );
+        log_profile_mutation_route_rejected("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit", &error.1);
     })?;
     let summary = profile
         .edit_skill_path(&_skill_id, &request.path, "service-api")
         .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "profile_skill_edit",
-                &profile_id,
-                "skill",
-                &_skill_id,
-                "edit",
-                &error,
-            );
+            log_profile_mutation_route_rejected("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit", &error);
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
@@ -7352,13 +6834,7 @@ async fn handle_profile_skill_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, _skill_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request(
-        "profile_skill_delete",
-        &profile_id,
-        "skill",
-        &_skill_id,
-        "delete",
-    );
+    log_profile_mutation_route_request("profile_skill_delete", &profile_id, "skill", &_skill_id, "delete");
     let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "profile_skill_delete",
@@ -7369,19 +6845,17 @@ async fn handle_profile_skill_delete(
             &error.1,
         );
     })?;
-    let summary = profile
-        .delete_skill(&_skill_id, "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "profile_skill_delete",
-                &profile_id,
-                "skill",
-                &_skill_id,
-                "delete",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
+    let summary = profile.delete_skill(&_skill_id, "service-api").map_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_delete",
+            &profile_id,
+            "skill",
+            &_skill_id,
+            "delete",
+            &error,
+        );
+        AppError(StatusCode::BAD_REQUEST, error)
+    })?;
     let event = write_profile_mutation_event(&state, summary).await?;
     log_profile_mutation_applied("profile_skill_delete", &event);
     Ok(Json(json!({
@@ -7441,20 +6915,14 @@ fn profile_mcp_server_configured(profile: &ProfileConfigFile, server_id: &str) -
     mcp.servers.iter().any(|server| server.name == server_id)
 }
 
-fn ensure_profile_mcp_server(
-    profile_id: String,
-    server_id: &str,
-) -> Result<ProfileConfigFile, AppError> {
+fn ensure_profile_mcp_server(profile_id: String, server_id: &str) -> Result<ProfileConfigFile, AppError> {
     let profile = profile_manifest_for_route(profile_id)?;
     if profile_mcp_server_configured(&profile, server_id) {
         Ok(profile)
     } else {
         Err(AppError(
             StatusCode::NOT_FOUND,
-            format!(
-                "MCP server not found in profile {}: {server_id}",
-                profile.id
-            ),
+            format!("MCP server not found in profile {}: {server_id}", profile.id),
         ))
     }
 }
@@ -7483,12 +6951,9 @@ fn validate_mcp_server_edit_request(
     update: McpServerEditRequest,
 ) -> Result<McpManualServer, AppError> {
     validate_mcp_server_id(server_id)?;
-    let url = update.url.ok_or_else(|| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            "MCP server URL is required".to_string(),
-        )
-    })?;
+    let url = update
+        .url
+        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "MCP server URL is required".to_string()))?;
     if url.trim().is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -7556,10 +7021,7 @@ async fn write_profile_mutation_event(
     Ok(event)
 }
 
-fn profile_mutation_log_fields(
-    route: &'static str,
-    event: &capsem_logger::ProfileMutationEvent,
-) -> serde_json::Value {
+fn profile_mutation_log_fields(route: &'static str, event: &capsem_logger::ProfileMutationEvent) -> serde_json::Value {
     json!({
         "route": route,
         "mutation_id": event.mutation_id,
@@ -7736,19 +7198,17 @@ async fn handle_profile_mcp_server_delete(
             &error.1,
         );
     })?;
-    let summary = profile
-        .delete_mcp_server(&server_id, "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "profile_mcp_server_delete",
-                &profile_id,
-                "mcp_server",
-                &server_id,
-                "delete",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
+    let summary = profile.delete_mcp_server(&server_id, "service-api").map_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_delete",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "delete",
+            &error,
+        );
+        AppError(StatusCode::BAD_REQUEST, error)
+    })?;
     let event = write_profile_mutation_event(&state, summary).await?;
     log_profile_mutation_applied("profile_mcp_server_delete", &event);
     Ok(Json(json!({
@@ -7771,11 +7231,7 @@ async fn handle_profile_mcp_servers(
     let builtin_bin = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let servers = build_profile_server_list(
-        &profile_mcp,
-        builtin_bin.as_deref(),
-        std::collections::HashMap::new(),
-    );
+    let servers = build_profile_server_list(&profile_mcp, builtin_bin.as_deref(), std::collections::HashMap::new());
     let cache = latest_mcp_tool_cache(&state);
 
     let resp: Vec<api::McpServerInfoResponse> = servers
@@ -7820,12 +7276,7 @@ async fn handle_profile_mcp_default_info(
         })?
         .get(&profile_id)
         .cloned()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("profile not found: {profile_id}"),
-            )
-        })?
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))?
         .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
     Ok(Json(permission))
 }
@@ -7856,10 +7307,7 @@ async fn handle_profile_mcp_server_tools(
     if !profile_mcp_server_configured(profile.config(), &server_id) {
         return Err(AppError(
             StatusCode::NOT_FOUND,
-            format!(
-                "MCP server not found in profile {}: {server_id}",
-                profile.config().id
-            ),
+            format!("MCP server not found in profile {}: {server_id}", profile.config().id),
         ));
     }
 
@@ -7910,15 +7358,11 @@ async fn handle_profile_mcp_server_refresh(
     // Send McpRefreshTools to all running instances.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
-        instances
-            .values()
-            .map(|info| info.uds_path.clone())
-            .collect::<Vec<_>>()
+        instances.values().map(|info| info.uds_path.clone()).collect::<Vec<_>>()
     };
     for uds_path in &uds_paths {
         let id = state.next_job_id();
-        let _ =
-            send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
+        let _ = send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
     }
     if let Ok(mut cache) = state.mcp_tool_cache.lock() {
         *cache = capsem_core::mcp::load_tool_cache();
@@ -8040,12 +7484,8 @@ async fn handle_profile_mcp_tool_call(
             .next()
             .map(|(id, info)| (id.clone(), info.uds_path.clone()))
     };
-    let (_session_id, uds_path) = selected_session.ok_or_else(|| {
-        AppError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no running sessions".into(),
-        )
-    })?;
+    let (_session_id, uds_path) =
+        selected_session.ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
 
     let arguments_json = serde_json::to_string(&arguments)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
@@ -8060,9 +7500,7 @@ async fn handle_profile_mcp_tool_call(
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     match resp {
-        ProcessToService::McpCallToolResult {
-            result_json, error, ..
-        } => {
+        ProcessToService::McpCallToolResult { result_json, error, .. } => {
             if let Some(err) = error {
                 Err(AppError(StatusCode::BAD_GATEWAY, err))
             } else {
@@ -8122,10 +7560,7 @@ async fn handle_timeline(
         .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
 
     if layers.is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "no layers selected".into(),
-        ));
+        return Err(AppError(StatusCode::BAD_REQUEST, "no layers selected".into()));
     }
 
     let session_dir = resolve_session_dir(&state, &id)?;
@@ -8148,15 +7583,12 @@ async fn handle_timeline(
         .into_iter()
         .filter(|row| layers.contains(&row.layer.as_str()))
         .filter(|row| {
-            params.trace_id.as_deref().is_none_or(|trace_id| {
-                row.trace_id.as_deref() == Some(trace_id) || row.trace_id.is_none()
-            })
-        })
-        .filter(|row| {
-            cutoff
+            params
+                .trace_id
                 .as_deref()
-                .is_none_or(|cutoff| row.timestamp.as_str() >= cutoff)
+                .is_none_or(|trace_id| row.trace_id.as_deref() == Some(trace_id) || row.trace_id.is_none())
         })
+        .filter(|row| cutoff.as_deref().is_none_or(|cutoff| row.timestamp.as_str() >= cutoff))
         .take(limit)
         .map(|row| row.to_values())
         .collect::<Vec<_>>();
@@ -8272,9 +7704,7 @@ fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
     {
         let registry = state.persistent_registry.lock().unwrap();
         for (id, entry) in registry.data.vms.iter() {
-            sessions
-                .entry(id.clone())
-                .or_insert_with(|| entry.session_dir.clone());
+            sessions.entry(id.clone()).or_insert_with(|| entry.session_dir.clone());
         }
     }
     sessions.into_iter().collect()
@@ -8284,10 +7714,7 @@ fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, 
     let mut sessions = BTreeMap::new();
     {
         let instances = state.instances.lock().unwrap();
-        for (id, info) in instances
-            .iter()
-            .filter(|(_, info)| info.profile_id == profile_id)
-        {
+        for (id, info) in instances.iter().filter(|(_, info)| info.profile_id == profile_id) {
             sessions.insert(id.clone(), info.session_dir.clone());
         }
     }
@@ -8299,9 +7726,7 @@ fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, 
             .iter()
             .filter(|(_, entry)| entry.profile_id == profile_id)
         {
-            sessions
-                .entry(id.clone())
-                .or_insert_with(|| entry.session_dir.clone());
+            sessions.entry(id.clone()).or_insert_with(|| entry.session_dir.clone());
         }
     }
     sessions.into_iter().collect()
@@ -8374,13 +7799,7 @@ async fn open_ready_session_db(
             db_path = %db_path.display(),
             "session ledger DB is absent"
         );
-        return Err(ledger_route_error(
-            vm_id,
-            ledger,
-            "ready",
-            db_path,
-            "session.db absent",
-        ));
+        return Err(ledger_route_error(vm_id, ledger, "ready", db_path, "session.db absent"));
     }
     let db = match state.session_db_handle(vm_id) {
         Some(handle) if handle.path() == db_path => handle,
@@ -8394,29 +7813,17 @@ async fn open_ready_session_db(
                 "session DB handle path did not match resolved session path"
             );
             state.unregister_session_db_handle(vm_id);
-            let session_dir = db_path.parent().ok_or_else(|| {
-                ledger_route_error(
-                    vm_id,
-                    ledger,
-                    "resolve session dir",
-                    db_path,
-                    "missing parent",
-                )
-            })?;
+            let session_dir = db_path
+                .parent()
+                .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
             state
                 .register_session_db_handle(vm_id, session_dir)
                 .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?
         }
         None => {
-            let session_dir = db_path.parent().ok_or_else(|| {
-                ledger_route_error(
-                    vm_id,
-                    ledger,
-                    "resolve session dir",
-                    db_path,
-                    "missing parent",
-                )
-            })?;
+            let session_dir = db_path
+                .parent()
+                .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
             let handle = state
                 .register_session_db_handle(vm_id, session_dir)
                 .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
@@ -8474,9 +7881,7 @@ async fn query_route_db_json(
         );
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"
-            ),
+            format!("{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"),
         )
     })
 }
@@ -8504,10 +7909,7 @@ fn query_json_to_objects(raw: serde_json::Value) -> Vec<serde_json::Value> {
         for (index, column) in columns.iter().enumerate() {
             object.insert(
                 column.clone(),
-                values
-                    .get(index)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
+                values.get(index).cloned().unwrap_or(serde_json::Value::Null),
             );
         }
         objects.push(serde_json::Value::Object(object));
@@ -8524,8 +7926,7 @@ async fn query_route_objects(
     sql: &str,
     params: &[serde_json::Value],
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let raw =
-        query_route_db_json(vm_id, ledger, "query", query_name, db_path, db, sql, params).await?;
+    let raw = query_route_db_json(vm_id, ledger, "query", query_name, db_path, db, sql, params).await?;
     Ok(query_json_to_objects(raw))
 }
 
@@ -8557,9 +7958,7 @@ where
                 );
                 AppError(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"
-                    ),
+                    format!("{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"),
                 )
             })
         })
@@ -8680,10 +8079,7 @@ async fn read_security_session_ledger(
     .next()
     .unwrap_or_else(|| json!({ "total": 0 }));
     let stats = capsem_logger::SecurityRuleStats {
-        total: total_row
-            .get("total")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
+        total: total_row.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0),
         by_action: query_route_typed_rows(
             vm_id,
             "security",
@@ -8748,9 +8144,7 @@ async fn read_profile_security_ledgers(
 ) -> Result<Vec<(String, SecuritySessionLedger)>, AppError> {
     let mut ledgers = Vec::new();
     for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
-        let Some(session) =
-            read_security_session_ledger(state, &vm_id, &session_dir.join("session.db")).await?
-        else {
+        let Some(session) = read_security_session_ledger(state, &vm_id, &session_dir.join("session.db")).await? else {
             continue;
         };
         ledgers.push((vm_id, session));
@@ -8841,9 +8235,8 @@ async fn read_history_session_ledger(
     .await?;
     for entry in &mut entries {
         if let serde_json::Value::String(details) = &entry.details {
-            entry.details = serde_json::from_str(details).map_err(|error| {
-                ledger_route_error(vm_id, "history", "parse entry details", db_path, error)
-            })?;
+            entry.details = serde_json::from_str(details)
+                .map_err(|error| ledger_route_error(vm_id, "history", "parse entry details", db_path, error))?;
         }
     }
     let processes = query_route_typed_rows(
@@ -8963,11 +8356,7 @@ fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineRow> {
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
-    let column_index = |name: &str| {
-        columns
-            .iter()
-            .position(|column| column.as_str() == Some(name))
-    };
+    let column_index = |name: &str| columns.iter().position(|column| column.as_str() == Some(name));
     let Some(timestamp_idx) = column_index("timestamp") else {
         return Vec::new();
     };
@@ -8998,14 +8387,8 @@ fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineRow> {
                 layer: json_value_as_string(row.get(layer_idx)?)?,
                 ref_value: row.get(ref_idx).cloned().unwrap_or(serde_json::Value::Null),
                 summary: json_value_as_string(row.get(summary_idx)?)?,
-                status: row
-                    .get(status_idx)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-                duration_ms: row
-                    .get(duration_idx)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
+                status: row.get(status_idx).cloned().unwrap_or(serde_json::Value::Null),
+                duration_ms: row.get(duration_idx).cloned().unwrap_or(serde_json::Value::Null),
                 trace_id: row.get(trace_idx).and_then(json_value_as_string),
             })
         })
@@ -9019,30 +8402,15 @@ async fn read_timeline_rows_from_session_db(
     sql: &str,
 ) -> Result<Option<Vec<TimelineRow>>, AppError> {
     let db = open_ready_session_db(state, vm_id, "timeline", db_path).await?;
-    let raw = query_route_db_json(
-        vm_id,
-        "timeline",
-        "query",
-        "timeline",
-        db_path,
-        &db,
-        sql,
-        &[],
-    )
-    .await?;
+    let raw = query_route_db_json(vm_id, "timeline", "query", "timeline", db_path, &db, sql, &[]).await?;
     Ok(Some(timeline_rows_from_query_json(raw)))
 }
 
-async fn history_ledger_for_vm(
-    state: &ServiceState,
-    id: &str,
-) -> Result<HistorySessionLedger, AppError> {
+async fn history_ledger_for_vm(state: &ServiceState, id: &str) -> Result<HistorySessionLedger, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
-    Ok(
-        read_history_session_ledger(state, id, &session_dir.join("session.db"))
-            .await?
-            .unwrap_or_default(),
-    )
+    Ok(read_history_session_ledger(state, id, &session_dir.join("session.db"))
+        .await?
+        .unwrap_or_default())
 }
 
 fn history_entry_matches_search(entry: &capsem_logger::HistoryEntry, query: &str) -> bool {
@@ -9058,10 +8426,7 @@ fn history_entry_matches_search(entry: &capsem_logger::HistoryEntry, query: &str
         || entry.details.to_string().contains(query)
 }
 
-fn query_history_ledger(
-    session: &HistorySessionLedger,
-    params: &api::HistoryQuery,
-) -> api::HistoryResponse {
+fn query_history_ledger(session: &HistorySessionLedger, params: &api::HistoryQuery) -> api::HistoryResponse {
     let mut entries = session
         .entries
         .iter()
@@ -9254,12 +8619,7 @@ fn session_response_cache_key(vm_id: &str, route_key: &str) -> String {
     format!("{vm_id}:{route_key}")
 }
 
-fn session_response_cache_get(
-    state: &ServiceState,
-    vm_id: &str,
-    route_key: &str,
-    db_path: &StdPath,
-) -> Option<Bytes> {
+fn session_response_cache_get(state: &ServiceState, vm_id: &str, route_key: &str, db_path: &StdPath) -> Option<Bytes> {
     let db_fingerprint = stats_detail_db_fingerprint(db_path)?;
     let cache_key = session_response_cache_key(vm_id, route_key);
     let cached = state
@@ -9271,13 +8631,7 @@ fn session_response_cache_get(
     (cached.db_fingerprint == db_fingerprint).then(|| Bytes::from(cached.bytes))
 }
 
-fn session_response_cache_store(
-    state: &ServiceState,
-    vm_id: &str,
-    route_key: &str,
-    db_path: &StdPath,
-    bytes: &[u8],
-) {
+fn session_response_cache_store(state: &ServiceState, vm_id: &str, route_key: &str, db_path: &StdPath, bytes: &[u8]) {
     let Some(db_fingerprint) = stats_detail_db_fingerprint(db_path) else {
         return;
     };
@@ -9427,9 +8781,7 @@ SELECT json_object(
 ) AS payload
 "#;
 
-async fn read_stats_response_from_main_db_handle(
-    state: &ServiceState,
-) -> Result<Vec<u8>, AppError> {
+async fn read_stats_response_from_main_db_handle(state: &ServiceState) -> Result<Vec<u8>, AppError> {
     let db_path = state.main_db_path();
     let db = &state.profile_mutation_db;
     let db_epoch = db.read_cache_epoch();
@@ -9454,23 +8806,15 @@ async fn read_stats_response_from_main_db_handle(
     let raw = raw
         .next()
         .ok_or_else(|| main_ledger_route_error("stats", "query response", &db_path, "no rows"))?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
-        main_ledger_route_error("stats", "parse response query", &db_path, error)
-    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| main_ledger_route_error("stats", "parse response query", &db_path, error))?;
     let payload = parsed
         .get("rows")
         .and_then(|rows| rows.as_array())
         .and_then(|rows| rows.first())
         .and_then(|row| row.as_array())
         .and_then(|row| row.first())
-        .ok_or_else(|| {
-            main_ledger_route_error(
-                "stats",
-                "read response payload",
-                &db_path,
-                "missing payload",
-            )
-        })?;
+        .ok_or_else(|| main_ledger_route_error("stats", "read response payload", &db_path, "missing payload"))?;
     match payload {
         serde_json::Value::String(payload) => {
             let bytes = payload.as_bytes().to_vec();
@@ -9481,9 +8825,8 @@ async fn read_stats_response_from_main_db_handle(
             Ok(bytes)
         }
         serde_json::Value::Object(_) => {
-            let bytes = serde_json::to_vec(payload).map_err(|error| {
-                main_ledger_route_error("stats", "serialize response payload", &db_path, error)
-            })?;
+            let bytes = serde_json::to_vec(payload)
+                .map_err(|error| main_ledger_route_error("stats", "serialize response payload", &db_path, error))?;
             *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
                 db_epoch,
                 bytes: bytes.clone(),
@@ -9501,19 +8844,12 @@ async fn read_stats_response_from_main_db_handle(
 
 fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {
     rebuild_profile_status_cache(state).map_err(|AppError(status, message)| {
-        AppError(
-            status,
-            format!("failed to build profile status cache: {message}"),
-        )
+        AppError(status, format!("failed to build profile status cache: {message}"))
     })?;
     Ok(())
 }
 
-async fn apply_session_db_status(
-    state: &ServiceState,
-    info: &mut SandboxInfo,
-    session_dir: &StdPath,
-) {
+async fn apply_session_db_status(state: &ServiceState, info: &mut SandboxInfo, session_dir: &StdPath) {
     let db_path = session_db_path_for_session_dir(session_dir);
     if !db_path.exists() {
         info.session_db = Some(api::SessionDbStatus {
@@ -9568,9 +8904,7 @@ async fn security_latest_for_vm(
     detection_only: bool,
 ) -> Result<Vec<capsem_logger::SecurityRuleEvent>, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
-    let Some(session) =
-        read_security_session_ledger(state, vm_id, &session_dir.join("session.db")).await?
-    else {
+    let Some(session) = read_security_session_ledger(state, vm_id, &session_dir.join("session.db")).await? else {
         return Ok(Vec::new());
     };
     Ok(session
@@ -9611,9 +8945,7 @@ async fn handle_service_security_latest(
     let limit = params.limit.unwrap_or(100).min(2000);
     let mut rows = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) =
-            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
-        else {
+        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
             continue;
         };
         for event in session.latest.into_iter().take(limit) {
@@ -9636,9 +8968,7 @@ async fn handle_service_detection_latest(
     let limit = params.limit.unwrap_or(100).min(2000);
     let mut rows = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) =
-            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
-        else {
+        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
             continue;
         };
         for event in session.latest.into_iter().take(limit) {
@@ -9662,9 +8992,7 @@ async fn handle_service_security_status(
     let mut total = 0_u64;
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) =
-            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
-        else {
+        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
             continue;
         };
         let stats = session.stats;
@@ -9680,9 +9008,7 @@ async fn handle_service_detection_status(
     let mut total = 0_u64;
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) =
-            read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await?
-        else {
+        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
             continue;
         };
         let count = security_detection_count(&session.stats);
@@ -9744,8 +9070,7 @@ static PLUGIN_CATALOG: LazyLock<BTreeMap<String, PluginCatalogEntry>> = LazyLock
             "dummy_post_allow".to_string(),
             PluginCatalogEntry {
                 name: "Dummy Postprocess Allow",
-                description:
-                    "debug postprocess plugin that requests allow to prove block is absolute",
+                description: "debug postprocess plugin that requests allow to prove block is absolute",
                 default_config: default_plugin_config(SecurityPluginMode::Disable),
                 stage: PluginStage::Postprocess,
                 version: "1",
@@ -9758,10 +9083,7 @@ fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> {
     &PLUGIN_CATALOG
 }
 
-fn validate_profile_route_id_from_state(
-    state: &ServiceState,
-    profile_id: String,
-) -> Result<String, AppError> {
+fn validate_profile_route_id_from_state(state: &ServiceState, profile_id: String) -> Result<String, AppError> {
     if profile_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -9795,30 +9117,17 @@ fn profile_plugin_scope(state: &ServiceState, profile_id: String) -> Result<Plug
     })
 }
 
-fn effective_plugin_policy(
-    state: &ServiceState,
-    profile_id: &str,
-) -> BTreeMap<String, SecurityPluginConfig> {
+fn effective_plugin_policy(state: &ServiceState, profile_id: &str) -> BTreeMap<String, SecurityPluginConfig> {
     let mut policy: BTreeMap<_, _> = plugin_catalog()
         .iter()
         .map(|(id, entry)| (id.clone(), entry.default_config))
         .collect();
-    if let Some(profile_policy) = state
-        .profile_plugin_policy_cache
-        .lock()
-        .unwrap()
-        .get(profile_id)
-    {
+    if let Some(profile_policy) = state.profile_plugin_policy_cache.lock().unwrap().get(profile_id) {
         for (id, config) in profile_policy {
             policy.insert(id.clone(), *config);
         }
     }
-    if let Some(overrides) = state
-        .plugin_policy_by_profile
-        .lock()
-        .unwrap()
-        .get(profile_id)
-    {
+    if let Some(overrides) = state.plugin_policy_by_profile.lock().unwrap().get(profile_id) {
         for (id, config) in overrides {
             policy.insert(id.clone(), *config);
         }
@@ -9834,10 +9143,7 @@ async fn plugin_info_for(
 ) -> Result<PluginInfo, AppError> {
     let catalog = plugin_catalog();
     let Some(catalog_entry) = catalog.get(plugin_id).copied() else {
-        return Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("unknown plugin: {plugin_id}"),
-        ));
+        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
     };
     let effective = effective_plugin_policy(state, &scope.profile_id);
     let config = effective
@@ -9991,25 +9297,16 @@ async fn hydrate_plugin_execution_runtime(
                 ));
                 continue;
             };
-            if let Some(executions) = payload
-                .get("plugin_executions")
-                .and_then(serde_json::Value::as_array)
-            {
+            if let Some(executions) = payload.get("plugin_executions").and_then(serde_json::Value::as_array) {
                 for execution in executions {
-                    if execution
-                        .get("plugin_id")
-                        .and_then(serde_json::Value::as_str)
-                        != Some(plugin_id)
-                    {
+                    if execution.get("plugin_id").and_then(serde_json::Value::as_str) != Some(plugin_id) {
                         continue;
                     }
                     let stage = execution
                         .get("stage")
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("unknown");
-                    if !seen_executions
-                        .insert((event.event_id.clone(), format!("{plugin_id}:{stage}")))
-                    {
+                    if !seen_executions.insert((event.event_id.clone(), format!("{plugin_id}:{stage}"))) {
                         continue;
                     }
                     status.execution_count += 1;
@@ -10030,16 +9327,10 @@ async fn hydrate_plugin_execution_runtime(
                     status.max_duration_us = status.max_duration_us.max(duration_us);
                 }
             }
-            if let Some(detections) = payload
-                .get("detections")
-                .and_then(serde_json::Value::as_array)
-            {
+            if let Some(detections) = payload.get("detections").and_then(serde_json::Value::as_array) {
                 for detection in detections {
                     if detection.get("source").and_then(serde_json::Value::as_str) != Some("plugin")
-                        || detection
-                            .get("plugin_id")
-                            .and_then(serde_json::Value::as_str)
-                            != Some(plugin_id)
+                        || detection.get("plugin_id").and_then(serde_json::Value::as_str) != Some(plugin_id)
                     {
                         continue;
                     }
@@ -10078,10 +9369,8 @@ fn merge_brokered_credential_status(
     last_seen: Option<String>,
 ) {
     let key = (provider.clone(), credential_ref.clone());
-    let replay_available = capsem_core::credential_broker::broker_reference_replay_available(
-        provider.as_deref(),
-        &credential_ref,
-    );
+    let replay_available =
+        capsem_core::credential_broker::broker_reference_replay_available(provider.as_deref(), &credential_ref);
     credentials
         .entry(key)
         .and_modify(|existing| {
@@ -10102,11 +9391,7 @@ fn merge_brokered_credential_status(
         });
 }
 
-async fn hydrate_credential_broker_runtime(
-    state: &ServiceState,
-    profile_id: &str,
-    status: &mut PluginRuntimeStatus,
-) {
+async fn hydrate_credential_broker_runtime(state: &ServiceState, profile_id: &str, status: &mut PluginRuntimeStatus) {
     let sessions = match read_profile_security_ledgers(state, profile_id).await {
         Ok(sessions) => sessions,
         Err(error) => {
@@ -10114,8 +9399,7 @@ async fn hydrate_credential_broker_runtime(
             return;
         }
     };
-    let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> =
-        BTreeMap::new();
+    let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> = BTreeMap::new();
     let mut seen = HashSet::<(String, String, String, String)>::new();
     for (_vm_id, session) in sessions {
         for credential in &session.brokered_credentials {
@@ -10127,14 +9411,10 @@ async fn hydrate_credential_broker_runtime(
                 credential.injected_count,
                 credential.last_seen.clone(),
             );
-            status.event_count = status.event_count.saturating_add(
-                credential
-                    .observed_count
-                    .saturating_add(credential.injected_count),
-            );
-            status.rewrite_count = status
-                .rewrite_count
-                .saturating_add(credential.injected_count);
+            status.event_count = status
+                .event_count
+                .saturating_add(credential.observed_count.saturating_add(credential.injected_count));
+            status.rewrite_count = status.rewrite_count.saturating_add(credential.injected_count);
         }
         for event in session.latest {
             let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
@@ -10155,10 +9435,7 @@ async fn hydrate_credential_broker_runtime(
                     let Some(credential_ref) = credential_ref_from_security_payload(item) else {
                         continue;
                     };
-                    let source = item
-                        .get("source")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("");
+                    let source = item.get("source").and_then(serde_json::Value::as_str).unwrap_or("");
                     if !seen.insert((
                         event.event_id.clone(),
                         field.to_string(),
@@ -10241,8 +9518,7 @@ async fn handle_profile_credential_broker_credentials_info(
         .get("credential_broker")
         .copied()
         .unwrap_or_else(|| default_plugin_config(SecurityPluginMode::Rewrite));
-    let runtime =
-        plugin_runtime_status(&state, &scope.profile_id, "credential_broker", config).await;
+    let runtime = plugin_runtime_status(&state, &scope.profile_id, "credential_broker", config).await;
     Ok(Json(CredentialBrokerDetailResponse {
         scope,
         plugin_id: "credential_broker",
@@ -10284,10 +9560,7 @@ async fn handle_profile_credential_broker_credentials_reload(
     handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
 }
 
-async fn list_plugins_for_scope(
-    state: &Arc<ServiceState>,
-    scope: PluginScope,
-) -> Result<PluginListResponse, AppError> {
+async fn list_plugins_for_scope(state: &Arc<ServiceState>, scope: PluginScope) -> Result<PluginListResponse, AppError> {
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
         plugins.push(plugin_info_for(state, plugin_id, scope.clone(), false).await?);
@@ -10300,13 +9573,7 @@ async fn handle_profile_plugin_info(
     Path((profile_id, plugin_id)): Path<(String, String)>,
 ) -> Result<Json<PluginInfo>, AppError> {
     Ok(Json(
-        plugin_info_for(
-            &state,
-            &plugin_id,
-            profile_plugin_scope(&state, profile_id)?,
-            true,
-        )
-        .await?,
+        plugin_info_for(&state, &plugin_id, profile_plugin_scope(&state, profile_id)?, true).await?,
     ))
 }
 
@@ -10318,10 +9585,7 @@ async fn handle_profile_plugin_update(
     let scope = profile_plugin_scope(&state, profile_id)?;
     let catalog = plugin_catalog();
     let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
-        return Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("unknown plugin: {plugin_id}"),
-        ));
+        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
     };
     let mut config = effective_plugin_policy(&state, &scope.profile_id)
         .get(&plugin_id)
@@ -10350,8 +9614,7 @@ async fn handle_profile_plugin_update(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    let _reload =
-        handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
+    let _reload = handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
     let info = plugin_info_for(&state, &plugin_id, scope, true).await?;
     Ok(Json(info))
 }
@@ -10365,10 +9628,7 @@ async fn update_plugin_for_scope(
 ) -> Result<Json<PluginInfo>, AppError> {
     let catalog = plugin_catalog();
     let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
-        return Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("unknown plugin: {plugin_id}"),
-        ));
+        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
     };
     let mut config = effective_plugin_policy(state, &scope.profile_id)
         .get(&plugin_id)
@@ -10387,9 +9647,7 @@ async fn update_plugin_for_scope(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    Ok(Json(
-        plugin_info_for(state, &plugin_id, scope, false).await?,
-    ))
+    Ok(Json(plugin_info_for(state, &plugin_id, scope, false).await?))
 }
 
 #[derive(Debug, Default)]
@@ -10438,13 +9696,12 @@ async fn handle_enforcement_evaluate(
         });
         return Ok(json_bytes_response(response_body));
     }
-    let request: EnforcementEvaluateRequest =
-        serde_json::from_slice(&request_body).map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid enforcement evaluation request: {error}"),
-            )
-        })?;
+    let request: EnforcementEvaluateRequest = serde_json::from_slice(&request_body).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid enforcement evaluation request: {error}"),
+        )
+    })?;
     let policy = effective_plugin_policy(&state, &profile_id);
     let cached_rule_set = {
         state
@@ -10457,19 +9714,10 @@ async fn handle_enforcement_evaluate(
     let rule_set = if let Some(rule_set) = cached_rule_set {
         rule_set
     } else {
-        let profile = SecurityRuleProfile::parse_toml(&request.rules_toml).map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid enforcement rules: {error}"),
-            )
-        })?;
-        let rules =
-            SecurityRuleProfile::compile(&profile, SecurityRuleSource::User).map_err(|error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid enforcement rules: {error}"),
-                )
-            })?;
+        let profile = SecurityRuleProfile::parse_toml(&request.rules_toml)
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid enforcement rules: {error}")))?;
+        let rules = SecurityRuleProfile::compile(&profile, SecurityRuleSource::User)
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid enforcement rules: {error}")))?;
         let rule_set = SecurityRuleSet::new(rules);
         state
             .evaluate_rule_cache
@@ -10537,10 +9785,7 @@ fn enforcement_rule_source_str(source: api::EnforcementRuleSource) -> &'static s
     }
 }
 
-fn enforcement_rule_info(
-    source: SecurityRuleSource,
-    rule: CompiledSecurityRule,
-) -> api::EnforcementRuleInfo {
+fn enforcement_rule_info(source: SecurityRuleSource, rule: CompiledSecurityRule) -> api::EnforcementRuleInfo {
     api::EnforcementRuleInfo {
         rule_id: rule.rule_id,
         source: enforcement_rule_source(source),
@@ -10564,31 +9809,20 @@ fn append_compiled_rules(
     source: SecurityRuleSource,
     profile: SecurityRuleProfile,
 ) -> Result<(), AppError> {
-    let mut rules = profile.compile(source).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid enforcement rules: {error}"),
-        )
-    })?;
-    output.extend(
-        rules
-            .drain(..)
-            .map(|rule| enforcement_rule_info(source, rule)),
-    );
+    let mut rules = profile
+        .compile(source)
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid enforcement rules: {error}")))?;
+    output.extend(rules.drain(..).map(|rule| enforcement_rule_info(source, rule)));
     Ok(())
 }
 
 #[cfg(test)]
-fn profile_security_rule_profile_for_route(
-    profile_id: &str,
-) -> Result<SecurityRuleProfile, AppError> {
+fn profile_security_rule_profile_for_route(profile_id: &str) -> Result<SecurityRuleProfile, AppError> {
     let profile = profile_for_route(profile_id.to_string())?;
     profile_security_rule_profile_for_config(&profile)
 }
 
-fn profile_security_rule_profile_for_config(
-    profile: &Profile,
-) -> Result<SecurityRuleProfile, AppError> {
+fn profile_security_rule_profile_for_config(profile: &Profile) -> Result<SecurityRuleProfile, AppError> {
     let profile_id = profile.config().id.clone();
     profile
         .config()
@@ -10631,39 +9865,28 @@ fn list_enforcement_rules_for_profile_config(
     Ok(rules)
 }
 
-fn enforcement_info_for_rules(
-    profile_id: String,
-    rules: &[api::EnforcementRuleInfo],
-) -> api::EnforcementInfoResponse {
+fn enforcement_info_for_rules(profile_id: String, rules: &[api::EnforcementRuleInfo]) -> api::EnforcementInfoResponse {
     let mut source_counts = BTreeMap::new();
     let mut action_counts = BTreeMap::new();
     for rule in rules {
         *source_counts
             .entry(enforcement_rule_source_str(rule.source).to_string())
             .or_insert(0) += 1;
-        *action_counts
-            .entry(rule.action.as_str().to_string())
-            .or_insert(0) += 1;
+        *action_counts.entry(rule.action.as_str().to_string()).or_insert(0) += 1;
     }
     api::EnforcementInfoResponse {
         profile_id,
         rule_count: rules.len(),
         default_rule_count: rules.iter().filter(|rule| rule.default_rule).count(),
         custom_rule_count: rules.iter().filter(|rule| !rule.default_rule).count(),
-        detection_rule_count: rules
-            .iter()
-            .filter(|rule| rule.detection_level.is_some())
-            .count(),
+        detection_rule_count: rules.iter().filter(|rule| rule.detection_level.is_some()).count(),
         corp_locked_rule_count: rules.iter().filter(|rule| rule.corp_locked).count(),
         source_counts,
         action_counts,
     }
 }
 
-fn cached_rules_for_profile(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
+fn cached_rules_for_profile(state: &ServiceState, profile_id: &str) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
     if profile_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -10676,12 +9899,7 @@ fn cached_rules_for_profile(
         .unwrap()
         .get(profile_id)
         .cloned()
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::NOT_FOUND,
-                format!("profile not found: {profile_id}"),
-            )
-        })
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile not found: {profile_id}")))
 }
 
 async fn handle_enforcement_info(
@@ -10775,13 +9993,7 @@ async fn handle_enforcement_rule_upsert(
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
-    log_profile_mutation_route_request(
-        "enforcement_rule_upsert",
-        &profile_id,
-        "rule",
-        &rule_id,
-        "upsert",
-    );
+    log_profile_mutation_route_request("enforcement_rule_upsert", &profile_id, "rule", &rule_id, "upsert");
     if rule.corp_locked {
         log_profile_mutation_route_rejected(
             "enforcement_rule_upsert",
@@ -10847,13 +10059,7 @@ async fn handle_detection_rule_upsert(
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
-    log_profile_mutation_route_request(
-        "detection_rule_upsert",
-        &profile_id,
-        "rule",
-        &rule_id,
-        "upsert",
-    );
+    log_profile_mutation_route_request("detection_rule_upsert", &profile_id, "rule", &rule_id, "upsert");
     if rule.detection_level.is_none() {
         log_profile_mutation_route_rejected(
             "detection_rule_upsert",
@@ -10932,13 +10138,7 @@ async fn handle_enforcement_rule_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    log_profile_mutation_route_request(
-        "enforcement_rule_delete",
-        &profile_id,
-        "rule",
-        &rule_id,
-        "delete",
-    );
+    log_profile_mutation_route_request("enforcement_rule_delete", &profile_id, "rule", &rule_id, "delete");
     let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "enforcement_rule_delete",
@@ -10949,46 +10149,35 @@ async fn handle_enforcement_rule_delete(
             &error.1,
         );
     })?;
-    let summary = profile
-        .delete_profile_rule(&rule_id, "service-api")
-        .map_err(|error| {
-            let status = if error.contains("not found") {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            log_profile_mutation_route_rejected(
-                "enforcement_rule_delete",
-                &profile_id,
-                "rule",
-                &rule_id,
-                "delete",
-                &error,
-            );
-            AppError(status, error)
-        })?;
+    let summary = profile.delete_profile_rule(&rule_id, "service-api").map_err(|error| {
+        let status = if error.contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        log_profile_mutation_route_rejected(
+            "enforcement_rule_delete",
+            &profile_id,
+            "rule",
+            &rule_id,
+            "delete",
+            &error,
+        );
+        AppError(status, error)
+    })?;
     let event = write_profile_mutation_event(&state, summary).await?;
     state
         .refresh_profile_rule_cache(Some(&profile_id))
         .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
-    Ok(Json(EnforcementRuleDeleteResponse {
-        rule_id,
-        deleted: true,
-    }))
+    Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 
 async fn handle_detection_rule_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    log_profile_mutation_route_request(
-        "detection_rule_delete",
-        &profile_id,
-        "rule",
-        &rule_id,
-        "delete",
-    );
+    log_profile_mutation_route_request("detection_rule_delete", &profile_id, "rule", &rule_id, "delete");
     let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "detection_rule_delete",
@@ -10999,33 +10188,21 @@ async fn handle_detection_rule_delete(
             &error.1,
         );
     })?;
-    let summary = profile
-        .delete_profile_rule(&rule_id, "service-api")
-        .map_err(|error| {
-            let status = if error.contains("not found") {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            log_profile_mutation_route_rejected(
-                "detection_rule_delete",
-                &profile_id,
-                "rule",
-                &rule_id,
-                "delete",
-                &error,
-            );
-            AppError(status, error)
-        })?;
+    let summary = profile.delete_profile_rule(&rule_id, "service-api").map_err(|error| {
+        let status = if error.contains("not found") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        log_profile_mutation_route_rejected("detection_rule_delete", &profile_id, "rule", &rule_id, "delete", &error);
+        AppError(status, error)
+    })?;
     let event = write_profile_mutation_event(&state, summary).await?;
     state
         .refresh_profile_rule_cache(Some(&profile_id))
         .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("detection_rule_delete", &event);
-    Ok(Json(EnforcementRuleDeleteResponse {
-        rule_id,
-        deleted: true,
-    }))
+    Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 
 async fn handle_enforcement_reload(
@@ -11053,12 +10230,9 @@ fn validate_single_user_profile_rule(
         },
         ..SecurityRuleProfile::default()
     };
-    let mut compiled = profile.compile(SecurityRuleSource::User).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid enforcement rule: {error}"),
-        )
-    })?;
+    let mut compiled = profile
+        .compile(SecurityRuleSource::User)
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid enforcement rule: {error}")))?;
     compiled.pop().ok_or_else(|| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -11205,14 +10379,10 @@ impl EnforcementEventInput {
             });
         }
         if self.tcp_port.is_some() {
-            event = event.with_tcp(TcpSecurityEvent {
-                port: self.tcp_port,
-            });
+            event = event.with_tcp(TcpSecurityEvent { port: self.tcp_port });
         }
         if self.udp_port.is_some() {
-            event = event.with_udp(UdpSecurityEvent {
-                port: self.udp_port,
-            });
+            event = event.with_udp(UdpSecurityEvent { port: self.udp_port });
         }
         Ok(event)
     }
@@ -11276,10 +10446,7 @@ fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
 
 fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &PersistentVmEntry) -> String {
     let arch = capsem_core::net::policy_config::current_profile_arch();
-    let active_profile = entry
-        .session_dir
-        .join(ACTIVE_PROFILE_DIR)
-        .join(ACTIVE_PROFILE_FILE);
+    let active_profile = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
     let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
     json!({
         "id": persistent_entry_vm_id(entry),
@@ -11345,10 +10512,7 @@ fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppErr
     if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
         return Ok(entry.session_dir.clone());
     }
-    Err(AppError(
-        StatusCode::NOT_FOUND,
-        format!("sandbox not found: {id}"),
-    ))
+    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
 /// GET /vms/{id}/history -- unified command history (exec + audit events).
@@ -11473,9 +10637,7 @@ fn requires_vz_host_lock() -> bool {
     cfg!(target_os = "macos")
 }
 
-async fn acquire_vz_host_lock(
-    mode: startup::VzHostLockMode,
-) -> Result<Option<startup::VzHostLock>, AppError> {
+async fn acquire_vz_host_lock(mode: startup::VzHostLockMode) -> Result<Option<startup::VzHostLock>, AppError> {
     // This lock exists solely for an Apple Virtualization.framework
     // save/restore constraint. KVM VMs have independent VM fds and device
     // state; forcing every Linux service/xdist worker through the same flock
@@ -11484,16 +10646,15 @@ async fn acquire_vz_host_lock(
         return Ok(None);
     }
 
-    let result = tokio::task::spawn_blocking(move || {
-        startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60))
-    })
-    .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("vz host lock task panicked: {e}"),
-        )
-    })?;
+    let result =
+        tokio::task::spawn_blocking(move || startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60)))
+            .await
+            .map_err(|e| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("vz host lock task panicked: {e}"),
+                )
+            })?;
     match result {
         Ok(Some(guard)) => Ok(Some(guard)),
         Ok(None) => Err(AppError(
@@ -11520,20 +10681,11 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) -> bool {
     }
     let pid_i32 = pid as i32;
     let exited = || async move { (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(()) };
-    if poll_until(process_exit_poll_options(timeout), exited)
-        .await
-        .is_ok()
-    {
+    if poll_until(process_exit_poll_options(timeout), exited).await.is_ok() {
         return true;
     }
-    tracing::warn!(
-        pid,
-        "VM process did not exit within timeout, sending SIGKILL"
-    );
-    let _ = nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid_i32),
-        nix::sys::signal::Signal::SIGKILL,
-    );
+    tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_i32), nix::sys::signal::Signal::SIGKILL);
     if poll_until(
         PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)),
         exited,
@@ -11590,12 +10742,7 @@ async fn shutdown_vm_process(
         let Some(i) = instances.get(id) else {
             return Ok(None);
         };
-        (
-            i.uds_path.clone(),
-            i.session_dir.clone(),
-            i.pid,
-            i.persistent,
-        )
+        (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
     };
 
     // Claim before signalling. The watcher may already have claimed a process
@@ -11616,13 +10763,8 @@ async fn shutdown_vm_process(
                 )
                 .is_ok()
                 {
-                    if let Ok((tx, _)) =
-                        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream)
-                    {
-                        capsem_core::try_send!(
-                            "ipc_graceful_shutdown",
-                            tx.send(ServiceToProcess::Shutdown).await
-                        );
+                    if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
+                        capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
                     }
                 }
             }
@@ -11642,11 +10784,7 @@ async fn shutdown_vm_process(
         );
     }
 
-    tracing::debug!(
-        id,
-        shutdown_claimed,
-        "shutdown_vm_process removing instance"
-    );
+    tracing::debug!(id, shutdown_claimed, "shutdown_vm_process removing instance");
 
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
@@ -11733,14 +10871,12 @@ async fn handle_suspend(
         (i.uds_path.clone(), i.pid)
     };
 
-    let stream = tokio::net::UnixStream::connect(&uds_path)
-        .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to connect to VM IPC: {e}"),
-            )
-        })?;
+    let stream = tokio::net::UnixStream::connect(&uds_path).await.map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to connect to VM IPC: {e}"),
+        )
+    })?;
     let mut std_stream = stream.into_std().map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -11752,19 +10888,13 @@ async fn handle_suspend(
         "capsem-service",
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
-    .map_err(|e| {
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
+    let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("IPC handshake failed: {e}"),
+            format!("failed to create IPC channel: {e}"),
         )
     })?;
-    let (tx, rx) =
-        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to create IPC channel: {e}"),
-            )
-        })?;
 
     let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
@@ -11780,29 +10910,24 @@ async fn handle_suspend(
     // right before exiting. We must wait for full exit to avoid a race condition where
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
-    let confirmation = match tokio::time::timeout(
-        std::time::Duration::from_secs(SUSPEND_CONFIRM_TIMEOUT_SECS),
-        async {
-            let mut suspended = false;
-            loop {
-                match rx.recv().await {
-                    Ok(message) => {
-                        if let Some(confirmation) =
-                            observe_suspend_message(message, &mut suspended)
-                        {
-                            return confirmation;
-                        }
-                    }
-                    Err(error) => {
-                        if !suspended {
-                            tracing::warn!(%error, "suspend IPC channel closed before confirmation");
-                        }
-                        return suspend_channel_closed(suspended);
+    let confirmation = match tokio::time::timeout(std::time::Duration::from_secs(SUSPEND_CONFIRM_TIMEOUT_SECS), async {
+        let mut suspended = false;
+        loop {
+            match rx.recv().await {
+                Ok(message) => {
+                    if let Some(confirmation) = observe_suspend_message(message, &mut suspended) {
+                        return confirmation;
                     }
                 }
+                Err(error) => {
+                    if !suspended {
+                        tracing::warn!(%error, "suspend IPC channel closed before confirmation");
+                    }
+                    return suspend_channel_closed(suspended);
+                }
             }
-        },
-    )
+        }
+    })
     .await
     {
         Ok(confirmation) => confirmation,
@@ -11864,9 +10989,7 @@ async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) =
-        shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?
-    {
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await? {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || {
@@ -11875,10 +10998,7 @@ async fn handle_stop(
         }
         Ok(Json(json!({ "success": true, "persistent": persistent })))
     } else {
-        Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("sandbox not found: {id}"),
-        ))
+        Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
 }
 
@@ -11888,21 +11008,17 @@ async fn handle_delete(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Delete fast-paths through direct process teardown: the session dir is
     // about to be removed, so guest sync() and bash history don't matter.
-    let session_dir = if let Some((session_dir, _, _pid)) =
-        shutdown_vm_process(&state, &id, ShutdownMode::Discard).await?
-    {
-        session_dir
-    } else {
-        // Not running -- check persistent registry for stopped VM
-        if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
-            entry.session_dir
+    let session_dir =
+        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Discard).await? {
+            session_dir
         } else {
-            return Err(AppError(
-                StatusCode::NOT_FOUND,
-                format!("sandbox not found: {id}"),
-            ));
-        }
-    };
+            // Not running -- check persistent registry for stopped VM
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
+                entry.session_dir
+            } else {
+                return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
+            }
+        };
 
     // DELETE is a destructive contract. Validate registry-derived paths,
     // perform the blocking removal off the async runtime, and do not report
@@ -11959,8 +11075,7 @@ async fn handle_resume(
     match state.resume_sandbox(&id, None, None) {
         Ok(resumed_id) => {
             let uds_path = state.instance_socket_path(&resumed_id);
-            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await
-            {
+            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
                 error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
                     warn!(
@@ -11974,13 +11089,9 @@ async fn handle_resume(
                         Ok(cold_id) => {
                             let cold_uds_path = state.instance_socket_path(&cold_id);
                             if let Err(cold_e) =
-                                wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id))
-                                    .await
+                                wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
                             {
-                                error!(
-                                    id,
-                                    "cold resume fallback failed after warm restore failure: {cold_e}"
-                                );
+                                error!(id, "cold resume fallback failed after warm restore failure: {cold_e}");
                                 return Err(AppError(
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     format!(
@@ -11989,8 +11100,7 @@ async fn handle_resume(
                                 ));
                             }
                             state.clear_resume_checkpoint(&cold_id);
-                            return provision_response_for_running(&state, cold_id, cold_uds_path)
-                                .map(Json);
+                            return provision_response_for_running(&state, cold_id, cold_uds_path).map(Json);
                         }
                         Err(cold_e) => {
                             error!(
@@ -11999,9 +11109,7 @@ async fn handle_resume(
                             );
                             return Err(AppError(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                format!(
-                                    "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
-                                ),
+                                format!("resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"),
                             ));
                         }
                     }
@@ -12016,10 +11124,7 @@ async fn handle_resume(
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");
-            Err(AppError(
-                StatusCode::NOT_FOUND,
-                format!("resume failed: {e}"),
-            ))
+            Err(AppError(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
         }
     }
 }
@@ -12108,12 +11213,7 @@ async fn handle_persist(
         .profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     state
-        .validate_profile_pins(
-            &profile,
-            &profile_revision,
-            &profile_payload_hash,
-            &asset_pins,
-        )
+        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Move session dir to persistent location without changing the runtime id.
@@ -12333,18 +11433,8 @@ async fn handle_run(
             })
         })
         .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("provision task: {e}"),
-            )
-        })?;
-        provision_result.map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("provision failed: {e}"),
-            )
-        })?;
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
+        provision_result.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
 
         // 3. Wait for VM socket to appear while still holding the VZ
         // lifecycle rail. The child does its Apple VZ start/restore before it
@@ -12363,8 +11453,7 @@ async fn handle_run(
             // preserve_failed_session_dir inspects session logs that capsem-process
             // is still flushing.
             let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
-            preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result)
-                .await?;
+            preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?;
             return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     }
@@ -12399,10 +11488,8 @@ async fn handle_run(
             truncated,
             ..
         }) => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
             truncated,
         })),
@@ -12410,10 +11497,7 @@ async fn handle_run(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response".into(),
         )),
-        Err(e) => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("exec failed: {e}"),
-        )),
+        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
     };
 
     response
@@ -12434,10 +11518,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
-        .route(
-            "/vms/{id}/snapshots/status",
-            get(handle_vm_snapshots_status),
-        )
+        .route("/vms/{id}/snapshots/status", get(handle_vm_snapshots_status))
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/exec", post(handle_exec))
@@ -12479,18 +11560,12 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/profiles/reload", post(handle_profiles_reload))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))
         .route("/profiles/{profile_id}/obom", get(handle_profile_obom))
-        .route(
-            "/profiles/{profile_id}/validate",
-            post(handle_profile_validate),
-        )
+        .route("/profiles/{profile_id}/validate", post(handle_profile_validate))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(handle_enforcement_evaluate),
         )
-        .route(
-            "/profiles/{profile_id}/enforcement/info",
-            get(handle_enforcement_info),
-        )
+        .route("/profiles/{profile_id}/enforcement/info", get(handle_enforcement_info))
         .route(
             "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
             put(handle_enforcement_rule_upsert),
@@ -12511,10 +11586,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/profiles/{profile_id}/detection/evaluate",
             post(handle_detection_evaluate),
         )
-        .route(
-            "/profiles/{profile_id}/detection/info",
-            get(handle_detection_info),
-        )
+        .route("/profiles/{profile_id}/detection/info", get(handle_detection_info))
         .route(
             "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
             put(handle_detection_rule_upsert),
@@ -12523,22 +11595,13 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
             delete(handle_detection_rule_delete),
         )
-        .route(
-            "/profiles/{profile_id}/detection/reload",
-            post(handle_detection_reload),
-        )
+        .route("/profiles/{profile_id}/detection/reload", post(handle_detection_reload))
         .route(
             "/profiles/{profile_id}/detection/rules/list",
             get(handle_detection_rules_list),
         )
-        .route(
-            "/profiles/{profile_id}/plugins/list",
-            get(handle_profile_plugins),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/info",
-            get(handle_profile_plugins_info),
-        )
+        .route("/profiles/{profile_id}/plugins/list", get(handle_profile_plugins))
+        .route("/profiles/{profile_id}/plugins/info", get(handle_profile_plugins_info))
         .route(
             "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
             get(handle_profile_credential_broker_credentials_info),
@@ -12563,26 +11626,14 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/profiles/{profile_id}/assets/status",
             get(handle_profile_assets_status),
         )
-        .route(
-            "/profiles/{profile_id}/assets/info",
-            get(handle_profile_assets_info),
-        )
+        .route("/profiles/{profile_id}/assets/info", get(handle_profile_assets_info))
         .route(
             "/profiles/{profile_id}/assets/ensure",
             post(handle_profile_assets_ensure),
         )
-        .route(
-            "/profiles/{profile_id}/skills/info",
-            get(handle_profile_skills_info),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/list",
-            get(handle_profile_skills_list),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/add",
-            post(handle_profile_skill_add),
-        )
+        .route("/profiles/{profile_id}/skills/info", get(handle_profile_skills_info))
+        .route("/profiles/{profile_id}/skills/list", get(handle_profile_skills_list))
+        .route("/profiles/{profile_id}/skills/add", post(handle_profile_skill_add))
         .route(
             "/profiles/{profile_id}/skills/{skill_id}/edit",
             patch(handle_profile_skill_edit),
@@ -12599,10 +11650,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/profiles/{profile_id}/mcp/servers/list",
             get(handle_profile_mcp_servers),
         )
-        .route(
-            "/profiles/{profile_id}/mcp/info",
-            get(handle_profile_mcp_info),
-        )
+        .route("/profiles/{profile_id}/mcp/info", get(handle_profile_mcp_info))
         .route(
             "/profiles/{profile_id}/mcp/default/info",
             get(handle_profile_mcp_default_info),
@@ -12638,10 +11686,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/history", get(handle_history))
         .route("/vms/{id}/history/processes", get(handle_history_processes))
         .route("/vms/{id}/history/counts", get(handle_history_counts))
-        .route(
-            "/vms/{id}/history/transcript",
-            get(handle_history_transcript),
-        )
+        .route("/vms/{id}/history/transcript", get(handle_history_transcript))
         .route("/vms/{id}/files/list", get(handle_list_files))
         .route(
             "/vms/{id}/files/content",
@@ -12661,22 +11706,19 @@ async fn handle_system_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::SystemStatusResponse>, AppError> {
     let manifest = read_installed_status_document(&state.assets_dir.join("manifest.json"))?;
-    capsem_assets::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(
-        |error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize installed manifest for validation: {error}"),
-            )
-        },
-    )?)
+    capsem_assets::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize installed manifest for validation: {error}"),
+        )
+    })?)
     .map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("installed manifest is invalid: {error:#}"),
         )
     })?;
-    let manifest_metadata =
-        read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
+    let manifest_metadata = read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
     let profiles = if asset_reconcile_has_route_fields(&state) {
         refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog.clone())
     } else {
@@ -12703,19 +11745,14 @@ fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, A
     serde_json::from_str(&content).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "parse installed status document {}: {error}",
-                path.display()
-            ),
+            format!("parse installed status document {}: {error}", path.display()),
         )
     })
 }
 
 fn read_manifest_metadata_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
     let value = read_installed_status_document(path)?;
-    if value.get("schema").and_then(serde_json::Value::as_str)
-        != Some("capsem.manifest_metadata.v1")
-    {
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some("capsem.manifest_metadata.v1") {
         return Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "installed manifest metadata must use schema capsem.manifest_metadata.v1".to_string(),
@@ -12782,9 +11819,7 @@ async fn execute_update_apply(
     Ok(response)
 }
 
-async fn execute_update_command_unlocked(
-    plan: api::UpdateCommandPlan,
-) -> Result<api::UpdateActionResponse, AppError> {
+async fn execute_update_command_unlocked(plan: api::UpdateCommandPlan) -> Result<api::UpdateActionResponse, AppError> {
     let output = Command::new(&plan.program)
         .args(&plan.args)
         .output()
@@ -12795,11 +11830,7 @@ async fn execute_update_command_unlocked(
                 format!("failed to start update command: {error}"),
             )
         })?;
-    let status = if output.status.success() {
-        "succeeded"
-    } else {
-        "failed"
-    };
+    let status = if output.status.success() { "succeeded" } else { "failed" };
     Ok(api::UpdateActionResponse {
         status: status.to_string(),
         command: plan,
@@ -12829,9 +11860,7 @@ fn automatic_updates_enabled() -> bool {
     automatic_updates_enabled_from_resolved(&resolved)
 }
 
-fn automatic_updates_enabled_from_resolved(
-    settings: &[capsem_core::net::policy_config::ResolvedSetting],
-) -> bool {
+fn automatic_updates_enabled_from_resolved(settings: &[capsem_core::net::policy_config::ResolvedSetting]) -> bool {
     settings
         .iter()
         .find(|setting| setting.id == "app.auto_update")
@@ -12847,10 +11876,7 @@ fn automatic_update_failure_backoff(consecutive_failures: u32) -> std::time::Dur
     std::time::Duration::from_secs(seconds)
 }
 
-fn automatic_update_delay_from_value(
-    value: Option<&std::ffi::OsStr>,
-    default_seconds: u64,
-) -> std::time::Duration {
+fn automatic_update_delay_from_value(value: Option<&std::ffi::OsStr>, default_seconds: u64) -> std::time::Duration {
     let seconds = value
         .and_then(std::ffi::OsStr::to_str)
         .and_then(|value| value.parse::<u64>().ok())
@@ -12892,10 +11918,7 @@ async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutco
 }
 
 async fn run_automatic_update_loop(state: Arc<ServiceState>) {
-    let mut delay = automatic_update_delay(
-        AUTOMATIC_UPDATE_INITIAL_DELAY_ENV,
-        AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,
-    );
+    let mut delay = automatic_update_delay(AUTOMATIC_UPDATE_INITIAL_DELAY_ENV, AUTOMATIC_UPDATE_INITIAL_DELAY_SECS);
     let poll_delay = automatic_update_delay(AUTOMATIC_UPDATE_POLL_ENV, AUTOMATIC_UPDATE_POLL_SECS);
     let mut consecutive_failures = 0_u32;
     loop {
@@ -12940,9 +11963,7 @@ fn should_start_automatic_update_loop(parent_pid: Option<u32>) -> bool {
     parent_pid.is_none()
 }
 
-fn reload_activated_update_runtime(
-    state: &ServiceState,
-) -> Result<UpdateRuntimeDisposition, AppError> {
+fn reload_activated_update_runtime(state: &ServiceState) -> Result<UpdateRuntimeDisposition, AppError> {
     let path = state.assets_dir.join("manifest.json");
     let content = std::fs::read_to_string(&path).map_err(|error| {
         AppError(
@@ -12950,16 +11971,12 @@ fn reload_activated_update_runtime(
             format!("read activated update manifest {}: {error}", path.display()),
         )
     })?;
-    let manifest =
-        capsem_assets::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "validate activated update manifest {}: {error:#}",
-                    path.display()
-                ),
-            )
-        })?;
+    let manifest = capsem_assets::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("validate activated update manifest {}: {error:#}", path.display()),
+        )
+    })?;
     let selected_binary = manifest.binaries.current.clone();
     let previous_manifest = {
         let mut installed = state.manifest.write().map_err(|error| {
@@ -12995,9 +12012,7 @@ fn reload_activated_update_runtime(
     }
 }
 
-async fn handle_service_status(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn handle_service_status(State(state): State<Arc<ServiceState>>) -> Result<Json<serde_json::Value>, AppError> {
     let credential_store = capsem_core::credential_broker::credential_store_status();
     let ready = credential_store.ready;
     Ok(Json(serde_json::json!({
@@ -13061,9 +12076,7 @@ async fn main() -> Result<()> {
     let _ = std::fs::create_dir_all(&sessions_dir);
     let _ = std::fs::create_dir_all(&persistent_dir);
 
-    let service_sock = args
-        .uds_path
-        .unwrap_or_else(|| run_dir.join("service.sock"));
+    let service_sock = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Self-idempotent startup. Four parallel `capsem-service --uds-path X`
     // invocations must converge on exactly one running service.
@@ -13083,9 +12096,7 @@ async fn main() -> Result<()> {
 
     // Fast path: someone else already serves a compatible version.
     if service_sock.exists() {
-        if let Ok(Some(running)) =
-            startup::probe_running_version(&service_sock, probe_timeout).await
-        {
+        if let Ok(Some(running)) = startup::probe_running_version(&service_sock, probe_timeout).await {
             if running == current_version {
                 info!(
                     socket = %service_sock.display(),
@@ -13110,16 +12121,15 @@ async fn main() -> Result<()> {
     }
 
     let lock_path = service_sock.with_extension("lock");
-    let startup_lock =
-        match startup::StartupLock::acquire(&lock_path, std::time::Duration::from_secs(30))? {
-            Some(lock) => lock,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "another capsem-service startup holds {} after 30s; aborting",
-                    lock_path.display()
-                ));
-            }
-        };
+    let startup_lock = match startup::StartupLock::acquire(&lock_path, std::time::Duration::from_secs(30))? {
+        Some(lock) => lock,
+        None => {
+            return Err(anyhow::anyhow!(
+                "another capsem-service startup holds {} after 30s; aborting",
+                lock_path.display()
+            ));
+        }
+    };
 
     // Under lock: double-check a peer didn't finish starting while we waited.
     if service_sock.exists() {
@@ -13165,12 +12175,7 @@ async fn main() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let manifest_path = if assets_base_dir.join("manifest.json").exists() {
         Some(assets_base_dir.join("manifest.json"))
-    } else if assets_base_dir
-        .parent()
-        .unwrap()
-        .join("manifest.json")
-        .exists()
-    {
+    } else if assets_base_dir.parent().unwrap().join("manifest.json").exists() {
         Some(assets_base_dir.parent().unwrap().join("manifest.json"))
     } else {
         None
@@ -13224,11 +12229,7 @@ async fn main() -> Result<()> {
             Ok(catalog) => {
                 let mut preserve = profile_catalog_asset_filenames(&catalog);
                 preserve.extend(persistent_registry_asset_filenames(&persistent_registry));
-                match capsem_assets::asset_manager::cleanup_unused_assets_preserving(
-                    &assets_base_dir,
-                    m,
-                    preserve,
-                ) {
+                match capsem_assets::asset_manager::cleanup_unused_assets_preserving(&assets_base_dir, m, preserve) {
                     Ok(removed) if !removed.is_empty() => {
                         info!(count = removed.len(), "cleaned up stale assets");
                     }
@@ -13253,23 +12254,18 @@ async fn main() -> Result<()> {
 
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
-    let profile_summary_cache = build_profile_summary_cache().map_err(|AppError(_, message)| {
-        anyhow!("failed to build profile summary cache: {message}")
-    })?;
-    let profile_cache = build_profile_cache()
-        .map_err(|AppError(_, message)| anyhow!("failed to build profile cache: {message}"))?;
+    let profile_summary_cache = build_profile_summary_cache()
+        .map_err(|AppError(_, message)| anyhow!("failed to build profile summary cache: {message}"))?;
+    let profile_cache =
+        build_profile_cache().map_err(|AppError(_, message)| anyhow!("failed to build profile cache: {message}"))?;
     prewarm_system_overlay_templates(&run_dir, &profile_cache);
     prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version);
     let profile_rule_cache = build_profile_rule_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
-    let profile_mcp_default_cache =
-        build_profile_mcp_default_cache(None).map_err(|AppError(_, message)| {
-            anyhow!("failed to build profile MCP default cache: {message}")
-        })?;
-    let profile_plugin_policy_cache =
-        build_profile_plugin_policy_cache(None).map_err(|AppError(_, message)| {
-            anyhow!("failed to build profile plugin cache: {message}")
-        })?;
+    let profile_mcp_default_cache = build_profile_mcp_default_cache(None)
+        .map_err(|AppError(_, message)| anyhow!("failed to build profile MCP default cache: {message}"))?;
+    let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)
+        .map_err(|AppError(_, message)| anyhow!("failed to build profile plugin cache: {message}"))?;
     let profile_mutation_db = ServiceState::open_profile_mutation_db_handle(&run_dir)?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -13327,10 +12323,7 @@ async fn main() -> Result<()> {
     reap_orphan_capsem_processes(&run_dir);
 
     // Check for running instances to reattach
-    info!(
-        "scanning for existing sandboxes in {}",
-        instances_dir.display()
-    );
+    info!("scanning for existing sandboxes in {}", instances_dir.display());
     if let Ok(entries) = std::fs::read_dir(&instances_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -13359,9 +12352,7 @@ async fn main() -> Result<()> {
 
     info!(socket = %service_sock.display(), "listening on UDS");
 
-    let uds = match service_launch_span
-        .in_scope(|| UnixListener::bind(&service_sock).context("failed to bind UDS"))
-    {
+    let uds = match service_launch_span.in_scope(|| UnixListener::bind(&service_sock).context("failed to bind UDS")) {
         Ok(uds) => {
             service_launch_span.record("status", "ok");
             uds
@@ -13391,16 +12382,10 @@ async fn main() -> Result<()> {
         // say something had no way to tell "not started" from "started and
         // quiet", and spent a release cycle on the difference.
         info!(
-            initial_delay_secs = automatic_update_delay(
-                AUTOMATIC_UPDATE_INITIAL_DELAY_ENV,
-                AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,
-            )
-            .as_secs(),
-            poll_secs = automatic_update_delay(
-                AUTOMATIC_UPDATE_POLL_ENV,
-                AUTOMATIC_UPDATE_POLL_SECS,
-            )
-            .as_secs(),
+            initial_delay_secs =
+                automatic_update_delay(AUTOMATIC_UPDATE_INITIAL_DELAY_ENV, AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,)
+                    .as_secs(),
+            poll_secs = automatic_update_delay(AUTOMATIC_UPDATE_POLL_ENV, AUTOMATIC_UPDATE_POLL_SECS,).as_secs(),
             "automatic release polling started"
         );
         tokio::spawn(async move {
@@ -13442,11 +12427,7 @@ async fn main() -> Result<()> {
             tray_binary,
         )
         .await;
-        companions_for_spawn
-            .lock()
-            .unwrap()
-            .children
-            .extend(spawned);
+        companions_for_spawn.lock().unwrap().children.extend(spawned);
     });
     companions.lock().unwrap().spawn_task = Some(spawn_task);
 
@@ -13562,10 +12543,7 @@ fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
     );
 
     for pid in &orphan_pids {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(*pid),
-            nix::sys::signal::Signal::SIGTERM,
-        );
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), nix::sys::signal::Signal::SIGTERM);
     }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -13585,10 +12563,7 @@ fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
                 "orphan capsem-process did not exit, SIGKILLing"
             );
             for pid in survivors {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
             }
             return;
         }
@@ -13607,14 +12582,7 @@ fn kill_all_vm_processes(state: &ServiceState) {
         let instances = state.instances.lock().unwrap();
         instances
             .values()
-            .map(|i| {
-                (
-                    i.pid,
-                    i.uds_path.clone(),
-                    i.session_dir.clone(),
-                    i.persistent,
-                )
-            })
+            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
             .collect()
     };
     // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
@@ -13712,11 +12680,7 @@ fn find_sibling_binary(name: &str) -> PathBuf {
 /// Open a log file for a companion process, returning Stdio handles for stdout and stderr.
 /// Falls back to null if the file cannot be opened.
 fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::process::Stdio) {
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-    {
+    match std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
         Ok(f) => {
             let stdout = f
                 .try_clone()
@@ -13783,9 +12747,7 @@ async fn spawn_companions(
     // Parent-watch: the gateway exits the moment we die, even if we die
     // ungracefully (SIGKILL/OOM). capsem-guard enforces this on the gateway
     // side; we just have to hand it our PID.
-    gw_cmd
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string());
+    gw_cmd.arg("--parent-pid").arg(std::process::id().to_string());
     if let Some(port) = gateway_port {
         gw_cmd.arg("--port").arg(port.to_string());
     }
@@ -13794,13 +12756,7 @@ async fn spawn_companions(
         capsem_foundation::telemetry::LAUNCH_GATEWAY_SPAN,
         status = tracing::field::Empty,
     );
-    match gateway_span.in_scope(|| {
-        gw_cmd
-            .stdout(gw_out)
-            .stderr(gw_err)
-            .kill_on_drop(true)
-            .spawn()
-    }) {
+    match gateway_span.in_scope(|| gw_cmd.stdout(gw_out).stderr(gw_err).kill_on_drop(true).spawn()) {
         Ok(child) => {
             info!(pid = child.id(), "capsem-gateway spawned");
             children.push(child);
@@ -13812,10 +12768,7 @@ async fn spawn_companions(
                 let tp = token_path.clone();
                 let pp = port_path.clone();
                 let _ = capsem_foundation::poll::poll_until(
-                    capsem_foundation::poll::PollOpts::new(
-                        "gateway-ready",
-                        std::time::Duration::from_secs(5),
-                    ),
+                    capsem_foundation::poll::PollOpts::new("gateway-ready", std::time::Duration::from_secs(5)),
                     || {
                         let tp = tp.clone();
                         let pp = pp.clone();

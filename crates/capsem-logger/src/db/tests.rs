@@ -3,8 +3,7 @@ use crate::events::{Decision, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolR
 use std::time::SystemTime;
 
 fn temp_db_path(name: &str) -> PathBuf {
-    let p =
-        std::env::temp_dir().join(format!("capsem-test-db-{name}-{}.db", std::process::id()));
+    let p = std::env::temp_dir().join(format!("capsem-test-db-{name}-{}.db", std::process::id()));
     // Clean up any stale file/WAL from previous runs
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(p.with_extension("db-wal"));
@@ -194,19 +193,11 @@ async fn write_read_roundtrip_mcp_call() {
     drop(writer);
 
     let conn = rusqlite::Connection::open(&p).unwrap();
-    let (origin, server, method, tool, decision): (String, String, String, String, String) =
-        conn.query_row(
+    let (origin, server, method, tool, decision): (String, String, String, String, String) = conn
+        .query_row(
             "SELECT origin, server_name, method, tool_name, decision FROM tool_calls",
             [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .unwrap();
     assert_eq!(origin, "mcp");
@@ -252,9 +243,7 @@ fn writer_creates_wal_mode() {
 
     // WAL files should have been created (or checkpoint cleared them)
     let conn = rusqlite::Connection::open(&p).unwrap();
-    let mode: String = conn
-        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
-        .unwrap();
+    let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, "wal");
 
     std::fs::remove_file(&p).ok();
@@ -297,9 +286,7 @@ fn query_raw_returns_json() {
     drop(_writer);
 
     let reader = DbReader::open(&p).unwrap();
-    let json = reader
-        .query_raw("SELECT COUNT(*) as cnt FROM net_events")
-        .unwrap();
+    let json = reader.query_raw("SELECT COUNT(*) as cnt FROM net_events").unwrap();
     assert!(json.contains("cnt"));
     assert!(json.contains("0"));
 
@@ -312,16 +299,10 @@ async fn wal_survives_close_reopen() {
 
     let writer = DbWriter::open(&p, 16).unwrap();
     writer
-        .write(crate::WriteOp::NetEvent(make_net_event(
-            "a.com",
-            Decision::Allowed,
-        )))
+        .write(crate::WriteOp::NetEvent(make_net_event("a.com", Decision::Allowed)))
         .await;
     writer
-        .write(crate::WriteOp::NetEvent(make_net_event(
-            "b.com",
-            Decision::Denied,
-        )))
+        .write(crate::WriteOp::NetEvent(make_net_event("b.com", Decision::Denied)))
         .await;
     drop(writer);
 
@@ -331,10 +312,7 @@ async fn wal_survives_close_reopen() {
 
     let writer2 = DbWriter::open(&p, 16).unwrap();
     writer2
-        .write(crate::WriteOp::NetEvent(make_net_event(
-            "c.com",
-            Decision::Error,
-        )))
+        .write(crate::WriteOp::NetEvent(make_net_event("c.com", Decision::Error)))
         .await;
     drop(writer2);
 

@@ -32,11 +32,7 @@ impl KvmSerialConsole {
     /// - `input_fd`: write end of the input pipe (host -> guest input)
     pub fn new(read_fd: RawFd, input_fd: RawFd) -> Self {
         let (tx, _rx) = broadcast::channel(256);
-        Self {
-            tx,
-            read_fd,
-            input_fd,
-        }
+        Self { tx, read_fd, input_fd }
     }
 
     /// Subscribe to serial output bytes.

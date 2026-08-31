@@ -182,10 +182,7 @@ fn deserialize_scan_1m_rows() -> (f64, f64, String) {
         )
         .expect("scan deserialized 1m rows");
     let scan_elapsed = scan_started.elapsed();
-    assert_eq!(
-        scan_json.0, READ_ROWS as i64,
-        "deserialize scan count mismatch"
-    );
+    assert_eq!(scan_json.0, READ_ROWS as i64, "deserialize scan count mismatch");
 
     (
         deserialize_elapsed.as_secs_f64() * 1000.0,
@@ -204,9 +201,7 @@ fn serialize_deserialize_scan_1m_rows() -> (f64, f64, String) {
 
     let deserialize_started = Instant::now();
     let source = Connection::open(&path).expect("open source db for sqlite serialize");
-    let data = source
-        .serialize(DatabaseName::Main)
-        .expect("serialize source DB");
+    let data = source.serialize(DatabaseName::Main).expect("serialize source DB");
     let data = sqlite_owned_data_from_serialized(data);
     let mut conn = Connection::open_in_memory().expect("open in-memory sqlite serialize db");
     conn.deserialize(DatabaseName::Main, data, true)
@@ -222,10 +217,7 @@ fn serialize_deserialize_scan_1m_rows() -> (f64, f64, String) {
         )
         .expect("scan sqlite serialized 1m rows");
     let scan_elapsed = scan_started.elapsed();
-    assert_eq!(
-        scan_json.0, READ_ROWS as i64,
-        "sqlite serialize scan count mismatch"
-    );
+    assert_eq!(scan_json.0, READ_ROWS as i64, "sqlite serialize scan count mismatch");
 
     (
         deserialize_elapsed.as_secs_f64() * 1000.0,

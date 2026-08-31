@@ -24,10 +24,7 @@ fn http_def(name: &str) -> McpServerDef {
 /// socket. `handle_request` only reaches the network through `Refresh`, and that
 /// test uses disabled definitions.
 fn manager(defs: Vec<McpServerDef>) -> Arc<RwLock<McpServerManager>> {
-    Arc::new(RwLock::new(McpServerManager::new(
-        defs,
-        reqwest::Client::new(),
-    )))
+    Arc::new(RwLock::new(McpServerManager::new(defs, reqwest::Client::new())))
 }
 
 #[tokio::test]
@@ -59,11 +56,7 @@ async fn framing_error_stops_before_following_bytes_are_reinterpreted() {
     );
 }
 
-async fn dispatch(
-    mgr: &Arc<RwLock<McpServerManager>>,
-    id: u64,
-    method: AggregatorMethod,
-) -> AggregatorResponse {
+async fn dispatch(mgr: &Arc<RwLock<McpServerManager>>, id: u64, method: AggregatorMethod) -> AggregatorResponse {
     handle_request(mgr, AggregatorRequest { id, method }).await
 }
 
@@ -120,10 +113,7 @@ async fn list_servers_reports_definitions_as_disconnected_before_initialize() {
     assert_eq!(s.source, "test");
     assert!(s.enabled);
     assert!(!s.is_stdio);
-    assert!(
-        !s.connected,
-        "never initialized, so it must not read connected"
-    );
+    assert!(!s.connected, "never initialized, so it must not read connected");
     assert_eq!(s.tool_count, 0);
     assert_eq!(s.resource_count, 0);
     assert_eq!(s.prompt_count, 0);

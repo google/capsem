@@ -51,12 +51,8 @@ fn conn_matches_protocol(conn: &ConnMeta, protocol: ModelProtocol) -> bool {
 /// map is free for the SSE/LLM slot accesses inside. We can't hold a
 /// `&mut state.parser` across the SSE/LLM slot calls because both go
 /// through `ctx.state` (single-borrow on the map at a time).
-fn run<P, Take, Put>(
-    ctx: &mut ChunkCtx<'_>,
-    kind: ProviderKind,
-    mut take_parser: Take,
-    mut put_parser: Put,
-) where
+fn run<P, Take, Put>(ctx: &mut ChunkCtx<'_>, kind: ProviderKind, mut take_parser: Take, mut put_parser: Put)
+where
     P: ProviderStreamParser + Default,
     Take: FnMut(&mut ChunkCtx<'_>) -> P,
     Put: FnMut(&mut ChunkCtx<'_>, P),

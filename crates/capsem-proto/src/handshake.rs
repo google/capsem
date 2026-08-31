@@ -61,21 +61,13 @@ impl Hello {
 #[derive(thiserror::Error, Debug)]
 pub enum HandshakeError {
     #[error("protocol version mismatch: ours={ours}, peer={peer}, peer_id={peer_id:?}")]
-    Version {
-        ours: u16,
-        peer: u16,
-        peer_id: String,
-    },
+    Version { ours: u16, peer: u16, peer_id: String },
 
     #[error(
         "schema hash mismatch (same version, incompatible enum layout): \
          ours={ours:016x}, peer={peer:016x}, peer_id={peer_id:?}"
     )]
-    Schema {
-        ours: u64,
-        peer: u64,
-        peer_id: String,
-    },
+    Schema { ours: u64, peer: u64, peer_id: String },
 
     #[error("peer did not send Hello within {timeout_ms}ms (likely pre-handshake binary)")]
     Timeout { timeout_ms: u64 },

@@ -3,8 +3,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Request, State};
-use axum::middleware::Next;
 use axum::http::HeaderMap;
+use axum::middleware::Next;
 use axum::Router;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
@@ -38,9 +38,7 @@ pub(crate) struct RecordedMcpHttpRequest {
 
 impl RecordedMcpHttpRequest {
     pub(crate) fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(&name.to_ascii_lowercase())
-            .map(String::as_str)
+        self.headers.get(&name.to_ascii_lowercase()).map(String::as_str)
     }
 }
 
@@ -58,17 +56,11 @@ pub(crate) struct RecordingMcpState {
 
 impl RecordingMcpState {
     pub(crate) fn http_requests(&self) -> Vec<RecordedMcpHttpRequest> {
-        self.http_requests
-            .lock()
-            .expect("MCP HTTP recorder poisoned")
-            .clone()
+        self.http_requests.lock().expect("MCP HTTP recorder poisoned").clone()
     }
 
     pub(crate) fn tool_calls(&self) -> Vec<RecordedMcpToolCall> {
-        self.tool_calls
-            .lock()
-            .expect("MCP tool recorder poisoned")
-            .clone()
+        self.tool_calls.lock().expect("MCP tool recorder poisoned").clone()
     }
 }
 
@@ -157,22 +149,20 @@ pub(crate) async fn spawn_recording_mcp_server() -> anyhow::Result<LocalMcpServe
     let state = RecordingMcpState::default();
     let handler_state = state.clone();
     let shutdown = CancellationToken::new();
-    let service: StreamableHttpService<RecordingMcpHandler, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(RecordingMcpHandler::new(handler_state.clone())),
-            Default::default(),
-            StreamableHttpServerConfig::default()
-                .with_sse_keep_alive(None)
-                .with_cancellation_token(shutdown.child_token()),
-        );
+    let service: StreamableHttpService<RecordingMcpHandler, LocalSessionManager> = StreamableHttpService::new(
+        move || Ok(RecordingMcpHandler::new(handler_state.clone())),
+        Default::default(),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
 
-    let router =
-        Router::new()
-            .nest_service("/mcp", service)
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                record_mcp_http_request,
-            ));
+    let router = Router::new()
+        .nest_service("/mcp", service)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            record_mcp_http_request,
+        ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -196,14 +186,13 @@ pub(crate) async fn spawn_recording_mcp_server() -> anyhow::Result<LocalMcpServe
 pub(crate) async fn spawn_duplicate_tool_mcp_server() -> anyhow::Result<LocalMcpServer> {
     let state = RecordingMcpState::default();
     let shutdown = CancellationToken::new();
-    let service: StreamableHttpService<DuplicateToolMcpHandler, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(DuplicateToolMcpHandler),
-            Default::default(),
-            StreamableHttpServerConfig::default()
-                .with_sse_keep_alive(None)
-                .with_cancellation_token(shutdown.child_token()),
-        );
+    let service: StreamableHttpService<DuplicateToolMcpHandler, LocalSessionManager> = StreamableHttpService::new(
+        move || Ok(DuplicateToolMcpHandler),
+        Default::default(),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
 
     let router = Router::new().nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

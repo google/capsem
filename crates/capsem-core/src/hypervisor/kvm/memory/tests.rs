@@ -26,8 +26,7 @@ fn gic_does_not_overlap_virtio() {
     let gic_end = GIC_REDIST_BASE + GIC_REDIST_PER_CPU * 8; // max 8 CPUs
     assert!(
         gic_end <= VIRTIO_MMIO_BASE
-            || GIC_DIST_BASE
-                >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * u64::from(VIRTIO_MMIO_MAX_DEVICES),
+            || GIC_DIST_BASE >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * u64::from(VIRTIO_MMIO_MAX_DEVICES),
         "GIC and virtio MMIO regions overlap"
     );
 }
@@ -184,10 +183,7 @@ fn guest_memory_is_zero_initialized() {
     let mem = GuestMemory::new(4096).unwrap();
     let mut buf = vec![0xFFu8; 4096];
     mem.read_at(0, &mut buf).unwrap();
-    assert!(
-        buf.iter().all(|&b| b == 0),
-        "memory should be zero-initialized"
-    );
+    assert!(buf.iter().all(|&b| b == 0), "memory should be zero-initialized");
 }
 
 #[test]
@@ -433,18 +429,12 @@ fn x86_64_kvm_memory_regions_split_around_pci_hole() {
             },
         ]
     );
-    assert_eq!(
-        guest_phys_end(8 * 1024 * 1024 * 1024u64),
-        9 * 1024 * 1024 * 1024u64
-    );
+    assert_eq!(guest_phys_end(8 * 1024 * 1024 * 1024u64), 9 * 1024 * 1024 * 1024u64);
     assert_eq!(
         gpa_to_ram_offset(PCI_HOLE_START - 1, 8 * 1024 * 1024 * 1024u64),
         Some(PCI_HOLE_START - 1)
     );
-    assert_eq!(
-        gpa_to_ram_offset(PCI_HOLE_START, 8 * 1024 * 1024 * 1024u64),
-        None
-    );
+    assert_eq!(gpa_to_ram_offset(PCI_HOLE_START, 8 * 1024 * 1024 * 1024u64), None);
     assert_eq!(
         gpa_to_ram_offset(PCI_HOLE_END, 8 * 1024 * 1024 * 1024u64),
         Some(PCI_HOLE_START)
@@ -479,10 +469,7 @@ fn x86_64_virtio_mmio_in_pci_hole() {
 #[test]
 #[allow(clippy::assertions_on_constants)]
 fn x86_64_irq_base_above_legacy() {
-    assert!(
-        VIRTIO_MMIO_IRQ_BASE > 4,
-        "must not conflict with ISA IRQs 0-4"
-    );
+    assert!(VIRTIO_MMIO_IRQ_BASE > 4, "must not conflict with ISA IRQs 0-4");
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -495,8 +482,5 @@ fn aarch64_gic_spi_range_valid() {
         );
     }
     let max_irq = VIRTIO_MMIO_IRQ_BASE + VIRTIO_MMIO_MAX_DEVICES;
-    assert!(
-        max_irq < 1020,
-        "virtio IRQs must stay within GIC SPI range (<1020)"
-    );
+    assert!(max_irq < 1020, "virtio IRQs must stay within GIC SPI range (<1020)");
 }

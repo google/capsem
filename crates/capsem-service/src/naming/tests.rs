@@ -70,10 +70,7 @@ fn session_naming_generate_profile_session_name_uses_profile_counter() {
         generate_profile_session_name("code", std::iter::empty::<&str>()),
         "code-1"
     );
-    assert_eq!(
-        generate_profile_session_name("code", ["code-1", "co-work-1"]),
-        "code-2"
-    );
+    assert_eq!(generate_profile_session_name("code", ["code-1", "co-work-1"]), "code-2");
 }
 
 #[test]

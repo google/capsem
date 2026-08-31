@@ -50,10 +50,7 @@ fn assets_dir_wsl_home() {
 
 #[test]
 fn assets_dir_root_home() {
-    assert_eq!(
-        assets_dir_from_home("/root"),
-        PathBuf::from("/root/.capsem/assets")
-    );
+    assert_eq!(assets_dir_from_home("/root"), PathBuf::from("/root/.capsem/assets"));
 }
 
 // -----------------------------------------------------------------------
@@ -132,10 +129,7 @@ fn service_manifest_path_matches_install_layout() {
     let home = "/home/test";
     let assets_dir = assets_dir_from_home(home);
     let manifest = assets_dir.join("manifest.json");
-    assert_eq!(
-        manifest,
-        PathBuf::from("/home/test/.capsem/assets/manifest.json")
-    );
+    assert_eq!(manifest, PathBuf::from("/home/test/.capsem/assets/manifest.json"));
 }
 
 #[test]

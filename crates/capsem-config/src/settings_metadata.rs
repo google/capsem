@@ -86,8 +86,7 @@ fn collect_settings(
     if table.contains_key("type") {
         // Leaf setting -- deserialize the object into SettingDefRaw
         let val = serde_json::Value::Object(table.clone());
-        let def: SettingDefRaw =
-            serde_json::from_value(val).unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
+        let def: SettingDefRaw = serde_json::from_value(val).unwrap_or_else(|e| panic!("bad setting '{path}': {e}"));
         // Inherit enabled_by from parent group, unless this IS the toggle itself
         let enabled_by = if parent.enabled_by.as_deref() == Some(path) {
             None
@@ -145,10 +144,7 @@ fn collect_settings(
 
     for (key, val) in table {
         // Skip group metadata keys -- they are not child settings
-        if matches!(
-            key.as_str(),
-            "name" | "description" | "enabled_by" | "collapsed"
-        ) {
+        if matches!(key.as_str(), "name" | "description" | "enabled_by" | "collapsed") {
             continue;
         }
         if let Some(child) = val.as_object() {
@@ -162,8 +158,7 @@ fn collect_settings(
     }
 }
 
-pub(super) const DEFAULTS_JSON: &str =
-    include_str!("../../../config/settings/ui-metadata.generated.json");
+pub(super) const DEFAULTS_JSON: &str = include_str!("../../../config/settings/ui-metadata.generated.json");
 
 /// Returns setting definitions parsed from generated UI metadata.
 pub fn setting_definitions() -> Vec<SettingDef> {

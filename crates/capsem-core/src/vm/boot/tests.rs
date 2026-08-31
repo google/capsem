@@ -106,8 +106,7 @@ fn erofs_rootfs_override_appends_cmdline_flag() {
     let base = "console=hvc0 ro loglevel=1";
     let shares: Vec<VirtioFsShare> = vec![];
     let rootfs = Path::new("/tmp/rootfs.erofs");
-    let effective =
-        effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
+    let effective = effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
     assert!(effective.contains("capsem.rootfs=erofs"));
 }
 

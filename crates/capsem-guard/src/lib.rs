@@ -125,17 +125,10 @@ fn spawn_watcher<F>(parent_pid: u32, interval: Duration, terminator: F) -> Resul
 where
     F: Fn() + Send + 'static,
 {
-    spawn_watcher_with(parent_pid, interval, terminator, |builder, task| {
-        builder.spawn(task)
-    })
+    spawn_watcher_with(parent_pid, interval, terminator, |builder, task| builder.spawn(task))
 }
 
-fn spawn_watcher_with<F, S>(
-    parent_pid: u32,
-    interval: Duration,
-    terminator: F,
-    spawn: S,
-) -> Result<(), GuardError>
+fn spawn_watcher_with<F, S>(parent_pid: u32, interval: Duration, terminator: F, spawn: S) -> Result<(), GuardError>
 where
     F: Fn() + Send + 'static,
     S: FnOnce(thread::Builder, WatcherTask) -> std::io::Result<thread::JoinHandle<()>>,
@@ -205,10 +198,7 @@ impl Singleton {
         Self::try_acquire_after_open(lock_path, || {})
     }
 
-    fn try_acquire_after_open<F>(
-        lock_path: &Path,
-        after_open: F,
-    ) -> Result<Option<Self>, GuardError>
+    fn try_acquire_after_open<F>(lock_path: &Path, after_open: F) -> Result<Option<Self>, GuardError>
     where
         F: FnOnce(),
     {
@@ -235,21 +225,11 @@ impl Singleton {
         // SAFETY: libc::open with a valid CString path and standard flags.
         use std::ffi::CString;
         use std::os::fd::FromRawFd;
-        let c_path =
-            CString::new(lock_path.as_os_str().as_encoded_bytes()).map_err(|_| GuardError::Io {
-                path: lock_path.to_path_buf(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "lock path contains a NUL byte",
-                ),
-            })?;
-        let raw_fd = unsafe {
-            libc::open(
-                c_path.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC,
-                0o644,
-            )
-        };
+        let c_path = CString::new(lock_path.as_os_str().as_encoded_bytes()).map_err(|_| GuardError::Io {
+            path: lock_path.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "lock path contains a NUL byte"),
+        })?;
+        let raw_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC, 0o644) };
         if raw_fd < 0 {
             return Err(GuardError::Io {
                 path: lock_path.to_path_buf(),
@@ -339,10 +319,7 @@ pub struct InstalledGuards {
 /// * `Err(_)` -- parent missing/dead, or real IO error. Caller should exit 0
 ///   for the parent cases (they're expected when someone runs the binary
 ///   standalone) and fail loudly for IO.
-pub fn install(
-    parent_pid: Option<u32>,
-    lock_path: &Path,
-) -> Result<Option<InstalledGuards>, GuardError> {
+pub fn install(parent_pid: Option<u32>, lock_path: &Path) -> Result<Option<InstalledGuards>, GuardError> {
     watch_parent_or_exit(parent_pid)?;
     match Singleton::try_acquire(lock_path)? {
         Some(s) => Ok(Some(InstalledGuards { _singleton: s })),
@@ -352,8 +329,7 @@ pub fn install(
 
 /// Helper to parse `--parent-pid` style args. Accepts `None` and strings.
 pub fn parse_parent_pid(raw: Option<&str>) -> Option<u32> {
-    raw.and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|&p| p > 0)
+    raw.and_then(|s| s.trim().parse::<u32>().ok()).filter(|&p| p > 0)
 }
 
 /// Spawn a watcher that calls `terminator` when we are re-parented away from

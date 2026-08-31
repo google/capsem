@@ -39,8 +39,8 @@ impl RuntimeProfileSource {
     pub(crate) fn load(&self) -> Result<RuntimeProfileConfig> {
         let content = std::fs::read_to_string(&self.active_profile_path)
             .with_context(|| format!("read {}", self.active_profile_path.display()))?;
-        let active: ActiveProfileFile = toml::from_str(&content)
-            .with_context(|| format!("parse {}", self.active_profile_path.display()))?;
+        let active: ActiveProfileFile =
+            toml::from_str(&content).with_context(|| format!("parse {}", self.active_profile_path.display()))?;
         RuntimeProfileConfig::from_active(active, self.active_profile_path.clone())
     }
 }
@@ -69,12 +69,9 @@ impl RuntimeProfileConfig {
             .upstreams
             .iter()
             .map(|upstream| {
-                upstream.parse::<SocketAddr>().with_context(|| {
-                    format!(
-                        "parse DNS upstream {upstream:?} from {}",
-                        active_profile_path.display()
-                    )
-                })
+                upstream
+                    .parse::<SocketAddr>()
+                    .with_context(|| format!("parse DNS upstream {upstream:?} from {}", active_profile_path.display()))
             })
             .collect::<Result<Vec<_>>>()?;
 

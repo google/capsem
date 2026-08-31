@@ -71,16 +71,9 @@ impl Drop for TerminalBridge {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TerminalCommand {
-    Connect {
-        session_id: String,
-        cols: u16,
-        rows: u16,
-    },
+    Connect { session_id: String, cols: u16, rows: u16 },
     Input(Vec<u8>),
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Resize { cols: u16, rows: u16 },
     Disconnect,
     Shutdown,
 }
@@ -137,15 +130,11 @@ async fn run_terminal_manager(
             break;
         };
         match command {
-            TerminalCommand::Connect {
-                session_id,
-                cols,
-                rows,
-            } => {
+            TerminalCommand::Connect { session_id, cols, rows } => {
                 if session_id == active_session_id && active_input.is_some() {
-                    let resize_sent = active_input.as_ref().is_some_and(|input| {
-                        input.send(TerminalInput::Resize { cols, rows }).is_ok()
-                    });
+                    let resize_sent = active_input
+                        .as_ref()
+                        .is_some_and(|input| input.send(TerminalInput::Resize { cols, rows }).is_ok());
                     if resize_sent {
                         continue;
                     }
@@ -162,15 +151,7 @@ async fn run_terminal_manager(
                 let task_base_url = base_url.clone();
                 let task_events = events.clone();
                 active_task = Some(tokio::spawn(async move {
-                    run_terminal_connection(
-                        task_base_url,
-                        session_id,
-                        cols,
-                        rows,
-                        input_rx,
-                        task_events,
-                    )
-                    .await;
+                    run_terminal_connection(task_base_url, session_id, cols, rows, input_rx, task_events).await;
                 }));
             }
             TerminalCommand::Input(bytes) => {
@@ -398,9 +379,7 @@ impl TerminalSurface {
     }
 
     pub fn status_for(&self, session_id: &str) -> Option<&str> {
-        self.buffers
-            .get(session_id)
-            .and_then(|buffer| buffer.status.as_deref())
+        self.buffers.get(session_id).and_then(|buffer| buffer.status.as_deref())
     }
 
     fn buffer_mut(&mut self, session_id: &str) -> &mut TerminalBuffer {
@@ -540,11 +519,7 @@ fn line_from_screen_row(screen: &vt100::Screen, row: u16, cols: u16) -> Terminal
         if cell.is_wide_continuation() {
             continue;
         }
-        let text = if cell.has_contents() {
-            cell.contents()
-        } else {
-            " "
-        };
+        let text = if cell.has_contents() { cell.contents() } else { " " };
         push_screen_text(&mut line, text, style_from_cell(cell));
     }
     trim_terminal_line(&mut line);

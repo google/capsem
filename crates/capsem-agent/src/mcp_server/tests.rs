@@ -113,20 +113,14 @@ fn large_json_line_preserved() {
 fn extracts_snapshot_revert_path_from_tool_call() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshots_revert","arguments":{"path":"/root/poem.md","checkpoint":"cp-0"}}}"#;
 
-    assert_eq!(
-        extract_snapshot_revert_path(line).as_deref(),
-        Some("/root/poem.md")
-    );
+    assert_eq!(extract_snapshot_revert_path(line).as_deref(), Some("/root/poem.md"));
 }
 
 #[test]
 fn extracts_namespaced_snapshot_revert_path_from_tool_call() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__snapshots_revert","arguments":{"path":"poem.md","checkpoint":"cp-0"}}}"#;
 
-    assert_eq!(
-        extract_snapshot_revert_path(line).as_deref(),
-        Some("poem.md")
-    );
+    assert_eq!(extract_snapshot_revert_path(line).as_deref(), Some("poem.md"));
 }
 
 #[test]

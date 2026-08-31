@@ -42,14 +42,7 @@ pub fn epoch_to_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
         month += 1;
     }
 
-    (
-        year,
-        month + 1,
-        remaining_days as u32 + 1,
-        hours,
-        minutes,
-        seconds,
-    )
+    (year, month + 1, remaining_days as u32 + 1, hours, minutes, seconds)
 }
 
 /// Convert epoch seconds to an ISO 8601 UTC timestamp.

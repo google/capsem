@@ -48,10 +48,7 @@ impl DnsResolver {
     /// Build a resolver targeting the [`DEFAULT_UPSTREAMS`] nameservers
     /// with the default per-attempt timeout.
     pub fn new() -> Self {
-        let upstreams = DEFAULT_UPSTREAMS
-            .iter()
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let upstreams = DEFAULT_UPSTREAMS.iter().filter_map(|s| s.parse().ok()).collect();
         Self {
             upstreams,
             per_attempt_timeout: DEFAULT_TIMEOUT,
@@ -127,9 +124,7 @@ impl DnsResolver {
         let n = match tokio::time::timeout(self.per_attempt_timeout, sock.recv(&mut buf)).await {
             Ok(Ok(n)) => n,
             Ok(Err(e)) => return Err(e.into()),
-            Err(_) => {
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "dns recv timeout").into())
-            }
+            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, "dns recv timeout").into()),
         };
         buf.truncate(n);
         Ok(buf)

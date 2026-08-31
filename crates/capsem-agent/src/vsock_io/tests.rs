@@ -31,10 +31,7 @@ fn read_write_exact_fd() {
     let mut small_buf = [0u8; 1];
     let eof_res = read_exact_fd(server_fd, &mut small_buf);
     assert!(eof_res.is_err());
-    assert_eq!(
-        eof_res.unwrap_err().kind(),
-        std::io::ErrorKind::UnexpectedEof
-    );
+    assert_eq!(eof_res.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
 
     unsafe {
         nix::libc::close(server_fd);
@@ -173,10 +170,7 @@ fn parse_vsock_port_offset_from_kernel_cmdline() {
 #[test]
 fn parse_vsock_port_offset_ignores_missing_or_invalid_value() {
     assert_eq!(parse_vsock_port_offset("console=ttyS0 root=/dev/vda"), None);
-    assert_eq!(
-        parse_vsock_port_offset("capsem.vsock_port_offset=not-a-number"),
-        None
-    );
+    assert_eq!(parse_vsock_port_offset("capsem.vsock_port_offset=not-a-number"), None);
 }
 
 #[test]

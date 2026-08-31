@@ -114,8 +114,7 @@ impl PricingTable {
             models: Vec<ModelData>,
         }
 
-        let raw: Vec<RawProvider> =
-            serde_json::from_str(PRICING_JSON).expect("genai-prices.json parse failed");
+        let raw: Vec<RawProvider> = serde_json::from_str(PRICING_JSON).expect("genai-prices.json parse failed");
 
         let providers = raw
             .into_iter()
@@ -178,9 +177,7 @@ impl PricingTable {
                 if let Some(price) = m.prices.price() {
                     let input_rate = price.input_mtok.rate();
                     let output_rate = price.output_mtok.rate();
-                    return Some(
-                        input * input_rate / 1_000_000.0 + output * output_rate / 1_000_000.0,
-                    );
+                    return Some(input * input_rate / 1_000_000.0 + output * output_rate / 1_000_000.0);
                 }
             }
         }

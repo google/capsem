@@ -111,10 +111,7 @@ fn extract_magika_info_smoke() {
     assert!(!label.is_empty());
     assert!(!mime.is_empty());
     assert!(!group.is_empty());
-    assert!(
-        is_text,
-        "ASCII text should be recognized as text, got label={label}"
-    );
+    assert!(is_text, "ASCII text should be recognized as text, got label={label}");
 }
 
 #[test]
@@ -137,10 +134,7 @@ fn identify_file_sync_round_trips_real_file() {
     drop(f);
     let session = test_magika();
     let (label, mime, _group, is_text) = identify_file_sync(&session, &txt);
-    assert!(
-        is_text,
-        "ASCII text not recognized as text, got label={label}"
-    );
+    assert!(is_text, "ASCII text not recognized as text, got label={label}");
     assert_eq!(mime, "text/plain");
 }
 
@@ -158,10 +152,7 @@ fn identify_file_sync_uses_extension_and_utf8_fallback_for_small_text() {
             false,
         ),
     );
-    assert_eq!(
-        detected,
-        ("text".into(), "text/plain".into(), "text".into(), true)
-    );
+    assert_eq!(detected, ("text".into(), "text/plain".into(), "text".into(), true));
 }
 
 /// Magika classifies by content, and the extension is deliberately not a vote.
@@ -185,11 +176,7 @@ fn a_short_key_value_line_is_not_reliably_plain_text() {
     // `text/csv`. Which wrong answer it is does not matter -- that the answer
     // depends on the random part does.
     let ambiguous = dir.path().join("ambiguous.txt");
-    std::fs::write(
-        &ambiguous,
-        b"upload:fps-0000000000000000b135823cc1684885\n",
-    )
-    .unwrap();
+    std::fs::write(&ambiguous, b"upload:fps-0000000000000000b135823cc1684885\n").unwrap();
     let (_, ambiguous_mime, _, _) = identify_file_sync(&magika, &ambiguous);
     assert_ne!(
         ambiguous_mime, "text/plain",

@@ -129,10 +129,7 @@ async fn tcp_connection_serves_multiple_length_prefixed_queries() {
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
 
     for query in [vec![1, 2, 3], vec![4, 5, 6, 7]] {
-        client
-            .write_all(&(query.len() as u16).to_be_bytes())
-            .await
-            .unwrap();
+        client.write_all(&(query.len() as u16).to_be_bytes()).await.unwrap();
         client.write_all(&query).await.unwrap();
 
         let response_len = client.read_u16().await.unwrap() as usize;

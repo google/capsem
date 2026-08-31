@@ -32,10 +32,7 @@ use capsem_logger::DbWriter;
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn build_http_client(
-    request_timeout: Duration,
-    connect_timeout: Duration,
-) -> reqwest::Result<reqwest::Client> {
+fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(request_timeout)
         .connect_timeout(connect_timeout)
@@ -211,10 +208,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn fetch_http(
-        &self,
-        Parameters(params): Parameters<FetchHttpParams>,
-    ) -> Result<String, String> {
+    async fn fetch_http(&self, Parameters(params): Parameters<FetchHttpParams>) -> Result<String, String> {
         call_builtin(self, "fetch_http", to_args(&params)).await
     }
 
@@ -229,10 +223,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn grep_http(
-        &self,
-        Parameters(params): Parameters<GrepHttpParams>,
-    ) -> Result<String, String> {
+    async fn grep_http(&self, Parameters(params): Parameters<GrepHttpParams>) -> Result<String, String> {
         call_builtin(self, "grep_http", to_args(&params)).await
     }
 
@@ -247,10 +238,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn http_headers(
-        &self,
-        Parameters(params): Parameters<HttpHeadersParams>,
-    ) -> Result<String, String> {
+    async fn http_headers(&self, Parameters(params): Parameters<HttpHeadersParams>) -> Result<String, String> {
         call_builtin(self, "http_headers", to_args(&params)).await
     }
 
@@ -274,10 +262,7 @@ impl BuiltinHandler {
         name = "snapshots_list",
         description = "List all snapshots (automatic and manual) with metadata and per-snapshot diffs."
     )]
-    async fn snapshots_list(
-        &self,
-        Parameters(params): Parameters<SnapshotPaginationParams>,
-    ) -> Result<String, String> {
+    async fn snapshots_list(&self, Parameters(params): Parameters<SnapshotPaginationParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_list_snapshots(&to_args(&params), &sched, &ws, None);
@@ -288,10 +273,7 @@ impl BuiltinHandler {
         name = "snapshots_revert",
         description = "Restore a file from a checkpoint to the current workspace."
     )]
-    async fn snapshots_revert(
-        &self,
-        Parameters(params): Parameters<SnapshotRevertParams>,
-    ) -> Result<String, String> {
+    async fn snapshots_revert(&self, Parameters(params): Parameters<SnapshotRevertParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let (resp, file_event) = {
             let sched = sched.lock().await;
@@ -312,10 +294,7 @@ impl BuiltinHandler {
         name = "snapshots_create",
         description = "Create a named manual snapshot (checkpoint)."
     )]
-    async fn snapshots_create(
-        &self,
-        Parameters(params): Parameters<SnapshotNameParams>,
-    ) -> Result<String, String> {
+    async fn snapshots_create(&self, Parameters(params): Parameters<SnapshotNameParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
         let mut sched = sched.lock().await;
         let resp = file_tools::handle_snapshot(&to_args(&params), &mut sched, None);
@@ -326,24 +305,15 @@ impl BuiltinHandler {
         name = "snapshots_delete",
         description = "Delete a manual snapshot by checkpoint ID."
     )]
-    async fn snapshots_delete(
-        &self,
-        Parameters(params): Parameters<SnapshotDeleteParams>,
-    ) -> Result<String, String> {
+    async fn snapshots_delete(&self, Parameters(params): Parameters<SnapshotDeleteParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_delete_snapshot(&to_args(&params), &sched, None);
         extract_text(resp)
     }
 
-    #[tool(
-        name = "snapshots_history",
-        description = "Show revert history for the session."
-    )]
-    async fn snapshots_history(
-        &self,
-        Parameters(params): Parameters<SnapshotHistoryParams>,
-    ) -> Result<String, String> {
+    #[tool(name = "snapshots_history", description = "Show revert history for the session.")]
+    async fn snapshots_history(&self, Parameters(params): Parameters<SnapshotHistoryParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_snapshots_history(&to_args(&params), &sched, &ws, None);
@@ -354,10 +324,7 @@ impl BuiltinHandler {
         name = "snapshots_compact",
         description = "Compact snapshot storage by merging specified checkpoints."
     )]
-    async fn snapshots_compact(
-        &self,
-        Parameters(params): Parameters<SnapshotCompactParams>,
-    ) -> Result<String, String> {
+    async fn snapshots_compact(&self, Parameters(params): Parameters<SnapshotCompactParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
         let mut sched = sched.lock().await;
         let resp = file_tools::handle_snapshots_compact(&to_args(&params), &mut sched, None);
@@ -385,11 +352,7 @@ fn to_args<T: serde::Serialize>(params: &T) -> serde_json::Value {
     serde_json::to_value(params).unwrap_or(serde_json::Value::Object(Default::default()))
 }
 
-async fn call_builtin(
-    handler: &BuiltinHandler,
-    name: &str,
-    args: serde_json::Value,
-) -> Result<String, String> {
+async fn call_builtin(handler: &BuiltinHandler, name: &str, args: serde_json::Value) -> Result<String, String> {
     let resp = builtin_tools::call_builtin_tool(
         name,
         &args,
@@ -423,10 +386,7 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
     // refusal). rmcp's ``Result<String, String>`` maps ``Err`` to the wire-
     // level ``isError: true`` response, so we propagate that here -- without
     // this, the client saw a successful result containing error text.
-    let is_error = result
-        .get("isError")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let is_error = result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
     if is_error {
         Err(text)
     } else {
@@ -438,10 +398,7 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::args()
-        .skip(1)
-        .any(|arg| arg == "--version" || arg == "-V")
-    {
+    if std::env::args().skip(1).any(|arg| arg == "--version" || arg == "-V") {
         println!("capsem-mcp-builtin {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -490,8 +447,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    let active_profile_path = std::env::var("CAPSEM_ACTIVE_PROFILE")
-        .map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
+    let active_profile_path =
+        std::env::var("CAPSEM_ACTIVE_PROFILE").map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
     let active_profile_text = std::fs::read_to_string(&active_profile_path)
         .map_err(anyhow::Error::new)
         .with_context(|| format!("read active profile {active_profile_path}"))?;
@@ -502,11 +459,7 @@ async fn main() -> Result<()> {
         .validate()
         .map_err(anyhow::Error::msg)
         .with_context(|| format!("validate active profile {active_profile_path}"))?;
-    let security_rules = Arc::new(
-        active_profile
-            .compile_security_rule_set()
-            .map_err(anyhow::Error::msg)?,
-    );
+    let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
     let plugin_policy = Arc::new(active_profile.plugins.clone());
 
     // Session DB writer (optional).

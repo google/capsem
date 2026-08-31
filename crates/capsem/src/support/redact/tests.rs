@@ -89,8 +89,7 @@ fn home_path_with_special_chars_collapsed() {
 
 #[test]
 fn multiple_secrets_in_one_line_all_redacted() {
-    let line =
-        "config: ANTHROPIC_KEY=sk-ant-aaaaaaaaaaaaaaaaaaaaaa OPENAI_KEY=sk-bbbbbbbbbbbbbbbbbbbb";
+    let line = "config: ANTHROPIC_KEY=sk-ant-aaaaaaaaaaaaaaaaaaaaaa OPENAI_KEY=sk-bbbbbbbbbbbbbbbbbbbb";
     let r = redact_line(line);
     assert!(!r.contains("aaaaaaaaaaaaaaaaaaaaaa"), "{r}");
     assert!(!r.contains("bbbbbbbbbbbbbbbbbbbb"), "{r}");
@@ -127,7 +126,6 @@ fn json_secret_value_is_redacted() {
     assert!(r.contains("\"endpoint\""));
 }
 
-
 // ── Leaks the redactor used to miss ────────────────────────────────
 //
 // A redactor is dangerous when it fails to fire, not when it over-redacts.
@@ -151,8 +149,7 @@ fn json_redaction_leaves_the_line_still_parseable() {
     let line = r#"{"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"}"#;
     let r = redact_line(line);
 
-    serde_json::from_str::<serde_json::Value>(&r)
-        .unwrap_or_else(|e| panic!("redaction broke the JSON: {e}\n{r}"));
+    serde_json::from_str::<serde_json::Value>(&r).unwrap_or_else(|e| panic!("redaction broke the JSON: {e}\n{r}"));
 }
 
 #[test]

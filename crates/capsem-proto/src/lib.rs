@@ -235,20 +235,12 @@ impl McpFrame {
 
 /// Encode a framed MCP payload as:
 /// `[u32 total_len_be][fixed header][process_name bytes][payload bytes]`.
-pub fn encode_mcp_frame(
-    stream_id: u32,
-    flags: u16,
-    process_name: &str,
-    payload: &[u8],
-) -> Result<Vec<u8>> {
+pub fn encode_mcp_frame(stream_id: u32, flags: u16, process_name: &str, payload: &[u8]) -> Result<Vec<u8>> {
     validate_mcp_frame_stream_flags(stream_id, flags)?;
 
     let process_name_bytes = process_name.as_bytes();
     if process_name_bytes.len() > MCP_FRAME_MAX_PROCESS_NAME_LEN {
-        bail!(
-            "MCP process name too long: {} bytes",
-            process_name_bytes.len()
-        );
+        bail!("MCP process name too long: {} bytes", process_name_bytes.len());
     }
 
     let total_len = MCP_FRAME_HEADER_LEN as usize + process_name_bytes.len() + payload.len();
@@ -260,10 +252,7 @@ pub fn encode_mcp_frame(
         .len()
         .try_into()
         .context("MCP process name length overflow")?;
-    let payload_len: u32 = payload
-        .len()
-        .try_into()
-        .context("MCP payload length overflow")?;
+    let payload_len: u32 = payload.len().try_into().context("MCP payload length overflow")?;
     let total_len_u32: u32 = total_len.try_into().context("MCP frame length overflow")?;
 
     let mut out = Vec::with_capacity(total_len + 4);
@@ -342,10 +331,7 @@ pub fn decode_mcp_frame_body(body: &[u8]) -> Result<McpFrame> {
 
     let expected = MCP_FRAME_HEADER_LEN as usize + process_name_len + payload_len;
     if body.len() != expected {
-        bail!(
-            "invalid MCP frame length: body={} expected={expected}",
-            body.len()
-        );
+        bail!("invalid MCP frame length: body={} expected={expected}", body.len());
     }
 
     let process_start = MCP_FRAME_HEADER_LEN as usize;
@@ -590,11 +576,7 @@ pub enum GuestToHost {
     /// Telemetry: file deleted in guest.
     FileDeleted { path: String },
     /// Response to FileRead.
-    FileContent {
-        id: u64,
-        path: String,
-        data: Vec<u8>,
-    },
+    FileContent { id: u64, path: String, data: Vec<u8> },
     /// Acknowledgment of a successful FileWrite or FileDelete.
     FileOpDone { id: u64 },
     /// Error encountered during a file operation or exec.
@@ -780,12 +762,9 @@ pub fn validate_file_path_safe(path: &str, workspace_root: &Path) -> Result<()> 
         bail!("path is a symlink: {path:?}");
     }
 
-    let ws_resolved = workspace_root.canonicalize().with_context(|| {
-        format!(
-            "cannot canonicalize workspace root: {}",
-            workspace_root.display()
-        )
-    })?;
+    let ws_resolved = workspace_root
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize workspace root: {}", workspace_root.display()))?;
 
     if full.exists() {
         // Existing path: canonicalize and check containment.

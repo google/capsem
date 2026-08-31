@@ -29,31 +29,18 @@ fn parses_real_provider_defaults_as_security_rules() {
         unknown_provider_rule.detection_level,
         Some(DetectionLevel::Informational)
     );
-    assert_eq!(
-        unknown_provider_rule.condition,
-        r#"model.provider == "unknown""#
-    );
+    assert_eq!(unknown_provider_rule.condition, r#"model.provider == "unknown""#);
     let unknown_mcp_rule = built_in_compiled
         .iter()
         .find(|rule| rule.rule_id == "profiles.rules.default_unknown_mcp_server")
         .expect("built-in defaults include unknown MCP detection");
     assert_eq!(unknown_mcp_rule.action, SecurityRuleAction::Allow);
-    assert_eq!(
-        unknown_mcp_rule.detection_level,
-        Some(DetectionLevel::Informational)
-    );
-    assert_eq!(
-        unknown_mcp_rule.condition,
-        r#"mcp.server.name.contains("observed:")"#
-    );
+    assert_eq!(unknown_mcp_rule.detection_level, Some(DetectionLevel::Informational));
+    assert_eq!(unknown_mcp_rule.condition, r#"mcp.server.name.contains("observed:")"#);
     assert!(built_in_defaults.plugins.contains_key("credential_broker"));
     assert!(built_in_defaults.plugins.contains_key("log_sanitizer"));
-    assert!(compiled
-        .iter()
-        .all(|rule| !rule.condition.contains("file.ingress")));
-    assert!(compiled
-        .iter()
-        .all(|rule| !rule.condition.contains("credential.name")));
+    assert!(compiled.iter().all(|rule| !rule.condition.contains("file.ingress")));
+    assert!(compiled.iter().all(|rule| !rule.condition.contains("credential.name")));
 }
 
 #[test]
@@ -69,8 +56,8 @@ match = 'has(http.host)'
 "#,
     )
     .expect("profile without plugins parses before built-in contract");
-    let err = validate_builtin_profile_contract(&missing_plugins)
-        .expect_err("built-in profile requires plugin section");
+    let err =
+        validate_builtin_profile_contract(&missing_plugins).expect_err("built-in profile requires plugin section");
     assert!(err.contains("[plugins.credential_broker]"), "{err}");
 
     let missing_defaults = SecurityRuleProfile::parse_toml(
@@ -83,8 +70,8 @@ mode = "rewrite"
 "#,
     )
     .expect("profile without defaults parses before built-in contract");
-    let err = validate_builtin_profile_contract(&missing_defaults)
-        .expect_err("built-in profile requires visible defaults");
+    let err =
+        validate_builtin_profile_contract(&missing_defaults).expect_err("built-in profile requires visible defaults");
     assert!(err.contains("[default.http]"), "{err}");
 }
 
@@ -94,22 +81,13 @@ fn provider_defaults_build_settings_defined_endpoint_registry() {
         .endpoint_registry()
         .expect("registry builds");
     assert_eq!(registry.len(), 4);
-    assert_eq!(
-        registry.get("openai").expect("openai").protocol,
-        ModelProtocol::OpenAi
-    );
+    assert_eq!(registry.get("openai").expect("openai").protocol, ModelProtocol::OpenAi);
     assert_eq!(
         registry.get("anthropic").expect("anthropic").protocol,
         ModelProtocol::Anthropic
     );
-    assert_eq!(
-        registry.get("google").expect("google").protocol,
-        ModelProtocol::Google
-    );
-    assert_eq!(
-        registry.get("ollama").expect("ollama").protocol,
-        ModelProtocol::Ollama
-    );
+    assert_eq!(registry.get("google").expect("google").protocol, ModelProtocol::Google);
+    assert_eq!(registry.get("ollama").expect("ollama").protocol, ModelProtocol::Ollama);
     assert_eq!(
         registry.protocol_for_host("api.openai.com"),
         Some(ModelProtocol::OpenAi)
@@ -122,14 +100,8 @@ fn provider_defaults_build_settings_defined_endpoint_registry() {
         registry.protocol_for_host("daily-cloudcode-pa.googleapis.com"),
         Some(ModelProtocol::Google)
     );
-    assert_eq!(
-        registry.protocol_for_host("127.0.0.1"),
-        Some(ModelProtocol::Ollama)
-    );
-    assert_eq!(
-        registry.protocol_for_host("local.ollama"),
-        Some(ModelProtocol::Ollama)
-    );
+    assert_eq!(registry.protocol_for_host("127.0.0.1"), Some(ModelProtocol::Ollama));
+    assert_eq!(registry.protocol_for_host("local.ollama"), Some(ModelProtocol::Ollama));
     assert_eq!(
         registry.protocol_for_target("local.ollama", 11434),
         Some(ModelProtocol::Ollama)
@@ -165,9 +137,7 @@ match = 'http.host == "llm.internal.example"'
     .expect("profile parses");
 
     let registry = profile.endpoint_registry().expect("registry builds");
-    let endpoint = registry
-        .get("private_gateway")
-        .expect("private endpoint exists");
+    let endpoint = registry.get("private_gateway").expect("private endpoint exists");
     assert_eq!(endpoint.provider_id, "private_gateway");
     assert_eq!(endpoint.display_name, "Private Gateway");
     assert_eq!(endpoint.protocol, ModelProtocol::OpenAi);
@@ -311,14 +281,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     let ids = rules
         .rules()
         .iter()
-        .map(|rule| {
-            (
-                rule.rule_id.as_str(),
-                rule.action,
-                rule.detection_level,
-                rule.priority,
-            )
-        })
+        .map(|rule| (rule.rule_id.as_str(), rule.action, rule.detection_level, rule.priority))
         .collect::<Vec<_>>();
 
     assert!(ids.contains(&(

@@ -30,11 +30,7 @@ const HERMETIC_UPSTREAM_DOMAIN: &str = "fixture.capsem.test";
 /// Enforcement intent is compiled into `SecurityRuleSet` so tests exercise the
 /// same security-event/CEL rail as production. `NetworkMechanics` remains present
 /// for non-enforcement proxy settings such as body capture and HTTP port gates.
-fn make_proxy_config(
-    allowed: &[&str],
-    blocked: &[&str],
-    default_allow: bool,
-) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
+fn make_proxy_config(allowed: &[&str], blocked: &[&str], default_allow: bool) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     make_proxy_config_full(allowed, blocked, default_allow, &[80])
 }
 
@@ -57,9 +53,7 @@ fn host_pattern_negative_condition(pattern: &str) -> Option<String> {
     }
     if let Some(suffix) = pattern.strip_prefix("*.") {
         let escaped = regex::escape(suffix);
-        return Some(format!(
-            "http.host.matches(\"(^|.*\\\\.){escaped}$\") == false"
-        ));
+        return Some(format!("http.host.matches(\"(^|.*\\\\.){escaped}$\") == false"));
     }
     Some(format!("http.host != \"{}\"", pattern.replace('"', "\\\"")))
 }
@@ -118,8 +112,8 @@ match = '''
         );
     }
 
-    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&toml)
-        .expect("test security rule profile");
+    let profile =
+        capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&toml).expect("test security rule profile");
     capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
         &profile,
         capsem_core::net::policy_config::SecurityRuleSource::User,
@@ -136,10 +130,7 @@ fn make_proxy_config_full(
     default_allow: bool,
     http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
-    make_proxy_config_with_security_rules(
-        security_rules_for_proxy(allowed, blocked, default_allow),
-        http_ports,
-    )
+    make_proxy_config_with_security_rules(security_rules_for_proxy(allowed, blocked, default_allow), http_ports)
 }
 
 fn make_proxy_config_with_security_rules(
@@ -166,10 +157,7 @@ fn make_proxy_config_with_local_http_upstream(
             protocol: UpstreamOverrideProtocol::Http,
         },
     );
-    make_proxy_config_with_mechanics(
-        security_rules_for_proxy(&[domain], &[], false),
-        policy_inner,
-    )
+    make_proxy_config_with_mechanics(security_rules_for_proxy(&[domain], &[], false), policy_inner)
 }
 
 fn make_proxy_config_with_mechanics(
@@ -185,14 +173,11 @@ fn make_proxy_config_with_mechanics(
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-        trace_state: Arc::new(std::sync::Mutex::new(
-            capsem_core::net::ai_traffic::TraceState::new(),
-        )),
+        trace_state: Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
         plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
-    let pipeline =
-        mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
+    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
     let config = Arc::new(MitmProxyConfig {
         ca,
         policy,
@@ -211,8 +196,8 @@ fn make_proxy_config_with_mechanics(
 }
 
 fn security_rules_from_toml(toml: &str) -> capsem_core::net::policy_config::SecurityRuleSet {
-    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(toml)
-        .expect("test security rule profile");
+    let profile =
+        capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(toml).expect("test security rule profile");
     capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
         &profile,
         capsem_core::net::policy_config::SecurityRuleSource::User,
@@ -241,9 +226,7 @@ fn make_tls_client_config() -> rustls::ClientConfig {
 
 /// Spawn the MITM proxy on a TCP listener and return the address.
 /// The proxy handles exactly one connection then exits.
-async fn spawn_proxy(
-    config: Arc<MitmProxyConfig>,
-) -> (tokio::task::JoinHandle<()>, std::net::SocketAddr) {
+async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<()>, std::net::SocketAddr) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -273,8 +256,7 @@ async fn mitm_proxy_allows_hermetic_upstream() {
         })
     })
     .await;
-    let (config, db) =
-        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
+    let (config, db) = make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     // Connect through the proxy with TLS trusting our MITM CA.
@@ -349,11 +331,7 @@ async fn mitm_proxy_denies_forbidden_domain() {
         .body(Full::new(Bytes::new()))
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(
-        resp.status().as_u16(),
-        403,
-        "denied domain should return 403"
-    );
+    assert_eq!(resp.status().as_u16(), 403, "denied domain should return 403");
 
     drop(sender);
     proxy_task.await.unwrap();
@@ -424,8 +402,7 @@ async fn mitm_proxy_records_http_method_and_path() {
         })
     })
     .await;
-    let (config, db) =
-        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
+    let (config, db) = make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -491,11 +468,7 @@ async fn mitm_proxy_denies_bad_upstream_cert() {
         .unwrap();
 
     let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(
-        resp.status().as_u16(),
-        502,
-        "Bad upstream cert should return 502"
-    );
+    assert_eq!(resp.status().as_u16(), 502, "Bad upstream cert should return 502");
     let _ = resp.into_body().collect().await;
 
     drop(sender);
@@ -534,10 +507,7 @@ async fn mitm_proxy_handles_garbage_data() {
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
     if !events.is_empty() {
-        assert!(matches!(
-            events[0].decision,
-            Decision::Error | Decision::Denied
-        ));
+        assert!(matches!(events[0].decision, Decision::Error | Decision::Denied));
     }
 }
 
@@ -575,10 +545,7 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     assert_eq!(events[0].status_code, Some(403));
     assert_eq!(events[0].domain, "example.com");
     assert_eq!(events[0].method.as_deref(), Some("GET"));
-    assert_eq!(
-        events[0].port, 80,
-        "plain HTTP defaults to upstream port 80"
-    );
+    assert_eq!(events[0].port, 80, "plain HTTP defaults to upstream port 80");
 }
 
 /// Network routing mechanics must not issue security decisions. A plain-HTTP
@@ -636,10 +603,7 @@ async fn mitm_proxy_plain_http_port_mechanics_do_not_deny_outside_security_rail(
     assert_eq!(events[0].status_code, Some(200));
     assert_eq!(events[0].domain, "127.0.0.1");
     assert_eq!(events[0].port, upstream_port);
-    assert_eq!(
-        events[0].matched_rule.as_deref(),
-        Some("security.http.default")
-    );
+    assert_eq!(events[0].matched_rule.as_deref(), Some("security.http.default"));
     assert!(!events[0]
         .matched_rule
         .as_deref()
@@ -699,11 +663,7 @@ async fn mitm_proxy_plain_http_reconnects_stale_cached_upstream_sender() {
 
     let events = db.reader().unwrap().recent_net_events(10).unwrap();
     assert!(
-        events
-            .iter()
-            .filter(|event| event.status_code == Some(200))
-            .count()
-            >= 2,
+        events.iter().filter(|event| event.status_code == Some(200)).count() >= 2,
         "both requests should be logged as successful net events: {events:?}"
     );
     assert!(
@@ -805,10 +765,7 @@ async fn mitm_proxy_plain_http_ollama_shape_records_telemetry() {
     assert_eq!(ev.path.as_deref(), Some("/api/generate"));
     assert_eq!(ev.status_code, Some(200));
     assert_eq!(ev.domain, "127.0.0.1");
-    assert_eq!(
-        ev.port, upstream_port,
-        "port reflects upstream Host: header port"
-    );
+    assert_eq!(ev.port, upstream_port, "port reflects upstream Host: header port");
     assert_eq!(ev.conn_type.as_deref(), Some("http-mitm"));
     assert!(
         ev.bytes_sent >= req_body.len() as u64,
@@ -826,9 +783,7 @@ async fn mitm_proxy_plain_http_ollama_shape_records_telemetry() {
 /// to validate (chunked, fixed-length, slow, etc.).
 async fn spawn_fake_upstream<F>(serve: F) -> (u16, tokio::task::JoinHandle<Vec<u8>>)
 where
-    F: FnOnce(
-            tokio::net::TcpStream,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<u8>> + Send>>
+    F: FnOnce(tokio::net::TcpStream) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<u8>> + Send>>
         + Send
         + 'static,
 {
@@ -860,11 +815,7 @@ async fn read_http11_request(sock: &mut tokio::net::TcpStream) -> Vec<u8> {
                 head_end = Some(idx + 4);
                 let head = std::str::from_utf8(&buf[..idx]).unwrap_or("");
                 for line in head.split("\r\n") {
-                    if let Some(v) = line
-                        .to_ascii_lowercase()
-                        .strip_prefix("content-length:")
-                        .map(str::trim)
-                    {
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:").map(str::trim) {
                         content_length = v.parse().unwrap_or(0);
                     }
                 }
@@ -937,14 +888,8 @@ async fn mitm_proxy_plain_http_post_forwards_body_and_records_bytes_sent() {
 
     // The response body must have come back to the client.
     let resp_text = String::from_utf8_lossy(&resp_buf);
-    assert!(
-        resp_text.contains("HTTP/1.1 200"),
-        "no 200 from proxy:\n{resp_text}"
-    );
-    assert!(
-        resp_text.contains(r#""ok":true"#),
-        "response body lost:\n{resp_text}"
-    );
+    assert!(resp_text.contains("HTTP/1.1 200"), "no 200 from proxy:\n{resp_text}");
+    assert!(resp_text.contains(r#""ok":true"#), "response body lost:\n{resp_text}");
 
     // NetEvent must reflect bytes_sent >= req body, status 200, POST.
     let reader = db.reader().unwrap();
@@ -1018,11 +963,7 @@ async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
 
     let reader = db.reader().unwrap();
     let model_calls = reader.recent_model_calls(10).unwrap();
-    assert_eq!(
-        model_calls.len(),
-        1,
-        "private gateway must emit one ModelCall"
-    );
+    assert_eq!(model_calls.len(), 1, "private gateway must emit one ModelCall");
     let call = &model_calls[0].1;
     assert_eq!(call.provider, "unknown");
     assert_eq!(call.protocol.as_deref(), Some("openai"));
@@ -1088,11 +1029,7 @@ async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_tool_call() {
 
     let reader = db.reader().unwrap();
     let net_events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        net_events.len(),
-        1,
-        "MCP-over-HTTP still emits HTTP telemetry"
-    );
+    assert_eq!(net_events.len(), 1, "MCP-over-HTTP still emits HTTP telemetry");
     assert_eq!(net_events[0].path.as_deref(), Some("/remote-mcp"));
 
     let tool_calls = reader.recent_tool_calls(10).unwrap();
@@ -1173,10 +1110,7 @@ match = 'mcp.tool_call.name == "search_web"'
     assert_eq!(call.method.as_deref(), Some("tools/call"));
     assert_eq!(call.tool_name, "search_web");
     assert_eq!(call.decision, "denied");
-    assert_eq!(
-        call.policy_rule.as_deref(),
-        Some("profiles.rules.block_search_web_mcp")
-    );
+    assert_eq!(call.policy_rule.as_deref(), Some("profiles.rules.block_search_web_mcp"));
 }
 
 /// T2.2: a chunked-transfer-encoding response from upstream is
@@ -1319,10 +1253,7 @@ async fn mitm_proxy_plain_http_keep_alive_emits_one_netevent_per_request() {
         tcp.flush().await.unwrap();
         // Drain head + body. ka-ok marker gates per-request progress.
         let s = drain_response(&mut tcp, "ka-ok").await;
-        assert!(
-            s.contains("ka-ok"),
-            "missing body in response for {p}:\n{s}"
-        );
+        assert!(s.contains("ka-ok"), "missing body in response for {p}:\n{s}");
     }
     drop(tcp);
 
@@ -1332,15 +1263,10 @@ async fn mitm_proxy_plain_http_keep_alive_emits_one_netevent_per_request() {
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        events.len(),
-        3,
-        "three keep-alive requests = three NetEvents"
-    );
+    assert_eq!(events.len(), 3, "three keep-alive requests = three NetEvents");
     // events[] is reverse-chronological per recent_net_events, but
     // the path field disambiguates regardless of order.
-    let paths: std::collections::HashSet<&str> =
-        events.iter().filter_map(|e| e.path.as_deref()).collect();
+    let paths: std::collections::HashSet<&str> = events.iter().filter_map(|e| e.path.as_deref()).collect();
     assert!(paths.contains("/a"));
     assert!(paths.contains("/b"));
     assert!(paths.contains("/c"));
@@ -1389,9 +1315,7 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
     let recv = received.lock().unwrap().clone();
     let head = String::from_utf8_lossy(&recv);
     let expected = format!("host: {host_value}");
-    let host_line_present = head
-        .split("\r\n")
-        .any(|l| l.eq_ignore_ascii_case(&expected));
+    let host_line_present = head.split("\r\n").any(|l| l.eq_ignore_ascii_case(&expected));
     assert!(
         host_line_present,
         "upstream did not receive the inbound Host header verbatim. Saw:\n{head}"
@@ -1427,11 +1351,7 @@ async fn mitm_proxy_plain_http_unresolvable_upstream_emits_502_netevent() {
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        events.len(),
-        1,
-        "dial failure should still emit one NetEvent"
-    );
+    assert_eq!(events.len(), 1, "dial failure should still emit one NetEvent");
     let ev = &events[0];
     assert_eq!(ev.decision, Decision::Error);
     assert_eq!(ev.status_code, Some(502));
@@ -1460,9 +1380,7 @@ async fn mitm_proxy_plain_http_records_every_http_method() {
             for _ in 0..n_methods {
                 let _ = read_http11_request(&mut sock).await;
                 // 204 No Content -- minimal, valid for any method.
-                sock.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
-                    .await
-                    .unwrap();
+                sock.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").await.unwrap();
                 sock.flush().await.unwrap();
             }
             let _ = sock.shutdown().await;
@@ -1499,10 +1417,7 @@ async fn mitm_proxy_plain_http_records_every_http_method() {
         let n = tcp.read(&mut resp_chunk).await.unwrap();
         assert!(n > 0, "no response for method {m}");
         let s = String::from_utf8_lossy(&resp_chunk[..n]);
-        assert!(
-            s.contains("204 No Content"),
-            "method {m}: bad response:\n{s}"
-        );
+        assert!(s.contains("204 No Content"), "method {m}: bad response:\n{s}");
     }
     drop(tcp);
 
@@ -1513,13 +1428,9 @@ async fn mitm_proxy_plain_http_records_every_http_method() {
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(20).unwrap();
     assert_eq!(events.len(), methods.len(), "one NetEvent per method");
-    let recorded: std::collections::HashSet<&str> =
-        events.iter().filter_map(|e| e.method.as_deref()).collect();
+    let recorded: std::collections::HashSet<&str> = events.iter().filter_map(|e| e.method.as_deref()).collect();
     for m in &methods {
-        assert!(
-            recorded.contains(m),
-            "method {m} not recorded; saw {recorded:?}"
-        );
+        assert!(recorded.contains(m), "method {m} not recorded; saw {recorded:?}");
     }
     for ev in &events {
         assert_eq!(ev.status_code, Some(204));
@@ -1554,9 +1465,7 @@ async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
     let query = "q=hello%20world&page=2&filter=active&tag=a&tag=b";
-    let req = format!(
-        "GET /search?{query} HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /search?{query} HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
     tcp.write_all(req.as_bytes()).await.unwrap();
     let mut resp_buf = Vec::new();
@@ -1583,11 +1492,7 @@ async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     let ev = &events[0];
-    assert_eq!(
-        ev.path.as_deref(),
-        Some("/search"),
-        "path must not include the query"
-    );
+    assert_eq!(ev.path.as_deref(), Some("/search"), "path must not include the query");
     assert_eq!(
         ev.query.as_deref(),
         Some(query),
@@ -1934,9 +1839,7 @@ async fn mitm_proxy_plain_http_corrupted_gzip_response_doesnt_crash() {
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
-    let req = format!(
-        "GET /badgzip HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /badgzip HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
     tcp.write_all(req.as_bytes()).await.unwrap();
     tcp.flush().await.unwrap();
@@ -1944,11 +1847,7 @@ async fn mitm_proxy_plain_http_corrupted_gzip_response_doesnt_crash() {
     // 5s deadline. The "must not hang" half of "must not crash" --
     // a panic in the body wrapper would silently abort the
     // hyper-server task, leaving the client read pending forever.
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        tcp.read_to_end(&mut resp_buf),
-    )
-    .await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), tcp.read_to_end(&mut resp_buf)).await;
     drop(tcp);
 
     upstream_task.await.unwrap();
@@ -2015,19 +1914,13 @@ async fn mitm_proxy_plain_http_truncated_upstream_response_doesnt_hang() {
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
-    let req = format!(
-        "GET /truncated HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /truncated HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
     tcp.write_all(req.as_bytes()).await.unwrap();
     // 5s deadline -- if the proxy hangs on the truncated body it
     // won't return inside this window and the test fails.
     let mut resp_buf = Vec::new();
-    let read = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        tcp.read_to_end(&mut resp_buf),
-    )
-    .await;
+    let read = tokio::time::timeout(std::time::Duration::from_secs(5), tcp.read_to_end(&mut resp_buf)).await;
     drop(tcp);
     upstream_task.await.unwrap();
     proxy_task.await.unwrap();
@@ -2079,9 +1972,7 @@ async fn mitm_proxy_plain_http_zero_length_response_body_emits_netevent() {
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
-    let req = format!(
-        "GET /empty HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /empty HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
     tcp.write_all(req.as_bytes()).await.unwrap();
     let mut resp_buf = Vec::new();
@@ -2093,11 +1984,7 @@ async fn mitm_proxy_plain_http_zero_length_response_body_emits_netevent() {
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        events.len(),
-        1,
-        "zero-body response still emits one NetEvent"
-    );
+    assert_eq!(events.len(), 1, "zero-body response still emits one NetEvent");
     let ev = &events[0];
     assert_eq!(ev.status_code, Some(200));
     assert_eq!(ev.bytes_received, 0);
@@ -2126,10 +2013,7 @@ async fn mitm_proxy_classifies_unknown_first_byte() {
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert!(
-        !events.is_empty(),
-        "unknown protocol path must record a NetEvent"
-    );
+    assert!(!events.is_empty(), "unknown protocol path must record a NetEvent");
     assert_eq!(events[0].decision, Decision::Error);
     let reason = events[0].matched_rule.as_deref().unwrap_or("");
     assert!(
@@ -2221,8 +2105,7 @@ async fn multiple_requests_reuse_upstream_connection() {
         })
     })
     .await;
-    let (config, db) =
-        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
+    let (config, db) = make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();

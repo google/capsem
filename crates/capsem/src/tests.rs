@@ -118,10 +118,7 @@ fn session_blocked_reason_explains_a_stopped_vm_the_service_will_not_resume() {
     let mut vm = session(client::VmLifecycleState::Stopped);
     vm.resume_blocked_reason = Some("rootfs asset file is missing".into());
 
-    assert_eq!(
-        session_blocked_reason(&vm),
-        Some("rootfs asset file is missing")
-    );
+    assert_eq!(session_blocked_reason(&vm), Some("rootfs asset file is missing"));
 }
 
 #[test]
@@ -145,24 +142,14 @@ fn base_update_status() -> UpdateStatusResponse {
         validation_error: None,
         stale: false,
         last_error: None,
-        binary: update_track(
-            Some("1.4.0"),
-            Some("1.4.0"),
-            UpdateTrackState::Current,
-            false,
-        ),
+        binary: update_track(Some("1.4.0"), Some("1.4.0"), UpdateTrackState::Current, false),
         assets: update_track(
             Some("2026.0627.1"),
             Some("2026.0627.1"),
             UpdateTrackState::Current,
             false,
         ),
-        profiles: update_track(
-            Some("profiles-1"),
-            Some("profiles-1"),
-            UpdateTrackState::Current,
-            false,
-        ),
+        profiles: update_track(Some("profiles-1"), Some("profiles-1"), UpdateTrackState::Current, false),
         images: update_track(None, None, UpdateTrackState::NotPublished, false),
         supply_chain: client::SupplyChainEvidence::default(),
     }
@@ -171,12 +158,7 @@ fn base_update_status() -> UpdateStatusResponse {
 #[test]
 fn update_status_lines_separate_available_and_blocked_tracks() {
     let mut status = base_update_status();
-    status.binary = update_track(
-        Some("1.4.0"),
-        Some("1.4.1"),
-        UpdateTrackState::UpdateAvailable,
-        true,
-    );
+    status.binary = update_track(Some("1.4.0"), Some("1.4.1"), UpdateTrackState::UpdateAvailable, true);
     status.profiles = update_track(
         Some("profiles-1"),
         Some("profiles-2"),
@@ -263,14 +245,7 @@ fn cli_mcp_commands_accept_profile() {
         vec!["capsem", "mcp", "servers", "--profile", "co-work"],
         vec!["capsem", "mcp", "tools", "--profile", "co-work"],
         vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
-        vec![
-            "capsem",
-            "mcp",
-            "call",
-            "server__tool",
-            "--profile",
-            "co-work",
-        ],
+        vec!["capsem", "mcp", "call", "server__tool", "--profile", "co-work"],
     ];
 
     for args in cases {
@@ -522,10 +497,7 @@ fn parse_list_quiet_long() {
 fn parse_status() {
     // `capsem status` is now the service status command
     let cli = Cli::parse_from(["capsem", "status"]);
-    assert!(matches!(
-        cli.command.unwrap(),
-        Commands::Misc(MiscCommands::Status)
-    ));
+    assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Status)));
 }
 
 #[test]
@@ -786,10 +758,7 @@ fn parse_restart() {
 #[test]
 fn parse_version() {
     let cli = Cli::parse_from(["capsem", "version"]);
-    assert!(matches!(
-        cli.command.unwrap(),
-        Commands::Misc(MiscCommands::Version)
-    ));
+    assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Version)));
 }
 
 #[test]
@@ -929,28 +898,19 @@ fn mock_server_binary_prefers_installed_sibling() {
 #[test]
 fn parse_install() {
     let cli = Cli::parse_from(["capsem", "install"]);
-    assert!(matches!(
-        cli.command.unwrap(),
-        Commands::Misc(MiscCommands::Install)
-    ));
+    assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Install)));
 }
 
 #[test]
 fn parse_start() {
     let cli = Cli::parse_from(["capsem", "start"]);
-    assert!(matches!(
-        cli.command.unwrap(),
-        Commands::Misc(MiscCommands::Start)
-    ));
+    assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Start)));
 }
 
 #[test]
 fn parse_stop() {
     let cli = Cli::parse_from(["capsem", "stop"]);
-    assert!(matches!(
-        cli.command.unwrap(),
-        Commands::Misc(MiscCommands::Stop)
-    ));
+    assert!(matches!(cli.command.unwrap(), Commands::Misc(MiscCommands::Stop)));
 }
 
 #[test]
@@ -1006,9 +966,7 @@ fn status_asset_lines_are_derived_from_profiles_status_payload() {
 
     let lines = profile_status_summary_lines(&payload);
 
-    assert!(lines
-        .iter()
-        .any(|line| line == "Profiles:  1/1 ready (installed)"));
+    assert!(lines.iter().any(|line| line == "Profiles:  1/1 ready (installed)"));
     assert!(lines
         .iter()
         .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
@@ -1334,10 +1292,7 @@ fn parse_update_url_overrides_reject_bare_paths() {
                 Err(err) => err,
             };
             let message = err.to_string();
-            assert!(
-                message.contains(&format!("{flag} must be a URL")),
-                "{message}"
-            );
+            assert!(message.contains(&format!("{flag} must be a URL")), "{message}");
             assert!(message.contains("https://..."), "{message}");
             assert!(message.contains("http://..."), "{message}");
             assert!(message.contains("file:///absolute/path"), "{message}");
@@ -1349,10 +1304,7 @@ fn parse_update_url_overrides_reject_bare_paths() {
 fn parse_update_url_overrides_reject_url_shorthand_paths() {
     for flag in ["--manifest", "--corp"] {
         for (source, expected) in [
-            (
-                "file:assets/stable/manifest.json",
-                "file URL must start with file://",
-            ),
+            ("file:assets/stable/manifest.json", "file URL must start with file://"),
             (
                 "https:release.capsem.org/assets/stable/manifest.json",
                 "must use https://, http://, or file:// URLs",
@@ -1383,10 +1335,7 @@ fn run_dir_override_logic() {
         resolve(Some("/tmp/custom-run"), "/ignored"),
         PathBuf::from("/tmp/custom-run"),
     );
-    assert_eq!(
-        resolve(None, "/Users/test"),
-        PathBuf::from("/Users/test/.capsem/run"),
-    );
+    assert_eq!(resolve(None, "/Users/test"), PathBuf::from("/Users/test/.capsem/run"),);
 }
 
 // -----------------------------------------------------------------------
@@ -1467,10 +1416,7 @@ fn parse_create_with_name_and_from() {
 fn shell_without_session_launches_tui_home() {
     assert_eq!(
         capsem_shell_tui_args(None, "http://127.0.0.1:49152"),
-        vec![
-            "--gateway-url".to_string(),
-            "http://127.0.0.1:49152".to_string()
-        ]
+        vec!["--gateway-url".to_string(), "http://127.0.0.1:49152".to_string()]
     );
 }
 

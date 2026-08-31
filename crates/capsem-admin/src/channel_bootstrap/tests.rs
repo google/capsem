@@ -48,18 +48,14 @@ fn missing_channel_bootstrap_copies_only_official_packages() {
     let donor = donor("stable");
     let before = donor.clone();
 
-    let bootstrapped =
-        bootstrap_first_party_channel_source("nightly", &donor).expect("bootstrap nightly");
+    let bootstrapped = bootstrap_first_party_channel_source("nightly", &donor).expect("bootstrap nightly");
 
     assert_eq!(bootstrapped["channel"], "nightly");
     assert_eq!(bootstrapped["version"], donor["version"]);
     assert_eq!(bootstrapped["status"], donor["status"]);
     assert_eq!(bootstrapped["packages"], donor["packages"]);
     assert_eq!(bootstrapped["profiles"], json!({}));
-    assert_eq!(
-        donor, before,
-        "the donor channel must remain byte-for-byte unchanged"
-    );
+    assert_eq!(donor, before, "the donor channel must remain byte-for-byte unchanged");
 }
 
 #[test]
@@ -77,8 +73,7 @@ fn missing_channel_bootstrap_rejects_profile_copy_and_unsupported_channels() {
 #[test]
 fn missing_channel_bootstrap_rejects_unofficial_or_empty_package_cohorts() {
     let mut unofficial = donor("stable");
-    unofficial["packages"][0]["url"] =
-        json!("https://example.com/releases/download/v1.5.0/Capsem.deb");
+    unofficial["packages"][0]["url"] = json!("https://example.com/releases/download/v1.5.0/Capsem.deb");
     assert!(bootstrap_first_party_channel_source("nightly", &unofficial).is_err());
 
     let mut empty = donor("stable");
@@ -88,8 +83,7 @@ fn missing_channel_bootstrap_rejects_unofficial_or_empty_package_cohorts() {
 
 #[test]
 fn missing_channel_bootstrap_source_allows_explicit_empty_membership() {
-    let bootstrapped =
-        bootstrap_first_party_channel_source("nightly", &donor("stable")).expect("bootstrap");
+    let bootstrapped = bootstrap_first_party_channel_source("nightly", &donor("stable")).expect("bootstrap");
 
     crate::validate_assets_channel_graph_manifest(&bootstrapped, "nightly")
         .expect("a channel may explicitly contain zero profiles before its first profile release");
@@ -100,8 +94,8 @@ fn exact_retired_channel_bootstrap_removes_both_dead_families() {
     let retired = donor("stable");
     let before = retired.clone();
 
-    let bootstrapped = bootstrap_retired_first_party_channel_source("stable", &retired)
-        .expect("retire exact stable source");
+    let bootstrapped =
+        bootstrap_retired_first_party_channel_source("stable", &retired).expect("retire exact stable source");
 
     assert_eq!(bootstrapped["channel"], "stable");
     assert_eq!(bootstrapped["version"], retired["version"]);

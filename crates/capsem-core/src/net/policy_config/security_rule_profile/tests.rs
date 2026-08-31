@@ -1,8 +1,7 @@
 use super::*;
 use crate::security_engine::{
-    DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent,
-    ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
-    TcpSecurityEvent,
+    DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent, ModelSecurityEvent,
+    ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 const RULE_FIXTURE: &str = include_str!(concat!(
@@ -13,8 +12,7 @@ const SIGMA_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/config/security-rule-profile/detection.yaml"
 ));
-const DEFAULT_PROVIDER_RULES: &str =
-    include_str!("../../../../../capsem-config/src/default_provider_rules.toml");
+const DEFAULT_PROVIDER_RULES: &str = include_str!("../../../../../capsem-config/src/default_provider_rules.toml");
 
 #[test]
 fn configuration_and_runtime_security_event_contracts_stay_identical() {
@@ -34,10 +32,7 @@ fn configuration_and_runtime_security_event_contracts_stay_identical() {
 #[test]
 fn parses_security_event_rule_spine_fixture() {
     let profile = SecurityRuleProfile::parse_toml(RULE_FIXTURE).expect("fixture parses");
-    assert_eq!(
-        profile.ai.keys().cloned().collect::<Vec<_>>(),
-        vec!["openai"]
-    );
+    assert_eq!(profile.ai.keys().cloned().collect::<Vec<_>>(), vec!["openai"]);
     assert!(profile.profiles.rules.contains_key("redact_pii"));
     assert!(profile.profiles.rules.contains_key("scan_import"));
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
@@ -46,10 +41,7 @@ fn parses_security_event_rule_spine_fixture() {
     let openai = &profile.ai["openai"].rules;
     assert_eq!(openai["http_api"].name, "openai_http_api_observed");
     assert_eq!(openai["http_api"].action, SecurityRuleAction::Allow);
-    assert_eq!(
-        openai["http_api"].detection_level,
-        Some(DetectionLevel::Informational)
-    );
+    assert_eq!(openai["http_api"].detection_level, Some(DetectionLevel::Informational));
     assert!(profile.plugins.contains_key("credential_broker"));
     assert!(profile.plugins.contains_key("pii"));
     assert!(profile.plugins.contains_key("virus_total"));
@@ -81,13 +73,10 @@ fn sigma_fixture_compiles_into_security_rule_profile() {
         r#"model.provider == "openai" && http.host != "api.openai.com""#
     );
 
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("sigma-derived rules compile");
+    let compiled =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("sigma-derived rules compile");
     let rule = compiled.rules().first().expect("compiled sigma rule");
-    assert_eq!(
-        rule.rule_id,
-        "profiles.rules.openai_traffic_to_unexpected_endpoint"
-    );
+    assert_eq!(rule.rule_id, "profiles.rules.openai_traffic_to_unexpected_endpoint");
 }
 
 #[test]
@@ -117,10 +106,7 @@ operation = "permission"
     assert_eq!(managed.category(), "mcp");
     assert_eq!(managed.target_kind(), "mcp_tool");
     assert_eq!(managed.target_key(), "capsem/fetch_http");
-    assert_eq!(
-        managed.identity_key(),
-        "mcp_tool:capsem:fetch_http:permission"
-    );
+    assert_eq!(managed.identity_key(), "mcp_tool:capsem:fetch_http:permission");
 
     let compiled = profile.compile(SecurityRuleSource::User).expect("compiles");
     assert_eq!(
@@ -164,8 +150,8 @@ operation = "permission"
 #[test]
 fn sigma_fixture_evaluates_against_security_event_roots() {
     let profile = SecurityRuleProfile::parse_sigma_yaml(SIGMA_FIXTURE).expect("sigma fixture");
-    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("sigma-derived rules compile");
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("sigma-derived rules compile");
 
     let rogue = SecurityEvent::new(RuntimeSecurityEventType::SecurityRule)
         .with_model(ModelSecurityEvent {
@@ -231,14 +217,8 @@ fn compiles_fixture_with_source_priority_defaults() {
             .priority,
         DEFAULT_RULE_PRIORITY
     );
-    let provider_convenience = builtin
-        .iter()
-        .find(|rule| rule.rule_key == "http_api")
-        .unwrap();
-    assert_eq!(
-        provider_convenience.rule_id,
-        "profiles.rules.ai_openai_http_api"
-    );
+    let provider_convenience = builtin.iter().find(|rule| rule.rule_key == "http_api").unwrap();
+    assert_eq!(provider_convenience.rule_id, "profiles.rules.ai_openai_http_api");
     assert_eq!(provider_convenience.namespace, "profiles");
     assert_eq!(provider_convenience.provider, "openai");
     assert_eq!(
@@ -255,14 +235,9 @@ fn compiles_fixture_with_source_priority_defaults() {
         .expect("file scan rule compiled");
     assert_eq!(file_scan.name, "file_import_vt_scan");
 
-    let user = profile
-        .compile(SecurityRuleSource::User)
-        .expect("user rules compile");
+    let user = profile.compile(SecurityRuleSource::User).expect("user rules compile");
     assert_eq!(
-        user.iter()
-            .find(|rule| rule.rule_key == "http_api")
-            .unwrap()
-            .priority,
+        user.iter().find(|rule| rule.rule_key == "http_api").unwrap().priority,
         10
     );
     assert_eq!(
@@ -273,12 +248,8 @@ fn compiles_fixture_with_source_priority_defaults() {
         -10
     );
 
-    let corp = profile
-        .compile(SecurityRuleSource::Corp)
-        .expect("corp rules compile");
-    assert!(corp
-        .iter()
-        .all(|rule| rule.priority == -10 && rule.corp_locked));
+    let corp = profile.compile(SecurityRuleSource::Corp).expect("corp rules compile");
+    assert!(corp.iter().all(|rule| rule.priority == -10 && rule.corp_locked));
 }
 
 #[test]
@@ -304,10 +275,7 @@ match = 'http.host == "api.openai.com"'
 "#,
     )
     .expect_err("uppercase/spaces rejected");
-    assert!(
-        uppercase.contains("rule name must use only lowercase"),
-        "{uppercase}"
-    );
+    assert!(uppercase.contains("rule name must use only lowercase"), "{uppercase}");
 
     let long = SecurityRuleProfile::parse_toml(&format!(
         r#"
@@ -334,10 +302,7 @@ match = 'http.host == "api.openai.com"'
 "#,
     )
     .expect("rules do not need detection level");
-    assert_eq!(
-        no_detection.ai["openai"].rules["allow"].detection_level,
-        None
-    );
+    assert_eq!(no_detection.ai["openai"].rules["allow"].detection_level, None);
 
     let block_detection = SecurityRuleProfile::parse_toml(
         r#"
@@ -390,11 +355,10 @@ match = 'has(model.request.body)'
     assert_eq!(compiled[0].provider, "profiles");
     assert_eq!(compiled[0].priority, DEFAULT_RULE_PRIORITY);
 
-    let event =
-        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
-            request_body: Some("hello".to_string()),
-            ..Default::default()
-        });
+    let event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+        request_body: Some("hello".to_string()),
+        ..Default::default()
+    });
     assert!(
         compiled[0].matches_security_event(&event).unwrap(),
         "compiled rules must evaluate without reparsing their CEL string"
@@ -414,8 +378,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/oauth
     )
     .expect("grouped CEL disjunction parses");
 
-    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("grouped CEL disjunction compiles");
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("grouped CEL disjunction compiles");
 
     let token = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
@@ -453,8 +417,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/oauth
 #[test]
 fn compiled_rule_set_evaluates_once_over_security_event() {
     let profile = SecurityRuleProfile::parse_toml(RULE_FIXTURE).expect("fixture parses");
-    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
-        .expect("rule set compiles");
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault).expect("rule set compiles");
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
         crate::security_engine::HttpSecurityEvent {
             host: Some("api.openai.com".to_string()),
@@ -472,10 +436,7 @@ fn compiled_rule_set_evaluates_once_over_security_event() {
             .iter()
             .map(|rule| rule.rule_id.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "corp.rules.block_openai",
-            "profiles.rules.ai_openai_http_api",
-        ]
+        vec!["corp.rules.block_openai", "profiles.rules.ai_openai_http_api",]
     );
     assert!(evaluation.postprocess_rules().is_empty());
     assert_eq!(
@@ -510,8 +471,7 @@ match = 'http.host.contains("openai.com")'
 "#,
     )
     .expect("disabled rule fixture parses");
-    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("rule set compiles");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("rule set compiles");
     let disabled = rules
         .rules()
         .iter()
@@ -549,21 +509,17 @@ match = 'http.host == "api.openai.com" || model.provider == "openai"'
 "#,
     )
     .expect("cross-root rule parses");
-    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
-        .expect("rule set compiles");
-    let event =
-        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
-            provider: Some("openai".to_string()),
-            ..Default::default()
-        });
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault).expect("rule set compiles");
+    let event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+        provider: Some("openai".to_string()),
+        ..Default::default()
+    });
 
     let evaluation = rules.evaluate(&event).expect("rule set evaluates");
 
     assert_eq!(evaluation.matched_rules().len(), 1);
-    assert_eq!(
-        evaluation.matched_rules()[0].rule_id,
-        "profiles.rules.openai_boundary"
-    );
+    assert_eq!(evaluation.matched_rules()[0].rule_id, "profiles.rules.openai_boundary");
 }
 
 #[test]
@@ -577,10 +533,7 @@ fn built_in_provider_defaults_use_security_rule_contract() {
 
     let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
         .expect("provider defaults compile");
-    assert!(compiled
-        .rules()
-        .iter()
-        .all(|rule| rule.namespace == "profiles"));
+    assert!(compiled.rules().iter().all(|rule| rule.namespace == "profiles"));
     assert!(compiled
         .rules()
         .iter()
@@ -595,30 +548,21 @@ fn built_in_provider_defaults_use_security_rule_contract() {
 #[test]
 fn built_in_defaults_cover_each_runtime_boundary_last() {
     let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
-        .expect("defaults compile");
+    let compiled =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault).expect("defaults compile");
 
     let expected = [
         (
             "profiles.rules.default_000_local_network",
             "Default ask before local, private, or non-routable network access.",
         ),
-        (
-            "profiles.rules.default_http",
-            "Default allow for HTTP requests.",
-        ),
-        (
-            "profiles.rules.default_dns",
-            "Default allow for DNS queries.",
-        ),
+        ("profiles.rules.default_http", "Default allow for HTTP requests."),
+        ("profiles.rules.default_dns", "Default allow for DNS queries."),
         (
             "profiles.rules.default_mcp",
             "Default allow for MCP server activity and tool calls.",
         ),
-        (
-            "profiles.rules.default_model",
-            "Default allow for model calls.",
-        ),
+        ("profiles.rules.default_model", "Default allow for model calls."),
         (
             "profiles.rules.default_unknown_model_provider",
             "Detect model traffic whose wire protocol is recognized but whose endpoint owner is not declared.",
@@ -664,8 +608,8 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
 #[test]
 fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
     let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
-        .expect("defaults compile");
+    let compiled =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault).expect("defaults compile");
 
     let private_network_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_ip(IpSecurityEvent {
@@ -684,10 +628,7 @@ fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
             .iter()
             .map(|rule| (rule.rule_id.as_str(), rule.action))
             .next(),
-        Some((
-            "profiles.rules.default_000_local_network",
-            SecurityRuleAction::Ask,
-        )),
+        Some(("profiles.rules.default_000_local_network", SecurityRuleAction::Ask,)),
         "local/private/non-routable network access must ask by default"
     );
 
@@ -704,19 +645,14 @@ fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
         .with_tcp(TcpSecurityEvent {
             port: Some("11434".to_string()),
         });
-    let ollama_eval = compiled
-        .evaluate(&ollama_event)
-        .expect("ollama event evaluates");
+    let ollama_eval = compiled.evaluate(&ollama_event).expect("ollama event evaluates");
     assert_eq!(
         ollama_eval
             .enforcement_rules()
             .iter()
             .map(|rule| (rule.rule_id.as_str(), rule.action))
             .next(),
-        Some((
-            "profiles.rules.ai_ollama_http_local_host",
-            SecurityRuleAction::Allow,
-        )),
+        Some(("profiles.rules.ai_ollama_http_local_host", SecurityRuleAction::Allow,)),
         "Ollama/local backend access is controlled by the explicit profile-owned Ollama rule"
     );
     assert!(
@@ -748,11 +684,9 @@ fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
         non_ollama_eval
             .enforcement_rules()
             .iter()
-            .all(
-                |rule| rule.rule_id != "profiles.rules.ai_ollama_http_local_host"
-                    && rule.rule_id != "profiles.rules.ai_ollama_http_native_api"
-                    && rule.rule_id != "profiles.rules.ai_ollama_http_openai_compatible"
-            ),
+            .all(|rule| rule.rule_id != "profiles.rules.ai_ollama_http_local_host"
+                && rule.rule_id != "profiles.rules.ai_ollama_http_native_api"
+                && rule.rule_id != "profiles.rules.ai_ollama_http_openai_compatible"),
         "Ollama convenience rules must not classify arbitrary localhost HTTP traffic"
     );
 }
@@ -800,9 +734,8 @@ match = 'http.host == "local.ollama" && tcp.port == "11434"'
         ("ask", SecurityRuleAction::Ask),
         ("block", SecurityRuleAction::Block),
     ] {
-        let compiled =
-            SecurityRuleSet::compile_profile(&profile_for(action, true), SecurityRuleSource::User)
-                .unwrap_or_else(|error| panic!("{action} profile compiles: {error}"));
+        let compiled = SecurityRuleSet::compile_profile(&profile_for(action, true), SecurityRuleSource::User)
+            .unwrap_or_else(|error| panic!("{action} profile compiles: {error}"));
         let first = compiled
             .evaluate(&event)
             .expect("event evaluates")
@@ -814,9 +747,8 @@ match = 'http.host == "local.ollama" && tcp.port == "11434"'
         assert_eq!(first.action, expected);
     }
 
-    let compiled =
-        SecurityRuleSet::compile_profile(&profile_for("allow", false), SecurityRuleSource::User)
-            .expect("disabled profile compiles");
+    let compiled = SecurityRuleSet::compile_profile(&profile_for("allow", false), SecurityRuleSource::User)
+        .expect("disabled profile compiles");
     let first = compiled
         .evaluate(&event)
         .expect("event evaluates")
@@ -831,18 +763,16 @@ match = 'http.host == "local.ollama" && tcp.port == "11434"'
 #[test]
 fn built_in_defaults_match_each_first_party_security_event_family() {
     let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
-        .expect("defaults compile");
+    let compiled =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault).expect("defaults compile");
 
     let cases = [
         (
             "profiles.rules.default_http",
-            SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
-                HttpSecurityEvent {
-                    host: Some("example.com".to_string()),
-                    ..Default::default()
-                },
-            ),
+            SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+                host: Some("example.com".to_string()),
+                ..Default::default()
+            }),
         ),
         (
             "profiles.rules.default_dns",
@@ -861,13 +791,11 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
         ),
         (
             "profiles.rules.default_model",
-            SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(
-                ModelSecurityEvent {
-                    provider: Some("openai".to_string()),
-                    name: Some("gpt-5".to_string()),
-                    ..Default::default()
-                },
-            ),
+            SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+                provider: Some("openai".to_string()),
+                name: Some("gpt-5".to_string()),
+                ..Default::default()
+            }),
         ),
         (
             "profiles.rules.default_file",
@@ -881,13 +809,11 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
         ),
         (
             "profiles.rules.default_process",
-            SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(
-                ProcessSecurityEvent {
-                    exec_path: Some("/usr/bin/python3".to_string()),
-                    command: Some("python3 script.py".to_string()),
-                    ..Default::default()
-                },
-            ),
+            SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(ProcessSecurityEvent {
+                exec_path: Some("/usr/bin/python3".to_string()),
+                command: Some("python3 script.py".to_string()),
+                ..Default::default()
+            }),
         ),
     ];
 
@@ -925,13 +851,11 @@ match = 'has(http.host)'
 "#,
     )
     .expect("profile parses");
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("profile compiles");
-    let event =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some("evil.example".to_string()),
-            ..Default::default()
-        });
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("profile compiles");
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("evil.example".to_string()),
+        ..Default::default()
+    });
 
     let evaluation = compiled.evaluate(&event).expect("rules evaluate");
 
@@ -970,18 +894,15 @@ match = 'http.host == "approved.example"'
 "#,
     )
     .expect("profile parses");
-    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("profile compiles");
-    let approved =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some("approved.example".to_string()),
-            ..Default::default()
-        });
-    let unknown =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some("unknown.example".to_string()),
-            ..Default::default()
-        });
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("profile compiles");
+    let approved = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("approved.example".to_string()),
+        ..Default::default()
+    });
+    let unknown = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("unknown.example".to_string()),
+        ..Default::default()
+    });
 
     assert_eq!(
         compiled
@@ -1017,10 +938,7 @@ match = 'has(http.host)'
     )
     .expect_err("profiles.defaults is retired");
 
-    assert!(
-        error.contains("unknown field") || error.contains("defaults"),
-        "{error}"
-    );
+    assert!(error.contains("unknown field") || error.contains("defaults"), "{error}");
 }
 
 #[test]
@@ -1363,52 +1281,22 @@ mode = "disable"
     )
     .expect("plugin policy parses");
 
-    assert_eq!(
-        profile.plugins["dummy_pre"].mode,
-        SecurityPluginMode::Rewrite
-    );
-    assert_eq!(
-        profile.plugins["dummy_pre"].detection_level,
-        DetectionLevel::Medium
-    );
-    assert_eq!(
-        profile.plugins["dummy_redact"].mode,
-        SecurityPluginMode::Rewrite
-    );
-    assert_eq!(
-        profile.plugins["dummy_mutate"].mode,
-        SecurityPluginMode::Rewrite
-    );
-    assert_eq!(
-        profile.plugins["dummy_neutralize"].mode,
-        SecurityPluginMode::Rewrite
-    );
-    assert_eq!(
-        profile.plugins["dummy_post"].mode,
-        SecurityPluginMode::Block
-    );
-    assert_eq!(
-        profile.plugins["dummy_post"].detection_level,
-        DetectionLevel::Critical
-    );
+    assert_eq!(profile.plugins["dummy_pre"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(profile.plugins["dummy_pre"].detection_level, DetectionLevel::Medium);
+    assert_eq!(profile.plugins["dummy_redact"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(profile.plugins["dummy_mutate"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(profile.plugins["dummy_neutralize"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(profile.plugins["dummy_post"].mode, SecurityPluginMode::Block);
+    assert_eq!(profile.plugins["dummy_post"].detection_level, DetectionLevel::Critical);
     assert_eq!(profile.plugins["dummy_ask"].mode, SecurityPluginMode::Ask);
-    assert_eq!(
-        profile.plugins["dummy_ask"].detection_level,
-        DetectionLevel::Low
-    );
-    assert_eq!(
-        profile.plugins["dummy_allow"].mode,
-        SecurityPluginMode::Allow
-    );
+    assert_eq!(profile.plugins["dummy_ask"].detection_level, DetectionLevel::Low);
+    assert_eq!(profile.plugins["dummy_allow"].mode, SecurityPluginMode::Allow);
     assert_eq!(
         profile.plugins["dummy_allow"].detection_level,
         DetectionLevel::Informational,
         "active plugins default to informational detection level"
     );
-    assert_eq!(
-        profile.plugins["dummy_disabled"].mode,
-        SecurityPluginMode::Disable
-    );
+    assert_eq!(profile.plugins["dummy_disabled"].mode, SecurityPluginMode::Disable);
     assert_eq!(
         profile.plugins["dummy_disabled"].active_detection_level(),
         None,
@@ -1441,10 +1329,7 @@ match = 'has(http.host)'
 "#,
     )
     .expect_err("rules must not bind plugins");
-    assert!(
-        old_plugin_field.contains("must not use 'plugin'"),
-        "{old_plugin_field}"
-    );
+    assert!(old_plugin_field.contains("must not use 'plugin'"), "{old_plugin_field}");
 
     let dummy = SecurityRuleProfile::parse_toml(
         r#"
@@ -1562,10 +1447,7 @@ match = 'héllo == "x"'
     )
     .expect_err("a non-ascii field name is invalid");
 
-    assert!(
-        error.contains("is not a first-party security-event root"),
-        "{error}"
-    );
+    assert!(error.contains("is not a first-party security-event root"), "{error}");
 }
 
 #[test]
@@ -1580,21 +1462,16 @@ match = 'http.host == "café.example" && has(http.valid)'
 "#,
     )
     .expect("a non-ascii literal is legitimate rule authoring");
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
-    let event =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some("café.example".to_string()),
-            ..Default::default()
-        });
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("café.example".to_string()),
+        ..Default::default()
+    });
 
     let evaluation = rules.evaluate(&event).expect("evaluates");
 
     assert_eq!(evaluation.matched_rules().len(), 1);
-    assert_eq!(
-        evaluation.enforcement_rules()[0].action,
-        SecurityRuleAction::Block
-    );
+    assert_eq!(evaluation.enforcement_rules()[0].action, SecurityRuleAction::Block);
 }
 
 fn pii_rule_matches(field: &str, event: SecurityEvent) -> bool {
@@ -1608,8 +1485,7 @@ match = '{field}.contains_pii()'
 "#
     ))
     .expect("contains_pii is a supported CEL term");
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
     !rules.evaluate(&event).expect("evaluates").matched_rules().is_empty()
 }
 
@@ -1638,13 +1514,7 @@ fn contains_pii_matches_addresses_and_social_security_numbers() {
 
 #[test]
 fn contains_pii_does_not_match_plain_text_or_absent_fields() {
-    for content in [
-        "nothing sensitive here",
-        "1234-56-7890",
-        "12-34-5678",
-        "123-45-678",
-        "",
-    ] {
+    for content in ["nothing sensitive here", "1234-56-7890", "12-34-5678", "123-45-678", ""] {
         assert!(
             !pii_rule_matches("file.export.content", export_event(Some(content))),
             "contains_pii() must not match {content:?}"
@@ -1703,13 +1573,8 @@ match = '{condition}'
 "#
     ))
     .unwrap_or_else(|error| panic!("condition {condition:?} must compile: {error}"));
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
-    !rules
-        .evaluate(event)
-        .expect("evaluates")
-        .matched_rules()
-        .is_empty()
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    !rules.evaluate(event).expect("evaluates").matched_rules().is_empty()
 }
 
 /// An absent field makes *every* atom false, including a negated comparison.
@@ -1793,28 +1658,21 @@ match = 'http.host != "allowed.test"'
 "#,
     )
     .expect("parses");
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
 
-    let known_bad = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
-        HttpSecurityEvent {
-            host: Some("evil.test".to_string()),
-            ..Default::default()
-        },
-    );
-    let host_missing = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
-        .with_http(HttpSecurityEvent::default());
+    let known_bad = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("evil.test".to_string()),
+        ..Default::default()
+    });
+    let host_missing =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent::default());
 
     assert!(
         !rules.evaluate(&known_bad).unwrap().enforcement_rules().is_empty(),
         "the negation does block a host it can see"
     );
     assert!(
-        rules
-            .evaluate(&host_missing)
-            .unwrap()
-            .enforcement_rules()
-            .is_empty(),
+        rules.evaluate(&host_missing).unwrap().enforcement_rules().is_empty(),
         "and goes quiet when the host is missing -- which is why default-deny \
          must be a block catch-all, not a negation"
     );
@@ -1841,8 +1699,7 @@ match = 'has(http.valid)'
 "#,
     )
     .expect("parses");
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
 
     let cases = [
         (Some("allowed.test"), SecurityRuleAction::Allow),
@@ -1852,12 +1709,10 @@ match = 'has(http.valid)'
     ];
 
     for (host, expected) in cases {
-        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
-            HttpSecurityEvent {
-                host: host.map(str::to_string),
-                ..Default::default()
-            },
-        );
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: host.map(str::to_string),
+            ..Default::default()
+        });
         let evaluation = rules.evaluate(&event).expect("evaluates");
         let selected = evaluation.enforcement_rules();
         assert_eq!(

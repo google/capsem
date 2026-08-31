@@ -82,11 +82,7 @@ pub(super) fn spawn_provision(
         // explicitly owned shutdowns need no post-mortem copy.
         if let Some(info) = removed {
             if unexpected_exit {
-                tracing::warn!(
-                    id,
-                    ?exit_status,
-                    "child exited unexpectedly, preserving session dir"
-                );
+                tracing::warn!(id, ?exit_status, "child exited unexpectedly, preserving session dir");
                 if !info.persistent {
                     let _ = state.preserve_failed_session_dir(&info.session_dir, &id);
                 }

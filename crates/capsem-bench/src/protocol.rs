@@ -14,12 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::{
-    DeltaArgs, ProtocolArgs, ProtocolDeltaArgs, HTTP_REQUEST_ATTEMPTS,
-    HTTP_RETRY_BACKOFF_BASE_MS, VERSION,
-};
-use tokio::net::UdpSocket;
+use crate::{DeltaArgs, ProtocolArgs, ProtocolDeltaArgs, HTTP_REQUEST_ATTEMPTS, HTTP_RETRY_BACKOFF_BASE_MS, VERSION};
 use futures::future::try_join_all;
+use tokio::net::UdpSocket;
 
 use crate::scenarios::*;
 
@@ -55,9 +52,7 @@ pub(crate) async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
         Some(
             args.dns_udp_addr
                 .or_else(|| std::env::var("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR").ok())
-                .context(
-                    "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR or --dns-udp-addr is required for DNS scenarios",
-                )?,
+                .context("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR or --dns-udp-addr is required for DNS scenarios")?,
         )
     } else {
         None
@@ -113,10 +108,7 @@ pub(crate) async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
             total_requests: args.requests,
             concurrency: args.concurrency,
             timeout_ms: args.timeout_ms,
-            selected_scenarios: selected
-                .iter()
-                .map(|scenario| scenario.name.to_string())
-                .collect(),
+            selected_scenarios: selected.iter().map(|scenario| scenario.name.to_string()).collect(),
             scenarios: scenario_results,
         },
     };
@@ -185,8 +177,8 @@ pub(crate) async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<Protoc
         &guest_command,
         args.guest_timeout_secs,
     )?;
-    let guest_artifact = parse_guest_protocol_artifact(&guest_stdout)
-        .context("parse guest capsem-bench protocol JSON")?;
+    let guest_artifact =
+        parse_guest_protocol_artifact(&guest_stdout).context("parse guest capsem-bench protocol JSON")?;
     let delta = build_delta_report(
         "host_direct:inline".to_string(),
         "guest_capsem:inline".to_string(),
@@ -230,18 +222,10 @@ pub(crate) async fn run_http_scenario(
             out
         })
     });
-    let joined = try_join_all(tasks)
-        .await
-        .context("join benchmark workers")?;
+    let joined = try_join_all(tasks).await.context("join benchmark workers")?;
     let wall_time = started.elapsed();
     let samples: Vec<RequestSample> = joined.into_iter().flatten().collect();
-    Ok(summarize(
-        scenario,
-        &samples,
-        wall_time,
-        total_requests,
-        concurrency,
-    ))
+    Ok(summarize(scenario, &samples, wall_time, total_requests, concurrency))
 }
 
 pub(crate) async fn run_dns_scenario(
@@ -276,33 +260,15 @@ pub(crate) async fn run_dns_scenario(
             let mut out = Vec::with_capacity(count);
             for request_idx in 0..count {
                 let query_id = ((idx as u32 * 4099 + request_idx as u32) & 0xFFFF) as u16;
-                out.push(
-                    run_one_dns_query(
-                        &socket,
-                        dns_udp_addr,
-                        scenario.path,
-                        qtype,
-                        query_id,
-                        timeout,
-                    )
-                    .await,
-                );
+                out.push(run_one_dns_query(&socket, dns_udp_addr, scenario.path, qtype, query_id, timeout).await);
             }
             out
         })
     });
-    let joined = try_join_all(tasks)
-        .await
-        .context("join DNS benchmark workers")?;
+    let joined = try_join_all(tasks).await.context("join DNS benchmark workers")?;
     let wall_time = started.elapsed();
     let samples: Vec<RequestSample> = joined.into_iter().flatten().collect();
-    Ok(summarize(
-        scenario,
-        &samples,
-        wall_time,
-        total_requests,
-        concurrency,
-    ))
+    Ok(summarize(scenario, &samples, wall_time, total_requests, concurrency))
 }
 
 pub(crate) async fn run_one_dns_query(
@@ -474,22 +440,15 @@ pub(crate) fn summarize(
     total_requests: usize,
     concurrency: usize,
 ) -> ScenarioResult {
-    let successful = samples
-        .iter()
-        .filter(|sample| result_ok(sample, scenario))
-        .count();
+    let successful = samples.iter().filter(|sample| result_ok(sample, scenario)).count();
     let mut errors = BTreeMap::new();
     for sample in samples {
         if let Some(error) = &sample.error {
             *errors.entry(error.clone()).or_insert(0) += 1;
         } else if sample.status != scenario.expected_status {
-            *errors
-                .entry(format!("status:{}", sample.status))
-                .or_insert(0) += 1;
+            *errors.entry(format!("status:{}", sample.status)).or_insert(0) += 1;
         } else if !sample.required_text_present {
-            *errors
-                .entry("required_text_missing".to_string())
-                .or_insert(0) += 1;
+            *errors.entry("required_text_missing".to_string()).or_insert(0) += 1;
         } else if let Some(expected_bytes) = scenario.expected_bytes {
             if sample.size != expected_bytes {
                 *errors
@@ -500,11 +459,9 @@ pub(crate) fn summarize(
     }
     let transfer_bytes = samples.iter().map(|sample| sample.size as u64).sum::<u64>();
     let duration_s = wall_time.as_secs_f64();
-    let secret_seen = scenario.secret_shaped_fixture.then(|| {
-        samples
-            .iter()
-            .any(|sample| sample.secret_shaped_fixture_seen)
-    });
+    let secret_seen = scenario
+        .secret_shaped_fixture
+        .then(|| samples.iter().any(|sample| sample.secret_shaped_fixture_seen));
     ScenarioResult {
         name: scenario.name.to_string(),
         path: scenario.path.to_string(),
@@ -513,10 +470,7 @@ pub(crate) fn summarize(
         concurrency,
         successful,
         failed: total_requests.saturating_sub(successful),
-        transport_retries: samples
-            .iter()
-            .map(|sample| sample.attempts.saturating_sub(1))
-            .sum(),
+        transport_retries: samples.iter().map(|sample| sample.attempts.saturating_sub(1)).sum(),
         total_duration_ms: round1(duration_s * 1000.0),
         requests_per_sec: round1(total_requests as f64 / duration_s),
         transfer_bytes,
@@ -554,14 +508,8 @@ pub(crate) fn build_delta_report(
     host: &Artifact,
     guest: &Artifact,
 ) -> Result<DeltaReport> {
-    validate_successful_scenarios(
-        &host.mock_server_protocol.scenarios,
-        &host.mock_server_protocol.lane,
-    )?;
-    validate_successful_scenarios(
-        &guest.mock_server_protocol.scenarios,
-        &guest.mock_server_protocol.lane,
-    )?;
+    validate_successful_scenarios(&host.mock_server_protocol.scenarios, &host.mock_server_protocol.lane)?;
+    validate_successful_scenarios(&guest.mock_server_protocol.scenarios, &guest.mock_server_protocol.lane)?;
     let host_rows = rows_by_name(&host.mock_server_protocol.scenarios);
     let guest_rows = rows_by_name(&guest.mock_server_protocol.scenarios);
     let mut scenarios = Vec::new();
@@ -576,10 +524,7 @@ pub(crate) fn build_delta_report(
             rps_ratio_guest_over_host: ratio(guest_row.requests_per_sec, host_row.requests_per_sec),
             host_bytes_per_sec: host_row.bytes_per_sec,
             guest_bytes_per_sec: guest_row.bytes_per_sec,
-            throughput_ratio_guest_over_host: ratio(
-                guest_row.bytes_per_sec,
-                host_row.bytes_per_sec,
-            ),
+            throughput_ratio_guest_over_host: ratio(guest_row.bytes_per_sec, host_row.bytes_per_sec),
             p50_delta_ms: round1(guest_row.latency_ms.p50 - host_row.latency_ms.p50),
             p95_delta_ms: round1(guest_row.latency_ms.p95 - host_row.latency_ms.p95),
             p99_delta_ms: round1(guest_row.latency_ms.p99 - host_row.latency_ms.p99),
@@ -670,8 +615,7 @@ pub(crate) fn parse_guest_protocol_artifact(stdout: &str) -> Result<Artifact> {
             let preview = stdout.chars().take(600).collect::<String>();
             format!("parse guest capsem-bench-rs JSON from stdout preview: {preview:?}")
         })?;
-    let artifact: Artifact =
-        serde_json::from_value(value).context("parse guest capsem-bench-rs artifact")?;
+    let artifact: Artifact = serde_json::from_value(value).context("parse guest capsem-bench-rs artifact")?;
     if artifact.benchmark != "capsem-bench-rs" {
         bail!(
             "guest protocol benchmark must be produced by capsem-bench-rs, got {}",
@@ -728,7 +672,6 @@ pub(crate) fn run_capsem_guest_command(
     String::from_utf8(output.stdout).context("guest capsem-bench stdout was not UTF-8")
 }
 
-
 pub(crate) fn rows_by_name(rows: &[ScenarioResult]) -> BTreeMap<&str, &ScenarioResult> {
     rows.iter().map(|row| (row.name.as_str(), row)).collect()
 }
@@ -742,8 +685,7 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    fs::write(path, serde_json::to_vec_pretty(value)?)
-        .with_context(|| format!("write {}", path.display()))
+    fs::write(path, serde_json::to_vec_pretty(value)?).with_context(|| format!("write {}", path.display()))
 }
 
 pub(crate) fn temp_artifact_path(lane: &str) -> PathBuf {

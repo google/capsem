@@ -50,8 +50,7 @@ pub fn parse(stdout: &str) -> Result<Collected> {
     let start = stdout
         .find('{')
         .context("collector printed no JSON document on stdout")?;
-    let mut stream =
-        serde_json::Deserializer::from_str(&stdout[start..]).into_iter::<Collected>();
+    let mut stream = serde_json::Deserializer::from_str(&stdout[start..]).into_iter::<Collected>();
     let collected = stream
         .next()
         .context("collector printed no JSON document on stdout")?

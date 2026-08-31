@@ -44,12 +44,15 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_changes".into(),
             original_name: "snapshots_changes".into(),
-            description: Some(concat!(
-                "List files that have changed in the workspace compared to automatic checkpoints. ",
-                "Each entry includes the file path, operation (created/modified/deleted), size, ",
-                "and a checkpoint ID that can be passed to snapshots_revert. ",
-                "Shows newest changes first. Output is paginated (default 5000 chars).",
-            ).into()),
+            description: Some(
+                concat!(
+                    "List files that have changed in the workspace compared to automatic checkpoints. ",
+                    "Each entry includes the file path, operation (created/modified/deleted), size, ",
+                    "and a checkpoint ID that can be passed to snapshots_revert. ",
+                    "Shows newest changes first. Output is paginated (default 5000 chars).",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -81,11 +84,14 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_list".into(),
             original_name: "snapshots_list".into(),
-            description: Some(concat!(
-                "List all workspace snapshots (automatic and manual). ",
-                "Shows slot index, origin (auto/manual), name, age, blake3 hash, file count, ",
-                "and a compact change summary. Output is paginated (default 5000 chars).",
-            ).into()),
+            description: Some(
+                concat!(
+                    "List all workspace snapshots (automatic and manual). ",
+                    "Shows slot index, origin (auto/manual), name, age, blake3 hash, file count, ",
+                    "and a compact change summary. Output is paginated (default 5000 chars).",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -121,14 +127,17 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_revert".into(),
             original_name: "snapshots_revert".into(),
-            description: Some(concat!(
-                "Revert a file to its state at a specific checkpoint. ",
-                "Use the checkpoint ID from snapshots_changes output, or omit checkpoint ",
-                "to auto-select the most recent snapshot containing the file. ",
-                "If the file was created after the checkpoint, it is deleted. ",
-                "If the file was modified, it is restored to its checkpoint state. ",
-                "Changes are reflected immediately in the guest via VirtioFS.",
-            ).into()),
+            description: Some(
+                concat!(
+                    "Revert a file to its state at a specific checkpoint. ",
+                    "Use the checkpoint ID from snapshots_changes output, or omit checkpoint ",
+                    "to auto-select the most recent snapshot containing the file. ",
+                    "If the file was created after the checkpoint, it is deleted. ",
+                    "If the file was modified, it is restored to its checkpoint state. ",
+                    "Changes are reflected immediately in the guest via VirtioFS.",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -156,12 +165,15 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_create".into(),
             original_name: "snapshots_create".into(),
-            description: Some(concat!(
-                "Create a named workspace snapshot (checkpoint). ",
-                "The snapshot captures the current state of all files and can be used ",
-                "with snapshots_revert to restore files later. Returns the checkpoint ID, ",
-                "a blake3 hash of the workspace, and the number of remaining snapshot slots.",
-            ).into()),
+            description: Some(
+                concat!(
+                    "Create a named workspace snapshot (checkpoint). ",
+                    "The snapshot captures the current state of all files and can be used ",
+                    "with snapshots_revert to restore files later. Returns the checkpoint ID, ",
+                    "a blake3 hash of the workspace, and the number of remaining snapshot slots.",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -185,11 +197,14 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_delete".into(),
             original_name: "snapshots_delete".into(),
-            description: Some(concat!(
-                "Delete a manual snapshot by checkpoint ID. ",
-                "Only manual (named) snapshots can be deleted. ",
-                "Automatic snapshots are managed by the scheduler.",
-            ).into()),
+            description: Some(
+                concat!(
+                    "Delete a manual snapshot by checkpoint ID. ",
+                    "Only manual (named) snapshots can be deleted. ",
+                    "Automatic snapshots are managed by the scheduler.",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -213,12 +228,15 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_history".into(),
             original_name: "snapshots_history".into(),
-            description: Some(concat!(
-                "Show the history of a specific file across all snapshots. ",
-                "For each snapshot that contains a version of the file, shows the checkpoint, ",
-                "origin, age, size, and whether the file was created, modified, or unchanged. ",
-                "Accepts both relative paths (hello.txt) and absolute guest paths (/root/hello.txt).",
-            ).into()),
+            description: Some(
+                concat!(
+                    "Show the history of a specific file across all snapshots. ",
+                    "For each snapshot that contains a version of the file, shows the checkpoint, ",
+                    "origin, age, size, and whether the file was created, modified, or unchanged. ",
+                    "Accepts both relative paths (hello.txt) and absolute guest paths (/root/hello.txt).",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -242,12 +260,15 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
         McpToolDef {
             namespaced_name: "snapshots_compact".into(),
             original_name: "snapshots_compact".into(),
-            description: Some(concat!(
-                "Compact multiple snapshots into a single new manual snapshot. ",
-                "Merges workspaces with newest-file-wins strategy. ",
-                "Deletes all source snapshots after successful compaction. ",
-                "Frees snapshot slots while preserving file state.",
-            ).into()),
+            description: Some(
+                concat!(
+                    "Compact multiple snapshots into a single new manual snapshot. ",
+                    "Merges workspaces with newest-file-wins strategy. ",
+                    "Deletes all source snapshots after successful compaction. ",
+                    "Frees snapshot slots while preserving file state.",
+                )
+                .into(),
+            ),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -302,11 +323,7 @@ fn parse_checkpoint(cp: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("invalid checkpoint ID: {cp:?}"))
 }
 
-fn checked_child_path(
-    root: &Path,
-    relative_path: &str,
-    label: &str,
-) -> Result<std::path::PathBuf, String> {
+fn checked_child_path(root: &Path, relative_path: &str, label: &str) -> Result<std::path::PathBuf, String> {
     let root = root
         .canonicalize()
         .map_err(|e| format!("failed to resolve {label} root: {e}"))?;
@@ -320,24 +337,15 @@ fn checked_child_path(
             current.push(name);
             match std::fs::symlink_metadata(&current) {
                 Ok(meta) if meta.file_type().is_symlink() => {
-                    return Err(format!(
-                        "{label} parent contains symlink: {}",
-                        current.display()
-                    ));
+                    return Err(format!("{label} parent contains symlink: {}", current.display()));
                 }
                 Ok(meta) if !meta.is_dir() => {
-                    return Err(format!(
-                        "{label} parent is not a directory: {}",
-                        current.display()
-                    ));
+                    return Err(format!("{label} parent is not a directory: {}", current.display()));
                 }
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
                 Err(e) => {
-                    return Err(format!(
-                        "failed to inspect {label} parent {}: {e}",
-                        current.display()
-                    ));
+                    return Err(format!("failed to inspect {label} parent {}: {e}", current.display()));
                 }
             }
         }
@@ -346,8 +354,7 @@ fn checked_child_path(
 }
 
 fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
-    let meta =
-        std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
     if meta.file_type().is_symlink() {
         return Err(format!("{label} is a symlink"));
     }
@@ -378,10 +385,7 @@ fn validate_snapshot_name(name: &str) -> Result<&str, String> {
     if name.is_empty() || name.len() > 64 {
         return Err("name must be 1-64 characters".into());
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
         return Err("name must be alphanumeric, underscore, or hyphen only".into());
     }
     Ok(name)
@@ -438,11 +442,7 @@ fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
         if let Ok(rel) = entry.path().strip_prefix(root) {
             let rel_str = rel.to_string_lossy().to_string();
             // Use symlink_metadata so we don't follow symlinks for size.
-            let size = entry
-                .path()
-                .symlink_metadata()
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let size = entry.path().symlink_metadata().map(|m| m.len()).unwrap_or(0);
             let is_symlink = ft.is_symlink();
             files.insert(
                 rel_str,
@@ -565,10 +565,7 @@ fn render_changes_table(changes: &[ChangedFile]) -> String {
             Some(s) => human_size(s),
             None => "-".into(),
         };
-        let cp_info = format!(
-            "{} ({}, {})",
-            c.checkpoint, c.checkpoint_origin, c.checkpoint_age
-        );
+        let cp_info = format!("{} ({}, {})", c.checkpoint, c.checkpoint_origin, c.checkpoint_age);
         out.push_str(&format!(
             "{:<34}{:<10}{:<9}{}\n",
             truncate_path(&c.path, 33),
@@ -597,11 +594,7 @@ fn truncate_path(path: &str, max: usize) -> String {
     // production call sites pass max = 33 and 15.
     if max <= 3 {
         let skip = char_count - max;
-        let byte_offset = path
-            .char_indices()
-            .nth(skip)
-            .map(|(i, _)| i)
-            .unwrap_or(path.len());
+        let byte_offset = path.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(path.len());
         return path[byte_offset..].to_string();
     }
     let to_take = max - 3;
@@ -616,28 +609,17 @@ fn truncate_path(path: &str, max: usize) -> String {
 
 /// Extract pagination params (start_index, max_length, format) from arguments.
 fn extract_pagination_params(arguments: &Value) -> (usize, usize, &str) {
-    let start_index = arguments
-        .get("start_index")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let start_index = arguments.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let max_length = arguments
         .get("max_length")
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
-    let format = arguments
-        .get("format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("text");
+    let format = arguments.get("format").and_then(|v| v.as_str()).unwrap_or("text");
     (start_index, max_length, format)
 }
 
 /// Build paginated MCP response from text content.
-fn paginated_response(
-    text: &str,
-    start_index: usize,
-    max_length: usize,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
+fn paginated_response(text: &str, start_index: usize, max_length: usize, request_id: Option<Value>) -> JsonRpcResponse {
     let (chunk, total, has_more) = paginate(text, start_index, max_length);
     let mut output = String::new();
     if start_index > 0 || has_more {
@@ -646,10 +628,7 @@ fn paginated_response(
             start_index + chunk.len(),
         ));
         if has_more {
-            output.push_str(&format!(
-                "Use start_index={} to continue.\n",
-                start_index + chunk.len(),
-            ));
+            output.push_str(&format!("Use start_index={} to continue.\n", start_index + chunk.len(),));
         }
         output.push('\n');
     }
@@ -711,8 +690,7 @@ pub fn handle_revert_file_with_rules(
     db: Option<&Arc<capsem_logger::DbWriter>>,
     security_rules: Option<&crate::net::policy_config::SecurityRuleSet>,
 ) -> JsonRpcResponse {
-    let (resp, file_event) =
-        handle_revert_file_with_security_event(arguments, scheduler, workspace_root, request_id);
+    let (resp, file_event) = handle_revert_file_with_security_event(arguments, scheduler, workspace_root, request_id);
     if let (Some(db), Some(file_event)) = (db, file_event) {
         let empty_rules;
         let rules = match security_rules {
@@ -755,43 +733,38 @@ pub fn handle_revert_file_with_security_event(
     };
 
     // Resolve checkpoint: explicit or auto-select newest containing the file.
-    let (slot, cp_str_owned) =
-        if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
-            let slot = match parse_checkpoint(cp_str) {
-                Ok(s) => s,
-                Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
-            };
-            (slot, cp_str.to_string())
-        } else {
-            // Auto-select: scan snapshots newest-first, find first containing the file.
-            let snapshots = scheduler.list_snapshots();
-            let found = snapshots.iter().find(|s| {
-                checked_child_path(&s.workspace_path, &path_str, "snapshot source")
-                    .ok()
-                    .and_then(|p| p.symlink_metadata().ok())
-                    .is_some()
-            });
-            match found {
-                Some(s) => (s.slot, format!("cp-{}", s.slot)),
-                None => {
-                    return (
-                        JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file"),
-                        None,
-                    );
-                }
-            }
+    let (slot, cp_str_owned) = if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
+        let slot = match parse_checkpoint(cp_str) {
+            Ok(s) => s,
+            Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
         };
+        (slot, cp_str.to_string())
+    } else {
+        // Auto-select: scan snapshots newest-first, find first containing the file.
+        let snapshots = scheduler.list_snapshots();
+        let found = snapshots.iter().find(|s| {
+            checked_child_path(&s.workspace_path, &path_str, "snapshot source")
+                .ok()
+                .and_then(|p| p.symlink_metadata().ok())
+                .is_some()
+        });
+        match found {
+            Some(s) => (s.slot, format!("cp-{}", s.slot)),
+            None => {
+                return (
+                    JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file"),
+                    None,
+                );
+            }
+        }
+    };
 
     // Get snapshot.
     let snap = match scheduler.get_snapshot(slot) {
         Some(s) => s,
         None => {
             return (
-                JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    format!("checkpoint {} not found", cp_str_owned),
-                ),
+                JsonRpcResponse::err(request_id, -32602, format!("checkpoint {} not found", cp_str_owned)),
                 None,
             )
         }
@@ -835,22 +808,14 @@ pub fn handle_revert_file_with_security_event(
             };
             if snap_bytes == cur_bytes && same_perms {
                 return (
-                    JsonRpcResponse::err(
-                        request_id,
-                        -32602,
-                        "file already matches snapshot (already current)",
-                    ),
+                    JsonRpcResponse::err(request_id, -32602, "file already matches snapshot (already current)"),
                     None,
                 );
             }
         }
     } else if !snap_exists && !current_exists {
         return (
-            JsonRpcResponse::err(
-                request_id,
-                -32602,
-                "file does not exist in snapshot or workspace",
-            ),
+            JsonRpcResponse::err(request_id, -32602, "file does not exist in snapshot or workspace"),
             None,
         );
     }
@@ -861,11 +826,7 @@ pub fn handle_revert_file_with_security_event(
         if let Some(parent) = current_file.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 return (
-                    JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to create parent directory: {e}"),
-                    ),
+                    JsonRpcResponse::err(request_id, -32603, format!("failed to create parent directory: {e}")),
                     None,
                 );
             }
@@ -883,22 +844,14 @@ pub fn handle_revert_file_with_security_event(
                 Ok(link_target) => {
                     if let Err(e) = std::os::unix::fs::symlink(&link_target, &current_file) {
                         return (
-                            JsonRpcResponse::err(
-                                request_id,
-                                -32603,
-                                format!("failed to restore symlink: {e}"),
-                            ),
+                            JsonRpcResponse::err(request_id, -32603, format!("failed to restore symlink: {e}")),
                             None,
                         );
                     }
                 }
                 Err(e) => {
                     return (
-                        JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to read symlink from snapshot: {e}"),
-                        ),
+                        JsonRpcResponse::err(request_id, -32603, format!("failed to read symlink from snapshot: {e}")),
                         None,
                     );
                 }
@@ -915,11 +868,7 @@ pub fn handle_revert_file_with_security_event(
                 Ok(d) => d,
                 Err(e) => {
                     return (
-                        JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to read snapshot file safely: {e}"),
-                        ),
+                        JsonRpcResponse::err(request_id, -32603, format!("failed to read snapshot file safely: {e}")),
                         None,
                     );
                 }
@@ -930,22 +879,14 @@ pub fn handle_revert_file_with_security_event(
                     Ok(f) => f,
                     Err(e) => {
                         return (
-                            JsonRpcResponse::err(
-                                request_id,
-                                -32603,
-                                format!("failed to create restored file: {e}"),
-                            ),
+                            JsonRpcResponse::err(request_id, -32603, format!("failed to create restored file: {e}")),
                             None,
                         );
                     }
                 };
                 if let Err(e) = f.write_all(&snap_data) {
                     return (
-                        JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to write restored file: {e}"),
-                        ),
+                        JsonRpcResponse::err(request_id, -32603, format!("failed to write restored file: {e}")),
                         None,
                     );
                 }
@@ -986,9 +927,7 @@ pub fn handle_revert_file_with_security_event(
         capsem_logger::FileAction::Deleted
     };
     let size = if action == "restored" {
-        std::fs::symlink_metadata(&current_file)
-            .ok()
-            .map(|m| m.len())
+        std::fs::symlink_metadata(&current_file).ok().map(|m| m.len())
     } else {
         None
     };
@@ -1057,10 +996,7 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
         let origin = e["origin"].as_str().unwrap_or("-");
         let name = e["name"].as_str().unwrap_or("-");
         let age = e["age"].as_str().unwrap_or("-");
-        let hash = e["hash"]
-            .as_str()
-            .map(|h| &h[..h.len().min(12)])
-            .unwrap_or("-");
+        let hash = e["hash"].as_str().map(|h| &h[..h.len().min(12)]).unwrap_or("-");
         let files = e["files_count"].as_u64().unwrap_or(0);
         let summary = &e["changes_summary"];
         out.push_str(&format!(
@@ -1080,10 +1016,7 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
 }
 
 /// Collect snapshot entries as JSON values (for both text and json rendering).
-fn collect_snapshot_entries(
-    scheduler: &AutoSnapshotScheduler,
-    include_changes: bool,
-) -> Vec<serde_json::Value> {
+fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler, include_changes: bool) -> Vec<serde_json::Value> {
     let mut snapshots = scheduler.list_snapshots();
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
@@ -1155,25 +1088,22 @@ pub fn handle_list_snapshots(
 }
 
 /// Compute changes between two snapshots: what's new/modified/deleted in `current` vs `prev`.
-fn compute_changes_vs_previous(
-    current: &HashMap<String, FileEntry>,
-    prev: &HashMap<String, FileEntry>,
-) -> Vec<Value> {
+fn compute_changes_vs_previous(current: &HashMap<String, FileEntry>, prev: &HashMap<String, FileEntry>) -> Vec<Value> {
     let mut changes = Vec::new();
 
     // New: in current but not in prev.
     for (path, entry) in current {
         if !prev.contains_key(path) {
-            changes.push(serde_json::json!({"path": path, "op": "new", "size": entry.size, "is_symlink": entry.is_symlink}));
+            changes.push(
+                serde_json::json!({"path": path, "op": "new", "size": entry.size, "is_symlink": entry.is_symlink}),
+            );
         }
     }
 
     // Deleted: in prev but not in current.
     for (path, entry) in prev {
         if !current.contains_key(path) {
-            changes.push(
-                serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}),
-            );
+            changes.push(serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}));
         }
     }
 
@@ -1252,11 +1182,7 @@ pub fn handle_delete_snapshot(
             );
         }
         None => {
-            return JsonRpcResponse::err(
-                request_id,
-                -32602,
-                format!("checkpoint {cp_str} not found"),
-            );
+            return JsonRpcResponse::err(request_id, -32602, format!("checkpoint {cp_str} not found"));
         }
         _ => {}
     }
@@ -1364,11 +1290,7 @@ pub fn handle_snapshots_compact(
         None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoints' array"),
     };
 
-    let name = arguments
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let name = if name.is_empty() {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

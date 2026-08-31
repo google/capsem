@@ -89,8 +89,8 @@ fn parse_arm64_header(data: &[u8]) -> u64 {
 /// The kernel is loaded at RAM_BASE + text_offset. Returns the entry point
 /// address and the end address (for placing the FDT after it).
 pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<KernelLoadInfo> {
-    let kernel_data = std::fs::read(kernel_path)
-        .with_context(|| format!("reading kernel: {}", kernel_path.display()))?;
+    let kernel_data =
+        std::fs::read(kernel_path).with_context(|| format!("reading kernel: {}", kernel_path.display()))?;
 
     if kernel_data.is_empty() {
         bail!("kernel image is empty: {}", kernel_path.display());
@@ -137,13 +137,9 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
 ///
 /// Placing the initrd at the end of RAM avoids overlapping with the kernel's
 /// BSS expansion. The start and end addresses are recorded in the FDT.
-pub(super) fn load_initrd(
-    mem: &GuestMemory,
-    initrd_path: &Path,
-    kernel_end: u64,
-) -> Result<InitrdLoadInfo> {
-    let initrd_data = std::fs::read(initrd_path)
-        .with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
+pub(super) fn load_initrd(mem: &GuestMemory, initrd_path: &Path, kernel_end: u64) -> Result<InitrdLoadInfo> {
+    let initrd_data =
+        std::fs::read(initrd_path).with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
 
     if initrd_data.is_empty() {
         bail!("initrd is empty: {}", initrd_path.display());
@@ -194,8 +190,7 @@ pub(super) fn load_fdt(mem: &GuestMemory, fdt_blob: &[u8], kernel_end: u64) -> R
         bail!("FDT at {fdt_start:#x} is more than 512MB from kernel entry at {kernel_entry:#x}");
     }
 
-    mem.write_at(offset, fdt_blob)
-        .context("writing FDT to guest memory")?;
+    mem.write_at(offset, fdt_blob).context("writing FDT to guest memory")?;
 
     Ok(fdt_start)
 }
@@ -209,8 +204,7 @@ pub(super) fn load_fdt(mem: &GuestMemory, fdt_blob: &[u8], kernel_end: u64) -> R
 ///   X2  = 0 (reserved)
 ///   X3  = 0 (reserved)
 pub(super) fn set_boot_regs(vcpu: &sys::VcpuFd, entry_addr: u64, fdt_addr: u64) -> Result<()> {
-    vcpu.set_one_reg(sys::REG_PC, entry_addr)
-        .context("setting PC")?;
+    vcpu.set_one_reg(sys::REG_PC, entry_addr).context("setting PC")?;
     vcpu.set_one_reg(sys::REG_X0, fdt_addr)
         .context("setting X0 (FDT address)")?;
     vcpu.set_one_reg(sys::REG_X1, 0).context("setting X1")?;

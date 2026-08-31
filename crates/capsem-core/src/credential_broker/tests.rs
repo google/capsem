@@ -11,11 +11,7 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    fn install(
-        capsem_home: &std::path::Path,
-        home: &std::path::Path,
-        test_store: &std::path::Path,
-    ) -> Self {
+    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
         CredentialStore::global().clear_for_test();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(STORE_PATH_ENV).ok();
@@ -84,9 +80,7 @@ fn default_credential_store_writes_capsem_home_disk_file() {
         context_json: None,
     };
     let brokered = broker_observed_credential(&observation).unwrap();
-    let store_path = capsem_home
-        .join("credentials")
-        .join("credential-store.json");
+    let store_path = capsem_home.join("credentials").join("credential-store.json");
     let stored: std::collections::HashMap<String, String> =
         serde_json::from_str(&std::fs::read_to_string(&store_path).unwrap()).unwrap();
 
@@ -121,28 +115,16 @@ fn env_parser_detects_ai_and_github_credentials() {
     );
     assert_eq!(found.len(), 4);
     assert!(found.iter().all(|obs| !obs.raw_value.is_empty()));
-    assert!(found
-        .iter()
-        .any(|obs| obs.provider == CredentialProvider::OpenAi));
-    assert!(found
-        .iter()
-        .any(|obs| obs.provider == CredentialProvider::Google));
-    assert!(found
-        .iter()
-        .any(|obs| obs.provider == CredentialProvider::Anthropic));
-    assert!(found
-        .iter()
-        .any(|obs| obs.provider == CredentialProvider::Github));
+    assert!(found.iter().any(|obs| obs.provider == CredentialProvider::OpenAi));
+    assert!(found.iter().any(|obs| obs.provider == CredentialProvider::Google));
+    assert!(found.iter().any(|obs| obs.provider == CredentialProvider::Anthropic));
+    assert!(found.iter().any(|obs| obs.provider == CredentialProvider::Github));
 }
 
 #[test]
 fn http_detector_detects_github_authorization_without_raw_leak() {
-    let obs = detect_http_credential(
-        "api.github.com",
-        "authorization",
-        b"Bearer github_pat_secret",
-    )
-    .expect("github token should be detected");
+    let obs = detect_http_credential("api.github.com", "authorization", b"Bearer github_pat_secret")
+        .expect("github token should be detected");
     assert_eq!(obs.provider, CredentialProvider::Github);
     let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));
@@ -160,17 +142,11 @@ fn http_detector_detects_google_api_key_header_with_provider_hint() {
     .expect("google API key header should be detected without provider hint");
 
     assert_eq!(obs.provider, CredentialProvider::Google);
-    assert_eq!(
-        obs.raw_value,
-        "capsem_test_google_stream_key_0123456789abcdef"
-    );
+    assert_eq!(obs.raw_value, "capsem_test_google_stream_key_0123456789abcdef");
     assert_eq!(obs.source, "http.header.x-goog-api-key");
     let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));
-    assert!(!event
-        .context_json
-        .unwrap()
-        .contains("capsem_test_google_stream_key"));
+    assert!(!event.context_json.unwrap().contains("capsem_test_google_stream_key"));
 }
 
 #[test]
@@ -184,17 +160,11 @@ fn http_detector_brokers_unknown_openai_compatible_authorization() {
     .expect("unknown OpenAI-compatible authorization header should be brokered");
 
     assert_eq!(obs.provider, CredentialProvider::OpenAi);
-    assert_eq!(
-        obs.raw_value,
-        "capsem_test_sdk_api_key_repeat_0123456789abcdef"
-    );
+    assert_eq!(obs.raw_value, "capsem_test_sdk_api_key_repeat_0123456789abcdef");
     assert_eq!(obs.source, "http.header.authorization");
     let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));
-    assert!(!event
-        .context_json
-        .unwrap()
-        .contains("capsem_test_sdk_api_key"));
+    assert!(!event.context_json.unwrap().contains("capsem_test_sdk_api_key"));
 }
 
 #[test]
@@ -208,28 +178,17 @@ fn http_detector_brokers_unknown_anthropic_compatible_api_key() {
     .expect("unknown Anthropic-compatible x-api-key header should be brokered");
 
     assert_eq!(obs.provider, CredentialProvider::Anthropic);
-    assert_eq!(
-        obs.raw_value,
-        "capsem_test_anthropic_stream_key_0123456789abcdef"
-    );
+    assert_eq!(obs.raw_value, "capsem_test_anthropic_stream_key_0123456789abcdef");
     assert_eq!(obs.source, "http.header.x-api-key");
     let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));
-    assert!(!event
-        .context_json
-        .unwrap()
-        .contains("capsem_test_anthropic_stream_key"));
+    assert!(!event.context_json.unwrap().contains("capsem_test_anthropic_stream_key"));
 }
 
 #[test]
 fn http_body_detector_finds_github_token_exchange_and_redacts_body() {
     let body = br#"{"access_token":"github_pat_body_secret","token_type":"bearer"}"#;
-    let found = detect_http_body_credentials(
-        "api.github.com",
-        "/login/oauth/access_token",
-        "response",
-        body,
-    );
+    let found = detect_http_body_credentials("api.github.com", "/login/oauth/access_token", "response", body);
 
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].provider, CredentialProvider::Github);
@@ -242,13 +201,12 @@ fn http_body_detector_finds_github_token_exchange_and_redacts_body() {
 
 #[test]
 fn http_body_detector_finds_google_oauth_json_response_without_token_prefix() {
-    let body = br#"{"access_token":"ya29.live-access-token","refresh_token":"1//live-refresh-token","expires_in":3599}"#;
+    let body =
+        br#"{"access_token":"ya29.live-access-token","refresh_token":"1//live-refresh-token","expires_in":3599}"#;
     let found = detect_http_body_credentials("oauth2.googleapis.com", "/token", "response", body);
 
     assert_eq!(found.len(), 2);
-    assert!(found
-        .iter()
-        .all(|obs| obs.provider == CredentialProvider::Google));
+    assert!(found.iter().all(|obs| obs.provider == CredentialProvider::Google));
     assert!(found
         .iter()
         .any(|obs| obs.source == "http.body.response.$.access_token"));
@@ -283,9 +241,7 @@ fn http_body_detector_finds_local_oauth_fixture_response() {
     let found = detect_http_body_credentials("127.0.0.1", "/oauth/token", "response", body);
 
     assert_eq!(found.len(), 2);
-    assert!(found
-        .iter()
-        .all(|obs| obs.provider == CredentialProvider::Google));
+    assert!(found.iter().all(|obs| obs.provider == CredentialProvider::Google));
     assert!(found
         .iter()
         .any(|obs| obs.source == "http.body.response.$.access_token"));
@@ -307,8 +263,7 @@ fn http_body_detector_finds_local_nested_credential_response() {
     assert_eq!(found.len(), 4);
     assert!(found
         .iter()
-        .any(|obs| obs.provider == CredentialProvider::OpenAi
-            && obs.source == "http.body.response.$.api_key"));
+        .any(|obs| obs.provider == CredentialProvider::OpenAi && obs.source == "http.body.response.$.api_key"));
     assert!(found
         .iter()
         .filter(|obs| obs.provider == CredentialProvider::Google)
@@ -329,10 +284,7 @@ fn http_body_detector_finds_local_nested_credential_response() {
 
 #[test]
 fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
-    assert!(is_http_body_credential_candidate(
-        "oauth2.googleapis.com",
-        "/token"
-    ));
+    assert!(is_http_body_credential_candidate("oauth2.googleapis.com", "/token"));
     assert!(is_http_body_credential_candidate(
         "api.github.com",
         "/login/oauth/access_token"
@@ -341,18 +293,9 @@ fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
         "daily-cloudcode-pa.googleapis.com",
         "/v1internal:streamGenerateContent"
     ));
-    assert!(is_http_body_credential_candidate(
-        "127.0.0.1",
-        "/oauth/token"
-    ));
-    assert!(is_http_body_credential_candidate(
-        "localhost",
-        "/oauth/token"
-    ));
-    assert!(is_http_body_credential_candidate(
-        "127.0.0.1",
-        "/credential/response"
-    ));
+    assert!(is_http_body_credential_candidate("127.0.0.1", "/oauth/token"));
+    assert!(is_http_body_credential_candidate("localhost", "/oauth/token"));
+    assert!(is_http_body_credential_candidate("127.0.0.1", "/credential/response"));
     assert!(!is_http_body_credential_candidate("example.com", "/token"));
 }
 
@@ -426,8 +369,7 @@ fn duplicate_capture_is_memory_fast_and_does_not_rewrite_durable_store() {
     perms.set_readonly(true);
     std::fs::set_permissions(&test_store, perms).unwrap();
 
-    let second = broker_observed_credential(&obs)
-        .expect("duplicate capture must use memory cache, not rewrite disk");
+    let second = broker_observed_credential(&obs).expect("duplicate capture must use memory cache, not rewrite disk");
     assert_eq!(second.credential_ref, first.credential_ref);
     assert!(first.newly_captured);
     assert!(!second.newly_captured);
@@ -476,10 +418,7 @@ fn replay_status_is_memory_only_and_hydration_is_explicit() {
         "credential-store status must be memory-only"
     );
 
-    assert_eq!(
-        hydrate_credential_runtime_cache_from_durable_store().unwrap(),
-        1
-    );
+    assert_eq!(hydrate_credential_runtime_cache_from_durable_store().unwrap(), 1);
     let hydrated = credential_store_status();
     assert!(hydrated.ready);
     assert_eq!(hydrated.status, "ready");
@@ -590,10 +529,7 @@ fn replay_availability_requires_resolvable_broker_secret() {
         Some("google"),
         &brokered.credential_ref
     ));
-    assert!(broker_reference_replay_available(
-        None,
-        &brokered.credential_ref
-    ));
+    assert!(broker_reference_replay_available(None, &brokered.credential_ref));
     assert!(!broker_reference_replay_available(
         Some("openai"),
         &brokered.credential_ref

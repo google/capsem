@@ -18,15 +18,9 @@ pub(crate) fn backend_name() -> &'static str {
     "disk"
 }
 
-pub(crate) fn write(
-    provider: CredentialProvider,
-    credential_ref: &str,
-    raw_value: &str,
-) -> Result<(), String> {
+pub(crate) fn write(provider: CredentialProvider, credential_ref: &str, raw_value: &str) -> Result<(), String> {
     disk_store_write(
-        store_path_override()
-            .unwrap_or_else(default_store_path)
-            .as_path(),
+        store_path_override().unwrap_or_else(default_store_path).as_path(),
         provider,
         credential_ref,
         raw_value,
@@ -35,20 +29,14 @@ pub(crate) fn write(
 
 pub(crate) fn read(provider: CredentialProvider, credential_ref: &str) -> Result<String, String> {
     disk_store_read(
-        store_path_override()
-            .unwrap_or_else(default_store_path)
-            .as_path(),
+        store_path_override().unwrap_or_else(default_store_path).as_path(),
         provider,
         credential_ref,
     )
 }
 
 pub(crate) fn hydrate() -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    disk_store_hydrate(
-        store_path_override()
-            .unwrap_or_else(default_store_path)
-            .as_path(),
-    )
+    disk_store_hydrate(store_path_override().unwrap_or_else(default_store_path).as_path())
 }
 
 fn store_path_override() -> Option<PathBuf> {
@@ -78,20 +66,15 @@ fn disk_store_write(
         raw_value.to_string(),
     );
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("create credential store dir: {error}"))?;
+        std::fs::create_dir_all(parent).map_err(|error| format!("create credential store dir: {error}"))?;
     }
-    let json = serde_json::to_string_pretty(&map)
-        .map_err(|error| format!("serialize credential disk store: {error}"))?;
+    let json =
+        serde_json::to_string_pretty(&map).map_err(|error| format!("serialize credential disk store: {error}"))?;
     std::fs::write(path, json).map_err(|error| format!("write credential disk store: {error}"))?;
     restrict_secret_file(path)
 }
 
-fn disk_store_read(
-    path: &Path,
-    provider: CredentialProvider,
-    credential_ref: &str,
-) -> Result<String, String> {
+fn disk_store_read(path: &Path, provider: CredentialProvider, credential_ref: &str) -> Result<String, String> {
     let _guard = store_lock()
         .lock()
         .map_err(|_| "credential disk store lock poisoned".to_string())?;
@@ -126,8 +109,7 @@ fn disk_store_load(path: &Path) -> Result<HashMap<String, String>, String> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("read credential disk store: {error}"))?;
+    let text = std::fs::read_to_string(path).map_err(|error| format!("read credential disk store: {error}"))?;
     if text.trim().is_empty() {
         return Ok(HashMap::new());
     }

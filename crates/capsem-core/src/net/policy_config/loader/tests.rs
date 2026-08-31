@@ -141,10 +141,7 @@ sigma_output_endpoint = "https://security.example.invalid/capsem/sigma"
         file.rule_files.enforcement.as_deref(),
         Some("profiles/base/enforcement.toml")
     );
-    assert_eq!(
-        file.rule_files.sigma.as_deref(),
-        Some("profiles/base/detection.yaml")
-    );
+    assert_eq!(file.rule_files.sigma.as_deref(), Some("profiles/base/detection.yaml"));
     assert_eq!(
         file.corp_rule_files.sigma_output_endpoint.as_deref(),
         Some("https://security.example.invalid/capsem/sigma")
@@ -178,8 +175,7 @@ enforcement = "profiles/base/enforcement.toml"
     .unwrap();
 
     let file = load_settings_file(&settings_path).expect("settings load");
-    let profile =
-        load_referenced_enforcement_rules(&settings_path, &file).expect("enforcement loads");
+    let profile = load_referenced_enforcement_rules(&settings_path, &file).expect("enforcement loads");
     assert!(profile
         .expect("profile exists")
         .profiles
@@ -232,10 +228,7 @@ sigma = "profiles/base/detection.yaml"
         .get("openai_traffic_to_unexpected_endpoint")
         .expect("derived Sigma rule");
     assert_eq!(rule.action, super::super::SecurityRuleAction::Block);
-    assert_eq!(
-        rule.detection_level,
-        Some(super::super::DetectionLevel::High)
-    );
+    assert_eq!(rule.detection_level, Some(super::super::DetectionLevel::High));
     assert_eq!(
         rule.condition,
         r#"model.provider == "openai" && http.host != "api.openai.com""#
@@ -295,24 +288,16 @@ fn env_var_path_resolution() {
     let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(std::path::Path::new("/tmp/custom-capsem-home"));
     assert_eq!(
         settings_config_path(),
-        Some(std::path::PathBuf::from(
-            "/tmp/custom-capsem-home/settings.toml"
-        ))
+        Some(std::path::PathBuf::from("/tmp/custom-capsem-home/settings.toml"))
     );
 
     // Corp override via env.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
-    assert_eq!(
-        corp_config_path(),
-        std::path::PathBuf::from("/tmp/custom-corp.toml")
-    );
+    assert_eq!(corp_config_path(), std::path::PathBuf::from("/tmp/custom-corp.toml"));
     std::env::remove_var("CAPSEM_CORP_CONFIG");
 
     // Corp default (env unset).
-    assert_eq!(
-        corp_config_path(),
-        std::path::PathBuf::from("/etc/capsem/corp.toml")
-    );
+    assert_eq!(corp_config_path(), std::path::PathBuf::from("/etc/capsem/corp.toml"));
 
     // Restore any prior values.
     match prev_corp {
@@ -361,7 +346,8 @@ upstreams = ["127.0.0.1:5353"]
 
     assert!(
         corp.corp.rules.contains_key("block_local_deny_target"),
-        "direct corp rules must not be dropped by load_settings_and_corp_files");
+        "direct corp rules must not be dropped by load_settings_and_corp_files"
+    );
     assert!(
         corp.plugins.contains_key("credential_broker"),
         "corp plugin policy must not be dropped by load_settings_and_corp_files"
@@ -386,10 +372,7 @@ local__echo = "block"
         let path = dir.path().join("settings.toml");
         std::fs::write(&path, retired).unwrap();
         let error = load_settings_file(&path).unwrap_err();
-        assert!(
-            error.contains("retired MCP policy key"),
-            "unexpected error: {error}"
-        );
+        assert!(error.contains("retired MCP policy key"), "unexpected error: {error}");
     }
 }
 

@@ -88,10 +88,7 @@ fn assets_dir_under_isolated_home() {
 fn sessions_dir_under_isolated_home() {
     let _lock = lock_env();
     let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-    assert_eq!(
-        capsem_sessions_dir(),
-        PathBuf::from("/tmp/isolated/sessions")
-    );
+    assert_eq!(capsem_sessions_dir(), PathBuf::from("/tmp/isolated/sessions"));
 }
 
 #[test]
@@ -99,12 +96,6 @@ fn service_socket_and_pidfile_under_run_dir() {
     let _lock = lock_env();
     let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
     let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
-    assert_eq!(
-        service_socket_path(),
-        PathBuf::from("/tmp/isolated/run/service.sock")
-    );
-    assert_eq!(
-        service_pidfile_path(),
-        PathBuf::from("/tmp/isolated/run/service.pid")
-    );
+    assert_eq!(service_socket_path(), PathBuf::from("/tmp/isolated/run/service.sock"));
+    assert_eq!(service_pidfile_path(), PathBuf::from("/tmp/isolated/run/service.pid"));
 }

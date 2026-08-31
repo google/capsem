@@ -16,11 +16,7 @@ fn create_scratch_disk_sparse_file() {
     assert_eq!(meta.len(), 1024 * 1024 * 1024);
     // Sparse file: actual blocks should be much less than 1GB
     // (blocks are in 512-byte units)
-    assert!(
-        meta.blocks() < 1024,
-        "file should be sparse, blocks={}",
-        meta.blocks()
-    );
+    assert!(meta.blocks() < 1024, "file should be sparse, blocks={}", meta.blocks());
     // Permissions should be 0600
     assert_eq!(meta.mode() & 0o777, 0o600);
 
@@ -54,10 +50,7 @@ fn create_scratch_disk_overwrites_existing() {
 
     // Overwrite with 2GB
     create_scratch_disk(&path, 2).unwrap();
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().len(),
-        2 * 1024 * 1024 * 1024
-    );
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 2 * 1024 * 1024 * 1024);
 
     std::fs::remove_file(&path).unwrap();
 }
@@ -153,12 +146,9 @@ fn preformatted_system_overlay_template_clones_session_images() {
 
     let created = ensure_preformatted_system_overlay_template(&template, 1).unwrap();
     let reused = ensure_preformatted_system_overlay_template(&template, 1).unwrap();
-    let first_cloned =
-        preformat_system_overlay_image_from_template_if_needed(&first, &template, 1).unwrap();
-    let second_cloned =
-        preformat_system_overlay_image_from_template_if_needed(&second, &template, 1).unwrap();
-    let first_reused =
-        preformat_system_overlay_image_from_template_if_needed(&first, &template, 1).unwrap();
+    let first_cloned = preformat_system_overlay_image_from_template_if_needed(&first, &template, 1).unwrap();
+    let second_cloned = preformat_system_overlay_image_from_template_if_needed(&second, &template, 1).unwrap();
+    let first_reused = preformat_system_overlay_image_from_template_if_needed(&first, &template, 1).unwrap();
 
     assert!(created);
     assert!(!reused);
@@ -168,10 +158,7 @@ fn preformatted_system_overlay_template_clones_session_images() {
     assert!(system_overlay_has_ext4_magic(&first).unwrap());
     assert!(system_overlay_has_ext4_magic(&second).unwrap());
     assert_eq!(std::fs::metadata(&first).unwrap().len(), 1024 * 1024 * 1024);
-    assert_eq!(
-        std::fs::metadata(&second).unwrap().len(),
-        1024 * 1024 * 1024
-    );
+    assert_eq!(std::fs::metadata(&second).unwrap().len(), 1024 * 1024 * 1024);
     assert!(
         std::fs::metadata(&first).unwrap().blocks() < 128 * 1024,
         "template clone should remain sparse"
@@ -237,12 +224,7 @@ fn reexport_surface_compiles() {
     let _: fn(&HostToGuest) -> anyhow::Result<Vec<u8>> = encode_host_msg;
 
     // Hypervisor traits (verify they exist as trait objects)
-    fn _assert_hypervisor_traits(
-        _h: &dyn Hypervisor,
-        _v: &dyn VmHandle,
-        _s: &dyn SerialConsole,
-    ) {
-    }
+    fn _assert_hypervisor_traits(_h: &dyn Hypervisor, _v: &dyn VmHandle, _s: &dyn SerialConsole) {}
 
     // AppleVzHypervisor (macOS-only)
     #[cfg(target_os = "macos")]

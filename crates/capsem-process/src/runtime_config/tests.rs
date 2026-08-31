@@ -39,15 +39,9 @@ local = false
         .rules()
         .iter()
         .any(|rule| rule.rule_id == "profiles.rules.runtime_http"));
-    assert_eq!(
-        runtime.plugins["credential_broker"].mode,
-        SecurityPluginMode::Rewrite
-    );
+    assert_eq!(runtime.plugins["credential_broker"].mode, SecurityPluginMode::Rewrite);
     assert!(!runtime.mcp.server_enabled["local"]);
-    assert_eq!(
-        runtime.network.http_upstream_ports,
-        vec![80, 3128, 3713, 8080, 11434]
-    );
+    assert_eq!(runtime.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
 }
 
 #[test]
@@ -102,17 +96,11 @@ upstreams = ["127.0.0.1:5353"]
         .expect("corp rule should match");
 
     assert_eq!(first.rule_id, "corp.rules.block_local_deny_target");
-    assert_eq!(
-        runtime.dns_upstreams,
-        vec!["127.0.0.1:5353".parse().unwrap()]
-    );
+    assert_eq!(runtime.dns_upstreams, vec!["127.0.0.1:5353".parse().unwrap()]);
     assert!(runtime.network.log_bodies);
     assert_eq!(runtime.network.max_body_capture, 8192);
     assert_eq!(runtime.network.http_upstream_ports, vec![80, 3713]);
-    assert_eq!(
-        first.action,
-        capsem_core::net::policy_config::SecurityRuleAction::Block
-    );
+    assert_eq!(first.action, capsem_core::net::policy_config::SecurityRuleAction::Block);
 }
 
 #[test]
@@ -150,8 +138,5 @@ protocol = "http"
         .network
         .find_upstream_override("daily-cloudcode-pa.googleapis.com", 80)
         .is_none());
-    assert!(runtime
-        .network
-        .find_upstream_override("evil.example", 443)
-        .is_none());
+    assert!(runtime.network.find_upstream_override("evil.example", 443).is_none());
 }

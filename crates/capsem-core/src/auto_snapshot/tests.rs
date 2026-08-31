@@ -72,8 +72,7 @@ fn take_auto_snapshot_creates_slot() {
 
     let meta_path = session.join("auto_snapshots/0/metadata.json");
     assert!(meta_path.exists());
-    let meta: SlotMetadata =
-        serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
+    let meta: SlotMetadata = serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
     assert_eq!(meta.origin, SnapshotOrigin::Auto);
     assert!(meta.name.is_none());
 }
@@ -123,8 +122,7 @@ fn compact_snapshots_does_not_modify_live_workspace() {
     let before_hash = workspace_hash(&workspace);
     let before_entries = workspace_entries(&workspace);
 
-    s.compact_snapshots(&[snap_a.slot, snap_b.slot], "merged")
-        .unwrap();
+    s.compact_snapshots(&[snap_a.slot, snap_b.slot], "merged").unwrap();
 
     assert_eq!(
         workspace_hash(&workspace),
@@ -224,11 +222,9 @@ fn auto_ring_buffer_wraps() {
     std::fs::write(session.join("workspace/a.txt"), "third").unwrap();
     s.take_snapshot().unwrap(); // slot 0 again
 
-    let content =
-        std::fs::read_to_string(session.join("auto_snapshots/0/workspace/a.txt")).unwrap();
+    let content = std::fs::read_to_string(session.join("auto_snapshots/0/workspace/a.txt")).unwrap();
     assert_eq!(content, "third");
-    let content =
-        std::fs::read_to_string(session.join("auto_snapshots/1/workspace/a.txt")).unwrap();
+    let content = std::fs::read_to_string(session.join("auto_snapshots/1/workspace/a.txt")).unwrap();
     assert_eq!(content, "second");
 }
 
@@ -245,14 +241,8 @@ fn separate_pools_dont_collide() {
 
     let list = s.list_snapshots();
     assert_eq!(list.len(), 2);
-    let auto: Vec<_> = list
-        .iter()
-        .filter(|s| s.origin == SnapshotOrigin::Auto)
-        .collect();
-    let manual: Vec<_> = list
-        .iter()
-        .filter(|s| s.origin == SnapshotOrigin::Manual)
-        .collect();
+    let auto: Vec<_> = list.iter().filter(|s| s.origin == SnapshotOrigin::Auto).collect();
+    let manual: Vec<_> = list.iter().filter(|s| s.origin == SnapshotOrigin::Manual).collect();
     assert_eq!(auto.len(), 1);
     assert_eq!(manual.len(), 1);
     assert_eq!(auto[0].slot, 0);
@@ -307,9 +297,7 @@ fn manual_pool_full_returns_error() {
 
     s.take_named_snapshot("first").unwrap();
     let err = s.take_named_snapshot("second").unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("no manual snapshot slots available"));
+    assert!(err.to_string().contains("no manual snapshot slots available"));
 }
 
 #[test]
@@ -407,9 +395,7 @@ fn compact_newest_wins() {
     std::fs::write(session.join("workspace/file.txt"), "new").unwrap();
     let snap2 = s.take_named_snapshot("v2").unwrap();
 
-    let result = s
-        .compact_snapshots(&[snap1.slot, snap2.slot], "merged")
-        .unwrap();
+    let result = s.compact_snapshots(&[snap1.slot, snap2.slot], "merged").unwrap();
     assert_eq!(
         std::fs::read_to_string(result.workspace_path.join("file.txt")).unwrap(),
         "new"
@@ -471,10 +457,7 @@ fn clone_preserves_file_content() {
     clone_directory(&src, &dst).unwrap();
 
     assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "hello");
-    assert_eq!(
-        std::fs::read_to_string(dst.join("sub/b.txt")).unwrap(),
-        "nested"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("sub/b.txt")).unwrap(), "nested");
 }
 
 // -----------------------------------------------------------------------
@@ -497,10 +480,7 @@ fn default_backend_returns_apfs_on_macos() {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("test.txt"), "hello").unwrap();
     backend.snapshot(&src, &dst).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(dst.join("test.txt")).unwrap(),
-        "hello"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("test.txt")).unwrap(), "hello");
 }
 
 // -----------------------------------------------------------------------
@@ -528,10 +508,7 @@ fn copy_recursive_single_file() {
 
     clone_directory(&src, &dst).unwrap();
 
-    assert_eq!(
-        std::fs::read_to_string(dst.join("file.txt")).unwrap(),
-        "content"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "content");
 }
 
 #[test]
@@ -545,14 +522,8 @@ fn copy_recursive_nested_dirs() {
     let dst = tmp.path().join("dst");
     clone_directory(&src, &dst).unwrap();
 
-    assert_eq!(
-        std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(),
-        "deep"
-    );
-    assert_eq!(
-        std::fs::read_to_string(dst.join("a/top.txt")).unwrap(),
-        "top"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(), "deep");
+    assert_eq!(std::fs::read_to_string(dst.join("a/top.txt")).unwrap(), "top");
 }
 
 #[test]
@@ -639,10 +610,7 @@ fn reflink_snapshot_copies_files() {
     ReflinkSnapshot.snapshot(&src, &dst).unwrap();
 
     assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "alpha");
-    assert_eq!(
-        std::fs::read_to_string(dst.join("subdir/b.txt")).unwrap(),
-        "beta"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("subdir/b.txt")).unwrap(), "beta");
 }
 
 #[cfg(target_os = "linux")]
@@ -677,10 +645,7 @@ fn reflink_snapshot_preserves_nested_structure() {
     let dst = tmp.path().join("dst");
     ReflinkSnapshot.snapshot(&src, &dst).unwrap();
 
-    assert_eq!(
-        std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(),
-        "deep"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("a/b/c/deep.txt")).unwrap(), "deep");
     assert_eq!(std::fs::read_to_string(dst.join("top.txt")).unwrap(), "top");
 }
 
@@ -883,10 +848,7 @@ fn apfs_snapshot_copies_files() {
     ApfsSnapshot.snapshot(&src, &dst).unwrap();
 
     assert_eq!(std::fs::read_to_string(dst.join("x.txt")).unwrap(), "data");
-    assert_eq!(
-        std::fs::read_to_string(dst.join("sub/y.txt")).unwrap(),
-        "nested"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("sub/y.txt")).unwrap(), "nested");
 }
 
 #[test]
@@ -915,10 +877,7 @@ fn clone_directory_dispatches_correctly() {
     let dst = tmp.path().join("dst");
     clone_directory(&src, &dst).unwrap();
 
-    assert_eq!(
-        std::fs::read_to_string(dst.join("test.txt")).unwrap(),
-        "cloned"
-    );
+    assert_eq!(std::fs::read_to_string(dst.join("test.txt")).unwrap(), "cloned");
 }
 
 // -----------------------------------------------------------------------
@@ -1066,14 +1025,8 @@ fn clone_sandbox_state_basic() {
     // Verify compat symlinks
     assert!(dst.join("system").is_symlink());
     assert!(dst.join("workspace").is_symlink());
-    assert_eq!(
-        std::fs::read(dst.join("system/rootfs.img")).unwrap(),
-        b"rootfs-data"
-    );
-    assert_eq!(
-        std::fs::read(dst.join("workspace/hello.txt")).unwrap(),
-        b"world"
-    );
+    assert_eq!(std::fs::read(dst.join("system/rootfs.img")).unwrap(), b"rootfs-data");
+    assert_eq!(std::fs::read(dst.join("workspace/hello.txt")).unwrap(), b"world");
 }
 
 #[test]
@@ -1116,9 +1069,7 @@ fn clone_sandbox_state_with_session_db() {
     assert!(!dst.join("guest/session.db").exists());
     let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
     let payload: String = cloned
-        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| row.get(0))
         .unwrap();
     assert_eq!(payload, "db-contents");
     let quick_check: String = cloned
@@ -1159,9 +1110,7 @@ fn clone_sandbox_state_snapshots_wal_backed_session_db() {
     assert!(!dst.join("session.db-shm").exists());
     let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
     let payload: String = cloned
-        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| row.get(0))
         .unwrap();
     assert_eq!(payload, "committed-in-wal");
     let quick_check: String = cloned

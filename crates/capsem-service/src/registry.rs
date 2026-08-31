@@ -25,11 +25,7 @@ pub struct PersistentVmEntry {
     pub base_version: String,
     pub created_at: String,
     pub session_dir: PathBuf,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        alias = "source_image"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "source_image")]
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
@@ -127,12 +123,7 @@ impl PersistentRegistry {
         if entry.id.trim().is_empty() {
             entry.id = new_persistent_vm_id();
         }
-        if self
-            .data
-            .vms
-            .values()
-            .any(|existing| existing.id == entry.id)
-        {
+        if self.data.vms.values().any(|existing| existing.id == entry.id) {
             return Err(anyhow!("persistent VM id \"{}\" already exists", entry.id));
         }
         self.data.vms.insert(entry.name.clone(), entry);

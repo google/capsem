@@ -27,16 +27,9 @@ pub enum Action {
 /// A menu entry description, independent of the muda toolkit.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MenuEntry {
-    Item {
-        id: String,
-        label: String,
-        enabled: bool,
-    },
+    Item { id: String, label: String, enabled: bool },
     Separator,
-    Sub {
-        label: String,
-        items: Vec<MenuEntry>,
-    },
+    Sub { label: String, items: Vec<MenuEntry> },
 }
 
 /// Compute the menu structure for a gateway status response.

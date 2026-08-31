@@ -9,9 +9,7 @@ fn short_path_uses_run_dir() {
 
 #[test]
 fn long_path_falls_back_to_tmp_capsem() {
-    let run_dir = PathBuf::from(
-        "/var/folders/lv/deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeep/T/capsem-test-xxxx",
-    );
+    let run_dir = PathBuf::from("/var/folders/lv/deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeep/T/capsem-test-xxxx");
     let p = instance_socket_path(&run_dir, "tmp-long-name-that-blows-past-sun-len");
     assert!(
         p.starts_with("/tmp/capsem/"),
@@ -41,8 +39,7 @@ fn terminal_socket_prefers_the_readable_path() {
 
 #[test]
 fn terminal_socket_fits_under_a_long_run_dir() {
-    let run_dir =
-        PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
+    let run_dir = PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
     let path = terminal_socket_path(&run_dir, "322e7460-f1b2-4fdd-88f1-0c4b58c48e46");
 
     assert!(
@@ -59,14 +56,10 @@ fn the_terminal_fallback_is_the_same_in_every_process() {
     // the id, and never exchange it. A per-process hash would leave them
     // binding and dialling different paths -- which fails exactly like the
     // overflow it was meant to fix.
-    let run_dir =
-        PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
+    let run_dir = PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
     let id = "322e7460-f1b2-4fdd-88f1-0c4b58c48e46";
 
-    assert_eq!(
-        terminal_socket_path(&run_dir, id),
-        terminal_socket_path(&run_dir, id)
-    );
+    assert_eq!(terminal_socket_path(&run_dir, id), terminal_socket_path(&run_dir, id));
     assert_ne!(
         terminal_socket_path(&run_dir, id),
         terminal_socket_path(&run_dir, "0acea121-db0b-431e-91f3-c51291fa64fc")
@@ -86,16 +79,11 @@ fn the_terminal_fallback_is_the_same_in_every_process() {
 /// VM that never became exec-ready.
 #[test]
 fn walking_up_from_a_shortened_ipc_path_finds_the_wrong_run_dir() {
-    let run_dir = PathBuf::from(
-        "/private/var/folders/l5/jg8zh4215ll399vd5mcp9sp40000gn/T/capsem-test-xw4j_rzq/run",
-    );
+    let run_dir = PathBuf::from("/private/var/folders/l5/jg8zh4215ll399vd5mcp9sp40000gn/T/capsem-test-xw4j_rzq/run");
     let id = "bb61246d-1dec-489f-8a2f-48c263fe4d5c";
 
     let ipc = instance_socket_path(&run_dir, id);
-    assert!(
-        ipc.starts_with("/tmp/capsem"),
-        "this run dir must shorten: {ipc:?}"
-    );
+    assert!(ipc.starts_with("/tmp/capsem"), "this run dir must shorten: {ipc:?}");
 
     let walked = ipc.parent().and_then(|p| p.parent()).unwrap();
     assert_ne!(
@@ -115,12 +103,8 @@ fn the_returned_path_has_a_directory_to_bind_in() {
 
     for id in ["short-id", "322e7460-f1b2-4fdd-88f1-0c4b58c48e46"] {
         let path = terminal_socket_path(temp.path(), id);
-        assert!(
-            path.parent().unwrap().is_dir(),
-            "{path:?} has no directory to bind in"
-        );
-        std::os::unix::net::UnixListener::bind(&path)
-            .unwrap_or_else(|e| panic!("cannot bind {path:?}: {e}"));
+        assert!(path.parent().unwrap().is_dir(), "{path:?} has no directory to bind in");
+        std::os::unix::net::UnixListener::bind(&path).unwrap_or_else(|e| panic!("cannot bind {path:?}: {e}"));
         let _ = std::fs::remove_file(&path);
     }
 }
@@ -139,9 +123,7 @@ fn the_returned_path_has_a_directory_to_bind_in() {
 /// this asserts the paths, not that something bound.
 #[test]
 fn the_gateway_and_the_process_agree_on_a_long_run_dir() {
-    let run_dir = PathBuf::from(
-        "/private/var/folders/l5/jg8zh4215ll399vd5mcp9sp40000gn/T/capsem-test-xw4j_rzq/run",
-    );
+    let run_dir = PathBuf::from("/private/var/folders/l5/jg8zh4215ll399vd5mcp9sp40000gn/T/capsem-test-xw4j_rzq/run");
     let id = "bb61246d-1dec-489f-8a2f-48c263fe4d5c";
 
     // What the gateway does: the service socket's directory.

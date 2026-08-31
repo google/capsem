@@ -17,9 +17,7 @@ use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
 use crate::net::policy_config;
-use crate::{
-    decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
-};
+use crate::{decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE};
 use capsem_logger::DbWriter;
 
 use super::registry::SandboxNetworkState;
@@ -178,17 +176,11 @@ pub fn boot_vm(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| assets.join("initrd.img"));
         if initrd_path.exists() {
-            info!(
-                "[boot-audit] initrd: {} (exists=true)",
-                initrd_path.display()
-            );
+            info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
             builder = builder.initrd_path(initrd_path);
             builder = builder.expected_initrd_hash(&expected_hashes.initrd);
         } else {
-            info!(
-                "[boot-audit] initrd: {} (exists=false)",
-                initrd_path.display()
-            );
+            info!("[boot-audit] initrd: {} (exists=false)", initrd_path.display());
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
@@ -198,11 +190,7 @@ pub fn boot_vm(
             .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
-            info!(
-                "[boot-audit] rootfs: {} (exists={})",
-                rootfs.display(),
-                rootfs.exists()
-            );
+            info!("[boot-audit] rootfs: {} (exists={})", rootfs.display(), rootfs.exists());
             builder = builder.disk_path(rootfs);
             builder = builder.expected_disk_hash(&expected_hashes.rootfs);
         } else {
@@ -258,11 +246,7 @@ pub fn boot_vm(
     Ok((vm, vsock_rx, sm))
 }
 
-fn effective_kernel_cmdline(
-    base: &str,
-    virtiofs_shares: &[VirtioFsShare],
-    rootfs_override: Option<&Path>,
-) -> String {
+fn effective_kernel_cmdline(base: &str, virtiofs_shares: &[VirtioFsShare], rootfs_override: Option<&Path>) -> String {
     effective_kernel_cmdline_with_erofs_mode(
         base,
         virtiofs_shares,
@@ -334,8 +318,8 @@ pub fn send_boot_config(
     preloaded_guest_config: Option<policy_config::GuestConfig>,
 ) -> Result<()> {
     use crate::capsem_proto::{
-        validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS,
-        MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+        validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
+        MAX_BOOT_FILE_BYTES,
     };
 
     let epoch_secs = std::time::SystemTime::now()
@@ -377,8 +361,7 @@ pub fn send_boot_config(
     }
 
     // 2. Send metadata-driven env vars from settings UI metadata.
-    let guest_config =
-        preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
+    let guest_config = preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.

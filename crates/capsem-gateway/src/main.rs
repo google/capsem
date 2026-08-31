@@ -23,11 +23,7 @@ use crate::auth::{AuthFailureTracker, AuthState};
 use crate::status::StatusCache;
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "capsem-gateway",
-    version,
-    about = "TCP-to-UDS gateway for capsem-service"
-)]
+#[command(name = "capsem-gateway", version, about = "TCP-to-UDS gateway for capsem-service")]
 struct Args {
     /// TCP port to listen on (0 = OS-assigned)
     #[arg(long, default_value_t = 19222)]
@@ -92,10 +88,7 @@ async fn main() -> Result<()> {
     // refuse if another gateway already holds the singleton lock for this
     // run_dir. Both conditions are expected (stale launch, double-spawn race)
     // and resolved by exiting 0 -- standalone launches become no-ops.
-    let lock_path = args
-        .lock_path
-        .clone()
-        .unwrap_or_else(|| run_dir.join("gateway.lock"));
+    let lock_path = args.lock_path.clone().unwrap_or_else(|| run_dir.join("gateway.lock"));
     match capsem_guard::install(args.parent_pid, &lock_path) {
         Ok(Some(guards)) => {
             // Keep the guards alive for the process's lifetime.
@@ -116,9 +109,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
-    let uds_path = args
-        .uds_path
-        .unwrap_or_else(|| run_dir.join("service.sock"));
+    let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
 
     // Check if service socket exists (warning only -- service may start later)
     if !uds_path.exists() {
@@ -131,10 +122,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .context("failed to bind TCP listener")?;
-    let bound_port = listener
-        .local_addr()
-        .context("failed to read bound TCP port")?
-        .port();
+    let bound_port = listener.local_addr().context("failed to read bound TCP port")?.port();
 
     // Generate auth token and write runtime files (token/port/pid).
     let token = auth::generate_token();
@@ -163,9 +151,7 @@ async fn main() -> Result<()> {
         ))
         .layer(
             CorsLayer::new()
-                .allow_origin(AllowOrigin::predicate(|origin, _| {
-                    cors::is_allowed_origin(origin)
-                }))
+                .allow_origin(AllowOrigin::predicate(|origin, _| cors::is_allowed_origin(origin)))
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
@@ -182,17 +168,14 @@ async fn main() -> Result<()> {
 
     // Graceful shutdown on SIGTERM/SIGINT
     let shutdown_auth = auth_state.clone();
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        shutdown_signal().await;
-        info!("shutting down");
-        shutdown_auth.cleanup();
-    })
-    .await
-    .context("server error")?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            info!("shutting down");
+            shutdown_auth.cleanup();
+        })
+        .await
+        .context("server error")?;
 
     // Belt-and-suspenders cleanup (signal handler may not run on all exit paths)
     auth_state.cleanup();
@@ -259,14 +242,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/profiles/{profile_id}/info", get(proxy::handle_proxy))
         .route("/profiles/{profile_id}/obom", get(proxy::handle_proxy))
         .route("/profiles/{profile_id}/validate", post(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/enforcement/evaluate",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/info",
-            get(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/enforcement/evaluate", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/enforcement/info", get(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
             put(proxy::handle_proxy),
@@ -275,22 +252,13 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
             delete(proxy::handle_proxy),
         )
-        .route(
-            "/profiles/{profile_id}/enforcement/reload",
-            post(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/enforcement/reload", post(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/enforcement/rules/list",
             get(proxy::handle_proxy),
         )
-        .route(
-            "/profiles/{profile_id}/detection/evaluate",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/info",
-            get(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/detection/evaluate", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/detection/info", get(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
             put(proxy::handle_proxy),
@@ -299,22 +267,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
             delete(proxy::handle_proxy),
         )
-        .route(
-            "/profiles/{profile_id}/detection/reload",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/list",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/list",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/info",
-            get(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/detection/reload", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/detection/rules/list", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/plugins/list", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/plugins/info", get(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/info",
             get(proxy::handle_proxy),
@@ -335,30 +291,12 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/fork", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/assets/status",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/ensure",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/list",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/add",
-            post(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/assets/status", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/assets/info", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/assets/ensure", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/skills/info", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/skills/list", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/skills/add", post(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/skills/{skill_id}/edit",
             patch(proxy::handle_proxy),
@@ -371,19 +309,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/corp/edit", put(proxy::handle_proxy))
         .route("/corp/validate", post(proxy::handle_proxy))
         .route("/corp/reload", post(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/mcp/servers/list",
-            get(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/mcp/servers/list", get(proxy::handle_proxy))
         .route("/profiles/{profile_id}/mcp/info", get(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/mcp/default/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/default/edit",
-            patch(proxy::handle_proxy),
-        )
+        .route("/profiles/{profile_id}/mcp/default/info", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/mcp/default/edit", patch(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
             put(proxy::handle_proxy),

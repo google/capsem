@@ -78,7 +78,9 @@ fn fdt_eight_cpus() {
 #[test]
 fn fdt_with_long_cmdline() {
     let mut config = minimal_config();
-    config.cmdline = "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 capsem.storage=virtiofs".to_string();
+    config.cmdline =
+        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 capsem.storage=virtiofs"
+            .to_string();
     let blob = build_fdt(&config).unwrap();
     assert!(!blob.is_empty());
 }
@@ -147,11 +149,7 @@ fn fdt_with_many_virtio_devices() {
         .collect();
     let blob = build_fdt(&config).unwrap();
     // With 32 devices, FDT should still be < 64KB
-    assert!(
-        blob.len() < 65536,
-        "FDT too large with 32 devices: {}",
-        blob.len()
-    );
+    assert!(blob.len() < 65536, "FDT too large with 32 devices: {}", blob.len());
 }
 
 // -----------------------------------------------------------------------

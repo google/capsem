@@ -115,10 +115,7 @@ fn text_relay_batch_merges_until_the_size_cap_then_flushes() {
     let flushed = queue_text_batch(&mut pending, fill).expect("batch should flush at cap");
     let expected = "abcd".to_string() + &"x".repeat(TERMINAL_RELAY_BATCH_MAX_BYTES - 4);
     assert_text_batch(&Some(flushed), &expected);
-    assert!(
-        pending.is_none(),
-        "full text batch should leave no pending frame"
-    );
+    assert!(pending.is_none(), "full text batch should leave no pending frame");
 }
 
 #[test]
@@ -136,10 +133,7 @@ fn binary_relay_batch_merges_until_the_size_cap_then_flushes() {
     let mut expected = vec![1, 2, 3, 4];
     expected.extend(std::iter::repeat_n(9, TERMINAL_RELAY_BATCH_MAX_BYTES - 4));
     assert_binary_batch(&Some(flushed), &expected);
-    assert!(
-        pending.is_none(),
-        "full binary batch should leave no pending frame"
-    );
+    assert!(pending.is_none(), "full binary batch should leave no pending frame");
 }
 
 #[test]
@@ -147,13 +141,13 @@ fn relay_batch_flushes_when_frame_type_changes() {
     let mut pending = None;
 
     assert!(queue_text_batch(&mut pending, "hello".to_string()).is_none());
-    let flushed = queue_binary_batch(&mut pending, vec![1, 2, 3])
-        .expect("binary frame should flush pending text first");
+    let flushed =
+        queue_binary_batch(&mut pending, vec![1, 2, 3]).expect("binary frame should flush pending text first");
     assert_text_batch(&Some(flushed), "hello");
     assert_binary_batch(&pending, &[1, 2, 3]);
 
-    let flushed = queue_text_batch(&mut pending, "world".to_string())
-        .expect("text frame should flush pending binary first");
+    let flushed =
+        queue_text_batch(&mut pending, "world".to_string()).expect("text frame should flush pending binary first");
     assert_binary_batch(&Some(flushed), &[1, 2, 3]);
     assert_text_batch(&pending, "world");
 }
@@ -164,10 +158,7 @@ fn relay_batch_flushes_when_frame_type_changes() {
 fn uds_path_derives_from_service_socket() {
     let service = Path::new("/home/user/.capsem/run/service.sock");
     let path = terminal_uds_path(service, "vm-123");
-    assert_eq!(
-        path,
-        PathBuf::from("/home/user/.capsem/run/instances/vm-123-ws.sock")
-    );
+    assert_eq!(path, PathBuf::from("/home/user/.capsem/run/instances/vm-123-ws.sock"));
 }
 
 #[test]
@@ -222,9 +213,7 @@ async fn handler_non_ws_request_does_not_reject_as_invalid_id() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let text = String::from_utf8_lossy(&body);
     assert!(
         !text.contains("invalid VM id"),
@@ -236,12 +225,7 @@ async fn handler_non_ws_request_does_not_reject_as_invalid_id() {
 async fn handler_unmatched_path_returns_404() {
     let app = terminal_app("/tmp/test.sock");
     let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/terminal/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(http::Request::builder().uri("/terminal/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
@@ -309,9 +293,7 @@ async fn websocket_relay_echoes_text() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     // Send a text message
-    ws.send(TungsteniteMessage::Text("hello gateway".into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Text("hello gateway".into())).await.unwrap();
 
     // Read back the echoed message
     let echoed = ws.next().await.unwrap().unwrap();
@@ -321,9 +303,7 @@ async fn websocket_relay_echoes_text() {
     }
 
     // Send binary
-    ws.send(TungsteniteMessage::Binary(vec![1, 2, 3].into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Binary(vec![1, 2, 3].into())).await.unwrap();
     let echoed = ws.next().await.unwrap().unwrap();
     match echoed {
         TungsteniteMessage::Binary(b) => assert_eq!(b.to_vec(), vec![1, 2, 3]),
@@ -351,10 +331,7 @@ async fn websocket_relay_handles_process_disconnect() {
             let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
             let (mut write, _read) = ws.split();
             // Send one message then close
-            write
-                .send(TungsteniteMessage::Text("bye".into()))
-                .await
-                .ok();
+            write.send(TungsteniteMessage::Text("bye".into())).await.ok();
             write.send(TungsteniteMessage::Close(None)).await.ok();
         }
     });
@@ -468,9 +445,7 @@ async fn websocket_relay_ping_pong() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     // Send ping
-    ws.send(TungsteniteMessage::Ping(vec![42].into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Ping(vec![42].into())).await.unwrap();
 
     // Should get pong back (from mock, relayed through gateway)
     let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
@@ -573,9 +548,7 @@ async fn websocket_relay_client_disconnect_aborts_process_relay() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     // Send a message to confirm relay works
-    ws.send(TungsteniteMessage::Text("ping".into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Text("ping".into())).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
     assert!(matches!(msg, TungsteniteMessage::Text(_)));
 
@@ -661,10 +634,7 @@ async fn websocket_relay_invalid_id_via_ws_client() {
     let result = tokio_tungstenite::connect_async(&url).await;
 
     // Should fail -- server returns 400, not 101 upgrade
-    assert!(
-        result.is_err(),
-        "expected WS handshake to fail for invalid ID"
-    );
+    assert!(result.is_err(), "expected WS handshake to fail for invalid ID");
 
     sh.abort();
 }
@@ -688,14 +658,8 @@ async fn websocket_relay_process_sends_binary_and_ping() {
                                 .send(TungsteniteMessage::Binary(vec![10, 20, 30].into()))
                                 .await
                                 .ok();
-                            write
-                                .send(TungsteniteMessage::Ping(vec![99].into()))
-                                .await
-                                .ok();
-                            write
-                                .send(TungsteniteMessage::Text("done".into()))
-                                .await
-                                .ok();
+                            write.send(TungsteniteMessage::Ping(vec![99].into())).await.ok();
+                            write.send(TungsteniteMessage::Text("done".into())).await.ok();
                         }
                         TungsteniteMessage::Close(_) => break,
                         _ => {}
@@ -709,9 +673,7 @@ async fn websocket_relay_process_sends_binary_and_ping() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     // Tell the mock we're ready
-    ws.send(TungsteniteMessage::Text("ready".into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Text("ready".into())).await.unwrap();
 
     // Collect messages
     let mut got_binary = false;
@@ -751,18 +713,9 @@ async fn websocket_relay_coalesces_process_text_bursts() {
             if let Ok((stream, _)) = uds.accept().await {
                 let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                 let (mut write, _read) = ws.split();
-                write
-                    .send(TungsteniteMessage::Text("alpha ".into()))
-                    .await
-                    .unwrap();
-                write
-                    .send(TungsteniteMessage::Text("beta ".into()))
-                    .await
-                    .unwrap();
-                write
-                    .send(TungsteniteMessage::Text("gamma".into()))
-                    .await
-                    .unwrap();
+                write.send(TungsteniteMessage::Text("alpha ".into())).await.unwrap();
+                write.send(TungsteniteMessage::Text("beta ".into())).await.unwrap();
+                write.send(TungsteniteMessage::Text("gamma".into())).await.unwrap();
             }
         })
     })
@@ -805,9 +758,7 @@ async fn websocket_relay_forwards_single_client_input_without_batch_delay() {
     .await;
 
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-    ws.send(TungsteniteMessage::Binary(vec![b'a'].into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Binary(vec![b'a'].into())).await.unwrap();
 
     let relayed = tokio::time::timeout(TERMINAL_RELAY_BATCH_FLUSH / 2, rx)
         .await
@@ -850,15 +801,9 @@ async fn websocket_relay_coalesces_client_text_bursts() {
     .await;
 
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-    ws.send(TungsteniteMessage::Text("cmd ".into()))
-        .await
-        .unwrap();
-    ws.send(TungsteniteMessage::Text("--flag ".into()))
-        .await
-        .unwrap();
-    ws.send(TungsteniteMessage::Text("value\r".into()))
-        .await
-        .unwrap();
+    ws.send(TungsteniteMessage::Text("cmd ".into())).await.unwrap();
+    ws.send(TungsteniteMessage::Text("--flag ".into())).await.unwrap();
+    ws.send(TungsteniteMessage::Text("value\r".into())).await.unwrap();
 
     let relayed = tokio::time::timeout(std::time::Duration::from_secs(2), rx)
         .await
@@ -930,10 +875,7 @@ fn uds_path_bare_filename_falls_back_to_tmp() {
 fn uds_path_absolute_does_not_fall_back() {
     let service = Path::new("/home/user/.capsem/run/service.sock");
     let path = terminal_uds_path(service, "vm-1");
-    assert_eq!(
-        path,
-        PathBuf::from("/home/user/.capsem/run/instances/vm-1-ws.sock")
-    );
+    assert_eq!(path, PathBuf::from("/home/user/.capsem/run/instances/vm-1-ws.sock"));
 }
 
 // --- Close frame on UDS failure (issue #9) ---
@@ -976,10 +918,7 @@ async fn websocket_relay_sends_close_frame_on_uds_failure() {
             // "VM not available" was true of every cause -- including a socket
             // path over the platform limit -- and pointed at none of them.
             assert!(
-                frame
-                    .reason
-                    .to_string()
-                    .starts_with("terminal socket unreachable: "),
+                frame.reason.to_string().starts_with("terminal socket unreachable: "),
                 "{}",
                 frame.reason
             );

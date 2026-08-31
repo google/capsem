@@ -70,11 +70,7 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    fn install(
-        capsem_home: &std::path::Path,
-        home: &std::path::Path,
-        test_store: &std::path::Path,
-    ) -> Self {
+    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
         let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
@@ -196,15 +192,8 @@ fn build_net_event_and_model_call_carry_credential_ref() {
         .expect("AI POST to /v1/messages must produce a model call");
 
     assert_eq!(net.credential_ref.as_deref(), Some(credential_ref.as_str()));
-    assert_eq!(
-        model.credential_ref.as_deref(),
-        Some(credential_ref.as_str())
-    );
-    assert!(!net
-        .credential_ref
-        .as_deref()
-        .unwrap()
-        .contains("sk-ant-test"));
+    assert_eq!(model.credential_ref.as_deref(), Some(credential_ref.as_str()));
+    assert!(!net.credential_ref.as_deref().unwrap().contains("sk-ant-test"));
 }
 
 /// HEAD request to an AI domain is *not* a model call (probe).
@@ -261,8 +250,7 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
     req_ctx.ai_provider = Some(ProviderKind::Google);
     req_ctx.ai_protocol = Some(ModelProtocol::Google);
     req_ctx.path = "/v1internal:generateContent".into();
-    req_ctx.request_body_stats =
-        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    req_ctx.request_body_stats = req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
     let response = br#"{
         "candidates": [{
             "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
@@ -283,17 +271,11 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
         .expect("Google generateContent should produce model telemetry");
 
     assert_eq!(mc.provider, "google");
-    assert_eq!(
-        mc.model.as_deref(),
-        Some("gemini-3.1-pro-preview-customtools")
-    );
+    assert_eq!(mc.model.as_deref(), Some("gemini-3.1-pro-preview-customtools"));
     assert_eq!(mc.tool_calls.len(), 1);
     assert_eq!(mc.tool_calls[0].call_id, "gemini_search_web_0");
     assert_eq!(mc.tool_calls[0].tool_name, "search_web");
-    assert_eq!(
-        mc.tool_calls[0].arguments.as_deref(),
-        Some(r#"{"query":"capsem"}"#)
-    );
+    assert_eq!(mc.tool_calls[0].arguments.as_deref(), Some(r#"{"query":"capsem"}"#));
 }
 
 #[test]
@@ -304,8 +286,7 @@ fn agy_google_tool_call_survives_into_session_stats() {
     req_ctx.ai_provider = Some(ProviderKind::Google);
     req_ctx.ai_protocol = Some(ModelProtocol::Google);
     req_ctx.path = "/v1internal:generateContent".into();
-    req_ctx.request_body_stats =
-        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    req_ctx.request_body_stats = req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
     let response = br#"{
         "candidates": [{
             "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
@@ -346,10 +327,7 @@ fn agy_google_tool_call_survives_into_session_stats() {
     assert_eq!(tool_rows.len(), 1);
     assert_eq!(tool_rows[0].call_id, "gemini_search_web_0");
     assert_eq!(tool_rows[0].tool_name, "search_web");
-    assert_eq!(
-        tool_rows[0].arguments.as_deref(),
-        Some(r#"{"query":"capsem"}"#)
-    );
+    assert_eq!(tool_rows[0].arguments.as_deref(), Some(r#"{"query":"capsem"}"#));
 }
 
 #[test]
@@ -360,8 +338,7 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     req_ctx.ai_provider = Some(ProviderKind::OpenAi);
     req_ctx.ai_protocol = Some(ModelProtocol::OpenAi);
     req_ctx.path = "/v1/chat/completions".into();
-    req_ctx.request_body_stats =
-        req_stats(br#"{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}"#);
+    req_ctx.request_body_stats = req_stats(br#"{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}"#);
     let response = br#"{
         "id": "chatcmpl-mock-local",
         "object": "chat.completion",
@@ -399,10 +376,7 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
         .expect("OpenAI-compatible chat completion should produce model telemetry");
 
     assert_ne!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
-    assert!(model_call
-        .trace_id
-        .as_deref()
-        .is_some_and(|trace| !trace.is_empty()));
+    assert!(model_call.trace_id.as_deref().is_some_and(|trace| !trace.is_empty()));
     assert_eq!(model_call.provider, "openai");
     assert_eq!(model_call.model.as_deref(), Some("mock-local"));
     assert_eq!(
@@ -433,9 +407,8 @@ fn ollama_endpoint_can_use_anthropic_wire_protocol() {
     req_ctx.ai_provider = Some(ProviderKind::Ollama);
     req_ctx.ai_protocol = Some(ModelProtocol::Anthropic);
     req_ctx.path = "/v1/messages".into();
-    req_ctx.request_body_stats = req_stats(
-        br#"{"model":"gemma4:latest","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}"#,
-    );
+    req_ctx.request_body_stats =
+        req_stats(br#"{"model":"gemma4:latest","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}"#);
     let response = br#"{
         "id": "msg_ironbank",
         "type": "message",
@@ -461,14 +434,8 @@ fn ollama_endpoint_can_use_anthropic_wire_protocol() {
     assert_eq!(model_call.provider, "ollama");
     assert_eq!(model_call.path, "/v1/messages");
     assert_eq!(model_call.model.as_deref(), Some("gemma4:latest"));
-    assert_eq!(
-        model_call.text_content.as_deref(),
-        Some("launcher response")
-    );
-    assert_eq!(
-        model_call.thinking_content.as_deref(),
-        Some("launcher reasoning")
-    );
+    assert_eq!(model_call.text_content.as_deref(), Some("launcher response"));
+    assert_eq!(model_call.thinking_content.as_deref(), Some("launcher reasoning"));
     assert_eq!(model_call.stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(model_call.input_tokens, Some(11));
     assert_eq!(model_call.output_tokens, Some(7));
@@ -540,8 +507,7 @@ fn tool_use_chains_traces_across_requests() {
             stop_reason: Some(StopReason::ToolUse),
         },
     ];
-    let mc1 = maybe_build_model_call(&req1, &empty_resp_stats(), &events1, &pricing, &trace)
-        .expect("model call");
+    let mc1 = maybe_build_model_call(&req1, &empty_resp_stats(), &events1, &pricing, &trace).expect("model call");
     assert_eq!(mc1.stop_reason.as_deref(), Some("tool_use"));
     assert_eq!(mc1.tool_calls.len(), 1);
     assert_eq!(mc1.tool_calls[0].call_id, "call_x");
@@ -556,8 +522,7 @@ fn tool_use_chains_traces_across_requests() {
         ),
         ..anthropic_req_ctx()
     };
-    let mc2 = maybe_build_model_call(&req2, &empty_resp_stats(), &[], &pricing, &trace)
-        .expect("model call");
+    let mc2 = maybe_build_model_call(&req2, &empty_resp_stats(), &[], &pricing, &trace).expect("model call");
     assert_eq!(mc2.trace_id, Some(trace_a));
 }
 
@@ -577,9 +542,7 @@ fn fake_deps() -> Arc<TelemetryDeps> {
 }
 
 fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-        Vec::new(),
-    ))))
+    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
 /// Without a seeded request context, the hook is shadow-mode: it
@@ -668,12 +631,11 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
     {
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
-        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) =
-            TelemetryResponseStats {
-                bytes: 10 * 1024 * 1024,
-                preview: Vec::new(),
-                max_body_capture: 0,
-            };
+        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) = TelemetryResponseStats {
+            bytes: 10 * 1024 * 1024,
+            preview: Vec::new(),
+            max_body_capture: 0,
+        };
     }
 
     complete_response(&hook, &mut state, &conn).await;
@@ -689,11 +651,7 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
         .expect("primary net event must be accepted before hook returns");
     assert_eq!(
         row,
-        (
-            "127.0.0.1".to_string(),
-            "/bytes/10mb".to_string(),
-            10 * 1024 * 1024
-        )
+        ("127.0.0.1".to_string(), "/bytes/10mb".to_string(), 10 * 1024 * 1024)
     );
 }
 
@@ -853,10 +811,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
     })
     .await;
 
-    assert!(
-        seen,
-        "expected net and substitution rows with shared credential_ref"
-    );
+    assert!(seen, "expected net and substitution rows with shared credential_ref");
     db.shutdown_blocking();
     let db_bytes = std::fs::read(&db_path).unwrap();
     assert!(
@@ -977,8 +932,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
 "#,
     )
     .expect("rules parse");
-    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
-        .expect("rules compile");
+    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User).expect("rules compile");
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
@@ -1016,19 +970,14 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
             continue;
         };
         assert_eq!(event_id.len(), 12);
-        assert!(event_id
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+        assert!(event_id.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
         assert_eq!(rule_id, "profiles.rules.anthropic_http_seen");
         assert_eq!(detection_level, "informational");
         seen = true;
         break;
     }
 
-    assert!(
-        seen,
-        "expected HTTP telemetry to write a joined rule ledger row"
-    );
+    assert!(seen, "expected HTTP telemetry to write a joined rule ledger row");
 }
 
 #[tokio::test]
@@ -1045,8 +994,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
 "#,
     )
     .expect("rules parse");
-    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
-        .expect("rules compile");
+    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User).expect("rules compile");
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
@@ -1084,19 +1032,14 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
             continue;
         };
         assert_eq!(event_id.len(), 12);
-        assert!(event_id
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+        assert!(event_id.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
         assert_eq!(rule_id, "profiles.rules.anthropic_model_seen");
         assert_eq!(detection_level, "informational");
         seen = true;
         break;
     }
 
-    assert!(
-        seen,
-        "expected model telemetry to write a joined rule ledger row"
-    );
+    assert!(seen, "expected model telemetry to write a joined rule ledger row");
 }
 
 #[tokio::test]
@@ -1206,13 +1149,11 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
     {
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
-        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) =
-            TelemetryResponseStats {
-                bytes: raw.len() as u64,
-                preview: format!(r#"{{"access_token":"{raw}","token_type":"bearer"}}"#)
-                    .into_bytes(),
-                max_body_capture: 4096,
-            };
+        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) = TelemetryResponseStats {
+            bytes: raw.len() as u64,
+            preview: format!(r#"{{"access_token":"{raw}","token_type":"bearer"}}"#).into_bytes(),
+            max_body_capture: 4096,
+        };
     }
     complete_response(&hook, &mut state, &conn).await;
 
@@ -1243,8 +1184,5 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
     })
     .await;
 
-    assert!(
-        seen,
-        "expected token exchange response to be brokered and redacted"
-    );
+    assert!(seen, "expected token exchange response to be brokered and redacted");
 }

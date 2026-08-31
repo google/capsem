@@ -25,22 +25,19 @@ async fn does_not_read_asset_contents_on_hot_path() {
 
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
-    let rootfs_path = assets_dir
-        .join(arch)
-        .join(capsem_assets::asset_manager::hash_filename(
-            &rootfs.name,
-            rootfs
-                .hash
-                .as_deref()
-                .expect("rootfs hash")
-                .strip_prefix("blake3:")
-                .unwrap(),
-        ));
+    let rootfs_path = assets_dir.join(arch).join(capsem_assets::asset_manager::hash_filename(
+        &rootfs.name,
+        rootfs
+            .hash
+            .as_deref()
+            .expect("rootfs hash")
+            .strip_prefix("blake3:")
+            .unwrap(),
+    ));
 
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&rootfs_path, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let (status, hot_status) =
-        route_request(app, axum::http::Method::GET, "/profiles/status", None).await;
+    let (status, hot_status) = route_request(app, axum::http::Method::GET, "/profiles/status", None).await;
     assert_eq!(status, StatusCode::OK, "{hot_status}");
     assert_eq!(
         hot_status["profiles"][0]["ready"], true,
@@ -48,9 +45,7 @@ async fn does_not_read_asset_contents_on_hot_path() {
     );
 
     std::fs::set_permissions(&rootfs_path, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let loaded =
-        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
-            .unwrap();
+    let loaded = capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code")).unwrap();
     std::fs::set_permissions(&rootfs_path, std::fs::Permissions::from_mode(0o000)).unwrap();
     let error = loaded
         .check(&assets_dir, arch)

@@ -42,10 +42,7 @@ pub fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
         ));
     }
     if trimmed.contains("..") {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "path traversal rejected".into(),
-        ));
+        return Err(AppError(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
     }
     Ok(trimmed.to_string())
 }
@@ -65,10 +62,7 @@ pub fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bo
 /// callers wrap in `spawn_blocking` because `Session::identify_file_sync` takes
 /// `&mut self`. Returns the `unknown`/`application/octet-stream` tuple on any
 /// error so handlers don't have to plumb errors through for best-effort typing.
-pub fn identify_file_sync(
-    magika: &Mutex<magika::Session>,
-    path: &std::path::Path,
-) -> (String, String, String, bool) {
+pub fn identify_file_sync(magika: &Mutex<magika::Session>, path: &std::path::Path) -> (String, String, String, bool) {
     let mut session = magika.lock().unwrap();
     match session.identify_file_sync(path) {
         Ok(ft) => normalize_file_type(path, extract_magika_info(&ft)),

@@ -190,11 +190,7 @@ pub fn compare(
     } else {
         after / before
     };
-    let delta_pct = if before == 0.0 {
-        0.0
-    } else {
-        delta_abs / before * 100.0
-    };
+    let delta_pct = if before == 0.0 { 0.0 } else { delta_abs / before * 100.0 };
 
     let regressed = ratio > maximum_factor;
     let noise_band = baseline.cv * noise_factor;

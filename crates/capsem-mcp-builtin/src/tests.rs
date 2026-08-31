@@ -242,11 +242,7 @@ fn a_non_boolean_is_error_does_not_signal_failure() {
     // sending the string "true" or the number 1 yields Ok. Anything other than
     // a JSON boolean is not a refusal signal, and a builtin that wants to
     // refuse must send a real `true`.
-    for weird in [
-        serde_json::json!("true"),
-        serde_json::json!(1),
-        serde_json::json!(null),
-    ] {
+    for weird in [serde_json::json!("true"), serde_json::json!(1), serde_json::json!(null)] {
         let resp = response(serde_json::json!({
             "isError": weird,
             "content": [{"text": "body"}]

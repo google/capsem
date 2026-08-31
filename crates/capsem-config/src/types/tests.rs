@@ -48,10 +48,7 @@ fn setting_value_as_float_accepts_number_and_float() {
 #[test]
 fn setting_value_list_accessors_return_slices() {
     let s = SettingValue::StringList(vec!["a".into(), "b".into()]);
-    assert_eq!(
-        s.as_string_list(),
-        Some(&["a".to_string(), "b".to_string()][..])
-    );
+    assert_eq!(s.as_string_list(), Some(&["a".to_string(), "b".to_string()][..]));
     assert_eq!(s.as_int_list(), None);
     assert_eq!(s.as_float_list(), None);
 
@@ -148,14 +145,8 @@ fn setting_value_round_trips_through_json() {
 
 #[test]
 fn enum_variants_serialize_with_snake_case() {
-    assert_eq!(
-        serde_json::to_string(&SettingType::ApiKey).unwrap(),
-        "\"apikey\""
-    );
-    assert_eq!(
-        serde_json::to_string(&SettingType::KvMap).unwrap(),
-        "\"kv_map\""
-    );
+    assert_eq!(serde_json::to_string(&SettingType::ApiKey).unwrap(), "\"apikey\"");
+    assert_eq!(serde_json::to_string(&SettingType::KvMap).unwrap(), "\"kv_map\"");
     assert_eq!(
         serde_json::to_string(&Widget::PasswordInput).unwrap(),
         "\"password_input\""
@@ -168,16 +159,7 @@ fn enum_variants_serialize_with_snake_case() {
         serde_json::to_string(&ActionKind::CheckUpdate).unwrap(),
         "\"check_update\""
     );
-    assert_eq!(
-        serde_json::to_string(&McpTransport::Stdio).unwrap(),
-        "\"stdio\""
-    );
-    assert_eq!(
-        serde_json::to_string(&McpToolOrigin::InVm).unwrap(),
-        "\"in_vm\""
-    );
-    assert_eq!(
-        serde_json::to_string(&PolicySource::Corp).unwrap(),
-        "\"corp\""
-    );
+    assert_eq!(serde_json::to_string(&McpTransport::Stdio).unwrap(), "\"stdio\"");
+    assert_eq!(serde_json::to_string(&McpToolOrigin::InVm).unwrap(), "\"in_vm\"");
+    assert_eq!(serde_json::to_string(&PolicySource::Corp).unwrap(), "\"corp\"");
 }

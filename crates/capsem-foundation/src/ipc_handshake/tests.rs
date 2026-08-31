@@ -9,10 +9,8 @@ use std::sync::mpsc;
 fn negotiate_succeeds_when_both_sides_match() {
     let (mut a, mut b) = UnixStream::pair().unwrap();
 
-    let initiator =
-        std::thread::spawn(move || negotiate_initiator(&mut a, "capsem-service-test", ""));
-    let responder =
-        std::thread::spawn(move || negotiate_responder(&mut b, "capsem-process-test", ""));
+    let initiator = std::thread::spawn(move || negotiate_initiator(&mut a, "capsem-service-test", ""));
+    let responder = std::thread::spawn(move || negotiate_responder(&mut b, "capsem-process-test", ""));
 
     let init_peer = initiator.join().unwrap().unwrap();
     let resp_peer = responder.join().unwrap().unwrap();
@@ -26,8 +24,7 @@ fn negotiate_times_out_when_peer_silent() {
     let (mut a, _b) = UnixStream::pair().unwrap();
     let timeout = Duration::from_millis(10);
 
-    let err =
-        negotiate_responder_with_timeout(&mut a, "capsem-service-test", "", timeout).unwrap_err();
+    let err = negotiate_responder_with_timeout(&mut a, "capsem-service-test", "", timeout).unwrap_err();
 
     match err {
         HandshakeError::Timeout { timeout_ms } => {

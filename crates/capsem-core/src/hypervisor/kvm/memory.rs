@@ -327,10 +327,7 @@ impl GuestMemory {
             )
         };
         if ptr == libc::MAP_FAILED {
-            bail!(
-                "mmap guest memory ({size} bytes): {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("mmap guest memory ({size} bytes): {}", std::io::Error::last_os_error());
         }
 
         Ok(Self {
@@ -396,11 +393,7 @@ impl GuestMemory {
             );
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.ptr.add(offset as usize),
-                buf.as_mut_ptr(),
-                buf.len(),
-            );
+            std::ptr::copy_nonoverlapping(self.ptr.add(offset as usize), buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -528,11 +521,7 @@ impl GuestMemoryRef {
             bail!("guest memory read out of bounds");
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.ptr.add(offset as usize),
-                buf.as_mut_ptr(),
-                buf.len(),
-            );
+            std::ptr::copy_nonoverlapping(self.ptr.add(offset as usize), buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }

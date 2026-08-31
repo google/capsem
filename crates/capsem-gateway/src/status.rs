@@ -228,10 +228,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         profiles: None,
     };
 
-    let (list_body, profiles) = tokio::join!(
-        uds_get(&state.uds_path, "/vms/list"),
-        fetch_profiles_status(state),
-    );
+    let (list_body, profiles) = tokio::join!(uds_get(&state.uds_path, "/vms/list"), fetch_profiles_status(state),);
     let list = match list_body {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
@@ -258,9 +255,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         match sess.status {
             VmLifecycleState::Running => running += 1,
             VmLifecycleState::Suspended => suspended += 1,
-            VmLifecycleState::Stopped
-            | VmLifecycleState::Defunct
-            | VmLifecycleState::Incompatible => stopped += 1,
+            VmLifecycleState::Stopped | VmLifecycleState::Defunct | VmLifecycleState::Incompatible => stopped += 1,
         }
 
         vms.push(VmSummary {

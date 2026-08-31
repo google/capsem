@@ -107,11 +107,7 @@ impl FuseProcessor {
 
     fn checkpoint_snapshot(&mut self, tag: [u8; TAG_LEN]) -> Result<VirtioFsBackendSnapshot> {
         let file_handles = self.file_handles.checkpoint(&self.inodes)?;
-        let handle_inodes = file_handles
-            .handles
-            .iter()
-            .map(|handle| handle.inode)
-            .collect();
+        let handle_inodes = file_handles.handles.iter().map(|handle| handle.inode).collect();
         let inodes = self.inodes.checkpoint(&handle_inodes)?;
         Ok(VirtioFsBackendSnapshot {
             tag,
@@ -130,11 +126,7 @@ impl FuseProcessor {
         self.encode_checkpoint_with_tag([0; TAG_LEN])
     }
 
-    fn restore_snapshot(
-        root_path: &Path,
-        read_only: bool,
-        snapshot: &VirtioFsBackendSnapshot,
-    ) -> Result<Self> {
+    fn restore_snapshot(root_path: &Path, read_only: bool, snapshot: &VirtioFsBackendSnapshot) -> Result<Self> {
         ensure!(
             snapshot.read_only == read_only,
             "VirtioFS checkpoint read-only identity mismatch"
@@ -171,9 +163,7 @@ fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<
                 return None;
             }
             if let Some(ptr) = mem.gpa_to_host(desc.addr) {
-                buf.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(ptr.cast_const(), desc.len as usize)
-                });
+                buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr.cast_const(), desc.len as usize) });
             }
         }
     }
@@ -220,18 +210,14 @@ fn worker_loop(
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
 ) {
-    debug!(
-        event_name = "virtio.fs.worker_start",
-        "virtio-fs worker started"
-    );
+    debug!(event_name = "virtio.fs.worker_start", "virtio-fs worker started");
     let mut hiprio_processed_total = 0u64;
     let mut request_processed_total = 0u64;
     while let Ok(command) = rx.recv() {
         match command {
             WorkerCommand::Notify(0) => {
                 let processed = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
-                hiprio_processed_total =
-                    hiprio_processed_total.saturating_add(u64::from(processed));
+                hiprio_processed_total = hiprio_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = hiprio_queue.prepare_kick();
                 log_queue_drain("hiprio", processed, should_interrupt);
                 if should_interrupt {
@@ -240,8 +226,7 @@ fn worker_loop(
             }
             WorkerCommand::Notify(1) => {
                 let processed = drain_request_queue(&mut proc, &mut request_queue, &mem);
-                request_processed_total =
-                    request_processed_total.saturating_add(u64::from(processed));
+                request_processed_total = request_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = request_queue.prepare_kick();
                 log_queue_drain("request", processed, should_interrupt);
                 if should_interrupt {
@@ -253,8 +238,7 @@ fn worker_loop(
                 let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
                 hiprio_processed_total = hiprio_processed_total.saturating_add(u64::from(hiprio));
-                request_processed_total =
-                    request_processed_total.saturating_add(u64::from(request));
+                request_processed_total = request_processed_total.saturating_add(u64::from(request));
                 let hiprio_interrupt = hiprio_queue.prepare_kick();
                 let request_interrupt = request_queue.prepare_kick();
                 if hiprio_interrupt || request_interrupt {
@@ -278,11 +262,7 @@ fn worker_loop(
     debug!("virtio-fs worker exiting");
 }
 
-fn drain_hiprio_queue(
-    proc: &mut FuseProcessor,
-    hiprio_queue: &mut VirtQueue,
-    mem: &GuestMemoryRef,
-) -> u32 {
+fn drain_hiprio_queue(proc: &mut FuseProcessor, hiprio_queue: &mut VirtQueue, mem: &GuestMemoryRef) -> u32 {
     // High-priority queue: FORGET ops (fire-and-forget, no response)
     let mut processed = 0u32;
     while let Some(chain) = hiprio_queue.pop() {
@@ -308,11 +288,7 @@ fn drain_hiprio_queue(
     processed
 }
 
-fn drain_request_queue(
-    proc: &mut FuseProcessor,
-    request_queue: &mut VirtQueue,
-    mem: &GuestMemoryRef,
-) -> u32 {
+fn drain_request_queue(proc: &mut FuseProcessor, request_queue: &mut VirtQueue, mem: &GuestMemoryRef) -> u32 {
     // Request queue: full FUSE operations
     let mut processed = 0u32;
     while let Some(chain) = request_queue.pop() {
@@ -491,10 +467,7 @@ impl VirtioFsDevice {
             .context("spawn virtio-fs worker")?;
         self.notify_tx = Some(notify_tx);
         self.worker_handle = Some(handle);
-        debug!(
-            event_name = "virtio.fs.activate",
-            "virtio-fs device activated"
-        );
+        debug!(event_name = "virtio.fs.activate", "virtio-fs device activated");
         Ok(())
     }
 }
@@ -603,10 +576,7 @@ impl VirtioDevice for VirtioFsDevice {
             "cannot restore VirtioFS backend state after activation"
         );
         let snapshot = VirtioFsBackendSnapshot::decode(encoded)?;
-        ensure!(
-            snapshot.tag == self.tag,
-            "VirtioFS checkpoint tag identity mismatch"
-        );
+        ensure!(snapshot.tag == self.tag, "VirtioFS checkpoint tag identity mismatch");
         let current = self
             .processor
             .as_ref()
@@ -615,8 +585,7 @@ impl VirtioDevice for VirtioFsDevice {
             snapshot.read_only == current.read_only,
             "VirtioFS checkpoint read-only identity mismatch"
         );
-        let restored =
-            FuseProcessor::restore_snapshot(&current.root_path, current.read_only, &snapshot)?;
+        let restored = FuseProcessor::restore_snapshot(&current.root_path, current.read_only, &snapshot)?;
         self.processor = Some(restored);
         self.checkpoint_state = Some(encoded.to_vec());
         Ok(())

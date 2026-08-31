@@ -126,8 +126,7 @@ fn the_same_move_on_a_noisy_baseline_is_not_significant() {
     // The 0.6.0 false alarm in miniature: the ratio is breached, but the
     // evidence itself wobbles at least as much, so the run has not learned
     // anything and must not hold a release.
-    let noisy = Summary::of(&[0.02, 0.18, 0.04, 0.16, 0.10, 0.06, 0.14, 0.10])
-        .expect("summarizes");
+    let noisy = Summary::of(&[0.02, 0.18, 0.04, 0.16, 0.10, 0.06, 0.14, 0.10]).expect("summarizes");
     let verdict = compare(
         "routes.gateway./vms/list.cpu_s",
         Statistic::Median,

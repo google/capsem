@@ -11,9 +11,9 @@ use anyhow::{bail, Context, Result};
 
 use crate::collector;
 use crate::machine;
-use crate::store;
 use crate::schema;
 use crate::stats;
+use crate::store;
 use crate::{Artifact, Thresholds};
 
 /// What can be measured, and what a quick run leaves out.
@@ -232,11 +232,7 @@ pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds
 }
 
 /// Compare two records on the statistic that describes each metric.
-fn judge(
-    baseline: &schema::Record,
-    current: &schema::Record,
-    thresholds: Thresholds,
-) -> Vec<stats::Comparison> {
+fn judge(baseline: &schema::Record, current: &schema::Record, thresholds: Thresholds) -> Vec<stats::Comparison> {
     let mut verdicts = Vec::new();
     for metric in &current.metrics {
         let Some(before) = baseline.metric(&metric.key) else {
@@ -306,21 +302,13 @@ pub(crate) fn protocol_record(
                 });
             }
         };
-        push(
-            "latency_ms",
-            schema::Unit::Milliseconds,
-            &scenario.latency_samples,
-        );
+        push("latency_ms", schema::Unit::Milliseconds, &scenario.latency_samples);
         push(
             "requests_per_sec",
             schema::Unit::RequestsPerSecond,
             &[scenario.requests_per_sec],
         );
-        push(
-            "bytes_per_sec",
-            schema::Unit::Bytes,
-            &[scenario.bytes_per_sec],
-        );
+        push("bytes_per_sec", schema::Unit::Bytes, &[scenario.bytes_per_sec]);
         push("failed", schema::Unit::Count, &[scenario.failed as f64]);
     }
 
@@ -446,11 +434,7 @@ pub(crate) fn report(store_db: &Path, arch: &str, profile: &str) -> Result<()> {
                 .join(" -> ");
             println!(
                 "| {} | {:.2} | {:.2} | {:.2} | {} | {trend} |",
-                metric.key,
-                metric.summary.median,
-                metric.summary.p99,
-                metric.summary.cv,
-                metric.summary.n
+                metric.key, metric.summary.median, metric.summary.p99, metric.summary.cv, metric.summary.n
             );
         }
     }

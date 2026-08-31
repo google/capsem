@@ -23,11 +23,7 @@ impl Provider for AnthropicProvider {
         "https://api.anthropic.com"
     }
 
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder {
+    fn inject_key(&self, builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
         builder.header("x-api-key", api_key)
     }
 }
@@ -60,10 +56,7 @@ mod wire {
         #[serde(rename = "text")]
         Text { text: Option<String> },
         #[serde(rename = "tool_use")]
-        ToolUse {
-            id: Option<String>,
-            name: Option<String>,
-        },
+        ToolUse { id: Option<String>, name: Option<String> },
         #[serde(rename = "thinking")]
         Thinking { thinking: Option<String> },
     }
@@ -130,9 +123,7 @@ impl Default for AnthropicStreamParser {
 
 impl AnthropicStreamParser {
     pub fn new() -> Self {
-        Self {
-            blocks: HashMap::new(),
-        }
+        Self { blocks: HashMap::new() }
     }
 }
 
@@ -150,8 +141,7 @@ impl ProviderStreamParser for AnthropicStreamParser {
 
         match event_type {
             "message_start" => {
-                let Ok(payload) = serde_json::from_str::<wire::MessageStartPayload>(&sse.data)
-                else {
+                let Ok(payload) = serde_json::from_str::<wire::MessageStartPayload>(&sse.data) else {
                     return vec![LlmEvent::Unknown {
                         event_type: Some(event_type.into()),
                         raw: sse.data.clone(),

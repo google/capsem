@@ -33,9 +33,7 @@ fn write_explicit_stop_marker() -> Result<()> {
 /// Escape a string for safe embedding in XML `<string>` elements.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Escape a path for systemd ExecStart (spaces must be escaped).
@@ -70,10 +68,7 @@ pub fn generate_plist(
     let gateway_bin = xml_escape(&gateway_bin.display().to_string());
     let tray_bin = xml_escape(&tray_bin.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
-    let credential_store_path = xml_escape(&format!(
-        "{}/.capsem/credentials/credential-store.json",
-        home
-    ));
+    let credential_store_path = xml_escape(&format!("{}/.capsem/credentials/credential-store.json", home));
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -146,8 +141,7 @@ WantedBy=default.target
 
 /// Check if the capsem service is installed on the current platform.
 pub fn is_service_installed() -> bool {
-    plist_path().map(|p| p.exists()).unwrap_or(false)
-        || systemd_unit_path().map(|p| p.exists()).unwrap_or(false)
+    plist_path().map(|p| p.exists()).unwrap_or(false) || systemd_unit_path().map(|p| p.exists()).unwrap_or(false)
 }
 
 /// Refuse service installation when test-isolation env vars are set.
@@ -186,21 +180,14 @@ fn reject_test_isolation_env() -> Result<()> {
 pub async fn install_service() -> Result<()> {
     reject_test_isolation_env()?;
     clear_explicit_stop_marker()?;
-    let capsem_paths =
-        paths::discover_paths().context("cannot discover paths for service installation")?;
+    let capsem_paths = paths::discover_paths().context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
 
     if !capsem_paths.service_bin.exists() {
-        anyhow::bail!(
-            "capsem-service not found at {}",
-            capsem_paths.service_bin.display()
-        );
+        anyhow::bail!("capsem-service not found at {}", capsem_paths.service_bin.display());
     }
     if !capsem_paths.process_bin.exists() {
-        anyhow::bail!(
-            "capsem-process not found at {}",
-            capsem_paths.process_bin.display()
-        );
+        anyhow::bail!("capsem-process not found at {}", capsem_paths.process_bin.display());
     }
 
     #[cfg(target_os = "macos")]
@@ -332,10 +319,7 @@ pub async fn stop_service() -> Result<()> {
                     .args(fallback.args.iter().map(String::as_str))
                     .output()
                     .await;
-                if fallback_output
-                    .as_ref()
-                    .map(|o| !o.status.success())
-                    .unwrap_or(true)
+                if fallback_output.as_ref().map(|o| !o.status.success()).unwrap_or(true)
                     && macos_launchagent_loaded(uid.as_raw()).await?
                 {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -455,12 +439,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
             .map(|d| format!("{}/{name}", d.display()))
             .unwrap_or_else(|| name.to_string())
     };
-    let names = [
-        "capsem-service",
-        "capsem-tray",
-        "capsem-gateway",
-        "capsem-process",
-    ];
+    let names = ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"];
     for name in names {
         let pattern = scoped_name(name);
         let _ = tokio::process::Command::new("pkill")

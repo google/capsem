@@ -1,9 +1,6 @@
 use super::*;
 
-pub(super) fn start_profile_ensure(
-    state: &Arc<ServiceState>,
-    profile: &ProfileConfigFile,
-) -> Result<bool, AppError> {
+pub(super) fn start_profile_ensure(state: &Arc<ServiceState>, profile: &ProfileConfigFile) -> Result<bool, AppError> {
     if claim_asset_reconcile(state).is_err() {
         return Ok(false);
     }

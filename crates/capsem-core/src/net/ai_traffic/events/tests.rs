@@ -652,10 +652,7 @@ fn non_streaming_openai_responses_tool_calls() {
     assert_eq!(calls[0].index, 0);
     assert_eq!(calls[0].call_id, "call_ironbank_write");
     assert_eq!(calls[0].name, "exec_command");
-    assert_eq!(
-        calls[0].arguments,
-        r#"{"cmd":"printf '%s\n' abc123 > /root/poem.md"}"#
-    );
+    assert_eq!(calls[0].arguments, r#"{"cmd":"printf '%s\n' abc123 > /root/poem.md"}"#);
 }
 
 #[test]
@@ -758,8 +755,7 @@ fn non_streaming_openai_image_generation_payload_is_recorded() {
 
 #[test]
 fn non_streaming_invalid_json() {
-    let (model, input, output, details) =
-        parse_non_streaming_usage(ModelProtocol::Google, b"not json");
+    let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, b"not json");
     assert!(model.is_none());
     assert!(input.is_none());
     assert!(output.is_none());

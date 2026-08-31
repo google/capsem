@@ -69,14 +69,8 @@ fn model_protocol_accepts_openai_compatible_without_new_provider_variant() {
         ModelProtocol::try_from("openai_compatible").unwrap(),
         ModelProtocol::OpenAi
     );
-    assert_eq!(
-        ModelProtocol::try_from("gemini").unwrap(),
-        ModelProtocol::Google
-    );
-    assert_eq!(
-        ModelProtocol::try_from("ollama").unwrap(),
-        ModelProtocol::Ollama
-    );
+    assert_eq!(ModelProtocol::try_from("gemini").unwrap(), ModelProtocol::Google);
+    assert_eq!(ModelProtocol::try_from("ollama").unwrap(), ModelProtocol::Ollama);
     assert!(ModelProtocol::try_from("private-vendor").is_err());
 }
 
@@ -115,10 +109,7 @@ fn extract_model_no_models_segment() {
 
 #[test]
 fn extract_model_empty_model() {
-    assert_eq!(
-        extract_model_from_path("/v1beta/models/:generateContent"),
-        None
-    );
+    assert_eq!(extract_model_from_path("/v1beta/models/:generateContent"), None);
 }
 
 // -- tool_origin --

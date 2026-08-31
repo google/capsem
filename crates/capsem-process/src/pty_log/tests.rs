@@ -87,10 +87,7 @@ fn timestamps_are_monotonic() {
     let entries = read_pty_log(&path).unwrap();
     assert_eq!(entries.len(), 10);
     for i in 1..entries.len() {
-        assert!(
-            entries[i].1 >= entries[i - 1].1,
-            "timestamps must be monotonic"
-        );
+        assert!(entries[i].1 >= entries[i - 1].1, "timestamps must be monotonic");
     }
 }
 

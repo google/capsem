@@ -6,10 +6,7 @@ use crate::net::parsers::sse_parser::SseParser;
 fn upstream_url_stream_generate() {
     let p = GoogleProvider;
     assert_eq!(
-        p.upstream_url(
-            "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
-            None
-        ),
+        p.upstream_url("/v1beta/models/gemini-2.5-pro:streamGenerateContent", None),
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent"
     );
 }
@@ -27,10 +24,7 @@ fn upstream_url_generate_content() {
 fn upstream_url_with_existing_query() {
     let p = GoogleProvider;
     assert_eq!(
-        p.upstream_url(
-            "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
-            Some("alt=sse")
-        ),
+        p.upstream_url("/v1beta/models/gemini-2.5-pro:streamGenerateContent", Some("alt=sse")),
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
     );
 }

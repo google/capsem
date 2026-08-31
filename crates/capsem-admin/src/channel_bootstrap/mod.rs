@@ -96,20 +96,14 @@ pub(super) fn bootstrap_first_party_channel_source(channel: &str, donor: &Value)
 
     let mut bootstrapped = Map::new();
     bootstrapped.insert("version".to_string(), Value::String(version.to_string()));
-    bootstrapped.insert(
-        "channel".to_string(),
-        Value::String(channel.as_str().to_string()),
-    );
+    bootstrapped.insert("channel".to_string(), Value::String(channel.as_str().to_string()));
     bootstrapped.insert("status".to_string(), Value::String("current".to_string()));
     bootstrapped.insert("packages".to_string(), Value::Array(packages.clone()));
     bootstrapped.insert("profiles".to_string(), Value::Object(Map::new()));
     Ok(Value::Object(bootstrapped))
 }
 
-pub(super) fn bootstrap_retired_first_party_channel_source(
-    channel: &str,
-    retired: &Value,
-) -> Result<Value> {
+pub(super) fn bootstrap_retired_first_party_channel_source(channel: &str, retired: &Value) -> Result<Value> {
     let channel = FirstPartyChannel::parse(channel)?;
     if retired.get("channel").and_then(Value::as_str) != Some(channel.as_str()) {
         bail!("retired graph must belong to the selected channel");
@@ -123,10 +117,7 @@ pub(super) fn bootstrap_retired_first_party_channel_source(
         .ok_or_else(|| anyhow!("retired graph is missing its manifest version"))?;
     let mut bootstrapped = Map::new();
     bootstrapped.insert("version".to_string(), Value::String(version.to_string()));
-    bootstrapped.insert(
-        "channel".to_string(),
-        Value::String(channel.as_str().to_string()),
-    );
+    bootstrapped.insert("channel".to_string(), Value::String(channel.as_str().to_string()));
     bootstrapped.insert("status".to_string(), Value::String("current".to_string()));
     bootstrapped.insert("packages".to_string(), Value::Array(Vec::new()));
     bootstrapped.insert("profiles".to_string(), Value::Object(Map::new()));

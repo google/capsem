@@ -12,19 +12,12 @@ use std::collections::HashMap;
 /// Returns a map of logical asset name to BLAKE3 hash string.
 ///
 /// v2 format: `assets.releases[current].arches[arch_key]` -> map of name -> {hash, size}
-pub fn extract_hashes(
-    manifest: &serde_json::Value,
-    _version: &str,
-    arch_key: &str,
-) -> HashMap<String, String> {
+pub fn extract_hashes(manifest: &serde_json::Value, _version: &str, arch_key: &str) -> HashMap<String, String> {
     let mut hashes = HashMap::new();
 
     // v2 format: assets.releases[current].arches[arch_key]
     if let Some(assets_section) = manifest.get("assets") {
-        let current = assets_section
-            .get("current")
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
+        let current = assets_section.get("current").and_then(|c| c.as_str()).unwrap_or("");
         if let Some(release) = assets_section.get("releases").and_then(|r| r.get(current)) {
             if let Some(arch_assets) = release.get("arches").and_then(|a| a.get(arch_key)) {
                 if let Some(obj) = arch_assets.as_object() {
@@ -60,9 +53,7 @@ pub mod time_format {
         S: Serializer,
     {
         let iso = capsem_foundation::time::epoch_to_iso(
-            time.duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
         );
         serializer.serialize_str(&iso)
     }
@@ -74,8 +65,7 @@ pub mod time_format {
         let s = String::deserialize(deserializer)?;
         // Parse ISO 8601 subset: YYYY-MM-DDTHH:MM:SS (with optional trailing Z or offset)
         if s.len() >= 19 && s.as_bytes()[10] == b'T' {
-            let bad =
-                |field: &str| serde::de::Error::custom(format!("invalid {field} in datetime: {s}"));
+            let bad = |field: &str| serde::de::Error::custom(format!("invalid {field} in datetime: {s}"));
             let year = s[0..4].parse::<u64>().map_err(|_| bad("year"))?;
             let month = s[5..7].parse::<u64>().map_err(|_| bad("month"))?;
             let day = s[8..10].parse::<u64>().map_err(|_| bad("day"))?;
@@ -104,9 +94,7 @@ pub mod time_format {
             let secs = days * 86400 + hour * 3600 + min * 60 + sec;
             Ok(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
         } else {
-            Err(serde::de::Error::custom(format!(
-                "unsupported datetime format: {s}"
-            )))
+            Err(serde::de::Error::custom(format!("unsupported datetime format: {s}")))
         }
     }
 }

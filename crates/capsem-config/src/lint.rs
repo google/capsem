@@ -116,17 +116,12 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
                     docs_url: None,
                 });
             }
-            if !file_path.starts_with("/root/")
-                && !file_path.starts_with("/root/.")
-                && !file_path.starts_with("/etc/")
+            if !file_path.starts_with("/root/") && !file_path.starts_with("/root/.") && !file_path.starts_with("/etc/")
             {
                 issues.push(ConfigIssue {
                     id: s.id.clone(),
                     severity: "warning".into(),
-                    message: format!(
-                        "{}: unusual file path (expected under /root/ or /etc/)",
-                        s.id
-                    ),
+                    message: format!("{}: unusual file path (expected under /root/ or /etc/)", s.id),
                     docs_url: None,
                 });
             }
@@ -159,18 +154,12 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
         if s.setting_type == SettingType::ApiKey {
             if let Some(text) = text_value {
                 if !text.is_empty()
-                    && (text.contains(' ')
-                        || text.contains('\n')
-                        || text.contains('\r')
-                        || text.contains('\t'))
+                    && (text.contains(' ') || text.contains('\n') || text.contains('\r') || text.contains('\t'))
                 {
                     issues.push(ConfigIssue {
                         id: s.id.clone(),
                         severity: "warning".into(),
-                        message: format!(
-                            "{}: key contains whitespace -- check for copy-paste errors",
-                            s.id
-                        ),
+                        message: format!("{}: key contains whitespace -- check for copy-paste errors", s.id),
                         docs_url: None,
                     });
                 }
@@ -199,8 +188,7 @@ pub fn config_lint(resolved: &[ResolvedSetting]) -> Vec<ConfigIssue> {
         // -- URL validation --
         if s.setting_type == SettingType::Url {
             if let Some(text) = text_value {
-                if !text.is_empty() && !text.starts_with("http://") && !text.starts_with("https://")
-                {
+                if !text.is_empty() && !text.starts_with("http://") && !text.starts_with("https://") {
                     issues.push(ConfigIssue {
                         id: s.id.clone(),
                         severity: "warning".into(),

@@ -4,10 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelProtocol, ProviderKind};
 
-use crate::{
-    CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet,
-    SecurityRuleSource,
-};
+use crate::{CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet, SecurityRuleSource};
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
 const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker", "log_sanitizer"];
@@ -110,9 +107,7 @@ impl ModelEndpointRegistry {
     }
 
     pub fn endpoint_for_host(&self, host: &str) -> Option<&ModelEndpoint> {
-        self.endpoints
-            .values()
-            .find(|endpoint| endpoint.matches_host(host))
+        self.endpoints.values().find(|endpoint| endpoint.matches_host(host))
     }
 
     pub fn endpoint_for_target(&self, host: &str, port: u16) -> Option<&ModelEndpoint> {
@@ -122,18 +117,15 @@ impl ModelEndpointRegistry {
     }
 
     pub fn protocol_for_host(&self, host: &str) -> Option<ModelProtocol> {
-        self.endpoint_for_host(host)
-            .map(|endpoint| endpoint.protocol)
+        self.endpoint_for_host(host).map(|endpoint| endpoint.protocol)
     }
 
     pub fn protocol_for_target(&self, host: &str, port: u16) -> Option<ModelProtocol> {
-        self.endpoint_for_target(host, port)
-            .map(|endpoint| endpoint.protocol)
+        self.endpoint_for_target(host, port).map(|endpoint| endpoint.protocol)
     }
 
     pub fn provider_for_host(&self, host: &str) -> Option<ProviderKind> {
-        self.endpoint_for_host(host)
-            .map(|endpoint| endpoint.provider_kind)
+        self.endpoint_for_host(host).map(|endpoint| endpoint.provider_kind)
     }
 
     pub fn provider_for_target(&self, host: &str, port: u16) -> Option<ProviderKind> {
@@ -182,9 +174,7 @@ fn upstream_target(url: &str) -> Option<TargetSpec> {
     if authority.trim().is_empty() {
         return None;
     }
-    let host_port = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
     let (host, port) = parse_host_port(host_port, default_port);
     Some(TargetSpec { host, port })
 }
@@ -192,9 +182,7 @@ fn upstream_target(url: &str) -> Option<TargetSpec> {
 fn parse_host_port(host_port: &str, default_port: Option<u16>) -> (Option<String>, Option<u16>) {
     let (host, explicit_port) = host_port
         .rsplit_once(':')
-        .map_or((host_port, None), |(host, port)| {
-            (host, port.parse::<u16>().ok())
-        });
+        .map_or((host_port, None), |(host, port)| (host, port.parse::<u16>().ok()));
     (normalize_host(host), explicit_port.or(default_port))
 }
 
@@ -261,22 +249,17 @@ impl ProviderRuleProfile {
                         base_provider.listen_ports = override_provider.listen_ports.clone();
                     }
                     if !override_provider.allowed_remote_targets.is_empty() {
-                        base_provider.allowed_remote_targets =
-                            override_provider.allowed_remote_targets.clone();
+                        base_provider.allowed_remote_targets = override_provider.allowed_remote_targets.clone();
                     }
                     if override_provider.discovery.is_some() {
                         base_provider.discovery = override_provider.discovery.clone();
                     }
                     for (rule_name, override_rule) in &override_provider.rules {
-                        base_provider
-                            .rules
-                            .insert(rule_name.clone(), override_rule.clone());
+                        base_provider.rules.insert(rule_name.clone(), override_rule.clone());
                     }
                 }
                 None => {
-                    merged
-                        .ai
-                        .insert(provider_id.clone(), override_provider.clone());
+                    merged.ai.insert(provider_id.clone(), override_provider.clone());
                 }
             }
         }
@@ -305,9 +288,7 @@ impl ProviderRuleProfile {
 fn validate_builtin_profile_contract(profile: &SecurityRuleProfile) -> Result<(), String> {
     for plugin_id in REQUIRED_BUILTIN_PLUGINS {
         if !profile.plugins.contains_key(*plugin_id) {
-            return Err(format!(
-                "built-in profile must include [plugins.{plugin_id}]"
-            ));
+            return Err(format!("built-in profile must include [plugins.{plugin_id}]"));
         }
     }
     for rule_key in REQUIRED_DEFAULT_RULE_KEYS {
@@ -325,9 +306,7 @@ pub fn compile_provider_rules_to_security_rule_set(
     corp: &ProviderRuleProfile,
 ) -> Result<SecurityRuleSet, String> {
     let mut by_rule_id = BTreeMap::new();
-    for rule in ProviderRuleProfile::builtin_security_defaults()
-        .compile(SecurityRuleSource::BuiltinDefault)?
-    {
+    for rule in ProviderRuleProfile::builtin_security_defaults().compile(SecurityRuleSource::BuiltinDefault)? {
         by_rule_id.insert(rule.rule_id.clone(), rule);
     }
     for rule in user.compile(SecurityRuleSource::User)? {

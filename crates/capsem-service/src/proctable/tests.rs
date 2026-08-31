@@ -11,9 +11,7 @@ fn running_processes_finds_this_process_and_its_arguments() {
     let line = table
         .lines()
         .find(|line| line.split_whitespace().next() == Some(&mine.to_string()))
-        .unwrap_or_else(|| {
-            panic!("the process table did not contain this test process (pid {mine})")
-        });
+        .unwrap_or_else(|| panic!("the process table did not contain this test process (pid {mine})"));
 
     // argv[0], not just the pid: the orphan match is on `--session-dir`, so an
     // enumerator that reports pids with empty command lines would satisfy a

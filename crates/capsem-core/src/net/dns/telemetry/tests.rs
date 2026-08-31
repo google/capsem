@@ -7,10 +7,9 @@ use capsem_logger::events::Decision;
 fn allowed_result() -> DnsHandlerResult {
     DnsHandlerResult {
         answer_bytes: vec![
-            0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x09, b'a',
-            b'n', b't', b'h', b'r', b'o', b'p', b'i', b'c', 0x03, b'c', b'o', b'm', 0x00, 0x00,
-            0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00,
-            0x04, 93, 184, 216, 34,
+            0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x09, b'a', b'n', b't', b'h', b'r',
+            b'o', b'p', b'i', b'c', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 93, 184, 216, 34,
         ],
         query: Some(DnsQuery {
             id: 0x1234,
@@ -149,28 +148,14 @@ fn build_event_carries_security_rule_fields() {
     res.policy_rule = Some("profiles.rules.block_openai_dns".into());
     res.policy_reason = Some("DNS to OpenAI API is blocked".into());
 
-    let evt = build_dns_event(
-        &res,
-        Some("udp"),
-        Some("claude".into()),
-        Some("trace_dns".into()),
-    );
+    let evt = build_dns_event(&res, Some("udp"), Some("claude".into()), Some("trace_dns".into()));
 
     assert_eq!(evt.decision, "denied");
-    assert_eq!(
-        evt.matched_rule.as_deref(),
-        Some("profiles.rules.block_openai_dns")
-    );
+    assert_eq!(evt.matched_rule.as_deref(), Some("profiles.rules.block_openai_dns"));
     assert_eq!(evt.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(evt.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        evt.policy_rule.as_deref(),
-        Some("profiles.rules.block_openai_dns")
-    );
-    assert_eq!(
-        evt.policy_reason.as_deref(),
-        Some("DNS to OpenAI API is blocked")
-    );
+    assert_eq!(evt.policy_rule.as_deref(), Some("profiles.rules.block_openai_dns"));
+    assert_eq!(evt.policy_reason.as_deref(), Some("DNS to OpenAI API is blocked"));
     assert_eq!(evt.process_name.as_deref(), Some("claude"));
     assert_eq!(evt.trace_id.as_deref(), Some("trace_dns"));
 }
@@ -186,8 +171,5 @@ fn dns_event_becomes_canonical_security_event() {
         security_event.dns.as_ref().unwrap().qname.as_deref(),
         Some("anthropic.com")
     );
-    assert_eq!(
-        security_event.dns.as_ref().unwrap().qtype.as_deref(),
-        Some("1")
-    );
+    assert_eq!(security_event.dns.as_ref().unwrap().qtype.as_deref(), Some("1"));
 }

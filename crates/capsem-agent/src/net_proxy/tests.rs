@@ -132,9 +132,7 @@ async fn meta_line_injected_before_data() {
     let mut vsock = AsyncVsock::new(fd).unwrap();
 
     let meta = encode_meta_line("test-agent");
-    tokio::io::AsyncWriteExt::write_all(&mut vsock, &meta)
-        .await
-        .unwrap();
+    tokio::io::AsyncWriteExt::write_all(&mut vsock, &meta).await.unwrap();
 
     // Read from the other end
     let mut buf = vec![0u8; meta.len()];
@@ -155,14 +153,10 @@ async fn async_vsock_write_then_read() {
     let mut vb = AsyncVsock::new(fd_b).unwrap();
 
     // Write from a, read fixed-size from b
-    tokio::io::AsyncWriteExt::write_all(&mut va, b"ping")
-        .await
-        .unwrap();
+    tokio::io::AsyncWriteExt::write_all(&mut va, b"ping").await.unwrap();
 
     let mut buf = [0u8; 4];
-    tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf)
-        .await
-        .unwrap();
+    tokio::io::AsyncReadExt::read_exact(&mut vb, &mut buf).await.unwrap();
     assert_eq!(&buf, b"ping");
 }
 

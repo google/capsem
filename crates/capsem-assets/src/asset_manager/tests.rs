@@ -135,10 +135,7 @@ fn public_release_graph_retains_every_profile_state_identity() {
 
     let state = release_graph_profile_state(&graph).unwrap();
 
-    assert_eq!(
-        state.profiles.keys().cloned().collect::<Vec<_>>(),
-        ["co-work", "code"]
-    );
+    assert_eq!(state.profiles.keys().cloned().collect::<Vec<_>>(), ["co-work", "code"]);
     assert_eq!(state.profiles["co-work"].revision, "2030.0101.1");
     assert_eq!(state.profiles["code"].revision, "2030.0101.2");
     assert!(state.catalog_revision.starts_with("catalog-"));
@@ -267,11 +264,7 @@ fn manifest_resolve() {
     let dir = tempfile::tempdir().unwrap();
     let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
     assert_eq!(resolved.asset_version, "2026.0415.1");
-    assert!(resolved
-        .kernel
-        .to_str()
-        .unwrap()
-        .contains("vmlinuz-a65f925ebe0b0cc7"));
+    assert!(resolved.kernel.to_str().unwrap().contains("vmlinuz-a65f925ebe0b0cc7"));
     assert!(resolved
         .initrd
         .to_str()
@@ -298,9 +291,7 @@ fn manifest_resolve_rejects_current_assets_that_require_newer_binary() {
     let future_version = "2030.0101.1".to_string();
     let mut future_release = m.assets.releases["2026.0415.1"].clone();
     future_release.min_binary = "2.0.0".to_string();
-    m.assets
-        .releases
-        .insert(future_version.clone(), future_release);
+    m.assets.releases.insert(future_version.clone(), future_release);
     m.assets.current = future_version;
 
     let dir = tempfile::tempdir().unwrap();
@@ -319,9 +310,7 @@ fn manifest_resolve_avoids_deprecated_asset_releases() {
     let mut deprecated_release = m.assets.releases["2026.0415.1"].clone();
     deprecated_release.deprecated = true;
     deprecated_release.deprecated_date = Some("2026-04-17".to_string());
-    m.assets
-        .releases
-        .insert(deprecated_version.clone(), deprecated_release);
+    m.assets.releases.insert(deprecated_version.clone(), deprecated_release);
     m.assets.current = deprecated_version;
 
     let dir = tempfile::tempdir().unwrap();
@@ -339,9 +328,7 @@ fn manifest_resolve_fails_when_only_compatible_assets_are_deprecated() {
     m.assets.releases.get_mut("2026.0415.1").unwrap().deprecated = true;
 
     let dir = tempfile::tempdir().unwrap();
-    let err = m
-        .resolve("1.0.1776269479", "arm64", dir.path())
-        .unwrap_err();
+    let err = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap_err();
 
     assert!(
         format!("{err:#}").contains("no compatible asset release for binary 1.0.1776269479"),
@@ -355,9 +342,7 @@ fn manifest_resolve_fails_when_no_asset_release_supports_binary() {
     m.assets.releases.get_mut("2026.0415.1").unwrap().min_binary = "2.0.0".to_string();
 
     let dir = tempfile::tempdir().unwrap();
-    let err = m
-        .resolve("1.0.1776269479", "arm64", dir.path())
-        .unwrap_err();
+    let err = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap_err();
 
     assert!(
         format!("{err:#}").contains("no compatible asset release for binary 1.0.1776269479"),
@@ -533,21 +518,9 @@ fn manifest_resolve_finds_files_in_arch_subdir() {
 
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
     let resolved = m.resolve("1.0.1776269479", "arm64", dir.path()).unwrap();
-    assert!(
-        resolved.kernel.exists(),
-        "kernel not found: {:?}",
-        resolved.kernel
-    );
-    assert!(
-        resolved.initrd.exists(),
-        "initrd not found: {:?}",
-        resolved.initrd
-    );
-    assert!(
-        resolved.rootfs.exists(),
-        "rootfs not found: {:?}",
-        resolved.rootfs
-    );
+    assert!(resolved.kernel.exists(), "kernel not found: {:?}", resolved.kernel);
+    assert!(resolved.initrd.exists(), "initrd not found: {:?}", resolved.initrd);
+    assert!(resolved.rootfs.exists(), "rootfs not found: {:?}", resolved.rootfs);
     // Must resolve to the arch subdir, not the flat path
     assert!(resolved.kernel.to_str().unwrap().contains("arm64/"));
 }
@@ -623,8 +596,7 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
     ))
     .unwrap();
 
-    let copied =
-        copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {}).unwrap();
+    let copied = copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {}).unwrap();
 
     assert_eq!(copied.len(), 3);
     for (logical, bytes) in [
@@ -638,10 +610,7 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-                0o444
-            );
+            assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o444);
         }
     }
 }
@@ -698,10 +667,7 @@ fn copy_missing_local_assets_rejects_hash_mismatch() {
     let err = copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {})
         .expect_err("wrong bytes must not be installed");
     assert!(err.to_string().contains("hash mismatch"), "{err:#}");
-    assert!(!install
-        .join("arm64")
-        .join("vmlinuz-aaaaaaaaaaaaaaaa")
-        .exists());
+    assert!(!install.join("arm64").join("vmlinuz-aaaaaaaaaaaaaaaa").exists());
 }
 
 #[test]
@@ -749,8 +715,7 @@ fn default_assets_dir_under_home() {
     // With CAPSEM_HOME / CAPSEM_ASSETS_DIR overrides the path won't contain
     // ".capsem/assets" -- it's whatever the user pointed at. Only assert
     // the substring when we're on the default layout.
-    let overridden =
-        std::env::var("CAPSEM_ASSETS_DIR").is_ok() || std::env::var("CAPSEM_HOME").is_ok();
+    let overridden = std::env::var("CAPSEM_ASSETS_DIR").is_ok() || std::env::var("CAPSEM_HOME").is_ok();
     if let Some(dir) = default_assets_dir() {
         if overridden {
             assert!(dir.to_str().is_some());
@@ -782,10 +747,7 @@ fn asset_download_url_uses_asset_version_channel_base_and_arch_prefix() {
         "https://release.capsem.org/assets/releases/2026.0627.1/x86_64-rootfs.erofs",
     );
     let url = asset_download_url("2026.0627.1", "arm64", "initrd.img");
-    assert!(
-        !url.contains("1.0."),
-        "binary version leaked into asset URL: {url}"
-    );
+    assert!(!url.contains("1.0."), "binary version leaked into asset URL: {url}");
     assert_eq!(
         asset_download_url_with_base(
             "https://github.com/google/capsem/releases/download/assets-v{asset_version}",
@@ -816,17 +778,12 @@ fn remote_asset_release_base_preserves_asset_version_template() {
 #[test]
 fn asset_release_base_derives_from_channel_manifest_url() {
     assert_eq!(
-        asset_release_base_url_from_manifest_url(
-            "https://release.capsem.org/assets/stable/manifest.json"
-        )
-        .as_deref(),
+        asset_release_base_url_from_manifest_url("https://release.capsem.org/assets/stable/manifest.json").as_deref(),
         Some("https://release.capsem.org/assets/releases")
     );
     assert_eq!(
-        asset_release_base_url_from_manifest_url(
-            "https://corp.example/capsem/assets/internal/manifest.json"
-        )
-        .as_deref(),
+        asset_release_base_url_from_manifest_url("https://corp.example/capsem/assets/internal/manifest.json")
+            .as_deref(),
         Some("https://corp.example/capsem/assets/releases")
     );
     assert_eq!(
@@ -941,19 +898,12 @@ fn cleanup_preserves_hyphenated_canonical_asset_names() {
     let base = dir.path();
 
     std::fs::write(base.join("software-inventory.json"), b"inventory").unwrap();
-    std::fs::write(
-        base.join("software-inventory-deadbeef12345678.json"),
-        b"old",
-    )
-    .unwrap();
+    std::fs::write(base.join("software-inventory-deadbeef12345678.json"), b"old").unwrap();
 
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
     let removed = cleanup_unused_assets(base, &m).unwrap();
 
-    assert_eq!(
-        removed,
-        vec![base.join("software-inventory-deadbeef12345678.json")]
-    );
+    assert_eq!(removed, vec![base.join("software-inventory-deadbeef12345678.json")]);
     assert!(base.join("software-inventory.json").exists());
 }
 
@@ -984,20 +934,13 @@ fn cleanup_preserves_explicit_retention_filenames() {
     let base = dir.path();
 
     std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"profile kernel").unwrap();
-    std::fs::write(
-        base.join("rootfs-feedface87654321.erofs"),
-        b"profile rootfs",
-    )
-    .unwrap();
+    std::fs::write(base.join("rootfs-feedface87654321.erofs"), b"profile rootfs").unwrap();
     std::fs::write(base.join("rootfs-1111111111111111.erofs"), b"old rootfs").unwrap();
 
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
-    let removed = cleanup_unused_assets_preserving(
-        base,
-        &m,
-        ["vmlinuz-deadbeef12345678", "rootfs-feedface87654321.erofs"],
-    )
-    .unwrap();
+    let removed =
+        cleanup_unused_assets_preserving(base, &m, ["vmlinuz-deadbeef12345678", "rootfs-feedface87654321.erofs"])
+            .unwrap();
 
     assert_eq!(removed, vec![base.join("rootfs-1111111111111111.erofs")]);
     assert!(base.join("vmlinuz-deadbeef12345678").exists());
@@ -1031,15 +974,11 @@ fn channel_cache_isolation() {
     assert!(stable_rootfs.is_file());
     assert!(nightly_rootfs.is_file());
     assert_eq!(
-        asset_release_base_url_from_manifest_url(
-            "https://release.capsem.org/assets/stable/manifest.json"
-        ),
+        asset_release_base_url_from_manifest_url("https://release.capsem.org/assets/stable/manifest.json"),
         Some("https://release.capsem.org/assets/releases".to_string())
     );
     assert_eq!(
-        asset_release_base_url_from_manifest_url(
-            "https://release.capsem.org/assets/nightly/manifest.json"
-        ),
+        asset_release_base_url_from_manifest_url("https://release.capsem.org/assets/nightly/manifest.json"),
         Some("https://release.capsem.org/assets/releases".to_string())
     );
 }
@@ -1072,10 +1011,7 @@ fn cleanup_rejects_unsafe_architecture_directory_before_removing_files() {
     let error = cleanup_unused_assets(dir.path(), &manifest).unwrap_err();
 
     assert!(format!("{error:#}").contains("invalid asset architecture directory"));
-    assert!(
-        orphan.exists(),
-        "validation must finish before cleanup starts"
-    );
+    assert!(orphan.exists(), "validation must finish before cleanup starts");
 }
 
 #[test]
@@ -1195,16 +1131,9 @@ fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
     .unwrap();
 
     let wanted = arch_assets_to_materialize(&manifest, "9.9.9", "arm64").unwrap();
-    let hashes: Vec<&str> = wanted
-        .iter()
-        .map(|(_, _, entry)| entry.hash.as_str())
-        .collect();
+    let hashes: Vec<&str> = wanted.iter().map(|(_, _, entry)| entry.hash.as_str()).collect();
 
-    assert_eq!(
-        wanted.len(),
-        2,
-        "one profile's kernel was dropped: {hashes:?}"
-    );
+    assert_eq!(wanted.len(), 2, "one profile's kernel was dropped: {hashes:?}");
     for bytes in [code.as_slice(), cowork.as_slice()] {
         assert!(hashes.contains(&blake3::hash(bytes).to_hex().to_string().as_str()));
     }
@@ -1234,8 +1163,5 @@ fn materializing_refuses_an_arch_no_compatible_release_builds() {
     .unwrap();
 
     let error = arch_assets_to_materialize(&manifest, "9.9.9", "x86_64").unwrap_err();
-    assert!(
-        error.to_string().contains("x86_64"),
-        "unhelpful error: {error}"
-    );
+    assert!(error.to_string().contains("x86_64"), "unhelpful error: {error}");
 }

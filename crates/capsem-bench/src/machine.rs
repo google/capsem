@@ -133,13 +133,9 @@ pub fn strays_from_pgrep(stdout: &str, self_pid: &str) -> Vec<String> {
 
 /// Observe this machine and judge it.
 pub fn examine(arch: &str, os: &str, strays: &[String]) -> Fitness {
-    let cpu_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
+    let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let load = load_average(Path::new("/proc/loadavg"));
-    let governor = governor(Path::new(
-        "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-    ));
+    let governor = governor(Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"));
     let kvm = Path::new("/dev/kvm").exists();
 
     let objections = assess(cpu_count, load, governor.as_deref(), kvm, strays);

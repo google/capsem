@@ -27,14 +27,10 @@ fn setting_id_ownership_matches_current_registry_contract() {
 #[test]
 fn settings_toml_accepts_only_ui_application_preferences() {
     let mut file = SettingsFile::default();
-    file.settings.insert(
-        "appearance.dark_mode".to_string(),
-        entry(SettingValue::Bool(true)),
-    );
-    file.settings.insert(
-        "app.auto_update".to_string(),
-        entry(SettingValue::Bool(false)),
-    );
+    file.settings
+        .insert("appearance.dark_mode".to_string(), entry(SettingValue::Bool(true)));
+    file.settings
+        .insert("app.auto_update".to_string(), entry(SettingValue::Bool(false)));
 
     validate_settings_toml_contract(&file).expect("ui settings are valid settings.toml");
 }
@@ -55,10 +51,7 @@ fn settings_toml_rejects_profile_behavior_settings() {
             Ok(()) => panic!("{id} must not belong to settings.toml"),
             Err(error) => error,
         };
-        assert!(
-            error.contains("owned by profile"),
-            "{id} produced wrong error: {error}"
-        );
+        assert!(error.contains("owned by profile"), "{id} produced wrong error: {error}");
     }
 }
 
@@ -176,10 +169,8 @@ mode = "block"
     validate_profile_toml_contract(&valid).expect("profile behavior is profile-owned");
 
     let mut ui = SettingsFile::default();
-    ui.settings.insert(
-        "appearance.dark_mode".to_string(),
-        entry(SettingValue::Bool(true)),
-    );
+    ui.settings
+        .insert("appearance.dark_mode".to_string(), entry(SettingValue::Bool(true)));
     assert!(validate_profile_toml_contract(&ui)
         .unwrap_err()
         .contains("owned by settings"));
@@ -232,10 +223,8 @@ upstreams = ["127.0.0.1:5353"]
     validate_corp_toml_contract(&valid).expect("corp constraints are corp-owned");
 
     let mut ui = SettingsFile::default();
-    ui.settings.insert(
-        "app.auto_update".to_string(),
-        entry(SettingValue::Bool(true)),
-    );
+    ui.settings
+        .insert("app.auto_update".to_string(), entry(SettingValue::Bool(true)));
     assert!(validate_corp_toml_contract(&ui)
         .unwrap_err()
         .contains("owned by settings"));

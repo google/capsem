@@ -13,9 +13,7 @@ static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
-    TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    TEST_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 use anyhow::{anyhow, Context, Result};
@@ -34,10 +32,9 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use client::UpdateTrackState;
 use client::{
-    ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
-    HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
-    ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
-    UpdateStatusResponse, VmLifecycleState,
+    ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
+    ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse,
+    RunRequest, SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -121,11 +118,7 @@ impl Drop for DoctorMockServer {
     }
 }
 
-fn find_mock_server_binary(
-    executable: &Path,
-    current_dir: &Path,
-    manifest_dir: &Path,
-) -> Option<PathBuf> {
+fn find_mock_server_binary(executable: &Path, current_dir: &Path, manifest_dir: &Path) -> Option<PathBuf> {
     if let Some(bin_dir) = executable.parent() {
         let installed_candidate = bin_dir.join("capsem-mock-server");
         if installed_candidate.exists() {
@@ -170,8 +163,7 @@ fn doctor_mock_server_command(binary: &Path) -> StdCommand {
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
-    let lock =
-        DoctorMockServerLock::acquire(DOCTOR_MOCK_SERVER_ADDR, DOCTOR_MOCK_SERVER_LOCK_TIMEOUT)?;
+    let lock = DoctorMockServerLock::acquire(DOCTOR_MOCK_SERVER_ADDR, DOCTOR_MOCK_SERVER_LOCK_TIMEOUT)?;
     let binary = mock_server_binary_path()?;
     let mut child = doctor_mock_server_command(&binary)
         .stdout(Stdio::piped())
@@ -179,24 +171,16 @@ fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
         .spawn()
         .with_context(|| format!("start {}", binary.display()))?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .context("mock server stdout must be piped")?;
+    let stdout = child.stdout.take().context("mock server stdout must be piped")?;
     let mut reader = std::io::BufReader::new(stdout);
     let mut line = String::new();
-    let bytes = reader
-        .read_line(&mut line)
-        .context("read mock server ready JSON")?;
+    let bytes = reader.read_line(&mut line).context("read mock server ready JSON")?;
     if bytes == 0 {
         let status = child.try_wait().context("read mock server status")?;
-        return Err(anyhow!(
-            "mock server exited before ready JSON; status={status:?}"
-        ));
+        return Err(anyhow!("mock server exited before ready JSON; status={status:?}"));
     }
 
-    let ready: serde_json::Value =
-        serde_json::from_str(&line).context("parse mock server ready JSON")?;
+    let ready: serde_json::Value = serde_json::from_str(&line).context("parse mock server ready JSON")?;
     if ready.get("service").and_then(serde_json::Value::as_str) != Some("capsem-mock-server") {
         child.kill().ok();
         return Err(anyhow!("unexpected mock server ready payload: {line}"));
@@ -222,22 +206,10 @@ const fn cli_styles() -> Styles {
                 .bold()
                 .underline(),
         )
-        .usage(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
-                .bold(),
-        )
-        .literal(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
-                .bold(),
-        )
+        .usage(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))).bold())
+        .literal(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))).bold())
         .placeholder(Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack))))
-        .error(
-            Style::new()
-                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
-                .bold(),
-        )
+        .error(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))).bold())
         .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
         .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
 }
@@ -849,10 +821,7 @@ fn print_session_info(info: &SessionInfo) {
             let total = info.total_requests.unwrap_or(0);
             let allowed = info.allowed_requests.unwrap_or(0);
             let denied = info.denied_requests.unwrap_or(0);
-            println!(
-                "  Requests:      {} ({} allowed, {} denied)",
-                total, allowed, denied
-            );
+            println!("  Requests:      {} ({} allowed, {} denied)", total, allowed, denied);
         }
         if let Some(fe) = info.total_file_events {
             println!("  File Events:   {}", fe);
@@ -906,9 +875,7 @@ fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
     let raw = match std::fs::read_to_string(&port_path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => {
-            return Some(Err(error).with_context(|| format!("read {}", port_path.display())))
-        }
+        Err(error) => return Some(Err(error).with_context(|| format!("read {}", port_path.display()))),
     };
     let raw = raw.trim();
     if raw.is_empty() {
@@ -918,10 +885,7 @@ fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
         Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
         Ok(port) => port,
         Err(error) => {
-            return Some(
-                Err(error)
-                    .with_context(|| format!("parse gateway port from {}", port_path.display())),
-            )
+            return Some(Err(error).with_context(|| format!("parse gateway port from {}", port_path.display())))
         }
     };
     Some(Ok(format!("http://127.0.0.1:{port}")))
@@ -1073,10 +1037,7 @@ async fn check_service_health() -> Result<Vec<String>> {
                     ));
                 }
                 (Some(_), false) => {
-                    issues.push(format!(
-                        "Gateway token MISMATCH (port {}) -- restart service",
-                        port
-                    ));
+                    issues.push(format!("Gateway token MISMATCH (port {}) -- restart service", port));
                 }
                 (None, _) => {
                     issues.push(format!("Gateway is DOWN (port {} not responding)", port));
@@ -1140,59 +1101,36 @@ fn profile_status_summary_lines(status: &serde_json::Value) -> Vec<String> {
     let source = status["source"].as_str().unwrap_or("unknown");
     let profile_count = status["profile_count"].as_u64().unwrap_or(0);
     let ready_count = status["ready_count"].as_u64().unwrap_or(0);
-    lines.push(format!(
-        "Profiles:  {ready_count}/{profile_count} ready ({source})"
-    ));
+    lines.push(format!("Profiles:  {ready_count}/{profile_count} ready ({source})"));
     if let Some(manifest) = status["asset_manifest"].as_object() {
         let origin = manifest
             .get("origin")
             .and_then(|value| value.as_str())
             .unwrap_or("unknown");
-        let path = manifest
-            .get("path")
-            .and_then(|value| value.as_str())
-            .unwrap_or("-");
+        let path = manifest.get("path").and_then(|value| value.as_str()).unwrap_or("-");
         lines.push(format!("Manifest:  {origin} ({path})"));
-        if let Some(source) = manifest
-            .get("origin_source")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(source) = manifest.get("origin_source").and_then(|value| value.as_str()) {
             lines.push(format!("  source:  {source}"));
         }
         if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
             lines.push(format!("  built:   {packaged_at}"));
         }
-        if let Some(refreshed_at) = manifest
-            .get("refreshed_at")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(refreshed_at) = manifest.get("refreshed_at").and_then(|value| value.as_str()) {
             lines.push(format!("  refresh: {refreshed_at}"));
         }
-        if let Some(validation_status) = manifest
-            .get("validation_status")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(validation_status) = manifest.get("validation_status").and_then(|value| value.as_str()) {
             lines.push(format!("  status:  {validation_status}"));
         }
-        if let Some(error) = manifest
-            .get("validation_error")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(error) = manifest.get("validation_error").and_then(|value| value.as_str()) {
             lines.push(format!("  error:   {error}"));
         }
         if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
             lines.push(format!("  hash:    blake3:{hash}"));
         }
-        if let Some(current) = manifest
-            .get("assets_current")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(current) = manifest.get("assets_current").and_then(|value| value.as_str()) {
             lines.push(format!("  assets:  {current}"));
         }
-        if let Some(current) = manifest
-            .get("binaries_current")
-            .and_then(|value| value.as_str())
-        {
+        if let Some(current) = manifest.get("binaries_current").and_then(|value| value.as_str()) {
             lines.push(format!("  binary:  {current}"));
         }
     }
@@ -1205,17 +1143,10 @@ fn profile_status_summary_lines(status: &serde_json::Value) -> Vec<String> {
             let hash = profile["profile_payload_hash"].as_str().unwrap_or("-");
             let missing = profile["missing_assets"]
                 .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
                 .unwrap_or_default();
             let readiness = if ready { "ready" } else { "not-ready" };
-            lines.push(format!(
-                "  - {id}: {name} ({readiness}, arch {arch}, hash {hash})"
-            ));
+            lines.push(format!("  - {id}: {name} ({readiness}, arch {arch}, hash {hash})"));
             if !missing.is_empty() {
                 lines.push(format!("    missing: {}", missing.join(", ")));
             }
@@ -1244,30 +1175,15 @@ fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
             let id = profile["id"].as_str().unwrap_or("unknown");
             let missing_assets = profile["missing_assets"]
                 .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
                 .unwrap_or_default();
             let invalid_assets = profile["invalid_assets"]
                 .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
                 .unwrap_or_default();
             let invalid_files = profile["invalid_files"]
                 .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .collect::<Vec<_>>()
-                })
+                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
                 .unwrap_or_default();
             let mut detail = Vec::new();
             if !missing_assets.is_empty() {
@@ -1277,10 +1193,7 @@ fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
                 detail.push(format!("invalid assets: {}", invalid_assets.join(", ")));
             }
             if !invalid_files.is_empty() {
-                detail.push(format!(
-                    "invalid profile files: {}",
-                    invalid_files.join(", ")
-                ));
+                detail.push(format!("invalid profile files: {}", invalid_files.join(", ")));
             }
             if detail.is_empty() {
                 issues.push(format!("Profile {id} is not ready"));
@@ -1294,14 +1207,7 @@ fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
 
 fn print_corp_status(info: &serde_json::Value) {
     let installed = info["installed"].as_bool().unwrap_or(false);
-    println!(
-        "Corp:      {}",
-        if installed {
-            "installed"
-        } else {
-            "not installed"
-        }
-    );
+    println!("Corp:      {}", if installed { "installed" } else { "not installed" });
     if let Some(source) = info["source"].as_object() {
         let url = source.get("url").and_then(|value| value.as_str());
         let file_path = source.get("file_path").and_then(|value| value.as_str());
@@ -1424,9 +1330,7 @@ fn app_auto_update_enabled() -> bool {
     auto_update_enabled_from_resolved(&resolved)
 }
 
-fn auto_update_enabled_from_resolved(
-    settings: &[capsem_core::net::policy_config::ResolvedSetting],
-) -> bool {
+fn auto_update_enabled_from_resolved(settings: &[capsem_core::net::policy_config::ResolvedSetting]) -> bool {
     settings
         .iter()
         .find(|setting| setting.id == "app.auto_update")
@@ -1443,9 +1347,7 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run { .. }) => {
-            client::DirectServiceLifetime::BoundToCommand
-        }
+        Commands::Session(SessionCommands::Run { .. }) => client::DirectServiceLifetime::BoundToCommand,
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1480,10 +1382,7 @@ async fn main() -> Result<()> {
     // env > <capsem_home>/run), matching the service.
     let (run_dir, uds_path) = match cli.uds_path {
         Some(p) => {
-            let dir = p
-                .parent()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."));
+            let dir = p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
             (dir, p)
         }
         None => {
@@ -1573,14 +1472,20 @@ async fn main() -> Result<()> {
                 let svc_version = async {
                     let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
                     let (reader, mut writer) = tokio::io::split(stream);
-                    writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
+                    writer
+                        .write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                        .await
+                        .ok()?;
                     let mut buf = Vec::new();
-                    tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
+                    tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf)
+                        .await
+                        .ok()?;
                     let body = String::from_utf8_lossy(&buf);
                     let json_start = body.find('{')?;
                     let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
                     v.get("version")?.as_str().map(String::from)
-                }.await;
+                }
+                .await;
 
                 match svc_version {
                     Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
@@ -1632,13 +1537,13 @@ async fn main() -> Result<()> {
                                 println!("Gateway:   ok (port {}, v{})", port, v);
                             }
                             (Some(ref v), true) => {
-                                println!("Gateway:   STALE (running v{}, binary is v{}) -- restart service", v, my_version);
+                                println!(
+                                    "Gateway:   STALE (running v{}, binary is v{}) -- restart service",
+                                    v, my_version
+                                );
                             }
                             (Some(_), false) => {
-                                println!(
-                                    "Gateway:   token MISMATCH (port {}) -- restart service",
-                                    port
-                                );
+                                println!("Gateway:   token MISMATCH (port {}) -- restart service", port);
                             }
                             (None, _) => {
                                 println!("Gateway:   DOWN (port {} not responding)", port);
@@ -1657,9 +1562,7 @@ async fn main() -> Result<()> {
                     Some(system_status) => {
                         print_profiles_status(&system_status["profiles"]);
                         print_corp_status(&system_status["corp"]);
-                        match serde_json::from_value::<UpdateStatusResponse>(
-                            system_status["updates"].clone(),
-                        ) {
+                        match serde_json::from_value::<UpdateStatusResponse>(system_status["updates"].clone()) {
                             Ok(update_status) => print_update_status(&update_status),
                             Err(_) => println!("Updates:   unavailable"),
                         }
@@ -1698,11 +1601,7 @@ async fn main() -> Result<()> {
                             for s in &defunct {
                                 let name = s.name.as_deref().unwrap_or(&s.id);
                                 if let Some(err) = &s.last_error {
-                                    println!(
-                                        "  - {}: {}",
-                                        name,
-                                        capsem_core::session::boot_failure_summary(err)
-                                    );
+                                    println!("  - {}: {}", name, capsem_core::session::boot_failure_summary(err));
                                 } else {
                                     println!("  - {}", name);
                                 }
@@ -1757,11 +1656,7 @@ async fn main() -> Result<()> {
     }
 
     let command = cli.command.as_ref().unwrap();
-    let client = UdsClient::with_direct_service_lifetime(
-        uds_path,
-        auto_launch,
-        direct_service_lifetime(command),
-    );
+    let client = UdsClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
 
     match command {
         Commands::Assets(AssetsCommands::Status { profile, json }) => {
@@ -1833,24 +1728,16 @@ async fn main() -> Result<()> {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let resp: ApiResponse<ForkResponse> = client
-                .post(&format!("/vms/{}/fork", session_id), &req)
-                .await?;
+            let resp: ApiResponse<ForkResponse> = client.post(&format!("/vms/{}/fork", session_id), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
-            println!(
-                "Forked session '{}' from '{}' ({:.1} MB)",
-                info.name, session, size_mb
-            );
+            println!("Forked session '{}' from '{}' ({:.1} MB)", info.name, session, size_mb);
         }
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
             let session_id = resolve_session_route_id(&client, name).await?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(
-                    &format!("/vms/{}/resume", session_id),
-                    &serde_json::json!({}),
-                )
+                .post(&format!("/vms/{}/resume", session_id), &serde_json::json!({}))
                 .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
@@ -1860,10 +1747,7 @@ async fn main() -> Result<()> {
             println!("Suspending session: {}", session);
             let session_id = resolve_session_route_id(&client, session).await?;
             let resp: ApiResponse<serde_json::Value> = client
-                .post(
-                    &format!("/vms/{}/pause", session_id),
-                    &serde_json::json!({}),
-                )
+                .post(&format!("/vms/{}/pause", session_id), &serde_json::json!({}))
                 .await?;
             resp.into_result()?;
             println!("Session suspended.");
@@ -1919,10 +1803,7 @@ async fn main() -> Result<()> {
                     .count();
                 if defunct > 0 {
                     println!();
-                    println!(
-                        "{} defunct sandbox(es). Run `capsem logs <name>` to debug.",
-                        defunct
-                    );
+                    println!("{} defunct sandbox(es). Run `capsem logs <name>` to debug.", defunct);
                 }
             }
         }
@@ -1937,9 +1818,7 @@ async fn main() -> Result<()> {
                 command: command.clone(),
                 timeout_secs: *timeout,
             };
-            let resp: ApiResponse<ExecResponse> = client
-                .post(&format!("/vms/{}/exec", session_id), req)
-                .await?;
+            let resp: ApiResponse<ExecResponse> = client.post(&format!("/vms/{}/exec", session_id), req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -1986,9 +1865,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             println!("Deleting session: {}", session);
             let session_id = resolve_session_route_id(&client, session).await?;
-            let resp: ApiResponse<serde_json::Value> = client
-                .delete(&format!("/vms/{}/delete", session_id))
-                .await?;
+            let resp: ApiResponse<serde_json::Value> = client.delete(&format!("/vms/{}/delete", session_id)).await?;
             resp.into_result()?;
             println!("Session deleted.");
         }
@@ -1996,14 +1873,9 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             let session_id = resolve_session_route_id(&client, session).await?;
             let req = PersistRequest { name: name.clone() };
-            let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/vms/{}/save", session_id), &req)
-                .await?;
+            let resp: ApiResponse<serde_json::Value> = client.post(&format!("/vms/{}/save", session_id), &req).await?;
             resp.into_result()?;
-            println!(
-                "[*] Session \"{}\" is now persistent as \"{}\"",
-                session, name
-            );
+            println!("[*] Session \"{}\" is now persistent as \"{}\"", session, name);
         }
         Commands::Session(SessionCommands::Purge { all }) => {
             if *all {
@@ -2013,8 +1885,10 @@ async fn main() -> Result<()> {
                 let resp = list_resp.into_result()?;
                 let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
                 let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
-                print!("[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
-                    persistent_count, ephemeral_count);
+                print!(
+                    "[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
+                    persistent_count, ephemeral_count
+                );
                 std::io::stdout().flush()?;
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -2032,8 +1906,7 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Info { session, json }) => {
             client::validate_id(session)?;
             let session_id = resolve_session_route_id(&client, session).await?;
-            let resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/vms/{}/info", session_id)).await?;
+            let resp: ApiResponse<SessionInfo> = client.get(&format!("/vms/{}/info", session_id)).await?;
             let info = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&info)?);
@@ -2044,8 +1917,7 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Logs { session, tail }) => {
             client::validate_id(session)?;
             let session_id = resolve_session_route_id(&client, session).await?;
-            let resp: ApiResponse<LogsResponse> =
-                client.get(&format!("/vms/{}/logs", session_id)).await?;
+            let resp: ApiResponse<LogsResponse> = client.get(&format!("/vms/{}/logs", session_id)).await?;
             let logs = resp.into_result()?;
 
             let tail_lines = |text: &str, n: usize| -> String {
@@ -2093,15 +1965,9 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             let limit = if *all { 100_000 } else { *tail };
             let session_id = resolve_session_route_id(&client, session).await?;
-            let mut url = format!(
-                "/vms/{}/history?limit={}&layer={}",
-                session_id, limit, layer
-            );
+            let mut url = format!("/vms/{}/history?limit={}&layer={}", session_id, limit, layer);
             if let Some(q) = search {
-                url.push_str(&format!(
-                    "&search={}",
-                    q.replace(' ', "%20").replace('&', "%26")
-                ));
+                url.push_str(&format!("&search={}", q.replace(' ', "%20").replace('&', "%26")));
             }
             let resp: ApiResponse<HistoryResponse> = client.get(&url).await?;
             let history = resp.into_result()?;
@@ -2118,10 +1984,7 @@ async fn main() -> Result<()> {
                     );
                 }
                 for entry in &history.commands {
-                    let exit = entry
-                        .exit_code
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "-".into());
+                    let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let process = match entry.layer.as_str() {
                         "exec" => entry
                             .details
@@ -2130,16 +1993,8 @@ async fn main() -> Result<()> {
                             .unwrap_or("api")
                             .to_string(),
                         "audit" => {
-                            let parent = entry
-                                .details
-                                .get("parent_exe")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let exe = entry
-                                .details
-                                .get("exe")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let parent = entry.details.get("parent_exe").and_then(|v| v.as_str()).unwrap_or("");
+                            let exe = entry.details.get("exe").and_then(|v| v.as_str()).unwrap_or("");
                             if parent.is_empty() {
                                 exe.rsplit('/').next().unwrap_or(exe).to_string()
                             } else {
@@ -2175,11 +2030,13 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
             let session_id = resolve_session_route_id(&client, name).await?;
-            let info_resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/vms/{}/info", session_id)).await?;
+            let info_resp: ApiResponse<SessionInfo> = client.get(&format!("/vms/{}/info", session_id)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
-                anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
+                anyhow::bail!(
+                    "Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.",
+                    name
+                );
             }
 
             // Stop, then resume
@@ -2190,19 +2047,15 @@ async fn main() -> Result<()> {
                 .into_result()
                 .context("failed to stop session during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(
-                    &format!("/vms/{}/resume", session_id),
-                    &serde_json::json!({}),
-                )
+                .post(&format!("/vms/{}/resume", session_id), &serde_json::json!({}))
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
         Commands::Mcp(McpCommands::Servers { profile }) => {
             client::validate_id(profile)?;
-            let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!("/profiles/{}/mcp/servers/list", profile))
-                .await?;
+            let resp: ApiResponse<Vec<serde_json::Value>> =
+                client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
             let servers = resp.into_result()?;
             if servers.is_empty() {
                 println!("No MCP servers configured.");
@@ -2235,9 +2088,8 @@ async fn main() -> Result<()> {
             let server_names: Vec<String> = if let Some(server_filter) = server {
                 vec![server_filter.clone()]
             } else {
-                let resp: ApiResponse<Vec<serde_json::Value>> = client
-                    .get(&format!("/profiles/{}/mcp/servers/list", profile))
-                    .await?;
+                let resp: ApiResponse<Vec<serde_json::Value>> =
+                    client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
                 resp.into_result()?
                     .into_iter()
                     .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
@@ -2246,10 +2098,7 @@ async fn main() -> Result<()> {
             let mut tools = Vec::new();
             for server_name in server_names {
                 let resp: ApiResponse<Vec<serde_json::Value>> = client
-                    .get(&format!(
-                        "/profiles/{}/mcp/servers/{}/tools/list",
-                        profile, server_name
-                    ))
+                    .get(&format!("/profiles/{}/mcp/servers/{}/tools/list", profile, server_name))
                     .await?;
                 tools.extend(resp.into_result()?);
             }
@@ -2258,10 +2107,7 @@ async fn main() -> Result<()> {
             } else {
                 #[allow(clippy::print_literal)]
                 {
-                    println!(
-                        "{:<40} {:<20} {:<10} {}",
-                        "TOOL", "SERVER", "APPROVED", "DESCRIPTION"
-                    );
+                    println!("{:<40} {:<20} {:<10} {}", "TOOL", "SERVER", "APPROVED", "DESCRIPTION");
                 }
                 for t in &tools {
                     let desc = t["description"].as_str().unwrap_or("-");
@@ -2282,9 +2128,8 @@ async fn main() -> Result<()> {
         }
         Commands::Mcp(McpCommands::Refresh { profile }) => {
             client::validate_id(profile)?;
-            let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!("/profiles/{}/mcp/servers/list", profile))
-                .await?;
+            let resp: ApiResponse<Vec<serde_json::Value>> =
+                client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
             for server in resp.into_result()? {
                 if let Some(server_name) = server["name"].as_str() {
                     let refresh: ApiResponse<serde_json::Value> = client
@@ -2298,17 +2143,12 @@ async fn main() -> Result<()> {
             }
             println!("MCP tools refreshed.");
         }
-        Commands::Mcp(McpCommands::Call {
-            profile,
-            name,
-            args,
-        }) => {
+        Commands::Mcp(McpCommands::Call { profile, name, args }) => {
             client::validate_id(profile)?;
-            let (server_name, tool_name) = name.split_once("__").ok_or_else(|| {
-                anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}")
-            })?;
-            let arguments: serde_json::Value =
-                serde_json::from_str(args).context("invalid JSON arguments")?;
+            let (server_name, tool_name) = name
+                .split_once("__")
+                .ok_or_else(|| anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}"))?;
+            let arguments: serde_json::Value = serde_json::from_str(args).context("invalid JSON arguments")?;
             let resp: ApiResponse<serde_json::Value> = client
                 .post(
                     &format!(
@@ -2355,10 +2195,7 @@ async fn main() -> Result<()> {
             println!("Local mock server: {mock_base_url}");
 
             let mut doctor_env = std::collections::HashMap::new();
-            doctor_env.insert(
-                "CAPSEM_MOCK_SERVER_BASE_URL".to_string(),
-                mock_base_url.clone(),
-            );
+            doctor_env.insert("CAPSEM_MOCK_SERVER_BASE_URL".to_string(), mock_base_url.clone());
 
             let req = ProvisionRequest {
                 name: None,
@@ -2373,19 +2210,11 @@ async fn main() -> Result<()> {
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 
-            async fn cleanup_doctor_vm(
-                client: &UdsClient,
-                vm_id: &str,
-                cleanup: DoctorSessionCleanup,
-            ) {
+            async fn cleanup_doctor_vm(client: &UdsClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
                 let route = cleanup.route(vm_id);
                 let result: Result<ApiResponse<serde_json::Value>, _> = match cleanup {
-                    DoctorSessionCleanup::Failed => {
-                        client.post(&route, serde_json::json!({})).await
-                    }
-                    DoctorSessionCleanup::Completed | DoctorSessionCleanup::Interrupted => {
-                        client.delete(&route).await
-                    }
+                    DoctorSessionCleanup::Failed => client.post(&route, serde_json::json!({})).await,
+                    DoctorSessionCleanup::Completed | DoctorSessionCleanup::Interrupted => client.delete(&route).await,
                 };
                 if let Err(error) = result {
                     eprintln!("warning: doctor session cleanup failed: {error:#}");
@@ -2408,10 +2237,7 @@ async fn main() -> Result<()> {
             // a hand-rolled loop.
             let sock_path_for_poll = sock_path.clone();
             let poll_ipc = capsem_foundation::poll::poll_until(
-                capsem_foundation::poll::PollOpts::new(
-                    "vm-ipc-ready",
-                    std::time::Duration::from_secs(30),
-                ),
+                capsem_foundation::poll::PollOpts::new("vm-ipc-ready", std::time::Duration::from_secs(30)),
                 || {
                     let sock_path = sock_path_for_poll.clone();
                     async move {
@@ -2587,7 +2413,14 @@ async fn main() -> Result<()> {
                     }
                 }
                 if !copied {
-                    eprintln!("warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+                    eprintln!(
+                        "warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar",
+                        candidates
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
             }
 
@@ -2637,13 +2470,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
                 std::io::stdout().write_all(&bytes)?;
             } else {
                 std::fs::write(dst, &bytes).with_context(|| format!("write {dst}"))?;
-                eprintln!(
-                    "[cp] {} bytes  {}:{}  ->  {}",
-                    bytes.len(),
-                    session,
-                    guest_path,
-                    dst,
-                );
+                eprintln!("[cp] {} bytes  {}:{}  ->  {}", bytes.len(), session, guest_path, dst,);
             }
             Ok(())
         }
@@ -2664,22 +2491,11 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
                 urlencoding::encode(guest_path)
             );
             let (resp_body, _ct) = client
-                .request_bytes(
-                    "POST",
-                    &url,
-                    Some(bytes.clone()),
-                    Some("application/octet-stream"),
-                )
+                .request_bytes("POST", &url, Some(bytes.clone()), Some("application/octet-stream"))
                 .await?;
             // POST handler returns JSON `{success, size}`; surface for sanity.
             let _ = resp_body;
-            eprintln!(
-                "[cp] {} bytes  {}  ->  {}:{}",
-                bytes.len(),
-                src,
-                session,
-                guest_path,
-            );
+            eprintln!("[cp] {} bytes  {}  ->  {}:{}", bytes.len(), src, session, guest_path,);
             Ok(())
         }
     }

@@ -41,14 +41,9 @@ pub struct CorpSource {
 }
 
 /// Fetch corp config from a URL, validate it as TOML, and return the content + ETag.
-pub async fn fetch_corp_config(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<(String, Option<String>)> {
+pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(String, Option<String>)> {
     let parsed = reqwest::Url::parse(url).with_context(|| {
-        format!(
-            "corp config source must be a URL: use https://..., http://..., or file:///absolute/path, got {url}"
-        )
+        format!("corp config source must be a URL: use https://..., http://..., or file:///absolute/path, got {url}")
     })?;
     info!(url = %url, "fetching corp config");
 
@@ -59,8 +54,7 @@ pub async fn fetch_corp_config(
         let path = parsed
             .to_file_path()
             .map_err(|_| anyhow::anyhow!("corp config file URL must be absolute: {url}"))?;
-        let body = std::fs::read_to_string(&path)
-            .with_context(|| format!("read corp config {}", path.display()))?;
+        let body = std::fs::read_to_string(&path).with_context(|| format!("read corp config {}", path.display()))?;
         validate_corp_toml(&body)?;
         return Ok((body, None));
     }
@@ -83,11 +77,7 @@ pub async fn fetch_corp_config(
         .context("failed to fetch corp config")?;
 
     if !resp.status().is_success() {
-        anyhow::bail!(
-            "corp config fetch failed: HTTP {} for {}",
-            resp.status(),
-            url
-        );
+        anyhow::bail!("corp config fetch failed: HTTP {} for {}", resp.status(), url);
     }
 
     let etag = resp
@@ -96,10 +86,7 @@ pub async fn fetch_corp_config(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    let body = resp
-        .text()
-        .await
-        .context("failed to read corp config body")?;
+    let body = resp.text().await.context("failed to read corp config body")?;
     validate_corp_toml(&body)?;
 
     Ok((body, etag))
@@ -115,8 +102,7 @@ fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
 pub fn validate_corp_toml(content: &str) -> Result<SettingsFile> {
     let file: SettingsFile = toml::from_str(content).context("invalid corp TOML")?;
-    super::loader::reject_retired_ai_setting_ids_in_content("corp TOML", content)
-        .map_err(anyhow::Error::msg)?;
+    super::loader::reject_retired_ai_setting_ids_in_content("corp TOML", content).map_err(anyhow::Error::msg)?;
     Ok(file)
 }
 
