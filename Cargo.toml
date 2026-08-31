@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/capsem-assets",
+    "crates/capsem-config",
     "crates/capsem-foundation",
     "crates/capsem-proto",
     "crates/capsem-core",

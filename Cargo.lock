@@ -788,6 +788,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-config"
+version = "0.6.2"
+dependencies = [
+ "capsem-proto",
+ "serde",
+]
+
+[[package]]
 name = "capsem-core"
 version = "0.6.2"
 dependencies = [
@@ -798,6 +806,7 @@ dependencies = [
  "block2",
  "bytes",
  "capsem-assets",
+ "capsem-config",
  "capsem-foundation",
  "capsem-logger",
  "capsem-proto",

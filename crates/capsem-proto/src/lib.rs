@@ -12,6 +12,7 @@
 
 pub mod handshake;
 pub mod ipc;
+pub mod mcp;
 pub mod poll;
 
 pub use handshake::{HandshakeError, Hello};

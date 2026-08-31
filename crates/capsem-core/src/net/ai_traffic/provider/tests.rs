@@ -82,7 +82,7 @@ fn model_protocol_accepts_openai_compatible_without_new_provider_variant() {
 
 #[test]
 fn native_ollama_protocol_does_not_borrow_openai_sse_parser() {
-    let mut parser = ModelProtocol::Ollama.create_parser();
+    let mut parser = create_parser(ModelProtocol::Ollama);
     let events = parser.parse_event(&crate::net::parsers::sse_parser::SseEvent {
         event_type: Some("message".into()),
         data: r#"{"choices":[{"delta":{"content":"not ollama"}}]}"#.into(),

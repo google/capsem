@@ -22,6 +22,7 @@ serde_yaml = { workspace = true }
 rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-assets = { path = "../capsem-assets" }
+capsem-config = { path = "../capsem-config" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
 libc = "0.2"
