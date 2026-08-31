@@ -110,7 +110,7 @@ def test_hot_route_uses_the_least_contended_independent_window() -> None:
             service_cpu_s=cpu,
             gateway_cpu_s=cpu + 0.01,
         )
-        for latency, cpu in ((0.5, 0.1), (9.0, 0.5), (0.6, 0.09))
+        for latency, cpu in ((0.5, 0.1), (9.0, 0.5), (0.7, 0.09))
     ]
 
     selected = _least_contended_route_window(windows)
