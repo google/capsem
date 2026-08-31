@@ -46,7 +46,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         .to_string(),
     )
     .unwrap();
-    let manifest_hash = capsem_core::asset_manager::hash_file(&assets_dir.join("manifest.json"))
+    let manifest_hash = capsem_assets::asset_manager::hash_file(&assets_dir.join("manifest.json"))
         .expect("manifest hash should be computable");
     std::fs::write(
         assets_dir.join("manifest-metadata.json"),
@@ -180,7 +180,7 @@ fn current_asset_state_keeps_independent_release_graph_profiles() {
         serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
-    let expected = capsem_core::asset_manager::release_graph_profile_state(&manifest).unwrap();
+    let expected = capsem_assets::asset_manager::release_graph_profile_state(&manifest).unwrap();
 
     assert_eq!(
         current_asset_version_from_manifest(&assets_dir),
@@ -527,7 +527,7 @@ fn system_status_rejects_noncanonical_manifest_metadata_schema() {
 async fn system_status_route_returns_exact_installed_documents_in_one_response() {
     let (state, _dir) = make_test_state_with_tempdir();
     std::fs::create_dir_all(&state.assets_dir).unwrap();
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let digest = |ch: char| ch.to_string().repeat(64);
     let manifest = serde_json::json!({
         "channel": "stable",
@@ -1126,15 +1126,15 @@ async fn update_route_live_commands_share_one_serial_lock() {
 
 fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &str) {
     std::fs::create_dir_all(assets_dir).unwrap();
-    let manifest = capsem_core::asset_manager::ManifestV2 {
+    let manifest = capsem_assets::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".to_string(),
         asset_base: None,
-        assets: capsem_core::asset_manager::AssetsSection {
+        assets: capsem_assets::asset_manager::AssetsSection {
             current: assets.to_string(),
             releases: HashMap::new(),
         },
-        binaries: capsem_core::asset_manager::BinariesSection {
+        binaries: capsem_assets::asset_manager::BinariesSection {
             current: binary.to_string(),
             releases: HashMap::new(),
         },
@@ -1433,7 +1433,7 @@ fn enforcement_evaluate_body(request: &EnforcementEvaluateRequest) -> Bytes {
 pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    let manifest = capsem_core::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
+    let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -1686,7 +1686,7 @@ fn profile_file_descriptor(
     path: &std::path::Path,
 ) -> capsem_core::net::policy_config::ProfileFileDescriptor {
     let bytes = std::fs::metadata(path).unwrap().len();
-    let hash = capsem_core::asset_manager::hash_file(path).unwrap();
+    let hash = capsem_assets::asset_manager::hash_file(path).unwrap();
     let relative = path
         .strip_prefix(config_root)
         .unwrap_or(path)
@@ -1795,7 +1795,7 @@ fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, Prof
         &mut arch_assets.rootfs,
     ] {
         let source = source_dir.join(&asset.name);
-        let hash = capsem_core::asset_manager::hash_file(&source).unwrap();
+        let hash = capsem_assets::asset_manager::hash_file(&source).unwrap();
         asset.url = format!("file://{}", source.display());
         asset.hash = Some(format!("blake3:{hash}"));
         asset.size = Some(std::fs::metadata(&source).unwrap().len());
@@ -1895,7 +1895,7 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
     let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
     let rootfs_target = assets_dir
         .join(arch)
-        .join(capsem_core::asset_manager::hash_filename(
+        .join(capsem_assets::asset_manager::hash_filename(
             &rootfs.name,
             rootfs
                 .hash
@@ -2036,7 +2036,7 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
         descriptor.hash,
         Some(format!(
             "blake3:{}",
-            capsem_core::asset_manager::hash_file(
+            capsem_assets::asset_manager::hash_file(
                 &config_root.join("profiles/code/enforcement.toml")
             )
             .unwrap()
@@ -2165,7 +2165,7 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
         descriptor.hash,
         Some(format!(
             "blake3:{}",
-            capsem_core::asset_manager::hash_file(
+            capsem_assets::asset_manager::hash_file(
                 &config_root.join("profiles/code/enforcement.toml")
             )
             .unwrap()
@@ -5864,7 +5864,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         profile_after_save.files.enforcement.unwrap().hash,
         Some(format!(
             "blake3:{}",
-            capsem_core::asset_manager::hash_file(&enforcement_path).unwrap()
+            capsem_assets::asset_manager::hash_file(&enforcement_path).unwrap()
         ))
     );
 
@@ -6393,7 +6393,7 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
             .expect("profile asset hash")
             .strip_prefix("blake3:")
             .unwrap();
-        let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+        let name = capsem_assets::asset_manager::hash_filename(&asset.name, hash);
         std::fs::write(arch_dir.join(name), b"asset").unwrap();
     }
 
@@ -6517,7 +6517,7 @@ fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
         .to_string(),
     )
     .unwrap();
-    let expected_hash = capsem_core::asset_manager::hash_file(&manifest_path).unwrap();
+    let expected_hash = capsem_assets::asset_manager::hash_file(&manifest_path).unwrap();
 
     let state = make_asset_state(dir.path().to_path_buf());
     let profile = ProfileConfigFile::builtin_primary();
@@ -6656,15 +6656,15 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
         },
     );
 
-    let manifest = capsem_core::asset_manager::ManifestV2 {
+    let manifest = capsem_assets::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".into(),
         asset_base: None,
-        assets: capsem_core::asset_manager::AssetsSection {
+        assets: capsem_assets::asset_manager::AssetsSection {
             current: "empty".into(),
             releases: HashMap::new(),
         },
-        binaries: capsem_core::asset_manager::BinariesSection {
+        binaries: capsem_assets::asset_manager::BinariesSection {
             current: "1.0.0".into(),
             releases: HashMap::new(),
         },
@@ -6673,7 +6673,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     preserve.extend(persistent_registry_asset_filenames(&registry));
 
     let removed =
-        capsem_core::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
+        capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
             .unwrap();
 
     assert_eq!(removed, vec![base.join(disposable_rootfs)]);
@@ -6721,15 +6721,15 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
         },
     );
 
-    let manifest = capsem_core::asset_manager::ManifestV2 {
+    let manifest = capsem_assets::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".into(),
         asset_base: None,
-        assets: capsem_core::asset_manager::AssetsSection {
+        assets: capsem_assets::asset_manager::AssetsSection {
             current: "2030.0101.1".into(),
             releases: [(
                 "2030.0101.1".into(),
-                capsem_core::asset_manager::AssetRelease {
+                capsem_assets::asset_manager::AssetRelease {
                     date: "2030-01-01".into(),
                     deprecated: true,
                     deprecated_date: Some("2030-01-02".into()),
@@ -6739,7 +6739,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
                         [
                             (
                                 "rootfs.erofs".into(),
-                                capsem_core::asset_manager::AssetEntry {
+                                capsem_assets::asset_manager::AssetEntry {
                                     hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
                                     sha256: String::new(),
                                     size: 1,
@@ -6747,7 +6747,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
                             ),
                             (
                                 "rootfs-pinned.erofs".into(),
-                                capsem_core::asset_manager::AssetEntry {
+                                capsem_assets::asset_manager::AssetEntry {
                                     hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
                                     sha256: String::new(),
                                     size: 1,
@@ -6764,7 +6764,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
             .into_iter()
             .collect(),
         },
-        binaries: capsem_core::asset_manager::BinariesSection {
+        binaries: capsem_assets::asset_manager::BinariesSection {
             current: "1.0.0".into(),
             releases: HashMap::new(),
         },
@@ -6772,7 +6772,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     let preserve = persistent_registry_asset_filenames(&registry);
 
     let removed =
-        capsem_core::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
+        capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
             .unwrap();
 
     assert_eq!(removed, vec![base.join(deprecated_unpinned_rootfs)]);
@@ -6799,7 +6799,7 @@ fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
             .expect("profile asset hash")
             .strip_prefix("blake3:")
             .unwrap();
-        let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+        let name = capsem_assets::asset_manager::hash_filename(&asset.name, hash);
         std::fs::write(arch_dir.join(name), b"asset").unwrap();
     }
     let state = make_asset_state(dir.path().to_path_buf());
@@ -6856,7 +6856,7 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
             descriptor.url = format!("file://{}", source.display());
             descriptor.hash = Some(format!(
                 "blake3:{}",
-                capsem_core::asset_manager::hash_file(&source).unwrap()
+                capsem_assets::asset_manager::hash_file(&source).unwrap()
             ));
             descriptor.size = Some(bytes.len() as u64);
         }

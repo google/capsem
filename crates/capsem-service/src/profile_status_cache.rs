@@ -33,7 +33,7 @@ fn profile_status_file_identity(path: &StdPath) -> ProfileStatusFileIdentity {
     if !path.exists() {
         return ProfileStatusFileIdentity::Missing;
     }
-    match capsem_core::asset_manager::hash_file(path) {
+    match capsem_assets::asset_manager::hash_file(path) {
         Ok(digest) => ProfileStatusFileIdentity::Digest(digest),
         Err(error) => ProfileStatusFileIdentity::Unreadable(error.to_string()),
     }

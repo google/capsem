@@ -2327,7 +2327,7 @@ fn profile_asset_path(
         })?;
     Ok(assets_dir
         .join(arch)
-        .join(crate::asset_manager::hash_filename(&descriptor.name, hash)))
+        .join(capsem_assets::asset_manager::hash_filename(&descriptor.name, hash)))
 }
 
 fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {
@@ -2336,7 +2336,7 @@ fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {
     if !metadata.is_file() {
         return Err(format!("{} is not a file", path.display()));
     }
-    let hash = crate::asset_manager::hash_file(path)
+    let hash = capsem_assets::asset_manager::hash_file(path)
         .map_err(|error| format!("hash {}: {error}", path.display()))?;
     Ok((hash, metadata.len()))
 }

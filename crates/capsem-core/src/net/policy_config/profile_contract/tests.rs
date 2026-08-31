@@ -1348,7 +1348,7 @@ capsem = true
 fn descriptor_hash(path: &std::path::Path) -> String {
     format!(
         "blake3:{}",
-        crate::asset_manager::hash_file(path).expect("hash fixture file")
+        capsem_assets::asset_manager::hash_file(path).expect("hash fixture file")
     )
 }
 

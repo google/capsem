@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use capsem_core::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
+use capsem_assets::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
 use capsem_core::net::policy_config::{
     resolve_profile_rule_file_path, validate_corp_toml_contract, CompiledSecurityRule,
     ProfileCatalog, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
@@ -1117,7 +1117,7 @@ struct AssetsChannelBinaryFile {
     sha256: String,
     blake3: String,
     size: u64,
-    binaries: Vec<capsem_core::asset_manager::BinaryExecutable>,
+    binaries: Vec<capsem_assets::asset_manager::BinaryExecutable>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2786,9 +2786,9 @@ fn graph_package_from_binary_file(
     let platform = package_platform_for_kind(package_kind);
     let architecture = release_graph::PackageArchitecture::from_package_name(&file.name)?;
     let package_id = release_graph_id(&file.name);
-    let package_url = capsem_core::asset_manager::release_url(version);
+    let package_url = capsem_assets::asset_manager::release_url(version);
     let package_url = format!("{}/{}", package_url.trim_end_matches('/'), file.name);
-    let host_sbom_url = capsem_core::asset_manager::release_url(version);
+    let host_sbom_url = capsem_assets::asset_manager::release_url(version);
     let host_sbom_url = format!("{}/{}", host_sbom_url.trim_end_matches('/'), host_sbom.name);
     let binaries = file
         .binaries
@@ -3447,7 +3447,7 @@ fn validate_release_date(date: &str) -> Result<()> {
 fn copy_assets_channel_release_assets(
     assets_dir: &Path,
     release_dir: &Path,
-    release: &mut capsem_core::asset_manager::AssetRelease,
+    release: &mut capsem_assets::asset_manager::AssetRelease,
     cache: &mut AssetDigestCache,
 ) -> Result<usize> {
     let mut copied = 0;
@@ -5497,7 +5497,7 @@ fn render_graph_release_manifest(
 struct ProfileGraphContext<'a> {
     channel: &'a str,
     manifest: &'a ManifestV2,
-    current_release: &'a capsem_core::asset_manager::AssetRelease,
+    current_release: &'a capsem_assets::asset_manager::AssetRelease,
     asset_base: &'a str,
     assets_dir: &'a Path,
 }
@@ -5562,7 +5562,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
 fn package_sbom_refs(
     package_id: &str,
     binary_files: &[AssetsChannelBinaryFile],
-    release: &capsem_core::asset_manager::BinaryRelease,
+    release: &capsem_assets::asset_manager::BinaryRelease,
 ) -> Vec<serde_json::Value> {
     let expected = package_sbom_file_name(package_id);
     binary_files
@@ -5925,7 +5925,7 @@ fn asset_entry_digest(
     _assets_dir: &Path,
     arch: &str,
     logical_name: &str,
-    entry: &capsem_core::asset_manager::AssetEntry,
+    entry: &capsem_assets::asset_manager::AssetEntry,
     cache: &mut AssetDigestCache,
 ) -> Result<(u64, serde_json::Value)> {
     let cache_key = (arch.to_string(), logical_name.to_string());
@@ -6170,7 +6170,7 @@ fn repo_root() -> PathBuf {
 fn validate_asset_digest(
     arch: &str,
     logical_name: &str,
-    entry: &capsem_core::asset_manager::AssetEntry,
+    entry: &capsem_assets::asset_manager::AssetEntry,
     bytes: u64,
     digest: &serde_json::Value,
 ) -> Result<()> {
@@ -6240,7 +6240,7 @@ fn publishable_profile_config(
     mut profile: ProfileConfigFile,
     config_root: &Path,
     manifest: &ManifestV2,
-    current_release: &capsem_core::asset_manager::AssetRelease,
+    current_release: &capsem_assets::asset_manager::AssetRelease,
     asset_base: &str,
 ) -> Result<ProfileConfigFile> {
     materialize_profile_file_descriptors(&mut profile, config_root)?;
@@ -6319,7 +6319,7 @@ fn rewrite_publishable_asset_descriptor(
     asset_version: &str,
     arch: &str,
     descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
-    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    manifest_assets: &std::collections::HashMap<String, capsem_assets::asset_manager::AssetEntry>,
     asset_base: &str,
 ) -> Result<()> {
     let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
@@ -6346,7 +6346,7 @@ fn channel_asset_url(
             asset_base.trim_end_matches('/')
         );
     }
-    capsem_core::asset_manager::asset_download_url_with_base(
+    capsem_assets::asset_manager::asset_download_url_with_base(
         asset_base,
         asset_version,
         arch,
@@ -6441,13 +6441,13 @@ trait ReleaseDeprecated {
     fn is_deprecated(&self) -> bool;
 }
 
-impl ReleaseDeprecated for capsem_core::asset_manager::AssetRelease {
+impl ReleaseDeprecated for capsem_assets::asset_manager::AssetRelease {
     fn is_deprecated(&self) -> bool {
         self.deprecated
     }
 }
 
-impl ReleaseDeprecated for capsem_core::asset_manager::BinaryRelease {
+impl ReleaseDeprecated for capsem_assets::asset_manager::BinaryRelease {
     fn is_deprecated(&self) -> bool {
         self.deprecated
     }
@@ -6456,7 +6456,7 @@ impl ReleaseDeprecated for capsem_core::asset_manager::BinaryRelease {
 fn current_asset_file_refs(
     asset_base: &str,
     asset_version: &str,
-    release: &capsem_core::asset_manager::AssetRelease,
+    release: &capsem_assets::asset_manager::AssetRelease,
 ) -> Vec<AssetsChannelAssetFile> {
     let mut files = Vec::new();
     for (arch, assets) in &release.arches {
@@ -6480,9 +6480,9 @@ fn current_asset_file_refs(
 
 fn binary_package_file_refs(
     binary_version: &str,
-    release: &capsem_core::asset_manager::BinaryRelease,
+    release: &capsem_assets::asset_manager::BinaryRelease,
 ) -> Vec<AssetsChannelBinaryFile> {
-    let base = capsem_core::asset_manager::release_url(binary_version);
+    let base = capsem_assets::asset_manager::release_url(binary_version);
     let mut files = release
         .files
         .iter()
@@ -7781,7 +7781,7 @@ fn profile_materialize_manifest_from_release_channel(
         anyhow::bail!("release channel profile {profile_id} is revoked");
     }
 
-    let mut arch_entries: HashMap<String, HashMap<String, capsem_core::asset_manager::AssetEntry>> =
+    let mut arch_entries: HashMap<String, HashMap<String, capsem_assets::asset_manager::AssetEntry>> =
         HashMap::new();
     let mut asset_urls = HashMap::new();
     for arch in selected_arches {
@@ -7808,7 +7808,7 @@ fn profile_materialize_manifest_from_release_channel(
                 .with_context(|| format!("validate {arch} {logical_name} digest"))?;
             assets.insert(
                 logical_name.to_string(),
-                capsem_core::asset_manager::AssetEntry {
+                capsem_assets::asset_manager::AssetEntry {
                     hash: artifact.digest.blake3.clone(),
                     sha256: artifact.digest.sha256.clone(),
                     size: artifact.size,
@@ -7835,11 +7835,11 @@ fn profile_materialize_manifest_from_release_channel(
         format: 2,
         refresh_policy: "24h".to_string(),
         asset_base: None,
-        assets: capsem_core::asset_manager::AssetsSection {
+        assets: capsem_assets::asset_manager::AssetsSection {
             current: profile.revision.clone(),
             releases: HashMap::from([(
                 profile.revision.clone(),
-                capsem_core::asset_manager::AssetRelease {
+                capsem_assets::asset_manager::AssetRelease {
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
@@ -7850,11 +7850,11 @@ fn profile_materialize_manifest_from_release_channel(
                 },
             )]),
         },
-        binaries: capsem_core::asset_manager::BinariesSection {
+        binaries: capsem_assets::asset_manager::BinariesSection {
             current: binary_version.clone(),
             releases: HashMap::from([(
                 binary_version.clone(),
-                capsem_core::asset_manager::BinaryRelease {
+                capsem_assets::asset_manager::BinaryRelease {
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
@@ -8023,7 +8023,7 @@ struct ProfileAssetMaterializeInputs<'a> {
     manifest_url: &'a str,
     asset_version: &'a str,
     arch: &'a str,
-    manifest_assets: &'a std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    manifest_assets: &'a std::collections::HashMap<String, capsem_assets::asset_manager::AssetEntry>,
     asset_urls: &'a HashMap<(String, String), String>,
 }
 
@@ -8113,9 +8113,9 @@ fn materialized_asset_url(
     size: u64,
 ) -> Result<String> {
     if let Some(asset_base_url) =
-        capsem_core::asset_manager::asset_release_base_url_from_manifest_url(manifest_url)
+        capsem_assets::asset_manager::asset_release_base_url_from_manifest_url(manifest_url)
     {
-        return Ok(capsem_core::asset_manager::asset_download_url_with_base(
+        return Ok(capsem_assets::asset_manager::asset_download_url_with_base(
             &asset_base_url,
             asset_version,
             arch,

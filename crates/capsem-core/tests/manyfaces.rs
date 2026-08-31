@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use capsem_core::asset_manager::{
+use capsem_assets::asset_manager::{
     cleanup_unused_assets, cleanup_unused_assets_preserving, hash_filename, host_manifest_arch,
     release_graph_profile_state, ManifestV2,
 };

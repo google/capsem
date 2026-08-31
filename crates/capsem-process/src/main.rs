@@ -258,7 +258,7 @@ fn main() -> Result<()> {
         }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
-        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
+        expected_asset_hashes: Some(capsem_assets::asset_manager::ExpectedAssetHashes {
             kernel: args.expected_kernel_hash.clone(),
             initrd: args.expected_initrd_hash.clone(),
             rootfs: args.expected_rootfs_hash.clone(),

@@ -157,7 +157,7 @@ fn run() -> Result<()> {
             checkpoint_path: None,
             machine_identifier_path: Some(&machine_identifier),
             serial_log_path: Some(&serial_log),
-        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
+        expected_asset_hashes: Some(capsem_assets::asset_manager::ExpectedAssetHashes {
             kernel: kernel_blake3.clone(),
             initrd: initrd_blake3.clone(),
             rootfs: rootfs_blake3.clone(),

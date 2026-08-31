@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
-pub use capsem_core::asset_manager::{Architecture, PackageArchitecture};
+pub use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};

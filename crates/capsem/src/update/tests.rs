@@ -352,8 +352,8 @@ fn test_manifest(
     asset_version: &str,
     min_binary: &str,
     min_assets: &str,
-) -> capsem_core::asset_manager::ManifestV2 {
-    capsem_core::asset_manager::ManifestV2::from_json(&format!(
+) -> capsem_assets::asset_manager::ManifestV2 {
+    capsem_assets::asset_manager::ManifestV2::from_json(&format!(
         r#"{{
                 "format": 2,
                 "refresh_policy": "24h",
@@ -1388,7 +1388,7 @@ fn release_graph_update_compares_independent_multi_profile_state() {
         }
     });
     let installed_state =
-        capsem_core::asset_manager::release_graph_profile_state(&graph_value).unwrap();
+        capsem_assets::asset_manager::release_graph_profile_state(&graph_value).unwrap();
     let graph: ReleaseGraphManifest = serde_json::from_value(graph_value.clone()).unwrap();
     assert_eq!(
         serde_json::json!({"profiles": &graph.profiles})["profiles"],

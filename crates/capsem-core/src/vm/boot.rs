@@ -81,7 +81,7 @@ pub struct BootOptions<'a> {
     /// can answer this: the caller knows which profile it is starting and must
     /// say what that profile pins. Absent means the caller could not determine
     /// them, which is a hard error rather than a licence to boot unverified.
-    pub expected_asset_hashes: Option<crate::asset_manager::ExpectedAssetHashes>,
+    pub expected_asset_hashes: Option<capsem_assets::asset_manager::ExpectedAssetHashes>,
 }
 
 /// Build config, boot the VM via the hypervisor trait, and return the handle +

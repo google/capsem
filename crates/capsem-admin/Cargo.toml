@@ -14,6 +14,7 @@ name = "capsem-admin"
 path = "src/main.rs"
 
 [dependencies]
+capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }
 anyhow.workspace = true
 clap.workspace = true

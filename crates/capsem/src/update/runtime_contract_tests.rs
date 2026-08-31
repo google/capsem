@@ -440,7 +440,7 @@ url = "https://release.capsem.org/assets/releases/images-2/x86_64-rootfs.erofs"
             "status": "current",
         })
     };
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let body = serde_json::to_vec(&serde_json::json!({
         "version": "1.0.0",
         "channel": "stable",
@@ -491,7 +491,7 @@ fn profile_stage_plan() -> VerifiedUpdatePlan {
 fn assert_profile_uses_release_manifest_pins(profile_path: &Path, release_dir: &Path) {
     let profile: toml::Value =
         toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let assets = &profile["assets"]["arch"][arch];
     for (kind, name) in [
         ("kernel", "vmlinuz"),
@@ -556,8 +556,8 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
                 .assets_dir
                 .as_ref()
                 .unwrap()
-                .join(capsem_core::asset_manager::host_manifest_arch())
-                .join(capsem_core::asset_manager::hash_filename(
+                .join(capsem_assets::asset_manager::host_manifest_arch())
+                .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
                     blake3::hash(&kernel).to_hex().as_ref(),
                 )),
@@ -653,8 +653,8 @@ async fn activate_staged_update_switches_profiles_assets_and_manifest_together()
     assert_eq!(
         std::fs::read(
             installed_assets
-                .join(capsem_core::asset_manager::host_manifest_arch())
-                .join(capsem_core::asset_manager::hash_filename(
+                .join(capsem_assets::asset_manager::host_manifest_arch())
+                .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
                     blake3::hash(&kernel).to_hex().as_ref(),
                 )),
@@ -697,8 +697,8 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
         .assets_dir
         .as_ref()
         .unwrap()
-        .join(capsem_core::asset_manager::host_manifest_arch())
-        .join(capsem_core::asset_manager::hash_filename(
+        .join(capsem_assets::asset_manager::host_manifest_arch())
+        .join(capsem_assets::asset_manager::hash_filename(
             "vmlinuz",
             blake3::hash(&kernel).to_hex().as_ref(),
         ));

@@ -27,7 +27,7 @@ async fn does_not_read_asset_contents_on_hot_path() {
     let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
     let rootfs_path = assets_dir
         .join(arch)
-        .join(capsem_core::asset_manager::hash_filename(
+        .join(capsem_assets::asset_manager::hash_filename(
             &rootfs.name,
             rootfs
                 .hash

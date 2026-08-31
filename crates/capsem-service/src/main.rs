@@ -225,7 +225,7 @@ struct ServiceState {
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
-    manifest: RwLock<Option<Arc<capsem_core::asset_manager::ManifestV2>>>,
+    manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,
     current_version: String,
     /// In-memory asset reconciliation progress. Service startup and explicit
     /// /profiles/{profile_id}/assets/ensure shares this single rail with
@@ -773,13 +773,13 @@ fn prewarm_system_overlay_templates(run_dir: &StdPath, profiles: &BTreeMap<Strin
 
 fn prewarm_vm_asset_hash_cache(
     assets_base_dir: &StdPath,
-    manifest: Option<&capsem_core::asset_manager::ManifestV2>,
+    manifest: Option<&capsem_assets::asset_manager::ManifestV2>,
     current_version: &str,
 ) {
     let Some(manifest) = manifest else {
         return;
     };
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let resolved = match manifest.resolve(current_version, arch, assets_base_dir) {
         Ok(resolved) => resolved,
         Err(error) => {
@@ -2134,7 +2134,7 @@ impl ServiceState {
     /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
     /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
     #[cfg(test)]
-    fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+    fn resolve_asset_paths(&self) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"
         } else {
@@ -2155,7 +2155,7 @@ impl ServiceState {
             self.assets_dir.clone()
         };
         let rootfs = base.join("rootfs.erofs");
-        Ok(capsem_core::asset_manager::ResolvedAssets {
+        Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: base.join("vmlinuz"),
             initrd: base.join("initrd.img"),
             rootfs,
@@ -2356,7 +2356,7 @@ impl ServiceState {
     fn resolve_profile_asset_paths(
         &self,
         profile: &ProfileConfigFile,
-    ) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+    ) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
         let arch = capsem_core::net::policy_config::current_profile_arch();
         let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
             anyhow!(
@@ -2365,7 +2365,7 @@ impl ServiceState {
             )
         })?;
 
-        Ok(capsem_core::asset_manager::ResolvedAssets {
+        Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel)?,
             initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd)?,
             rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs)?,
@@ -2506,9 +2506,9 @@ impl ServiceState {
     fn resolve_pinned_asset_paths(
         &self,
         pins: &BootAssetPins,
-    ) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+    ) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
         let arch = capsem_core::net::policy_config::current_profile_arch();
-        Ok(capsem_core::asset_manager::ResolvedAssets {
+        Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: boot_asset_pin_path(&self.assets_dir, arch, &pins.kernel),
             initrd: boot_asset_pin_path(&self.assets_dir, arch, &pins.initrd),
             rootfs: boot_asset_pin_path(&self.assets_dir, arch, &pins.rootfs),
@@ -2518,7 +2518,7 @@ impl ServiceState {
 
     fn validate_pinned_asset_files(
         &self,
-        resolved: &capsem_core::asset_manager::ResolvedAssets,
+        resolved: &capsem_assets::asset_manager::ResolvedAssets,
         pins: &BootAssetPins,
     ) -> Result<()> {
         validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
@@ -2818,7 +2818,7 @@ fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
 }
 
 fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
-    Ok(capsem_core::asset_manager::hash_filename(
+    Ok(capsem_assets::asset_manager::hash_filename(
         &asset.name,
         profile_asset_hash_hex(asset)?,
     ))
@@ -2826,7 +2826,7 @@ fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
 
 fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
     let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
-    capsem_core::asset_manager::hash_filename(&pin.name, hash)
+    capsem_assets::asset_manager::hash_filename(&pin.name, hash)
 }
 
 fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> {
@@ -5449,7 +5449,7 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         .and_then(|metadata| metadata.modified().ok())
         .map(format_system_time_rfc3339);
     let blake3 = if path.is_file() {
-        capsem_core::asset_manager::hash_file(&path).ok()
+        capsem_assets::asset_manager::hash_file(&path).ok()
     } else {
         None
     };
@@ -5690,7 +5690,7 @@ fn supply_chain_evidence_from_paths(
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned);
     let manifest_hash = if manifest_path.is_file() {
-        capsem_core::asset_manager::hash_file(&manifest_path).ok()
+        capsem_assets::asset_manager::hash_file(&manifest_path).ok()
     } else {
         None
     };
@@ -5773,11 +5773,11 @@ fn read_update_check_cache(
 fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-        if let Ok(state) = capsem_core::asset_manager::release_graph_profile_state(&value) {
+        if let Ok(state) = capsem_assets::asset_manager::release_graph_profile_state(&value) {
             return Some(state.images_revision);
         }
     }
-    capsem_core::asset_manager::ManifestV2::from_json(&content)
+    capsem_assets::asset_manager::ManifestV2::from_json(&content)
         .ok()
         .map(|manifest| manifest.assets.current)
 }
@@ -5867,7 +5867,7 @@ fn channel_update_track(
 
 struct AssetManifestValidation {
     status: &'static str,
-    manifest: Option<capsem_core::asset_manager::ManifestV2>,
+    manifest: Option<capsem_assets::asset_manager::ManifestV2>,
     error: Option<String>,
 }
 
@@ -5880,7 +5880,7 @@ fn validate_asset_manifest_file(path: &std::path::Path) -> AssetManifestValidati
         };
     }
     match std::fs::read_to_string(path) {
-        Ok(content) => match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+        Ok(content) => match capsem_assets::asset_manager::ManifestV2::from_json(&content) {
             Ok(manifest) => AssetManifestValidation {
                 status: "valid",
                 manifest: Some(manifest),
@@ -6044,8 +6044,8 @@ async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, St
                 ..Default::default()
             };
         })?;
-        let arch = capsem_core::asset_manager::host_manifest_arch();
-        let downloaded = capsem_core::asset_manager::download_missing_assets(
+        let arch = capsem_assets::asset_manager::host_manifest_arch();
+        let downloaded = capsem_assets::asset_manager::download_missing_assets(
             &manifest,
             &state.current_version,
             arch,
@@ -6165,7 +6165,7 @@ async fn ensure_profile_assets_after_claim(
                 .to_string();
             let expected_size = required_profile_asset_size(asset).map_err(|e| e.to_string())?;
             if resolved.exists() {
-                match capsem_core::asset_manager::hash_file(&resolved) {
+                match capsem_assets::asset_manager::hash_file(&resolved) {
                     Ok(hash) if hash == expected_hash => {
                         update_asset_reconcile_state(&state, |status| {
                             status.in_progress = true;
@@ -6326,7 +6326,7 @@ where
         .with_context(|| format!("flush {}", tmp.display()))?;
     drop(output);
 
-    let actual = capsem_core::asset_manager::hash_file(&tmp)?;
+    let actual = capsem_assets::asset_manager::hash_file(&tmp)?;
     if actual != expected_hash {
         let _ = std::fs::remove_file(&tmp);
         anyhow::bail!(
@@ -12661,7 +12661,7 @@ async fn handle_system_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::SystemStatusResponse>, AppError> {
     let manifest = read_installed_status_document(&state.assets_dir.join("manifest.json"))?;
-    capsem_core::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(
+    capsem_assets::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(
         |error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -12951,7 +12951,7 @@ fn reload_activated_update_runtime(
         )
     })?;
     let manifest =
-        capsem_core::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
+        capsem_assets::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
@@ -13178,7 +13178,7 @@ async fn main() -> Result<()> {
 
     let manifest = manifest_path.and_then(|path| {
         let content = std::fs::read_to_string(&path).ok()?;
-        match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+        match capsem_assets::asset_manager::ManifestV2::from_json(&content) {
             Ok(m) => {
                 info!(asset_version = %m.assets.current, "loaded manifest");
                 Some(Arc::new(m))
@@ -13224,7 +13224,7 @@ async fn main() -> Result<()> {
             Ok(catalog) => {
                 let mut preserve = profile_catalog_asset_filenames(&catalog);
                 preserve.extend(persistent_registry_asset_filenames(&persistent_registry));
-                match capsem_core::asset_manager::cleanup_unused_assets_preserving(
+                match capsem_assets::asset_manager::cleanup_unused_assets_preserving(
                     &assets_base_dir,
                     m,
                     preserve,

@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
-use capsem_core::asset_manager::{Architecture, PackageArchitecture};
+use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
 use capsem_core::net::policy_config::{ProfileCatalog, ProfileConfigFile};
 
 const RELEASE_HTTP_ATTEMPTS: usize = 4;
@@ -574,7 +574,7 @@ fn plan_verified_update(
     } else {
         let manifest_text =
             std::str::from_utf8(manifest_bytes).context("release manifest is not valid UTF-8")?;
-        let manifest = capsem_core::asset_manager::ManifestV2::from_json(manifest_text)
+        let manifest = capsem_assets::asset_manager::ManifestV2::from_json(manifest_text)
             .context("parse verified release manifest")?;
         validate_v2_update_pairing(&manifest, &selected_binary)?;
     }
@@ -672,7 +672,7 @@ fn validate_release_graph_update_pairing(
 }
 
 fn validate_v2_update_pairing(
-    manifest: &capsem_core::asset_manager::ManifestV2,
+    manifest: &capsem_assets::asset_manager::ManifestV2,
     selected_binary: &str,
 ) -> Result<()> {
     if manifest.binaries.current != selected_binary {
@@ -684,7 +684,7 @@ fn validate_v2_update_pairing(
     let resolved = manifest
         .resolve(
             selected_binary,
-            capsem_core::asset_manager::host_manifest_arch(),
+            capsem_assets::asset_manager::host_manifest_arch(),
             Path::new("."),
         )
         .with_context(|| {
@@ -799,9 +799,9 @@ async fn stage_profile_candidate(
     let document: serde_json::Value =
         serde_json::from_str(body).with_context(|| format!("parse manifest JSON from {source}"))?;
     if document.get("format").is_none() && document.get("profiles").is_some() {
-        let arch = capsem_core::asset_manager::host_manifest_arch();
+        let arch = capsem_assets::asset_manager::host_manifest_arch();
         let graph = manifest_from_release_channel_profile_graph(body, arch)?;
-        capsem_core::asset_manager::ManifestV2::from_json(body)
+        capsem_assets::asset_manager::ManifestV2::from_json(body)
             .context("validate release graph through the runtime manifest parser")?;
         hydrate_release_channel_profile_assets(
             &stage_root.join("assets"),
@@ -819,7 +819,7 @@ async fn stage_profile_candidate(
         return Ok(());
     }
 
-    capsem_core::asset_manager::ManifestV2::from_json(body)
+    capsem_assets::asset_manager::ManifestV2::from_json(body)
         .with_context(|| format!("parse format 2 manifest from {source}"))?;
     let assets_dir = stage_root.join("assets");
     std::fs::create_dir_all(&assets_dir)
@@ -1157,7 +1157,7 @@ fn now_secs() -> u64 {
 }
 
 fn manifest_metadata_path() -> Option<PathBuf> {
-    capsem_core::asset_manager::default_assets_dir()
+    capsem_assets::asset_manager::default_assets_dir()
         .map(|assets_dir| assets_dir.join("manifest-metadata.json"))
 }
 
@@ -1778,15 +1778,15 @@ fn local_current_asset_version() -> Option<String> {
     if let Some(state) = local_release_graph_profile_state() {
         return Some(state.images_revision);
     }
-    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
+    let assets_dir = capsem_assets::asset_manager::default_assets_dir()?;
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(manifest_path).ok()?;
-    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes).ok()?;
+    let manifest = capsem_assets::asset_manager::ManifestV2::from_json(&manifest_bytes).ok()?;
     Some(manifest.assets.current)
 }
 
 fn local_current_binary_version() -> String {
-    let package_version = capsem_core::asset_manager::default_assets_dir()
+    let package_version = capsem_assets::asset_manager::default_assets_dir()
         .and_then(|assets_dir| std::fs::read(assets_dir.join("manifest-metadata.json")).ok())
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .and_then(|origin| {
@@ -1807,11 +1807,11 @@ fn local_current_profile_catalog_revision() -> Option<String> {
 }
 
 fn local_release_graph_profile_state(
-) -> Option<capsem_core::asset_manager::ReleaseGraphProfileState> {
-    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
+) -> Option<capsem_assets::asset_manager::ReleaseGraphProfileState> {
+    let assets_dir = capsem_assets::asset_manager::default_assets_dir()?;
     let manifest = std::fs::read(assets_dir.join("manifest.json")).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&manifest).ok()?;
-    capsem_core::asset_manager::release_graph_profile_state(&value).ok()
+    capsem_assets::asset_manager::release_graph_profile_state(&value).ok()
 }
 
 fn profile_catalog_revision(
@@ -1872,7 +1872,7 @@ fn update_target_blocked_reason(
 
 #[allow(clippy::too_many_arguments)]
 fn update_check_from_release_manifest(
-    manifest: &capsem_core::asset_manager::ManifestV2,
+    manifest: &capsem_assets::asset_manager::ManifestV2,
     checked_at: u64,
     current_binary: &str,
     current_assets: Option<&str>,
@@ -2043,12 +2043,12 @@ fn graph_current_binary_version(packages: &[ReleaseGraphPackage]) -> Result<Opti
 
 fn release_graph_profile_state(
     manifest: &ReleaseGraphManifest,
-) -> Result<Option<capsem_core::asset_manager::ReleaseGraphProfileState>> {
+) -> Result<Option<capsem_assets::asset_manager::ReleaseGraphProfileState>> {
     if manifest.profiles.is_empty() {
         return Ok(None);
     }
     let value = serde_json::json!({"profiles": &manifest.profiles});
-    capsem_core::asset_manager::release_graph_profile_state(&value).map(Some)
+    capsem_assets::asset_manager::release_graph_profile_state(&value).map(Some)
 }
 
 fn graph_binary_installer_for_layout(
@@ -2129,8 +2129,8 @@ fn graph_package_url(source: &str, raw: &str) -> Result<String> {
 }
 
 fn binary_release_files_from_manifest(
-    manifest: &capsem_core::asset_manager::ManifestV2,
-    release: Option<&capsem_core::asset_manager::BinaryRelease>,
+    manifest: &capsem_assets::asset_manager::ManifestV2,
+    release: Option<&capsem_assets::asset_manager::BinaryRelease>,
     source: &str,
 ) -> Result<Vec<ReleaseChannelBinaryFile>> {
     let Some(release) = release else {
@@ -2153,7 +2153,7 @@ fn binary_release_files_from_manifest(
 }
 
 fn manifest_binary_file_url(
-    manifest: &capsem_core::asset_manager::ManifestV2,
+    manifest: &capsem_assets::asset_manager::ManifestV2,
     source: &str,
     name: &str,
 ) -> Result<String> {
@@ -2421,7 +2421,7 @@ async fn fetch_selected_channel_update_check(
         .await
         .with_context(|| format!("read release manifest from {}", selection.url))?;
     if let Err(error) = verify_selected_channel_manifest(selection, &body) {
-        let current = capsem_core::asset_manager::default_assets_dir()
+        let current = capsem_assets::asset_manager::default_assets_dir()
             .map(|path| installed_asset_audit_state(&path))
             .unwrap_or(serde_json::Value::Null);
         append_update_audit(serde_json::json!({
@@ -2465,7 +2465,7 @@ fn update_check_from_release_payload(
             if !graph.profiles.is_empty() {
                 let text = std::str::from_utf8(body)
                     .context("release graph manifest is not valid UTF-8")?;
-                capsem_core::asset_manager::ManifestV2::from_json(text)
+                capsem_assets::asset_manager::ManifestV2::from_json(text)
                     .context("validate release graph through the runtime manifest parser")?;
             }
             return update_check_from_release_graph_manifest(
@@ -2480,7 +2480,7 @@ fn update_check_from_release_payload(
             );
         }
     }
-    let manifest: capsem_core::asset_manager::ManifestV2 = serde_json::from_slice(body)
+    let manifest: capsem_assets::asset_manager::ManifestV2 = serde_json::from_slice(body)
         .with_context(|| format!("parse release manifest from {manifest_url}"))?;
     update_check_from_release_manifest(
         &manifest,
@@ -2508,7 +2508,7 @@ fn binary_installer_from_release_payload(
             ));
         }
     }
-    let manifest: capsem_core::asset_manager::ManifestV2 = serde_json::from_slice(body)
+    let manifest: capsem_assets::asset_manager::ManifestV2 = serde_json::from_slice(body)
         .with_context(|| format!("parse release manifest from {manifest_url}"))?;
     let release = manifest.binaries.releases.get(&manifest.binaries.current);
     let files = binary_release_files_from_manifest(&manifest, release, manifest_url)?;
@@ -2789,12 +2789,12 @@ pub async fn run_update(
     }
 
     let requested_transition = if let Some(channel) = channel {
-        let assets_dir = capsem_core::asset_manager::default_assets_dir()
+        let assets_dir = capsem_assets::asset_manager::default_assets_dir()
             .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
         channel_transition_for_request(&assets_dir, Some(channel), None)?
     } else {
         if let Some(input) = explicit_manifest.as_ref() {
-            let assets_dir = capsem_core::asset_manager::default_assets_dir()
+            let assets_dir = capsem_assets::asset_manager::default_assets_dir()
                 .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
             channel_transition_for_request(&assets_dir, None, Some(input.source))?;
         }
@@ -2859,7 +2859,7 @@ pub async fn run_update(
         .as_deref()
         .context("verified update is missing its manifest source")?;
     let candidate_manifest_sha256 = sha256_hex(&manifest_bytes);
-    let candidate_assets_dir = capsem_core::asset_manager::default_assets_dir()
+    let candidate_assets_dir = capsem_assets::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
     let candidate_previous_state = installed_asset_audit_state(&candidate_assets_dir);
     let staged_update = if yes {
@@ -3063,7 +3063,7 @@ pub async fn run_update(
     if yes {
         if let Some(staged) = staged_update.as_ref() {
             let capsem_home = crate::paths::capsem_home()?;
-            let installed_assets = capsem_core::asset_manager::default_assets_dir()
+            let installed_assets = capsem_assets::asset_manager::default_assets_dir()
                 .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
             if let Err(error) = activate_staged_update_with_asset_audit(
                 &capsem_home,
@@ -3455,7 +3455,7 @@ async fn refresh_assets(
     selected_channel: Option<&ResolvedReleaseChannelManifest>,
     selected_payload: Option<&[u8]>,
 ) -> Result<()> {
-    let assets_dir = capsem_core::asset_manager::default_assets_dir()
+    let assets_dir = capsem_assets::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
     let refresh_source = if let Some(input) = explicit_manifest {
         Some(input.source.to_string())
@@ -3837,7 +3837,7 @@ async fn hydrate_assets_for_binary(assets_dir: &Path, binary_version: &str) -> R
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
+    let manifest = capsem_assets::asset_manager::ManifestV2::from_json(&manifest_bytes)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
 
     let arch = if cfg!(target_arch = "aarch64") {
@@ -3849,7 +3849,7 @@ async fn hydrate_assets_for_binary(assets_dir: &Path, binary_version: &str) -> R
     println!("Refreshing VM assets into {}...", assets_dir.display());
     if let Some(local_source) = local_manifest_asset_source(assets_dir)? {
         println!("Using local asset source {}...", local_source.display());
-        let copied = capsem_core::asset_manager::copy_missing_local_assets(
+        let copied = capsem_assets::asset_manager::copy_missing_local_assets(
             &manifest,
             binary_version,
             arch,
@@ -3872,7 +3872,7 @@ async fn hydrate_assets_for_binary(assets_dir: &Path, binary_version: &str) -> R
         return Ok(());
     }
 
-    let downloaded = capsem_core::asset_manager::download_missing_assets(
+    let downloaded = capsem_assets::asset_manager::download_missing_assets(
         &manifest,
         binary_version,
         arch,
@@ -3939,7 +3939,7 @@ fn manifest_from_release_channel_profile_graph(
 
     let mut primary: Option<(
         String,
-        HashMap<String, capsem_core::asset_manager::AssetEntry>,
+        HashMap<String, capsem_assets::asset_manager::AssetEntry>,
     )> = None;
     let mut downloads = Vec::new();
     let mut profile_config_downloads = Vec::new();
@@ -4031,15 +4031,15 @@ fn manifest_from_release_channel_profile_graph(
         anyhow::bail!("release channel profile manifest contains no complete {arch} image set");
     };
     let binary_version = env!("CARGO_PKG_VERSION").to_string();
-    let manifest = capsem_core::asset_manager::ManifestV2 {
+    let manifest = capsem_assets::asset_manager::ManifestV2 {
         format: 2,
         refresh_policy: "24h".to_string(),
         asset_base: None,
-        assets: capsem_core::asset_manager::AssetsSection {
+        assets: capsem_assets::asset_manager::AssetsSection {
             current: asset_version.clone(),
             releases: HashMap::from([(
                 asset_version.clone(),
-                capsem_core::asset_manager::AssetRelease {
+                capsem_assets::asset_manager::AssetRelease {
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
@@ -4048,11 +4048,11 @@ fn manifest_from_release_channel_profile_graph(
                 },
             )]),
         },
-        binaries: capsem_core::asset_manager::BinariesSection {
+        binaries: capsem_assets::asset_manager::BinariesSection {
             current: binary_version.clone(),
             releases: HashMap::from([(
                 binary_version.clone(),
-                capsem_core::asset_manager::BinaryRelease {
+                capsem_assets::asset_manager::BinaryRelease {
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
@@ -4064,7 +4064,7 @@ fn manifest_from_release_channel_profile_graph(
         },
     };
     let json = serde_json::to_string(&manifest).context("serialize converted asset manifest")?;
-    capsem_core::asset_manager::ManifestV2::from_json(&json)
+    capsem_assets::asset_manager::ManifestV2::from_json(&json)
         .context("validate converted asset manifest")?;
     Ok(ReleaseChannelProfileGraphInputs {
         asset_downloads: dedupe_release_channel_downloads(downloads),
@@ -4078,7 +4078,7 @@ fn profile_assets_from_release_channel_images(
     revision: &str,
     arch: &str,
     artifacts: &[ReleaseChannelProfileImage],
-) -> Result<HashMap<String, capsem_core::asset_manager::AssetEntry>> {
+) -> Result<HashMap<String, capsem_assets::asset_manager::AssetEntry>> {
     let mut assets = HashMap::new();
     for artifact in artifacts {
         if release_channel_status_is_revoked(&artifact.status) {
@@ -4096,7 +4096,7 @@ fn profile_assets_from_release_channel_images(
         validate_release_channel_digest(&artifact.digest)?;
         assets.insert(
             logical_name.to_string(),
-            capsem_core::asset_manager::AssetEntry {
+            capsem_assets::asset_manager::AssetEntry {
                 hash: artifact.digest.blake3.clone(),
                 sha256: artifact.digest.sha256.clone(),
                 size: artifact.size,
@@ -4159,9 +4159,9 @@ async fn install_release_channel_profile_manifest(
     body: &str,
     metadata_policy: ManifestMetadataPolicy,
 ) -> Result<()> {
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let graph = manifest_from_release_channel_profile_graph(body, arch)?;
-    capsem_core::asset_manager::ManifestV2::from_json(body)
+    capsem_assets::asset_manager::ManifestV2::from_json(body)
         .context("validate release graph through the runtime manifest parser")?;
     hydrate_release_channel_profile_assets(assets_dir, source, &graph.asset_downloads).await?;
     hydrate_release_channel_profile_configs(source, &graph.config_downloads, &graph.runtime_pins)
@@ -4405,7 +4405,7 @@ async fn hydrate_release_channel_profile_assets(
     if downloads.is_empty() {
         anyhow::bail!("release channel profile manifest contains no image artifacts");
     }
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let arch_dir = assets_dir.join(arch);
     std::fs::create_dir_all(&arch_dir).with_context(|| format!("create {}", arch_dir.display()))?;
 
@@ -4421,7 +4421,7 @@ async fn download_release_channel_profile_asset(
     download: &ReleaseChannelAssetDownload,
 ) -> Result<()> {
     validate_blake3_hex("profile image blake3", &download.blake3)?;
-    let target = arch_dir.join(capsem_core::asset_manager::hash_filename(
+    let target = arch_dir.join(capsem_assets::asset_manager::hash_filename(
         &download.logical_name,
         &download.blake3,
     ));
@@ -4628,7 +4628,7 @@ async fn install_manifest_bytes(
             .with_context(|| format!("install release channel profile graph from {source}"))?;
         return Ok(());
     }
-    capsem_core::asset_manager::ManifestV2::from_json(body)
+    capsem_assets::asset_manager::ManifestV2::from_json(body)
         .with_context(|| format!("parse format 2 manifest from {source}"))?;
 
     std::fs::create_dir_all(assets_dir)
