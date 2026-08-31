@@ -591,7 +591,7 @@ identity_inputs = [
     "web/app/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/docker/swap-dev-libs.sh",
-    "build_system/scripts/build/materialize-package-ort.py",
+    "build_system/builder/image/tools/build/materialize_package_ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
 # BuildKit and containers have different network vocabularies. `default` is

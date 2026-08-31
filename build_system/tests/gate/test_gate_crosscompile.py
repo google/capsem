@@ -456,6 +456,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
     normalized_dockerfile = " ".join(dockerfile.replace("\\\n", " ").split())
     script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
+    materializer = "build_system/builder/image/tools/build/materialize_package_ort.py"
 
     assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
     assert 'grep -F "${selected}-"' in dockerfile
@@ -470,7 +471,9 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "web/app/pnpm-workspace.yaml" in dockerfile
     assert "ORT_STRATEGY=system" in dockerfile
     assert "ORT_LIB_LOCATION" in dockerfile
-    assert "materialize-package-ort.py" in dockerfile
+    assert f"COPY {materializer} /usr/local/bin/materialize-package-ort.py" in dockerfile
+    assert materializer in builder.identity_inputs
+    assert "build_system/scripts/build/materialize-package-ort.py" not in builder.identity_inputs
     assert "cargo build" not in dockerfile
     assert "COPY --from=dependency-fetch /cargo-target" not in dockerfile
     assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile

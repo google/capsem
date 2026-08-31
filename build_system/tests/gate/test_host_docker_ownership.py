@@ -83,5 +83,9 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     host = (OWNER / "Dockerfile.host-builder").read_text(encoding="utf-8")
     assert "COPY --chmod=555 build_system/docker/materialize-install-os.sh" in install
     assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh" in package
+    assert (
+        "COPY build_system/builder/image/tools/build/materialize_package_ort.py "
+        "/usr/local/bin/materialize-package-ort.py"
+    ) in package
     assert "COPY sources-multiarch.sh /tmp/" in host
     assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
