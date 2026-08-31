@@ -411,7 +411,9 @@ impl GuestMemory {
     /// The caller must ensure the offset + len is within bounds and the
     /// returned pointer is not used after the GuestMemory is dropped.
     pub unsafe fn host_ptr(&self, offset: u64) -> *mut u8 {
-        self.ptr.add(offset as usize)
+        // SAFETY: The caller owns the offset-in-bounds obligation documented
+        // above; this block keeps that obligation visible at the operation.
+        unsafe { self.ptr.add(offset as usize) }
     }
 
     /// Clone a reference to this guest memory (for passing to virtio devices).

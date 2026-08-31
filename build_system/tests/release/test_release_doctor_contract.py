@@ -60,7 +60,7 @@ REQUIRED_PR_GATE_JOBS = frozenset(
 # unmonitored crates to the measurement lowered the percentage without
 # removing a single test, and the floor followed the measurement rather than
 # tests being written to flatter it.
-RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 63"
+RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 64"
 FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
 OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
@@ -1953,7 +1953,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
 
 def test_clean_build_pins_sse_stream_api() -> None:
     workspace = _source_text("Cargo.toml")
-    server_manager = _source_text("crates/capsem-core/src/mcp/server_manager.rs")
+    server_manager = _source_text("crates/capsem-mcp-aggregator/src/server_manager.rs")
 
     assert 'sse-stream = "=0.2.4"' in workspace
     assert "SseStream::from_bytes_stream" in server_manager
@@ -4748,6 +4748,7 @@ def test_settings_generator_uses_current_config_authority() -> None:
 def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     runtime_files = [
         PROJECT_ROOT / "crates" / "capsem-core" / "src" / "credential_broker.rs",
+        PROJECT_ROOT / "crates" / "capsem-credentials" / "src" / "durable.rs",
         PROJECT_ROOT / "crates" / "capsem" / "src" / "service_install.rs",
         PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs",
         PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs",
@@ -4774,9 +4775,9 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
         for needle in forbidden:
             assert needle not in source, f"{path} must not call native Keychain storage"
 
-    broker = runtime_files[0].read_text()
-    assert "CAPSEM_CREDENTIAL_STORE_PATH" in broker
-    assert "default_credential_store_path()" in broker
+    durable_store = runtime_files[1].read_text()
+    assert "CAPSEM_CREDENTIAL_STORE_PATH" in durable_store
+    assert "default_store_path" in durable_store
 
 
 def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
@@ -4898,7 +4899,7 @@ def test_helper_version_surfaces_support_installed_update_smoke() -> None:
 
     for path, struct_name in [
         ("crates/capsem-admin/src/main.rs", "Cli"),
-        ("crates/capsem-mcp-aggregator/src/main.rs", "Args"),
+        ("crates/capsem-mcp-aggregator/src/runtime.rs", "Args"),
         ("crates/capsem-gateway/src/main.rs", "Args"),
         ("crates/capsem-tray/src/main.rs", "Args"),
     ]:
@@ -4923,7 +4924,10 @@ def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -
     """
 
     app_manifest = (PROJECT_ROOT / "crates" / "capsem-app" / "Cargo.toml").read_text()
-    app_source = (PROJECT_ROOT / "crates" / "capsem-app" / "src" / "main.rs").read_text()
+    app_source = "\n".join(
+        (PROJECT_ROOT / "crates" / "capsem-app" / "src" / source).read_text()
+        for source in ("main.rs", "lib.rs")
+    )
     tauri_conf = (PROJECT_ROOT / "crates" / "capsem-app" / "tauri.conf.json").read_text()
     capabilities = (
         PROJECT_ROOT / "crates" / "capsem-app" / "capabilities" / "default.json"
