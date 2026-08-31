@@ -25,7 +25,7 @@ allowlist update in the same change.
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
-| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. `release-system` is source-only and needs no package or install. |
+| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: `assets`, `binaries`, `benchmark`, `functional`, `install`, `release-system`, or affected `rust`. `release-system` is source-only; `rust` derives changed crates and reverse dependents from Cargo manifests. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
 | `just test [source-commit]` | Reusable complete local verification; optional before release. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |

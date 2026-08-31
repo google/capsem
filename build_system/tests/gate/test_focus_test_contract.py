@@ -61,6 +61,22 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     assert "rehearsal.cohort" not in plan
 
 
+def test_rust_focus_uses_the_configured_affected_selector() -> None:
+    assert focus.TARGETS["rust"] is focus.RustAffectedCommand
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("rust"),
+        qualification=LocalQualification(bin_dir="target/debug"),
+    )
+
+    rendered = command.plan().describe()
+    assert command.private_checkout is False
+    assert command.exclusive is True
+    assert "rust.affected" in rendered
+    assert command._config.devloop.rust_affected in rendered
+    assert "capsem-gate" not in rendered
+
+
 def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> None:
     command = focus.FocusTestCommand(
         RecordingRunner(ROOT),
@@ -91,3 +107,10 @@ def test_the_public_recipe_passes_only_the_group_and_reuse_mode() -> None:
     recipe = (ROOT / "justfile").read_text(encoding="utf-8")
     assert f'{variables.FOCUS_TEST} group mode="reuse":' in recipe
     assert f"capsem-gate {variables.FOCUS_TEST}" in recipe
+
+
+def test_the_just_skill_lists_every_focus_owner() -> None:
+    guide = (ROOT / "skills/dev-just/SKILL.md").read_text(encoding="utf-8")
+    row = next(line for line in guide.splitlines() if "just focus-test <group>" in line)
+    for group in focus.TARGETS:
+        assert f"`{group}`" in row, f"focus owner {group!r} is missing from /dev-just"

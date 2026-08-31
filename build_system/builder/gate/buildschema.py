@@ -290,6 +290,7 @@ class DevLoopConfig(Strict):
     frontend_dir: str
     tui: tuple[str, ...]
     surfaces: tuple[str, ...]
+    rust_affected: str
     generate_settings: str
     generated_settings_scratch: str
     check_settings: str

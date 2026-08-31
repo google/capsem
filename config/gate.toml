@@ -1421,6 +1421,7 @@ frontend_dev = ["pnpm", "run", "dev"]
 frontend_dir = "web/app"
 tui = ["cargo", "run", "-p", "capsem-tui"]
 surfaces = ["ui", "frontend", "tui"]
+rust_affected = "build_system/scripts/test/rust-affected.py"
 generate_settings = "build_system/scripts/build/generate-settings.sh"
 # Where this step's *tracked* outputs go: build output, not the checkout. The
 # step exists to make the gitignored frontend mock, which the web surfaces

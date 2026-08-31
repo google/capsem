@@ -32,7 +32,7 @@ let five through; the rule is now a whitelist for that reason.
 | Command | What | VM? |
 |---------|------|-----|
 | `just fast-test` | Incomplete source feedback only | No |
-| `just focus-test <group>` | One existing functional owner, with reusable products | Depends on group |
+| `just focus-test <group>` | One existing owner; `rust` selects changed crates and reverse dependents | Depends on group |
 | `just install` | Complete local macOS package build and native install for hands-on testing | Yes |
 | `just test` | Reusable complete local verification | Yes |
 
