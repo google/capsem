@@ -40,6 +40,10 @@
 ## Config
 
 - `config/settings/ui-metadata.toml` -- settings UI metadata (embedded at compile time)
+- `crates/capsem-config/src/` -- config types, validation, provider/MCP identity, and resolution
+- `crates/capsem-credentials/src/` -- provider contracts and durable credential storage
+- `crates/capsem-assets/src/asset_manager.rs` -- asset resolution, download, and verification
+- `crates/capsem-assets/src/manifest_compat.rs` -- manifest compatibility contract
 - `crates/capsem-core/resources/ca/capsem-ca.key` + `crates/capsem-core/resources/ca/capsem-ca.crt` -- static MITM CA keypair (ECDSA P-256)
 
 ## Frontend
@@ -52,4 +56,14 @@
 
 ## MCP
 
-- `crates/capsem-core/src/mcp/file_tools.rs` -- MCP built-in tools: list_changed_files, revert_file
+- `crates/capsem-mcp/src/` -- host MCP server and service-facing tool handlers
+- `crates/capsem-mcp-aggregator/src/` -- external-server lifecycle and transport
+- `crates/capsem-mcp-builtin/src/main.rs` -- built-in HTTP and file/snapshot tools
+- `crates/capsem-core/src/mcp/` -- VM/session-side MCP runtime integration
+
+## Shared host plumbing
+
+- `crates/capsem-foundation/src/paths.rs` -- canonical host paths and test redirection
+- `crates/capsem-foundation/src/uds.rs` -- HTTP over Unix-domain sockets
+- `crates/capsem-foundation/src/poll.rs` -- bounded asynchronous polling
+- `crates/capsem-proto/src/` -- shared wire types and framing contracts

@@ -6,16 +6,35 @@ boundaries, or changing MITM CA-key handling.
 
 ## Crate architecture
 
-- **`capsem-core`**: all shared logic (VM, network, policy, telemetry, config). This is where business logic lives.
-- **`capsem-service`**: daemon process. Axum HTTP server over UDS, spawns/manages capsem-process children, routes API calls via IPC.
-- **`capsem-process`**: per-VM process. Boots VM via capsem-core, bridges vsock, manages structured jobs (exec, file I/O) with a job store + oneshot channels.
-- **`capsem`**: CLI client. HTTP over UDS to service, direct UDS to process for shell.
-- **`capsem-mcp`**: MCP server (stdio). Uses `rmcp` crate. Bridges AI agent tool calls to service HTTP API.
-- **`capsem-gateway`**: TCP-to-UDS HTTP reverse proxy. Axum server on port 19222, Bearer token auth, CORS. Provides an explicit route table, `/status` (cached), and `/terminal/{id}` (WebSocket relay). Unknown routes return 404; frontend and tray connect through this.
-- **`capsem-app`**: thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). No capsem-core dependency. 2 IPC commands: `open_url`, `check_for_app_update`.
-- **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (guest suspend helper; in-VM shutdown disabled), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (guest MCP relay).
-- **`capsem-logger`**: session DB schema, queries, async writer.
-- **`capsem-proto`**: shared protocol types. `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost).
+Reusable code belongs to the lowest-dependency crate that owns its domain.
+Sharing alone is not a reason to put code in `capsem-core`.
+
+- **`capsem-foundation`**: dependency-light host primitives: paths, UDS HTTP,
+  polling, telemetry/log setup, and IPC handshakes.
+- **`capsem-assets`**: asset manifests, compatibility, download, resolution,
+  and verification.
+- **`capsem-config`**: config types, parsing, validation, resolution, and
+  provider/MCP identity.
+- **`capsem-credentials`**: credential provider contracts and durable store.
+- **`capsem-proto`**: shared host/guest and service/process wire contracts.
+- **`capsem-core`**: VM, hypervisor, security-engine, host-network, MCP runtime,
+  and session/image domain logic.
+- **`capsem-logger`**: session DB schema, queries, storage, and async writer.
+- **`capsem-guard`**: parent-watch and singleton-flock lifecycle primitives.
+- **`capsem-service`**: daemon HTTP/UDS API and VM-process orchestration.
+- **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime.
+- **`capsem`**: CLI client; HTTP/UDS to the service and direct process UDS for shell.
+- **`capsem-tui`**: terminal control UI over the gateway API.
+- **`capsem-admin`**: profile/asset/release validation and materialization.
+- **`capsem-mcp`**: host MCP server bridging AI-agent tools to the service API.
+- **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
+- **`capsem-mcp-builtin`**: built-in HTTP and file/snapshot MCP tools.
+- **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.
+- **`capsem-app`**: thin Tauri webview shell pointing at the gateway.
+- **`capsem-tray`**: system tray status and quick actions through the gateway.
+- **`capsem-agent`**: musl guest PTY, network, DNS, MCP, and sysutil binaries.
+- **`capsem-bench`**: host/guest benchmark harness and collectors.
+- **`capsem-mock-server`**: hermetic HTTP/TLS/WebSocket test upstream.
 
 ## Process privilege model
 

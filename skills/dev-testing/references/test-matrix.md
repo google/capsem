@@ -6,19 +6,34 @@ Reference for /dev-testing: per-crate Rust CI matrix and the Python integration 
 
 ### Rust crate CI matrix
 
-| Crate | Tests | CI macOS | CI Linux | Smoke | Full |
-|-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Compile/no-run + non-live-KVM | No | Yes |
-| capsem-agent | ~71 | Yes | Compile/no-run | No | Yes |
-| capsem-logger | ~47 | Yes | Compile/no-run | No | Yes |
-| capsem-proto | ~132 | Yes | Compile/no-run | No | Yes |
-| capsem-gateway | ~38 | Yes | Compile/no-run | No | Yes |
-| capsem-service | ~109 | Yes | Compile/no-run | No | Yes |
-| capsem (CLI) | ~140 | Yes | Compile/no-run | No | Yes |
-| capsem-mcp | ~67 | Yes | Compile/no-run | No | Yes |
-| capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | Compile/no-run | No | Yes |
-| capsem-app | ~35 | Check | No | No | Yes |
+Test counts are deliberately not copied here: the workspace runner and LCOV
+artifact are the live inventory. Every Cargo workspace member must appear in
+this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
+
+| Crate | Role | CI macOS | CI Linux | Fast source | Full |
+|-------|------|:--------:|:--------:|:-----------:|:----:|
+| `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-config` | Config contracts | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-credentials` | Credential contracts/store | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-proto` | Wire contracts | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-core` | VM/security/network runtime | Yes | Compile/no-run + non-live-KVM | Clippy | Yes |
+| `capsem-logger` | Session database | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-guard` | Companion lifecycle | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-service` | Daemon API/orchestration | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-process` | Per-VM runtime | Yes | Compile/no-run | Clippy | Yes |
+| `capsem` | CLI | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-admin` | Profile/asset/release administration | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-mcp` | Host MCP server | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-mcp-builtin` | Built-in MCP tools | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-gateway` | Authenticated HTTP gateway | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-app` | Tauri shell | Check | No | Clippy | Yes |
+| `capsem-tray` | System tray | Yes | No | Clippy | Yes |
+| `capsem-agent` | Guest binaries | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-bench` | Benchmark harness | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-mock-server` | Hermetic test upstream | Yes | Compile/no-run | Clippy | Yes |
 
 ### Python integration suite tier map
 

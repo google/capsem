@@ -34,7 +34,11 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ## Project Layout
 
 ```
-crates/capsem-core/            VM library (config, boot, serial, vsock, machine)
+crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
+crates/capsem-config/          Product config types, parsing, validation, and provider/MCP identity
+crates/capsem-credentials/     Credential provider contracts and durable credential store
+crates/capsem-core/            VM, hypervisor, security engine, and host network runtime
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
 crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)

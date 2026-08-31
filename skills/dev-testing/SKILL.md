@@ -471,7 +471,7 @@ gate).
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 63% | `--fail-under-lines 63` | CI (`cargo llvm-cov`), `just test` |
+| Rust workspace | Config-owned | `config/gate.toml` `rust_coverage_floor` | CI (`cargo llvm-cov`), `just test` |
 | Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
 | Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
@@ -481,7 +481,8 @@ gate).
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 63% line coverage)
+- Rust: `cargo llvm-cov` via `just test`; the line floor is owned only by
+  `config/gate.toml` `rust_coverage_floor`.
 - Python: ordinary CI and the full `just test` suite both enforce 85%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
@@ -571,7 +572,10 @@ the culprit in two runs instead of guessing.
 
 ### Thresholds belong in one place
 
-A number copied next to a rule drifts from it silently. Three separate gate failures in one session traced to this: a coverage floor asserted as `65` after it moved to `63`, a guest kernel check demanding `major >= 7` after the pin moved to `6.18`, and a Docker fixture simulating `30 GiB free` as "plenty" after the floor rose to `40`.
+A number copied next to a rule drifts from it silently. Three separate gate
+failures in one session traced to this: a coverage floor copied into a test, a
+guest kernel major copied beside its pin, and a Docker fixture hardcoding
+"plenty" of free space independently from the configured minimum.
 
 Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
 
@@ -597,4 +601,7 @@ something already listed. `/dev-gate` has why each wrong shape was tried.
 
 ## Testable design
 
-Extract logic into `capsem-core` -- never embed business logic in the app layer where it's coupled to Tauri. If you can't test something without booting a VM or launching the GUI, it belongs in core.
+Extract logic from presentation and process entrypoints into the
+lowest-dependency crate that owns its domain. If logic cannot be tested without
+booting a VM or launching the GUI, first separate the pure decision from its
+runtime adapter; do not default unrelated shared code into `capsem-core`.
