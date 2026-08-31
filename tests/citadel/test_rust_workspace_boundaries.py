@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -171,7 +171,7 @@ def test_dependency_guard_detects_normal_target_and_renamed_dependencies() -> No
 )
 def test_source_shape_guards_notice_a_regression(source: str, checker) -> None:
     if checker is _thin_source_violations:
-        sources = {path: "" for path in THIN_SOURCE_LIMITS}
+        sources = dict.fromkeys(THIN_SOURCE_LIMITS, "")
         sources["crates/capsem-app/src/main.rs"] = source
         assert checker(sources) == {"crates/capsem-app/src/main.rs": (31, 30)}
     else:

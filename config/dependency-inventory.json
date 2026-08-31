@@ -732,7 +732,9 @@
    "anyhow",
    "blake3",
    "bytes",
+   "capsem-assets",
    "capsem-core",
+   "capsem-foundation",
    "capsem-proto",
    "clap",
    "clap_complete",
@@ -764,6 +766,7 @@
   "dependencies": [
    "anyhow",
    "blake3",
+   "capsem-assets",
    "capsem-core",
    "clap",
    "flate2",
@@ -810,6 +813,21 @@
    "tracing-subscriber"
   ]
  },
+ "capsem-assets": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "blake3",
+   "capsem-foundation",
+   "futures",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tracing"
+  ]
+ },
  "capsem-bench": {
   "build_script": false,
   "dependencies": [
@@ -824,6 +842,18 @@
    "tokio"
   ]
  },
+ "capsem-config": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-proto",
+   "regex",
+   "serde",
+   "serde_json",
+   "serde_yaml",
+   "toml",
+   "tracing"
+  ]
+ },
  "capsem-core": {
   "build_script": false,
   "dependencies": [
@@ -833,6 +863,10 @@
    "blake3",
    "block2",
    "bytes",
+   "capsem-assets",
+   "capsem-config",
+   "capsem-credentials",
+   "capsem-foundation",
    "capsem-logger",
    "capsem-proto",
    "core-foundation-sys",
@@ -890,13 +924,40 @@
    "webpki-roots"
   ]
  },
+ "capsem-credentials": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-foundation",
+   "capsem-proto",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tracing"
+  ]
+ },
+ "capsem-foundation": {
+  "build_script": false,
+  "dependencies": [
+   "blake3",
+   "capsem-proto",
+   "libc",
+   "rmp-serde",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "tracing-appender",
+   "tracing-subscriber"
+  ]
+ },
  "capsem-gateway": {
   "build_script": false,
   "dependencies": [
    "anyhow",
    "axum",
    "bytes",
-   "capsem-core",
+   "capsem-foundation",
    "capsem-guard",
    "clap",
    "futures",
@@ -931,6 +992,8 @@
   "dependencies": [
    "anyhow",
    "blake3",
+   "capsem-foundation",
+   "capsem-proto",
    "criterion",
    "humantime",
    "memmap2",
@@ -951,7 +1014,7 @@
    "anyhow",
    "async-trait",
    "bytes",
-   "capsem-core",
+   "capsem-foundation",
    "capsem-logger",
    "capsem-proto",
    "futures",
@@ -973,14 +1036,23 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "capsem-core",
+   "axum",
+   "capsem-credentials",
+   "capsem-foundation",
    "capsem-guard",
+   "capsem-proto",
    "clap",
+   "futures",
+   "http",
    "reqwest",
+   "rmcp",
    "rmp-serde",
    "serde",
    "serde_json",
+   "sse-stream",
+   "tempfile",
    "tokio",
+   "tokio-util",
    "tracing",
    "tracing-subscriber"
   ]
@@ -991,6 +1063,7 @@
    "anyhow",
    "blake3",
    "capsem-core",
+   "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
    "regex",
@@ -1038,7 +1111,9 @@
   "dependencies": [
    "anyhow",
    "axum",
+   "capsem-assets",
    "capsem-core",
+   "capsem-foundation",
    "capsem-logger",
    "capsem-proto",
    "clap",
@@ -1062,11 +1137,13 @@
   "dependencies": [
    "anyhow",
    "bincode",
+   "blake3",
    "rmp-serde",
    "serde",
    "serde_json",
    "tempfile",
-   "thiserror"
+   "thiserror",
+   "tokio"
   ]
  },
  "capsem-service": {
@@ -1076,7 +1153,9 @@
    "axum",
    "base64",
    "blake3",
+   "capsem-assets",
    "capsem-core",
+   "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
    "capsem-proto",
@@ -1109,7 +1188,7 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "capsem-core",
+   "capsem-foundation",
    "capsem-guard",
    "clap",
    "muda",

@@ -79,14 +79,16 @@ def test_package_and_machine_architecture_vocabularies_never_cross() -> None:
 
 
 def test_rust_graph_uses_distinct_typed_architecture_domains() -> None:
-    core = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "asset_manager.rs").read_text()
+    assets = (
+        PROJECT_ROOT / "crates" / "capsem-assets" / "src" / "asset_manager.rs"
+    ).read_text()
     source = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs").read_text()
     main = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs").read_text()
     updater = (PROJECT_ROOT / "crates" / "capsem" / "src" / "update.rs").read_text()
 
-    assert "pub enum PackageArchitecture {" in core
-    assert "Amd64," in core
-    assert "pub use capsem_core::asset_manager::{Architecture, PackageArchitecture};" in source
+    assert "pub enum PackageArchitecture {" in assets
+    assert "Amd64," in assets
+    assert "pub use capsem_assets::asset_manager::{Architecture, PackageArchitecture};" in source
     package_row = source.split("pub struct PackageInventoryRow", maxsplit=1)[1].split(
         "}", maxsplit=1
     )[0]
