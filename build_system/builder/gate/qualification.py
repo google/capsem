@@ -157,7 +157,7 @@ def is_release(
 
     Here rather than at the call site, because the interesting distinction is
     not "did a command parse a qualification" -- `candidate` always does, and a
-    plain `just test-full` parses `LOCAL`. It is whether the artifacts came from a
+    plain `just test` parses `LOCAL`. It is whether the artifacts came from a
     manifest, which is what the two release modes mean and what anything
     offering a shortcut has to refuse.
     """

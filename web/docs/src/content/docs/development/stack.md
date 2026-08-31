@@ -263,7 +263,7 @@ Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need 
 | Python 3.11+ / uv | Runs capsem-builder (image builds, schema generation) |
 | Docker (via Colima on macOS) | Container runtime for kernel + rootfs builds |
 | cargo-nextest | Pinned native Rust test runner |
-| cargo-llvm-cov | Code coverage (`just test-full`) |
+| cargo-llvm-cov | Code coverage (`just test`) |
 | cargo-audit | Dependency vulnerability scanning |
 | cargo-tauri | Tauri CLI for desktop app builds |
 | cargo-sbom | Rust SBOM generation |

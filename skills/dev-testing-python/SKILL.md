@@ -14,7 +14,7 @@ PYTHONPATH=src:tests uv run --project build_system pytest build_system/tests/ima
   --cov=capsem_builder.image --cov-fail-under=85                 # With coverage
 PYTHONPATH=src:tests uv run --project build_system pytest \
   build_system/tests/image/test_validate.py -k "test_E001"      # Single test
-just test-full                                                  # Full suite
+just test                                                  # Full suite
 just _generate-settings                                          # Regenerate settings outputs
 ```
 
@@ -48,7 +48,7 @@ environment edge when `builder/gate/` lands; do not add a compatibility package.
 
 ## Coverage
 
-- Floor: 85% enforced by `--cov-fail-under=85` in `just test-full`
+- Floor: 85% enforced by `--cov-fail-under=85` in `just test`
 - Report: `target/coverage/python/codecov.xml` (XML for CI upload)
 - `codecov.yml`: builder component includes `build_system/builder/**`
 - Current image package: 91.12% (551 tests, measured during the repository move)

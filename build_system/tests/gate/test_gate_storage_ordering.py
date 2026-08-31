@@ -1,6 +1,6 @@
 """Storage a later step still needs may not be reclaimed by an earlier one.
 
-`just test-full` found this the only way it could be found. `install-image` ended by
+`just test` found this the only way it could be found. `install-image` ended by
 releasing the linux-rust builder rail, and 164 milliseconds later
 `cache-ownership` asked Docker to run that exact image and got exit 125 --
 "no such image". The run log's own timeline is what showed it:

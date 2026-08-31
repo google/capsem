@@ -27,7 +27,7 @@ allowlist update in the same change.
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
 | `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. `release-system` is source-only and needs no package or install. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
-| `just test-full [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
+| `just test [source-commit]` | Reusable complete local verification; optional before release. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
 
@@ -66,9 +66,9 @@ locking, teardown, and contract tests see it.
 A plan action must never invoke `just` or another `capsem-gate` command. Compose
 the other command's fragment instead. The machine lock is not reentrant, so a
 nested gate waits for the lock held by its own parent. Likewise, do not split a
-release with an operator-authored receipt. The complete candidate owns one
-process, lock, workspace, plan, and runner journal; release revalidates that
-content-addressed journal before its short publication plan.
+release with an operator-authored receipt. The complete local test owns one
+process, lock, workspace, plan, and runner journal. Release commands do not
+consume it; each hosted lane performs its own release qualification.
 
 Read `/dev-gate` before changing Python orchestration and `/release-process`
 before changing either release plan.
@@ -101,16 +101,16 @@ exchange for no decision made.
   compose a second test graph. `focus-test release-system` aliases the
   source-only release-contract owner; package rehearsal and installed-product
   proof belong to qualification. Neither feedback command is release authority.
-- No generic or combined release recipe. The two approved release commands
-  revalidate exact qualification before delegating to one checked-in
-  implementation, and the two workflows share the per-channel lock.
+- No generic or combined release recipe. Each of the two approved release
+  commands is sufficient by itself and dispatches its self-qualifying hosted
+  lane; the two workflows share the per-channel lock.
 - No dependency-update, fixture-update, audit-only, coverage-only,
   cleanup, session-SQL, or extra package-install convenience recipes. Call the owning
   script/tool directly.
 - No separate UI aliases. Use `just dev <surface>` or `just build`.
 - No public build primitives for kernel, rootfs, Docker images, architectures,
   or package rails.
-- No public continuation recipe. Exact-commit `just test-full` derives a partial
+- No public continuation recipe. Exact-commit `just test` derives a partial
   frontier only from its archived event graph and retained full-SHA prefix;
   working-tree diagnostic continuation is not qualification. Both release
   commands refuse continuation flags.
@@ -123,7 +123,7 @@ branching, reporting, cleanup, or resource ownership.
 
 ## Canonical testing
 
-`just test-full` owns the complete graph:
+`just test` owns the complete graph:
 
 - fail-fast bootstrap and clean install-harness proof;
 - audits, lint, frontend, Rust and Python coverage;
@@ -139,7 +139,7 @@ branching, reporting, cleanup, or resource ownership.
 Release CI calls the checked-in `_test-fast`, `_test-static`,
 `_test-artifacts`, `_test-functional`, `_test-glowup`, and
 `_test-release-contracts` modules. `_test-fast` is also the first phase of
-`just test-full` and `just fast-test`; it owns YAML/source syntax, source contracts,
+`just test` and `just fast-test`; it owns YAML/source syntax, source contracts,
 Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
 audit. Callers must reuse it whole rather than duplicating a subset.
 Binary CI builds packages and pulls profiles; profile CI builds one profile and
@@ -147,7 +147,7 @@ pulls packages. Both retain complete functional and glow-up proof before
 activation. Do not fork or approximate this graph in another public recipe.
 All checked-in automation enters through the same two public release recipes;
 it must not call their scripts or workflows directly.
-Local qualification must not import, unlock, or use Apple Developer
+Local verification must not import, unlock, or use Apple Developer
 certificates. Developer ID package signing, notarization, and stapling belong
 only to the tagged publication workflow.
 

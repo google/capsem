@@ -18,15 +18,15 @@ just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just fast-test     # Incomplete source feedback; prints the next supported rails
 just focus-test functional # Rerun one named functional owner
+source_commit=$(git rev-parse HEAD)
+just test "$source_commit" # Optional complete local proof; exact repeats reuse its journal.
 
 # Optional hands-on local testing; never a release prerequisite
 just install
 
-# Release dispatchers; hosted lanes own exact-package install and qualification
-source_commit=$(git rev-parse HEAD)
+# Release dispatchers are sufficient on their own; hosted lanes self-qualify
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"
-# Exceptional cold full diagnostic only: just test-full "$source_commit"
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.
@@ -189,7 +189,7 @@ python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds <finite
 
 The wrapper closes stdin and owns a process group so timeout or interruption
 cannot leave a Docker client, compiler, test runner, or helper behind. Do not
-use it around `just test-full` or either release command: the gate's config-owned
+use it around `just test` or either release command: the gate's config-owned
 timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
 ## Serialized Orthogonal Releases
@@ -204,10 +204,11 @@ just release-profile <channel> <profile> <source-commit>
 ```
 
 Agents use these entrypoints rather than dispatching release workflows or
-authoring manifests directly. `just test-full <source-commit>` is the
-exceptional local diagnostic and is not publication authority. Direct release
-commands and `just test-full` own their timeouts, journal, teardown, and
-network boundary; do not wrap or nest them.
+authoring manifests directly. Each release command is sufficient on its own:
+its hosted lane performs release qualification, so `just test` is not a
+prerequisite. `just test <source-commit>` is optional reusable complete local
+verification. Direct release commands and `just test` own their timeouts,
+journal, teardown, and network boundary; do not wrap or nest them.
 
 Implementation-specific invariants belong beside their executable tests and in
 the routed release references. If prose here disagrees with `RELEASE.md`, fix
@@ -250,7 +251,7 @@ only inventories Git-tracked program sources under the configured first-party
 roots, so generated outputs and vendored dependencies are outside its scope by
 rule.
 
-`just test-full` is **one process, one machine lock, one workspace, one plan**.
+`just test` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
 checked-in count depend on machine state. It is diagnostic evidence, not a
 prerequisite consumed by either release dispatcher.
@@ -294,9 +295,9 @@ Read `/dev-gate` before changing any of it.
 
 ## Vocabulary and gotchas
 
-- **glowup** = installed-package release proof owned by `just test-full`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
+- **glowup** = installed-package release proof owned by `just test`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test-full` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- `just test` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

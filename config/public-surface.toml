@@ -31,7 +31,7 @@ approved = [
   "replay-release-lane",
   "run-service",
   "shell",
-  "test-full",
+  "test",
   "test-linux-rust",
 ]
 

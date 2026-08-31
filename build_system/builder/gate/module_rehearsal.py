@@ -3,7 +3,7 @@
 `AGENTS.md` says a release lane "does not run a different gate". That was true
 of fifteen of the binary lane's twenty steps and false of the other five, and
 the five were the ones nobody could run: verifying a digest-selected cohort,
-and proving the publishable package against it. `just test-full` filled those slots
+and proving the publishable package against it. `just test` filled those slots
 by *building* instead -- `artifacts.build-chain` where a release verifies, and
 `glowup.install` where a release proves a pulled package.
 
@@ -200,7 +200,7 @@ def rehearsal(
         # The install half owns the machine: it purges the host's `capsem`,
         # deletes `~/.capsem`, and reinstalls from the channel under test. A
         # release runner is disposable and a developer's machine is not, and
-        # `just test-full` already installs the package it built inside the install
+        # `just test` already installs the package it built inside the install
         # container. What is rehearsed here is the assembly the release lane
         # does from a pulled cohort, which is where the defects were.
         skip_install=True,

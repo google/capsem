@@ -110,7 +110,7 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     """Each owns one artifact family, and neither rebuilds the other's.
 
     The recipes dispatch, so this asks the plans. That is the stronger
-    question: a recipe body could stop *containing* `just test-full` while still
+    question: a recipe body could stop *containing* `just test` while still
     running it, and could contain it while running it too late.
     """
     justfile = "\n" + _read("justfile")
@@ -302,7 +302,7 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert "just release-" not in release
 
     # It qualifies nothing, and it builds nothing: it dispatches and waits.
-    assert "just test-full" not in workflow
+    assert "just test" not in workflow
     assert "/dev/kvm" not in workflow
     assert "musl" not in workflow
 
@@ -397,7 +397,7 @@ def test_nightly_scheduler_rejects_ambiguous_or_mutable_inputs(
 def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> None:
     """The runner builds nothing, but it is not therefore setup-free.
 
-    Its sibling above pins what this job must *not* do -- no `just test-full`, no
+    Its sibling above pins what this job must *not* do -- no `just test`, no
     KVM, no musl -- because it dispatches rather than builds. Nothing pinned
     what it must still provide, and a refactor that stripped it down to a
     dispatcher removed a fourth step along with those three. It looked like

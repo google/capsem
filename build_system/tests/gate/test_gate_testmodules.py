@@ -1,4 +1,4 @@
-"""The modules `just test-full` is made of, as graphs rather than regions of a file.
+"""The modules `just test` is made of, as graphs rather than regions of a file.
 
 `_test-candidate-run` selected between six modules with a `CAPSEM_TEST_MODULE`
 environment variable and a `module_enabled` shell function, so a module was the

@@ -58,7 +58,7 @@ That whole class is now mechanized, so it should never cost a CI round-trip
 again: `tests/capsem-release/test_release_test_composition.py` asserts every
 job in `ci.yaml`, `release.yaml`, and `release-assets.yaml` installs the tools
 its own steps invoke, following justfile recipe dependencies transitively. It
-runs in `_test-fast`, so the gap fails locally in seconds. Local `just test-full`
+runs in `_test-fast`, so the gap fails locally in seconds. Local `just test`
 cannot catch provisioning drift any other way -- it runs where `just`, `pnpm`,
 `node`, and `uv` are already on PATH, while CI provisions per job.
 
@@ -71,7 +71,7 @@ not exist". Provision generously; cache only where the store is observed.
 The independently executable `_test-fast` module is the first local and CI
 gate. It owns YAML/workflow and source syntax, source contracts, Clippy,
 Python lint/type checks, JavaScript checks/builds, and the blocking Rust,
-Python, and JavaScript vulnerability audits. `just fast-test`, local `just test-full`,
+Python, and JavaScript vulnerability audits. `just fast-test`, local `just test`,
 ordinary CI, and both release lanes call that exact module; workflows must not
 reimplement or trim it. The scheduled/manual `security-audit.yaml` retains its
 dedicated scanner schedule. A newly published advisory is a real red gate:
@@ -144,7 +144,7 @@ contract move together.
 Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 `/release-process`.
 
-- `just test-full` is the complete local all-artifact proof.
+- `just test` is the complete local all-artifact proof.
 - Binary CI builds packages only, pulls every selected profile, and runs the
   shared complete modules against that resolved pairing.
 - Profile CI builds one channel/profile only, pulls the current package, and

@@ -7,7 +7,7 @@ package that produced 74 identical false failures from a reference the source
 no longer contained; an isolated cache made them vanish without a source
 change.
 
-That is not merely bad local feedback. `just test-full` and both release
+That is not merely bad local feedback. `just test` and both release
 commands begin with `uv run --project build_system --frozen capsem-gate`. The local diagnostic records its
 commit and source digest, while each release freezes and dispatches that exact
 source to a hosted qualifying lane. A stale module could otherwise construct a

@@ -6,7 +6,7 @@ release, and they ran `build_system/scripts/release/local-release-glowup.py` wit
 Neither step could ever have got past `argparse`.
 
 Nothing found it, and the reason is worth recording. The script is exercised
-constantly -- `installproof.prove_glowup` runs it on every local `just test-full`,
+constantly -- `installproof.prove_glowup` runs it on every local `just test`,
 passing all three -- so no test of the script was failing, no import was
 broken, and the call site had no test of its own because the plan is a
 description and descriptions look fine. Only the release lane reaches these two
@@ -39,7 +39,7 @@ STAGED = Path("/staged-release-workspace")
 def _lanes():
     """Every command whose plan differs by lane, in each shape it has.
 
-    The local lane is what `just test-full` builds; the two release shapes are what
+    The local lane is what `just test` builds; the two release shapes are what
     the workflows build. A guard that only checked the local one would have
     passed on the defect this file exists for.
     """

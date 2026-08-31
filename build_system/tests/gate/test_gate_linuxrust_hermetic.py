@@ -154,7 +154,7 @@ def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
 def test_the_lane_owns_its_base_image_instead_of_asking_the_operator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A module owns its prerequisites, or `just test-full` is not self-sufficient.
+    """A module owns its prerequisites, or `just test` is not self-sufficient.
 
     The lane refuses to build the base image inside itself -- correctly, since
     it runs sealed and a multi-gigabyte fetch mid-run is the thing sealing

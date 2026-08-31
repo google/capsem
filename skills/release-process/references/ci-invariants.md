@@ -8,7 +8,7 @@ Reference for /release-process: the Ironbank parity rule and every burned-releas
 ##### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test-full`. Local development rebuilds every package and every profile.
+`just test`. Local development rebuilds every package and every profile.
 Release CI reuses the same checked-in test modules while building only its
 owned artifact family and resolving the unchanged family by manifest-recorded
 digest. A specialized job is useful evidence, but it cannot become the sole
@@ -25,12 +25,12 @@ local gate over its recorded source state.
 Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 
-- test composition: local `just test-full` and both release lanes call
+- test composition: local `just test` and both release lanes call
   `_test-fast`, `_test-static`, `_test-artifacts`, `_test-functional`,
   `_test-glowup`, and `_test-release-contracts`; `_test-fast` also runs whole
   in `just fast-test`, and release lanes stage resolved complementary artifacts
   rather than rebuilding them;
-- VM assets: `just test-full` owns `just _gate-assets`, which executes the same
+- VM assets: `just test` owns `just _gate-assets`, which executes the same
   `just _build-kernel` and `just _build-rootfs` primitives as
   `release-assets.yaml` for every checked-in profile and both published
   architectures, validates the full payload and manifest, and proves a real
@@ -52,20 +52,20 @@ entrypoint with a local gate. Current required mappings are:
   per channel or test fixture. Only a legacy current entry may be hydrated;
   historical releases never resolve through current asset paths. Local blob
   copying hashes while copying once, and graph rendering reuses that result;
-- Linux package assembly: `just test-full` executes `just _cross-compile arm64` and
+- Linux package assembly: `just test` executes `just _cross-compile arm64` and
   `just _cross-compile x86_64`, so both publishable `.deb` architecture builds
   are locally accounted for before the release workflow repeats them;
 - Linux package E2E: local and PR CI both execute `just _gate-install`;
-- Linux platform branches: macOS-local `just test-full` executes
+- Linux platform branches: macOS-local `just test` executes
   `just _gate-linux-rust` in the checked-in host-builder container as a non-root
   user, while Linux CI calls the same runner natively;
-- generated settings: `just test-full` regenerates the tracked settings outputs and
+- generated settings: `just test` regenerates the tracked settings outputs and
   fails if their before/after contents drift, matching CI's generation drift
   gate without requiring the local worktree to be committed first;
 - package assembly and acceptance: local and release CI share
   `build_system/packaging/macos/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
   `build_system/scripts/release/verify-installed-release.py`, and
-  `build_system/scripts/test/prove-installed-shell.py`; macOS-local `just test-full` builds the real
+  `build_system/scripts/test/prove-installed-shell.py`; macOS-local `just test` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
   architectures, and runs `build_system/scripts/release/generate-host-binary-sbom.py` over those
   exact artifacts. The native glow-up must finish with the same
@@ -114,7 +114,7 @@ Each release lane must fit the runner that actually executes it with substantial
 headroom for the final tests and evidence upload. Measure stage and total wall
 times; do not infer capacity from `timeout-minutes`. Repeated termination at
 nearly the same run age is a runtime-budget defect, not a transient runner loss.
-Hold the release, reproduce the expensive rail through `just test-full` locally, and
+Hold the release, reproduce the expensive rail through `just test` locally, and
 shorten the critical path before dispatching again. Safe concurrency requires
 per-lane workspaces, image tags, output directories, and cleanup ownership plus
 a regression contract; two commands with different output arguments can still
@@ -189,7 +189,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Three files hold the binary version.** `Cargo.toml` (workspace),
   `crates/capsem-app/tauri.conf.json`, and `pyproject.toml`. Candidate
-  preparation keeps all three aligned before `just test-full`; release workflows
+  preparation keeps all three aligned before `just test`; release workflows
   never silently stamp or commit them.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
   profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
@@ -203,7 +203,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `fcntl.flock` holder process otherwise. Keep `flock` out of `capsem-doctor`
   required tools unless the fallback is removed.
 - **Python coverage remains blocking at an exact 85% floor.** Ordinary CI runs
-  its selected portable Python suite while full local `just test-full` runs every
+  its selected portable Python suite while full local `just test` runs every
   Python suite. Both use `--cov-fail-under=85`, and coverage precision remains
   two decimal places so subthreshold totals cannot round up to a pass.
 - **Do not execute artifact-dependent Python suites on a clean PR runner before
@@ -211,7 +211,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `target/assets/<arch>/` plus `target/assets/manifest.json`, and `tests/capsem-codesign/`
   needs built, signed host binaries. The PR macOS no-VM integration lane runs
   only suites without generated prerequisites and then import-collects every
-  `tests/capsem-*/` suite; the full `just test-full` gate owns bootstrap/codesign
+  `tests/capsem-*/` suite; the full `just test` gate owns bootstrap/codesign
   execution after `_pack-initrd`/`_sign` have made the prerequisites real.
 - **Do not run live KVM probes on GitHub-hosted PR runners.** Hosted ARM runners
   can expose `/dev/kvm` but still hang or behave inconsistently under test

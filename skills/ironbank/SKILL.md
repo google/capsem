@@ -20,7 +20,7 @@ missing contract.
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate belongs in
-`just test-full`. Local `just test-full` rebuilds both artifact families and runs the
+`just test`. Local `just test` rebuilds both artifact families and runs the
 complete recipe. Binary and profile release CI reuse the same checked-in
 modules while pulling the unchanged artifact family; green split jobs do not
 replace those modules. The shared entrypoints include workspace/runtime tests,
@@ -30,16 +30,16 @@ surfaces, and Docker/systemd Linux install plus a real guest-shell proof. Only
 unavoidable platform boundaries may remain outside, and each must be named
 with its authoritative final gate.
 
-`just test-full` is the strict superset of portable CI work. CI workflows may run a
+`just test` is the strict superset of portable CI work. CI workflows may run a
 smaller relevant slice, but no portable artifact may be built only in workflow
 YAML. In particular, VM asset publication uses the same `just _build-kernel`
-and `just _build-rootfs` primitives owned by `just test-full` through
+and `just _build-rootfs` primitives owned by `just test` through
 `just _gate-assets`; the canonical gate rebuilds every profile for arm64 and
 x86_64, validates every required artifact and manifest, and boots each rebuilt
 host-architecture image to a guest-shell marker. Input-contract tests are not
 a substitute for testing the artifact that was actually built.
 
-The accounting applies to host packages too: macOS-local `just test-full` must build
+The accounting applies to host packages too: macOS-local `just test` must build
 the real release-mode `.pkg` and both release-mode Linux `.deb` architectures,
 then execute the production host-SBOM generator over those exact packages.
 Linux-only Rust branches must run locally in Docker as a non-root user through

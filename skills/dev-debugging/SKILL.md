@@ -29,8 +29,8 @@ uv run --project build_system --frozen capsem-gate <command> --graph
 
 Use the smallest focused pytest, cargo, pnpm, or script command for red/green
 work. Use `just focus-test functional` for focused integration feedback, and
-`just fast-test` for the fast gate itself. Use a clean
-`just test-full` only when the forward fix is ready for complete qualification.
+`just fast-test` for the fast gate itself. Use `just test` when the forward fix
+is ready for optional complete local verification.
 
 Direct diagnostics which may block, build, launch children, or wait on input
 must use the portable bounded-process wrapper rather than a bare shell command:
@@ -43,7 +43,7 @@ The wrapper closes stdin, creates a dedicated process group, and terminates the
 whole group on timeout or interruption. This prevents a PTY-backed `docker
 build -f -`, compiler, test runner, or child helper from surviving its owning
 diagnostic. Pick a finite timeout appropriate to the focused operation; do not
-wrap `just test-full` or a release command, whose config-owned step timeouts,
+wrap `just test` or a release command, whose config-owned step timeouts,
 journal, teardown, and resumable graph are the authority.
 
 ### Diagnostic continuation for a late gate failure
@@ -74,9 +74,9 @@ can proceed. It does not prove the complete current tree.
 
 Never use diagnostic continuation with `release-binaries` or
 `release-profile`, and never let it authorize publication. After the fix, use
-the smallest owning `focus-test` group. Run `just test-full <commit>` only when
-a cold whole-system Mac diagnostic is justified; release qualification belongs
-to the hosted release lane and never consumes the local journal.
+the smallest owning `focus-test` group. Run `just test <commit>` when complete
+local whole-system proof is useful. It is not required before release: the
+hosted release lane owns qualification and never consumes the local journal.
 
 ## Step 1: Reproduce with a test
 
@@ -183,7 +183,7 @@ Write down what you find. The diagnosis should explain *why* the bug exists, not
 
 ## Concurrency flakes are product bugs, not test-tuning problems
 
-`just test-full` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot in parallel; this is dogfooding. Capsem ships as a multi-VM sandbox for AI agents -- if the test suite cannot safely run 4 concurrent VMs, real users running an agent farm will hit the same bug. When a test flakes only under concurrency, the diagnosis target is **Capsem's product code**, not the test:
+`just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot in parallel; this is dogfooding. Capsem ships as a multi-VM sandbox for AI agents -- if the test suite cannot safely run 4 concurrent VMs, real users running an agent farm will hit the same bug. When a test flakes only under concurrency, the diagnosis target is **Capsem's product code**, not the test:
 
 - "Suspend timed out" appearing only at `-n 4` -> `handle_suspend` IPC race; investigate the `with_quiescence` path and the `Suspend` round-trip, not the test timeout
 - "Session did not become ready" only with multiple parallel provisions -> Apple VZ resource contention, VirtioFS lock, or service handle_provision serialization gap
@@ -214,12 +214,12 @@ Example: Snapshot MCP hang was caused by blocking I/O (clonefile, walkdir, blake
 
 Now that you understand the root cause, write the fix. The fix should:
 - Make your reproducing test pass
-- Not break any existing tests (`just test-full`)
+- Not break any existing tests (`just test`)
 - Address the root cause, not just the symptom
 - Include the test from Step 1 in the same commit
 
 After the fix, run the full validation:
-1. `just test-full` -- unit + cross-compile + frontend
+1. `just test` -- unit + cross-compile + frontend
 2. `just exec "capsem-doctor"` -- VM smoke test
 3. If the bug touched telemetry: `python3 build_system/scripts/doctor/check_session.py` after a real session
 

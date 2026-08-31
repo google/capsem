@@ -1,4 +1,4 @@
-"""`just test-full`: the exceptional complete local diagnostic.
+"""`just test`: reusable complete local verification.
 
 Two of this command's three guarantees cannot be steps, and understanding why
 is most of the design.
@@ -57,7 +57,7 @@ def keep_awake(runner: Runner) -> list[str] | None:
     command = settings.keep_awake_command[0]
     if shutil.which(command) is None:
         raise GateError(
-            f"macOS just test-full requires {command} to prevent an unattended "
+            f"macOS just test requires {command} to prevent an unattended "
             "release gate from sleeping"
         )
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
@@ -74,7 +74,7 @@ class CompleteGate:
 
     A mixin, not a base command: a base would have to register a runnable
     name, and there is nothing here to run. Only `candidate` owns the complete
-    cold diagnostic; release commands dispatch hosted qualifying lanes instead
+    complete qualification; release commands dispatch hosted qualifying lanes instead
     of inheriting this multi-hour local lifecycle.
     """
 
@@ -106,7 +106,7 @@ class CompleteGate:
     only a command that already costs an hour should pay it.
 
     Publication has its own short detached prefix and does not consume this
-    machine-local diagnostic journal.
+    machine-local qualification journal.
     """
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
@@ -183,7 +183,7 @@ class CandidateCommand(
     in report mode to measure a rule without creating qualification evidence.
     """
 
-    # The run this whole mechanism was built for. `just test-full` is this command,
+    # The run this whole mechanism was built for. `just test` is this command,
     # and it composes the modules' plan *fragments* in-process rather than
     # invoking their commands -- so declaring `private_checkout` on the modules
     # protects `capsem-gate test-fast` typed by hand and does nothing for the

@@ -1,7 +1,7 @@
 """Continuing a failed run instead of repeating it.
 
 A gate run is long and the graph is deep, so a fix to a step near the end used
-to cost a full replay of everything before it. Six consecutive `just test-full` runs
+to cost a full replay of everything before it. Six consecutive `just test` runs
 were spent that way: each stopped one step later than the last, and each paid
 twenty-odd minutes to reach the new frontier. The private checkout made it
 worse rather than better -- a fresh copy per run starts with no `target/`, so

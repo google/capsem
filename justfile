@@ -14,7 +14,7 @@
 #   fast-test              incomplete source feedback; never qualification
 #   focus-test             one named functional group, optionally cold
 #   install                build and install the complete local macOS product
-#   test-full             exceptional cold complete diagnostic
+#   test                   reusable complete local verification
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
 #
@@ -171,12 +171,14 @@ _bootstrap:
     sh {{quote(justfile_directory() / "bootstrap.sh")}} -y
 
 # Build output is reused between runs by default, which is what makes a second
-# commit cost minutes rather than an hour; `buildcache` explains how. This is
-# the escape hatch, for when a local pass has to mean a pass on a cold runner:
-# diagnose with nothing reused, compiling every artifact from nothing. Release
-# qualification belongs to the release rails; agents must not run this by habit.
-test-full source_commit="":
-    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} --clean-build
+# commit cost minutes rather than an hour; `buildcache` explains how. With no
+# argument, verify the current source state. With a full commit on local main,
+# reuse its complete journal, structurally resume its retained prefix, or
+# verify it once. This is optional before release: each release command owns
+# its hosted qualification. Cold reproduction remains an explicit gate CLI
+# diagnostic, never the public complete-test default.
+test source_commit="":
+    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}}
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.

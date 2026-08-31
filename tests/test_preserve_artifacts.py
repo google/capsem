@@ -5,7 +5,7 @@ everything in a tmp_dir on test failure; rootfs.img files and other
 multi-GB blobs filled up the dev machine's disk (100% on /System/Volumes/Data).
 These tests pin the skip list, the per-file size cap, and the rotation
 so a future "helpful" loosening that reintroduces the bloat surfaces
-in CI rather than on the next `just test-full` run.
+in CI rather than on the next `just test` run.
 """
 
 import tomllib

@@ -1,6 +1,6 @@
 """Citadel guard: build output must outlive the prefix that produced it.
 
-Every commit used to qualify cold. `just test-full` works in a private copy named
+Every commit used to qualify cold. `just test` works in a private copy named
 for the commit, so a fix on top of a qualified tree shares nothing with the run
 before it -- three consecutive runs carried zero steps while a 42 GiB `target/`
 from the previous one sat on the same disk waiting for the next sweep to delete
@@ -163,18 +163,18 @@ def test_lending_never_overwrites_what_the_prefix_already_built(tmp_path: Path) 
     assert (working / relative / "built").read_text(encoding="utf-8") == "newer"
 
 
-def test_a_clean_rebuild_stays_reachable_without_reading_the_source() -> None:
-    """Reuse is the default, so the way to refuse it has to be one command.
+def test_the_public_complete_gate_never_discards_reusable_output() -> None:
+    """Reuse is the complete local gate's default and cannot be opt-out.
 
-    Not a nicety. The failure reuse trades against is a step that reads a file
-    it did not produce this run: it passes here on stale output and fails on a
-    runner that has never built anything. An operator who suspects that needs
-    the answer in one line, not a flag they have to find in `cli.py`.
+    `just test` is the expensive whole-system proof. Quietly attaching the
+    low-level cold diagnostic flag makes every forward fix rebuild everything
+    and defeats the content-addressed cache this guard protects.
     """
     recipes = (ROOT / "justfile").read_text(encoding="utf-8")
-    assert "--clean-build" in recipes, (
-        "no just recipe discards the reused build output, so the only way to "
-        "reproduce a cold run is to delete a directory by hand"
+    test_recipe = recipes.split("\ntest source_commit=", 1)[1].split("\n\n", 1)[0]
+    assert "--clean-build" not in test_recipe, (
+        "the public complete gate discards reusable build output; cold "
+        "reproduction belongs to the explicit capsem-gate CLI flag"
     )
 
 

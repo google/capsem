@@ -87,7 +87,7 @@ def invokes_the_gate(command: str) -> bool:
     """Whether a hook command would take the gate's lock.
 
     Matched on the command name rather than on a list of known-bad spellings:
-    `just test-full`, `capsem-gate runs digest` and `uv run capsem-gate ...` all
+    `just test`, `capsem-gate runs digest` and `uv run capsem-gate ...` all
     take the machine or history lock, and the point is that none of them may
     run before a session has started.
     """
@@ -235,7 +235,7 @@ def test_a_settings_file_without_the_hook_is_caught() -> None:
     [
         "uv run capsem-gate runs digest",
         "capsem-gate runs digest",
-        "just test-full",
+        "just test",
         "cd /repo && uv run capsem-gate runs digest || true",
     ],
 )

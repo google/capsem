@@ -66,7 +66,7 @@ Fixes land test-first. No exceptions.
 5. **Opportunistic cleanup -- do it, but name it.** When your diagnosis reveals that the buggy code reinvents a wheel the project already has (hand-rolled retry when `capsem_core::poll::poll_until` exists, hand-rolled 0o600 when `pty_log::open_append` exists, a `vec![...]` a clippy-lint away, a `patient: bool` where an enum self-documents), fix it in the same commit. Do NOT ship a minimal diff on top of a bug that was caused by the duplication -- that's how the same bug class reappears in a new location. Rules: (a) touch only code the fix itself motivates, (b) check existing primitives first (grep for `poll_until`, `capsem_core::`, shared helpers) before hand-rolling anything, (c) call out each cleanup in the summary so it's explicit, not silent. "Also fixed while I was here: X, Y, Z." If the cleanup is large enough that it'd dominate the diff or obscure the bug fix, split it into a sibling commit in the same review.
 5. **Run the relevant gates:**
   - Rust change: `cargo check -p <crate>` + targeted `cargo test`
-  - Cross-cutting Rust: `just test-full`
+  - Cross-cutting Rust: `just test`
   - Frontend: `pnpm run check` (fail-on-warnings) + `pnpm test` where relevant
   - VM behavior: `just exec "capsem-doctor -k <category>"` or the targeted diagnostic
   - Telemetry: `python3 build_system/scripts/doctor/check_session.py`

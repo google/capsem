@@ -75,7 +75,7 @@ See `crates/capsem-service/src/main.rs`
 
 ## Tests
 
-`just test-full` intentionally runs Python integration tests under
+`just test` intentionally runs Python integration tests under
 `pytest -n 4 --dist=loadfile`. That creates multiple service processes, so
 the host-wide flock is required test and product infrastructure. Do not
 demote suspend/resume, lifecycle, or provisioning tests to `-n 1` to avoid
@@ -83,7 +83,7 @@ this class of failure; a concurrent VZ lifecycle failure means the shared
 rail regressed.
 
 Timing and benchmark probes are different: their assertion is the measured
-number. `just test-full` runs the non-serial integration canary first, then runs
+number. `just test` runs the non-serial integration canary first, then runs
 `tests/capsem-serial/` alone so boot and lifecycle numbers measure Capsem
 rather than a sibling benchmark stealing the same VZ launch budget.
 

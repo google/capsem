@@ -54,7 +54,7 @@ Native installation is a functional outcome, not a file-existence check:
   transitions.
 
 GitHub-hosted macOS cannot repeat nested Apple Virtualization.framework guest
-boot. Local Apple Silicon `just test-full` owns that VZ proof. Hosted macOS owns
+boot. Local Apple Silicon `just test` owns that VZ proof. Hosted macOS owns
 signing, notarization, stapling, installation, and structural verification of
 the final publishable package. Neither substitutes for the other.
 
@@ -157,7 +157,7 @@ uv run --project build_system --frozen python build_system/release_site/scripts/
 
 Use **diagnostic continuation** only to reach a late failure after a failed
 non-release candidate. It may combine earlier outputs with current source:
-zero means the segment passed, not that current source completed `just test-full`.
+zero means the segment passed, not that current source completed `just test`.
 The transitional CLI spells this:
 
 ```bash

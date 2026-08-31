@@ -7,7 +7,7 @@ landed, 86 files carried them and the worst single file hid 4,070 lines of tests
 under 8,855 lines of production code.
 
 These are source-shape contracts. They read the checked-in tree only, so they run
-in the fast gate that `just test-full`, `just smoke`, ordinary CI, and both release
+in the fast gate that `just test`, `just smoke`, ordinary CI, and both release
 lanes all share.
 """
 

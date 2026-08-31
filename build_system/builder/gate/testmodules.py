@@ -1,4 +1,4 @@
-"""The modules `just test-full` is made of, and the ones provable from source.
+"""The modules `just test` is made of, and the ones provable from source.
 
 `_test-candidate-run` was 366 lines because six modules each re-solved the same
 problems inside one `bash` body, selected by a `CAPSEM_TEST_MODULE` environment
