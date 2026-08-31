@@ -80,7 +80,7 @@ def test_clean_tree_and_root_contract_changes_select_the_workspace() -> None:
 def test_non_rust_changes_are_an_explicit_noop() -> None:
     selected = rust_affected.affected_packages(
         _workspace(),
-        (PurePosixPath("web/docs/readme.md"),),
+        (PurePosixPath("web/app/readme.md"),),
     )
     assert selected == frozenset()
     assert rust_affected.cargo_test_command(_workspace(), selected) is None
