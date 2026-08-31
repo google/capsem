@@ -792,7 +792,12 @@ name = "capsem-config"
 version = "0.6.2"
 dependencies = [
  "capsem-proto",
+ "regex",
  "serde",
+ "serde_json",
+ "serde_yaml",
+ "toml 0.8.2",
+ "tracing",
 ]
 
 [[package]]

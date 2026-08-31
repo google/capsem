@@ -1,4 +1,4 @@
-use super::types::PolicySubject;
+use crate::types::PolicySubject;
 
 #[derive(Debug, Clone)]
 pub struct CompiledCondition {
@@ -214,14 +214,14 @@ impl ConditionAtom {
     }
 }
 
-pub(super) fn validate_condition_with<F>(condition: &str, validate: F) -> Result<(), String>
+pub(crate) fn validate_condition_with<F>(condition: &str, validate: F) -> Result<(), String>
 where
     F: Fn(&str) -> Result<(), String>,
 {
     CompiledCondition::parse_with(condition, validate).map(|_| ())
 }
 
-pub(super) fn evaluate_condition_with<S, F>(
+pub(crate) fn evaluate_condition_with<S, F>(
     condition: &str,
     subject: &S,
     validate: F,

@@ -314,6 +314,75 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
     mechanics
 }
 
+pub fn network_config_from_policy_and_dns(
+    mechanics: &crate::net::policy::NetworkMechanics,
+    dns: DnsNetworkConfig,
+) -> NetworkConfig {
+    NetworkConfig {
+        log_bodies: Some(mechanics.log_bodies),
+        max_body_capture: Some(mechanics.max_body_capture),
+        http_upstream_ports: mechanics.http_upstream_ports.clone(),
+        dns,
+        upstream_overrides: mechanics
+            .upstream_overrides
+            .iter()
+            .map(|(target, route)| {
+                (
+                    target.clone(),
+                    UpstreamOverrideConfig {
+                        dial: route.dial.clone(),
+                        protocol: match route.protocol {
+                            crate::net::policy::UpstreamOverrideProtocol::Http => {
+                                UpstreamOverrideProtocolConfig::Http
+                            }
+                            crate::net::policy::UpstreamOverrideProtocol::Tls => {
+                                UpstreamOverrideProtocolConfig::Tls
+                            }
+                        },
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+pub fn apply_network_config(
+    config: &NetworkConfig,
+    mechanics: &mut crate::net::policy::NetworkMechanics,
+) {
+    if let Some(log_bodies) = config.log_bodies {
+        mechanics.log_bodies = log_bodies;
+    }
+    if let Some(max_body_capture) = config.max_body_capture {
+        mechanics.max_body_capture = max_body_capture;
+    }
+    if !config.http_upstream_ports.is_empty() {
+        mechanics.http_upstream_ports = config.http_upstream_ports.clone();
+    }
+    if !config.upstream_overrides.is_empty() {
+        mechanics.upstream_overrides = config
+            .upstream_overrides
+            .iter()
+            .map(|(target, route)| {
+                (
+                    target.to_lowercase(),
+                    crate::net::policy::UpstreamOverride {
+                        dial: route.dial.clone(),
+                        protocol: match route.protocol {
+                            UpstreamOverrideProtocolConfig::Http => {
+                                crate::net::policy::UpstreamOverrideProtocol::Http
+                            }
+                            UpstreamOverrideProtocolConfig::Tls => {
+                                crate::net::policy::UpstreamOverrideProtocol::Tls
+                            }
+                        },
+                    },
+                )
+            })
+            .collect();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // High-level entry points (thin wrappers over MergedPolicies)
 // ---------------------------------------------------------------------------

@@ -1355,8 +1355,10 @@ impl ActiveProfileFile {
         };
         let merged_network =
             super::builder::MergedPolicies::from_files(&network_profile, &network_corp).network;
-        let mut network =
-            NetworkConfig::from_policy_and_dns(&merged_network, corp.network.dns.clone());
+        let mut network = super::builder::network_config_from_policy_and_dns(
+            &merged_network,
+            corp.network.dns.clone(),
+        );
         network.upstream_overrides = corp.network.upstream_overrides.clone();
 
         let active = Self {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::net::policy_config::{DetectionLevel, SecurityRuleAction};
+use crate::{DetectionLevel, SecurityRuleAction};
 
 const DRAFT: &str = include_str!("../default_provider_rules.toml");
 

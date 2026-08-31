@@ -54,7 +54,7 @@ impl RuntimeProfileConfig {
         let (profile_settings, corp_settings) = active.merged_policy_inputs();
         let merged = MergedPolicies::from_files(&profile_settings, &corp_settings);
         let mut network = merged.network;
-        active.network.apply_to_policy(&mut network);
+        capsem_core::net::policy_config::apply_network_config(&active.network, &mut network);
         let security_rules = active
             .compile_security_rule_set()
             .map_err(anyhow::Error::msg)

@@ -13,7 +13,23 @@ const SIGMA_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/config/security-rule-profile/detection.yaml"
 ));
-const DEFAULT_PROVIDER_RULES: &str = include_str!("../default_provider_rules.toml");
+const DEFAULT_PROVIDER_RULES: &str =
+    include_str!("../../../../../capsem-config/src/default_provider_rules.toml");
+
+#[test]
+fn configuration_and_runtime_security_event_contracts_stay_identical() {
+    assert_eq!(
+        capsem_config::SECURITY_EVENT_CEL_FIELDS,
+        crate::security_engine::SECURITY_EVENT_CEL_FIELDS
+    );
+    let runtime_types = RuntimeSecurityEventType::ALL
+        .iter()
+        .map(|event_type| event_type.as_str())
+        .collect::<Vec<_>>();
+    assert!(runtime_types
+        .iter()
+        .all(|event_type| capsem_config::security_event_type_is_known(event_type)));
+}
 
 #[test]
 fn parses_security_event_rule_spine_fixture() {
