@@ -3,26 +3,9 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-pub const CREDENTIAL_REF_PREFIX: &str = "credential:blake3:";
-const CREDENTIAL_REF_DOMAIN: &[u8] = b"capsem.credential.v1";
-
-/// Build the canonical brokered credential reference used downstream by
-/// security events, logs, CEL, and session.db.
-pub fn credential_reference(provider: &str, raw_credential: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(CREDENTIAL_REF_DOMAIN);
-    hasher.update(&[0]);
-    hasher.update(provider.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(raw_credential.as_bytes());
-    format!("{CREDENTIAL_REF_PREFIX}{}", hasher.finalize().to_hex())
-}
-
-pub fn is_credential_reference(value: &str) -> bool {
-    value
-        .strip_prefix(CREDENTIAL_REF_PREFIX)
-        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
-}
+pub use capsem_proto::credential_reference::{
+    credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX,
+};
 
 /// Canonical action vocabulary for security rule matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

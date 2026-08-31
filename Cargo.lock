@@ -812,6 +812,7 @@ dependencies = [
  "bytes",
  "capsem-assets",
  "capsem-config",
+ "capsem-credentials",
  "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
@@ -868,6 +869,18 @@ dependencies = [
  "vm-fdt",
  "walkdir",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "capsem-credentials"
+version = "0.6.2"
+dependencies = [
+ "capsem-foundation",
+ "capsem-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -932,6 +945,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "capsem-foundation",
+ "capsem-proto",
  "criterion",
  "humantime",
  "memmap2",
@@ -977,7 +991,7 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
- "capsem-core",
+ "capsem-credentials",
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
@@ -1081,11 +1095,13 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "bincode",
+ "blake3",
  "rmp-serde",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

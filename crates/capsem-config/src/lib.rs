@@ -30,12 +30,7 @@ pub use validation::{
 };
 
 /// True when a value has the broker-owned credential reference shape.
-pub fn is_credential_reference(value: &str) -> bool {
-    let Some(digest) = value.strip_prefix("credential:blake3:") else {
-        return false;
-    };
-    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
+pub use capsem_proto::credential_reference::is_credential_reference;
 
 pub fn security_event_type_is_known(value: &str) -> bool {
     matches!(

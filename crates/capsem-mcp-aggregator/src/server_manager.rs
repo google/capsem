@@ -572,8 +572,8 @@ impl McpServerManager {
     async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
         if let Some(auth) = &def.auth {
-            let token = capsem_core::credential_broker::resolve_broker_reference_for_provider(
-                capsem_core::credential_broker::CredentialProvider::Mcp,
+            let token = capsem_credentials::resolve_broker_reference_for_provider(
+                capsem_credentials::CredentialProvider::Mcp,
                 &auth.credential_ref,
             )
             .map_err(|error| anyhow::anyhow!(error))?

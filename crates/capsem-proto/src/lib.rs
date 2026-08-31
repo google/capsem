@@ -10,9 +10,11 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod credential_reference;
 pub mod handshake;
 pub mod ipc;
 pub mod mcp;
+pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
 

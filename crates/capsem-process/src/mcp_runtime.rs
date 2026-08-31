@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::net::mitm_proxy::McpEndpointState;
 use capsem_core::net::policy_config::{ModelEndpointRegistry, SecurityRuleSet, SharedPluginPolicy};
 use capsem_logger::DbWriter;
+use capsem_proto::mcp_aggregator::AggregatorClient;
 
 /// Shared MCP state for capsem-process after the guest transport cutover.
 ///

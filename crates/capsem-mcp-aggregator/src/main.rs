@@ -27,8 +27,8 @@ use clap::Parser;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use capsem_core::mcp::aggregator::*;
 use capsem_mcp_aggregator::server_manager::McpServerManager;
+use capsem_proto::mcp_aggregator::*;
 use capsem_proto::mcp_contracts::McpServerDef;
 
 #[derive(Parser, Debug)]
@@ -53,11 +53,12 @@ async fn main() -> Result<()> {
     // mcp-aggregator.stderr.log in the VM's session dir). Matches the
     // format capsem-process + capsem-service already emit, so every
     // host-side log is machine-parseable with the same schema.
-    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
-        service: "capsem-mcp-aggregator",
-        sink: capsem_foundation::telemetry::LogSink::Stderr,
-        default_filter: "capsem_mcp_aggregator=info",
-    })?;
+    let _telemetry_guard =
+        capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+            service: "capsem-mcp-aggregator",
+            sink: capsem_foundation::telemetry::LogSink::Stderr,
+            default_filter: "capsem_mcp_aggregator=info",
+        })?;
 
     // Root span: every log inherits `vm_id` and `trace_id` as
     // structured fields, so lines in mcp-aggregator.stderr.log can be

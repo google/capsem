@@ -270,21 +270,20 @@ async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
     let harness = crate::test_support::spawn_recording_mcp_server()
         .await
         .unwrap();
-    let observation = capsem_core::credential_broker::CredentialObservation {
-        provider: capsem_core::credential_broker::CredentialProvider::Mcp,
-        raw_value: "local-mcp-oauth-token".to_string(),
-        source: "mcp.auth.local_e2e".to_string(),
-        event_type: Some("mcp.server.auth".to_string()),
-        trace_id: Some("trace-local-mcp".to_string()),
-        context_json: None,
-    };
-    let brokered = capsem_core::credential_broker::broker_observed_credential(&observation)
-        .expect("test credential should broker");
+    let credential_ref = format!("credential:blake3:{}", "d".repeat(64));
+    capsem_credentials::CredentialStore::global().clear_for_test();
+    capsem_credentials::CredentialStore::global()
+        .capture(
+            capsem_credentials::CredentialProvider::Mcp,
+            &credential_ref,
+            "local-mcp-oauth-token",
+        )
+        .expect("test credential should store");
     let def = local_http_mcp_def(
         harness.url.clone(),
         Some(McpAuthConfig {
             kind: McpAuthKind::OAuth,
-            credential_ref: brokered.credential_ref.clone(),
+            credential_ref,
         }),
     );
     let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());

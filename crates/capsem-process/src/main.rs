@@ -196,11 +196,12 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
 }
 
 fn main() -> Result<()> {
-    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
-        service: "capsem-process",
-        sink: capsem_foundation::telemetry::LogSink::Stderr,
-        default_filter: "info",
-    })?;
+    let _telemetry_guard =
+        capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+            service: "capsem-process",
+            sink: capsem_foundation::telemetry::LogSink::Stderr,
+            default_filter: "info",
+        })?;
     let args = Args::parse();
 
     // Root span shared across the whole capsem-process run: every
@@ -821,8 +822,8 @@ async fn spawn_mcp_aggregator(
     session_dir: &Path,
     vm_id: &str,
     trace_id: &str,
-) -> Result<capsem_core::mcp::aggregator::AggregatorClient> {
-    use capsem_core::mcp::aggregator::*;
+) -> Result<capsem_proto::mcp_aggregator::AggregatorClient> {
+    use capsem_proto::mcp_aggregator::*;
     use std::collections::HashMap;
 
     let (client, mut rx) = AggregatorClient::channel(64);

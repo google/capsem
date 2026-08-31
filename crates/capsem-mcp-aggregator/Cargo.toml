@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-core = { path = "../capsem-core" }
+capsem-credentials = { path = "../capsem-credentials" }
 capsem-proto = { path = "../capsem-proto" }
 capsem-foundation = { path = "../capsem-foundation" }
 tokio.workspace = true
