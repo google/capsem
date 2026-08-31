@@ -1,4 +1,5 @@
 use super::*;
+use capsem_proto::{max_frame_size, VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL};
 
 // -----------------------------------------------------------------------
 // Constants

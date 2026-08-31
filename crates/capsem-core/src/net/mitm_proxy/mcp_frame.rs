@@ -15,13 +15,13 @@ use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
-use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
     emit_matching_security_rules_for_evaluated_event, emit_security_write, evaluate_security_boundary,
     McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
     SecurityEnforcementDecision, SecurityEvent,
 };
+use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
 use super::metrics;

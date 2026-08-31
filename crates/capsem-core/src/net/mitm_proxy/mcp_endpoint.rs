@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use crate::mcp::aggregator::AggregatorClient;
-use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
 use crate::net::policy_config::{SecurityRuleSet, SharedPluginPolicy};
+use capsem_proto::mcp_aggregator::AggregatorClient;
+use capsem_proto::mcp_contracts::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;

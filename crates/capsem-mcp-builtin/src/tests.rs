@@ -140,7 +140,7 @@ fn response(body: serde_json::Value) -> JsonRpcResponse {
 #[test]
 fn transport_error_becomes_err_with_its_message() {
     let mut resp = response(serde_json::json!({"content": [{"text": "ignored"}]}));
-    resp.error = Some(capsem_core::mcp::types::JsonRpcError {
+    resp.error = Some(capsem_proto::mcp_contracts::JsonRpcError {
         code: -32000,
         message: "vsock closed".to_string(),
         data: None,
@@ -223,7 +223,7 @@ fn transport_error_wins_over_a_logical_failure() {
         "isError": true,
         "content": [{"text": "policy refusal"}]
     }));
-    resp.error = Some(capsem_core::mcp::types::JsonRpcError {
+    resp.error = Some(capsem_proto::mcp_contracts::JsonRpcError {
         code: -32000,
         message: "connection reset".to_string(),
         data: None,

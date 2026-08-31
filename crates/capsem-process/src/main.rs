@@ -771,7 +771,7 @@ async fn run_async_main_loop(
 ///
 /// Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
 async fn spawn_mcp_aggregator(
-    servers: &[capsem_core::mcp::types::McpServerDef],
+    servers: &[capsem_proto::mcp_contracts::McpServerDef],
     session_dir: &Path,
     vm_id: &str,
     trace_id: &str,

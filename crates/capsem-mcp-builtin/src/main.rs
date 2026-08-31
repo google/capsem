@@ -24,10 +24,10 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
-use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
+use capsem_proto::mcp_contracts::JsonRpcResponse;
 
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

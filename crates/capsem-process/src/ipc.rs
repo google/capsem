@@ -843,7 +843,7 @@ pub(crate) async fn handle_ipc_connection(
                     // deserialize_any. See crates/capsem-proto/src/ipc.rs.
                     let arguments: serde_json::Value =
                         serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
-                    let request = capsem_core::mcp::types::JsonRpcRequest {
+                    let request = capsem_proto::mcp_contracts::JsonRpcRequest {
                         jsonrpc: "2.0".to_string(),
                         id: Some(serde_json::json!(id)),
                         method: "tools/call".to_string(),

@@ -1,8 +1,6 @@
-pub mod aggregator;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod policy;
-pub mod types;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::mcp::policy::McpProfileConfig;
-use crate::mcp::types::{McpServerDef, McpToolDef, ToolAnnotations};
+use capsem_proto::mcp_contracts::{McpServerDef, McpToolDef, ToolAnnotations};
 
 /// Compute a CPU-proportional default for framed MCP in-flight handlers.
 ///
@@ -103,8 +101,8 @@ pub fn build_profile_server_list(
             warn!("profile MCP server uses reserved name 'builtin', skipping");
             continue;
         }
-        if manual.name.contains(crate::mcp::types::NS_SEP) {
-            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+        if manual.name.contains(capsem_proto::mcp_contracts::NS_SEP) {
+            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", capsem_proto::mcp_contracts::NS_SEP);
             continue;
         }
         if seen.insert(manual.name.clone()) {

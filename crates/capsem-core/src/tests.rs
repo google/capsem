@@ -1,5 +1,8 @@
 use super::*;
-use capsem_proto::{encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE};
+use capsem_proto::{
+    encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE, VSOCK_PORT_CONTROL,
+    VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+};
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;

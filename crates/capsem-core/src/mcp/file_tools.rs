@@ -15,13 +15,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::auto_snapshot::{snapshot_entry_digest, AutoSnapshotScheduler, SnapshotOrigin};
 
 use super::builtin_tools::{paginate, DEFAULT_MAX_LENGTH};
-use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[

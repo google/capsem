@@ -14,14 +14,13 @@ use reqwest::Client;
 use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
-
-use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];

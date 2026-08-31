@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
-use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
+use capsem_proto::{self as proto, GuestToHost, HostToGuest, HostVsockService};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -754,7 +754,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
         while let Some(conn) = vsock_rx.recv().await {
             match conn.port {
-                capsem_core::VSOCK_PORT_CONTROL => {
+                proto::VSOCK_PORT_CONTROL => {
                     info!("control port: connection accepted, performing handshake");
                     let mut fd = match clone_fd(conn.fd) {
                         Ok(f) => f,
@@ -807,7 +807,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         }
                     }
                 }
-                capsem_core::VSOCK_PORT_TERMINAL => {
+                proto::VSOCK_PORT_TERMINAL => {
                     info!("terminal port: connection accepted, re-keying bridge");
                     let conn_arc = Arc::new(conn);
                     capsem_core::try_send!("terminal_rekey", terminal_rekey_tx.send(conn_arc).await);
@@ -1700,9 +1700,9 @@ async fn collect_terminal_control_pair(
             anyhow::bail!("vsock channel closed before terminal/control pair arrived");
         };
         match conn.port {
-            capsem_core::VSOCK_PORT_TERMINAL => terminal = Some(conn),
-            capsem_core::VSOCK_PORT_CONTROL => control = Some(conn),
-            capsem_core::VSOCK_PORT_SNI_PROXY | capsem_proto::VSOCK_PORT_AUDIT | capsem_proto::VSOCK_PORT_DNS_PROXY => {
+            proto::VSOCK_PORT_TERMINAL => terminal = Some(conn),
+            proto::VSOCK_PORT_CONTROL => control = Some(conn),
+            proto::VSOCK_PORT_SNI_PROXY | proto::VSOCK_PORT_AUDIT | proto::VSOCK_PORT_DNS_PROXY => {
                 deferred_conns.push(conn);
             }
             _ => {}

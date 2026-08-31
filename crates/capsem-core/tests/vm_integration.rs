@@ -95,7 +95,7 @@ fn hypervisor_boot_fails_with_fake_kernel() {
     let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
 
     let h = capsem_core::AppleVzHypervisor;
-    let ports = [capsem_core::VSOCK_PORT_CONTROL, capsem_core::VSOCK_PORT_TERMINAL];
+    let ports = [capsem_proto::VSOCK_PORT_CONTROL, capsem_proto::VSOCK_PORT_TERMINAL];
     let result = h.boot(&config, &ports);
     // Fails gracefully (no entitlement or invalid kernel), does not panic
     assert!(result.is_err(), "boot with fake kernel should fail");
@@ -153,10 +153,10 @@ fn hypervisor_boot_requires_entitlement() {
 
     let config = make_config(&assets);
     let vsock_ports = [
-        capsem_core::VSOCK_PORT_CONTROL,
-        capsem_core::VSOCK_PORT_TERMINAL,
-        capsem_core::VSOCK_PORT_SNI_PROXY,
-        capsem_core::VSOCK_PORT_LIFECYCLE,
+        capsem_proto::VSOCK_PORT_CONTROL,
+        capsem_proto::VSOCK_PORT_TERMINAL,
+        capsem_proto::VSOCK_PORT_SNI_PROXY,
+        capsem_proto::VSOCK_PORT_LIFECYCLE,
     ];
 
     let result = capsem_core::AppleVzHypervisor.boot(&config, &vsock_ports);
@@ -181,7 +181,7 @@ fn hypervisor_boot_returns_vsock_receiver() {
     };
 
     let config = make_config(&assets);
-    let ports = [capsem_core::VSOCK_PORT_CONTROL, capsem_core::VSOCK_PORT_TERMINAL];
+    let ports = [capsem_proto::VSOCK_PORT_CONTROL, capsem_proto::VSOCK_PORT_TERMINAL];
 
     match capsem_core::AppleVzHypervisor.boot(&config, &ports) {
         Ok((_vm, mut rx)) => {

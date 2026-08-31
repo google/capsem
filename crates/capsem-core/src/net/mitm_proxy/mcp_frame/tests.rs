@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::mcp::types::JsonRpcError;
+use capsem_proto::mcp_contracts::JsonRpcError;
 
 use super::*;
 

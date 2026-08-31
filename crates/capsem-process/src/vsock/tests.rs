@@ -75,7 +75,7 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
 #[test]
 fn classify_terminal_port() {
     assert_eq!(
-        classify_vsock_port(capsem_core::VSOCK_PORT_TERMINAL),
+        classify_vsock_port(capsem_proto::VSOCK_PORT_TERMINAL),
         VsockPortKind::Terminal
     );
 }
@@ -83,7 +83,7 @@ fn classify_terminal_port() {
 #[test]
 fn classify_control_port() {
     assert_eq!(
-        classify_vsock_port(capsem_core::VSOCK_PORT_CONTROL),
+        classify_vsock_port(capsem_proto::VSOCK_PORT_CONTROL),
         VsockPortKind::Control
     );
 }
@@ -91,20 +91,20 @@ fn classify_control_port() {
 #[test]
 fn classify_sni_proxy_port() {
     assert_eq!(
-        classify_vsock_port(capsem_core::VSOCK_PORT_SNI_PROXY),
+        classify_vsock_port(capsem_proto::VSOCK_PORT_SNI_PROXY),
         VsockPortKind::SniProxy
     );
 }
 
 #[test]
 fn classify_exec_port() {
-    assert_eq!(classify_vsock_port(capsem_core::VSOCK_PORT_EXEC), VsockPortKind::Exec);
+    assert_eq!(classify_vsock_port(capsem_proto::VSOCK_PORT_EXEC), VsockPortKind::Exec);
 }
 
 #[test]
 fn classify_lifecycle_port() {
     assert_eq!(
-        classify_vsock_port(capsem_core::VSOCK_PORT_LIFECYCLE),
+        classify_vsock_port(capsem_proto::VSOCK_PORT_LIFECYCLE),
         VsockPortKind::Lifecycle
     );
 }
@@ -315,39 +315,39 @@ fn not_found_not_retryable() {
 #[tokio::test]
 async fn collect_returns_terminal_and_control_in_any_order() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_CONTROL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
 
     let mut deferred = Vec::new();
     let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
         .await
         .expect("pair collected");
-    assert_eq!(terminal.port, capsem_core::VSOCK_PORT_TERMINAL);
-    assert_eq!(control.port, capsem_core::VSOCK_PORT_CONTROL);
+    assert_eq!(terminal.port, capsem_proto::VSOCK_PORT_TERMINAL);
+    assert_eq!(control.port, capsem_proto::VSOCK_PORT_CONTROL);
     assert!(deferred.is_empty());
 }
 
 #[tokio::test]
 async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_SNI_PROXY)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_SNI_PROXY)).unwrap();
     tx.send(make_conn(5003)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_CONTROL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_CONTROL)).unwrap();
 
     let mut deferred = Vec::new();
     collect_terminal_control_pair(&mut rx, &mut deferred)
         .await
         .expect("pair collected");
     assert_eq!(deferred.len(), 1);
-    assert_eq!(deferred[0].port, capsem_core::VSOCK_PORT_SNI_PROXY);
+    assert_eq!(deferred[0].port, capsem_proto::VSOCK_PORT_SNI_PROXY);
     assert_eq!(classify_vsock_port(5003), VsockPortKind::Unknown);
 }
 
 #[tokio::test]
 async fn collect_errors_when_channel_closes_early() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(make_conn(capsem_core::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
     drop(tx); // close before control arrives
 
     let mut deferred = Vec::new();

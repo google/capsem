@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use capsem_core::{boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, VirtioFsShare, VSOCK_PORT_CONTROL};
+use capsem_core::{boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, VirtioFsShare};
+use capsem_proto::VSOCK_PORT_CONTROL;
 
 fn arguments() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();

@@ -80,6 +80,8 @@ def _tracked_line_counts(
             continue
         relative = Path(raw.decode())
         path = root / relative
+        if not path.is_file():
+            continue
         if relative.suffix in suffixes:
             source = path.read_text(encoding="utf-8")
         elif relative.suffix:
@@ -171,6 +173,7 @@ def test_only_tracked_first_party_programs_are_measured(tmp_path: Path) -> None:
     (tmp_path / "scripts" / "installer").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (tmp_path / "scripts" / "data.xml").write_text("<data />\n", encoding="utf-8")
     (tmp_path / "scripts" / "fixture.bin").write_bytes(b"\xff\x00\xfe")
+    (tmp_path / "scripts" / "deleted.py").write_text("gone\n", encoding="utf-8")
     (tmp_path / "scripts" / "generated.py").write_text("generated\n", encoding="utf-8")
     (tmp_path / "vendor" / "tool.py").write_text("vendored\n", encoding="utf-8")
 
@@ -183,11 +186,13 @@ def test_only_tracked_first_party_programs_are_measured(tmp_path: Path) -> None:
             "scripts/installer",
             "scripts/data.xml",
             "scripts/fixture.bin",
+            "scripts/deleted.py",
             "vendor",
         ],
         cwd=tmp_path,
         check=True,
     )
+    (tmp_path / "scripts" / "deleted.py").unlink()
 
     measured = _tracked_line_counts((("scripts",)), (".py", ".sh"), root=tmp_path)
     assert measured == {"scripts/installer": 2, "scripts/module.py": 2}

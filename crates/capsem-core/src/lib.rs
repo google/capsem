@@ -24,10 +24,7 @@ pub use vm::boot::{
 pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};
 pub use vm::terminal::TerminalOutputQueue;
-pub use vm::vsock::{
-    self, CoalesceBuffer, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
-};
+pub use vm::vsock::{self, CoalesceBuffer};
 pub use vm::VmState;
 
 // Hypervisor abstraction layer

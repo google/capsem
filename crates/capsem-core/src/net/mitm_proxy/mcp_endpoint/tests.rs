@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 
-use crate::mcp::aggregator::{AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult};
-use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
 use crate::net::policy_config::SecurityRuleSet;
+use capsem_proto::mcp_aggregator::{AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult};
+use capsem_proto::mcp_contracts::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
 
 use super::*;
 
@@ -28,7 +28,7 @@ where
     F: FnMut(AggregatorRequest) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = AggregatorResult> + Send + 'static,
 {
-    let (aggregator, mut rx) = crate::mcp::aggregator::AggregatorClient::channel(16);
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(16);
     let calls = Arc::new(Mutex::new(Vec::new()));
     let calls_h = Arc::clone(&calls);
     tokio::spawn(async move {

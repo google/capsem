@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::policy::NetworkMechanics;
 use capsem_core::net::policy_config::{
     ActiveProfileFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
 };
+use capsem_proto::mcp_contracts::McpServerDef;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

@@ -308,7 +308,7 @@ credential_ref = "credential:blake3:{}"
     cfg.validate("profile").expect("brokered OAuth auth must validate");
     assert_eq!(
         cfg.servers[0].auth.as_ref().unwrap().kind,
-        crate::mcp::types::McpAuthKind::OAuth
+        capsem_proto::mcp_contracts::McpAuthKind::OAuth
     );
 }
 

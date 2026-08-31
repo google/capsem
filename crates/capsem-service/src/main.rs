@@ -6934,12 +6934,12 @@ fn validate_mcp_server_id(server_id: &str) -> Result<(), AppError> {
             "MCP server id must not be empty".to_string(),
         ));
     }
-    if server_id.contains(capsem_core::mcp::types::NS_SEP) {
+    if server_id.contains(capsem_proto::mcp_contracts::NS_SEP) {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             format!(
                 "MCP server id must not contain namespace separator {}",
-                capsem_core::mcp::types::NS_SEP
+                capsem_proto::mcp_contracts::NS_SEP
             ),
         ));
     }
