@@ -835,6 +835,45 @@ fn prewarm_vm_asset_hash_cache(
 /// all retained state.
 const MAX_FAILED_SESSIONS: usize = 32;
 
+/// Remove a session tree after its process has exited.
+///
+/// Linux may return `ENOTEMPTY` from `remove_dir_all` when a late SQLite or
+/// filesystem cleanup creates an entry between traversal and the final
+/// `rmdir`. Retry only that transient race for a bounded number of sightings;
+/// permissions, path safety, and every other filesystem error remain
+/// fail-closed. Counting sightings rather than wall time keeps host load from
+/// consuming the retry budget.
+const SESSION_DELETE_MAX_ATTEMPTS: usize = 8;
+
+fn remove_quiesced_session_dir(path: &StdPath) -> std::io::Result<()> {
+    remove_quiesced_session_dir_with(
+        path,
+        |path| std::fs::remove_dir_all(path),
+        || std::thread::sleep(std::time::Duration::from_millis(20)),
+    )
+}
+
+fn remove_quiesced_session_dir_with(
+    path: &StdPath,
+    mut remove: impl FnMut(&StdPath) -> std::io::Result<()>,
+    mut wait: impl FnMut(),
+) -> std::io::Result<()> {
+    for attempt in 1..=SESSION_DELETE_MAX_ATTEMPTS {
+        match remove(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    && attempt < SESSION_DELETE_MAX_ATTEMPTS =>
+            {
+                wait();
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the final removal attempt always returns")
+}
+
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
     ///
@@ -1466,7 +1505,7 @@ impl ServiceState {
         // alias. This keeps a legitimate macOS /var -> /private/var spelling
         // difference working without giving a mutable alias another path
         // resolution opportunity at the destructive operation.
-        std::fs::remove_dir_all(&canonical_session).with_context(|| {
+        remove_quiesced_session_dir(&canonical_session).with_context(|| {
             format!(
                 "delete canonical session directory: {}",
                 canonical_session.display()
