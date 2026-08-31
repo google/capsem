@@ -9,10 +9,10 @@ a checker at. Nothing fails, because nothing runs.
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from capsem_builder.gate import audits, rustchecks
 from capsem_builder.gate import config as gate_config
 from helpers.gate import gate_plan
