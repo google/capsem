@@ -79,6 +79,18 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     )
 
 
+def test_rust_format_is_a_fast_source_leaf() -> None:
+    """Formatting needs Rust, but no frontend bundle, ORT, or compilation."""
+    plan = _plan(FastModule)
+    label = "fast.rust-format"
+
+    assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.audit.source-syntax")
+    assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.toolchain.rust")
+    assert _wave_of(FastModule, label) < _wave_of(FastModule, "fast.clippy")
+    assert CONFIG.modules.rust_format == ("cargo", "fmt", "--all", "--", "--check")
+    assert "cargo fmt --all -- --check" in "\n".join(plan.step_named(label).render())
+
+
 def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
     """A private static checkout cannot inherit ``web/app/dist`` from fast.
 

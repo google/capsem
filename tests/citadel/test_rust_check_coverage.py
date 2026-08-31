@@ -27,6 +27,7 @@ MODULES = CONFIG.modules
 RUST = next(surface for surface in CONFIG.lint_surfaces if surface.name == "rust")
 CHECKERS = (*RUST.enforced_by, *RUST.checked_by)
 CLIPPY_STEP = RUST.enforced_by[0]
+FORMAT_STEP = "fast.rust-format"
 
 RUST_COVERAGE_RATIONALE = """\
 Every Rust target must be linted, and every Rust test must be run by something.
@@ -133,6 +134,16 @@ def test_clippy_covers_every_target() -> None:
         assert flag in rendered, (
             RUST_COVERAGE_RATIONALE + f"\nclippy runs without {flag}: {rendered}"
         )
+
+
+def test_rust_format_covers_the_workspace() -> None:
+    rendered = " ".join(CONFIG.modules.rust_format)
+    assert FORMAT_STEP in RUST.enforced_by, (
+        RUST_COVERAGE_RATIONALE + f"\n{FORMAT_STEP} does not enforce the Rust surface"
+    )
+    assert rendered == "cargo fmt --all -- --check", (
+        RUST_COVERAGE_RATIONALE + f"\nRust format command drifted: {rendered}"
+    )
 
 
 @pytest.mark.parametrize("label", CHECKERS)

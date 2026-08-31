@@ -119,6 +119,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
 
     # Nothing is worth starting against a file that will not parse.
     syntax = phase.add(audits.source_syntax(config), after=(python,))
+    formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
     audited = tuple(phase.add(check, after=(syntax,)) for check in audits.all_of(config))
     # The same fragment the `lint` command composes: Ruff and both Ty passes as
@@ -179,6 +180,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         collected,
         build_system_collected,
         guarded,
+        formatted,
         digest,
         *(surface for surface in surfaces if surface is not blocking),
         channel,
