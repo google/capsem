@@ -256,6 +256,21 @@ def test_shared_host_image_waits_for_canonical_preparation() -> None:
     )
 
 
+def test_macos_parity_consumes_shared_host_image_without_back_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late shared-image consumer must not reorder its producer backwards."""
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "system", lambda: "Darwin")
+    monkeypatch.setattr(host, "machine", lambda: "arm64")
+    plan = _plan()
+
+    assert "linux-rust" in plan.labels
+    assert "prepare.sign" not in plan.after_of("host-image")
+    assert {"host-image", "prepare.sign"} <= set(plan.after_of("warm-base"))
+
+
 # ---------------------------------------------------------------------------
 # What must happen even when the gate fails
 # ---------------------------------------------------------------------------
