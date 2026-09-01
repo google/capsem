@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import imagebases, imagebuild, initrd
 from capsem_builder.gate.errors import GateError
@@ -165,17 +165,15 @@ def test_guest_rust_builder_tag_is_keyed_by_every_materialized_input(
     assert image_tag(BUILD, "arm64", tmp_path) != first
 
 
-def test_every_guest_rust_builder_generation_is_owned_by_storage_policy() -> None:
-    policy = tomllib.loads(
-        (PROJECT_ROOT / "config/storage-policy.toml").read_text(encoding="utf-8")
-    )
+def test_every_guest_rust_builder_generation_is_owned_by_cache_policy() -> None:
+    policy = load_policy(PROJECT_ROOT)
+    assert policy.control is not None
 
     for arch_name in BUILD.architectures:
         repository = image_repository(BUILD, arch_name)
-        resource = policy["resources"][repository]
-        assert resource["docker_name"] == repository
-        assert resource["retention"] == "generational"
-        assert resource["keep_previous"] == 0
+        resource = policy.control.docker.images[repository]
+        assert resource.repository == repository
+        assert resource.keep_previous == 0
 
 
 def test_cold_prefetch_pulls_exact_rust_base_then_builds_locked_helper() -> None:

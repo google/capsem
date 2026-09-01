@@ -93,6 +93,21 @@ def test_the_broad_suite_runs_four_at_a_time_by_file() -> None:
 
     assert "-n" in argv
     assert "--dist=loadfile" in argv
+    assert pytestsuite.broad(CONFIG, profile="code").as_step(CONFIG).concurrency == (
+        CONFIG.suites.pytest.parallel_workers
+    )
+
+
+def test_the_citadel_uses_the_configured_source_parallelism() -> None:
+    """Source-only guards are independent by file and should not spend the
+    fast lane on one Python process while the host has idle cores."""
+    suite = pytestsuite.citadel(CONFIG)
+    argv = _argv(suite)
+
+    assert suite.parallel
+    assert argv[argv.index("-n") + 1] == str(CONFIG.suites.pytest.parallel_workers)
+    assert f"--dist={CONFIG.suites.pytest.parallel_distribution}" in argv
+    assert suite.as_step(CONFIG).concurrency == CONFIG.suites.pytest.parallel_workers
 
 
 def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:
@@ -149,8 +164,8 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
         "ironbank",
     )
     forbidden = (
-        'ASSETS_DIR = PROJECT_ROOT / "target" / "assets"',
-        'PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"',
+        'ASSETS_DIR = PROJECT_ROOT / "cache" / "target" / "assets"',
+        'PROFILES_DIR = PROJECT_ROOT / "cache" / "target" / "config" / "profiles"',
     )
     offenders = [
         f"{path.relative_to(PROJECT_ROOT)}: {needle}"
@@ -221,7 +236,7 @@ def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
 
     assert (
         "uv run --project build_system --frozen python -m pytest "
-        "-c build_system/pyproject.toml --rootdir . tests/"
+        "-c build_system/pyproject.toml --rootdir . tests/ build_system/tests/"
     ) in rendered
     for flag in (
         "--collect-only",
@@ -236,15 +251,12 @@ def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
     assert "-n" not in rendered
 
 
-def test_build_system_collection_uses_its_locked_project() -> None:
-    collection = pytestsuite.build_system_collection(CONFIG)
+def test_collection_uses_one_locked_project_for_both_roots() -> None:
+    collection = pytestsuite.collection(CONFIG)
     rendered = " ".join(collection.render())
 
-    assert (
-        "uv run --project build_system --frozen python -m pytest "
-        "-c build_system/pyproject.toml --rootdir . build_system/tests/"
-        in rendered
-    )
+    assert rendered.count("python -m pytest") == 1
+    assert "tests/ build_system/tests/" in rendered
     for flag in CONFIG.suites.pytest.collection_flags:
         assert flag in rendered
     assert CONFIG.suites.pytest.require_artifacts not in rendered
@@ -282,7 +294,7 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
         # unit test cannot mistake itself for a release -- and the child then
         # inherits an environment that still says artifacts are required while
         # no longer saying which lane is running. It concluded it was a local
-        # build and asked for `target/linux-agent`, which a pulled lane
+        # build and asked for `cache/target/build/linux-agent`, which a pulled lane
         # correctly does not have, fifteen minutes into a release gate.
         env={k: v for k, v in os.environ.items() if k != "CAPSEM_REQUIRE_ARTIFACTS"},
     )

@@ -42,9 +42,7 @@ fn single_event_in_one_chunk_is_emitted() {
         hook.on_response_chunk(&mut chunk, &mut ctx);
     }
 
-    let stream = state
-        .peek::<SseEventStream>()
-        .expect("stream slot must exist");
+    let stream = state.peek::<SseEventStream>().expect("stream slot must exist");
     assert_eq!(stream.events.len(), 1);
     let ev = &stream.events[0];
     assert_eq!(ev.event_type.as_deref(), Some("message_start"));
@@ -69,9 +67,7 @@ fn event_split_across_chunks_reassembles() {
         hook.on_response_chunk(&mut b, &mut ctx);
     }
 
-    let stream = state
-        .peek::<SseEventStream>()
-        .expect("stream slot must exist");
+    let stream = state.peek::<SseEventStream>().expect("stream slot must exist");
     assert_eq!(stream.events.len(), 1);
     assert_eq!(stream.events[0].data, "{\"hello\":\"world\"}");
 }
@@ -89,9 +85,7 @@ fn multiple_events_accumulate_for_consumer() {
         hook.on_response_chunk(&mut chunk, &mut ctx);
     }
 
-    let stream = state
-        .peek::<SseEventStream>()
-        .expect("stream slot must exist");
+    let stream = state.peek::<SseEventStream>().expect("stream slot must exist");
     assert_eq!(stream.events.len(), 3);
     let kinds: Vec<&str> = stream
         .events
@@ -150,17 +144,13 @@ fn on_response_end_flushes_trailing_event() {
         hook.on_response_chunk(&mut chunk, &mut ctx);
     }
     // Pre-end: nothing emitted because there's no blank line yet.
-    assert!(state
-        .peek::<SseEventStream>()
-        .is_none_or(|s| s.events.is_empty()));
+    assert!(state.peek::<SseEventStream>().is_none_or(|s| s.events.is_empty()));
 
     {
         let mut ctx = ctx_for(&mut state, &conn);
         hook.on_response_end(&mut ctx);
     }
-    let stream = state
-        .peek::<SseEventStream>()
-        .expect("stream slot must exist");
+    let stream = state.peek::<SseEventStream>().expect("stream slot must exist");
     assert_eq!(stream.events.len(), 1);
     assert_eq!(stream.events[0].data, "last");
 }
@@ -185,9 +175,7 @@ fn openai_done_sentinel_is_filtered() {
         hook.on_response_chunk(&mut chunk, &mut ctx);
     }
 
-    let stream = state
-        .peek::<SseEventStream>()
-        .expect("stream slot must exist");
+    let stream = state.peek::<SseEventStream>().expect("stream slot must exist");
     assert_eq!(stream.events.len(), 1);
     assert_eq!(stream.events[0].data, "hello");
 }

@@ -26,28 +26,18 @@ impl SecurityPlugin for LogSanitizerPlugin {
 
         if let Some(request) = event.http_request.as_mut() {
             for value in request.headers.values_mut() {
-                let redacted = redact_observed_credentials_in_bytes(
-                    value.as_bytes(),
-                    &event.credential_observations,
-                );
+                let redacted = redact_observed_credentials_in_bytes(value.as_bytes(), &event.credential_observations);
                 if redacted != value.as_bytes() {
                     *value = http::HeaderValue::from_bytes(&redacted).map_err(|error| {
-                        SecurityActionError::new(format!(
-                            "log sanitizer produced invalid header value: {error}"
-                        ))
+                        SecurityActionError::new(format!("log sanitizer produced invalid header value: {error}"))
                     })?;
                 }
             }
             if let Some(query) = request.query.as_mut() {
-                let redacted = redact_observed_credentials_in_bytes(
-                    query.as_bytes(),
-                    &event.credential_observations,
-                );
+                let redacted = redact_observed_credentials_in_bytes(query.as_bytes(), &event.credential_observations);
                 if redacted != query.as_bytes() {
                     *query = String::from_utf8(redacted).map_err(|error| {
-                        SecurityActionError::new(format!(
-                            "log sanitizer produced invalid query text: {error}"
-                        ))
+                        SecurityActionError::new(format!("log sanitizer produced invalid query text: {error}"))
                     })?;
                 }
             }

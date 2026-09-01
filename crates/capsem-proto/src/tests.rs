@@ -130,10 +130,7 @@ fn set_env_fits_in_frame() {
 
 #[test]
 fn roundtrip_resize() {
-    let msg = HostToGuest::Resize {
-        cols: 120,
-        rows: 40,
-    };
+    let msg = HostToGuest::Resize { cols: 120, rows: 40 };
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
@@ -181,12 +178,7 @@ fn roundtrip_file_write() {
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::FileWrite {
-            id,
-            path,
-            data,
-            mode,
-        } => {
+        HostToGuest::FileWrite { id, path, data, mode } => {
             assert_eq!(id, 1);
             assert_eq!(path, "/workspace/test.txt");
             assert_eq!(data, b"hello world");
@@ -353,10 +345,7 @@ fn roundtrip_exec_started() {
 
 #[test]
 fn roundtrip_exec_done() {
-    let msg = GuestToHost::ExecDone {
-        id: 99,
-        exit_code: 127,
-    };
+    let msg = GuestToHost::ExecDone { id: 99, exit_code: 127 };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -569,10 +558,7 @@ fn vsock_port_constants_are_distinct() {
 
 #[test]
 fn host_vsock_registry_is_the_only_boot_listener_contract() {
-    let ports: Vec<u32> = host_vsock_services()
-        .iter()
-        .map(|service| service.port())
-        .collect();
+    let ports: Vec<u32> = host_vsock_services().iter().map(|service| service.port()).collect();
     assert_eq!(
         ports,
         vec![
@@ -724,10 +710,7 @@ fn different_messages_produce_different_bytes() {
 fn rmp_payload_is_compact() {
     let frame = encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
     let payload_len = frame.len() - 4;
-    assert!(
-        payload_len < 50,
-        "Ping payload is {payload_len} bytes, expected < 50"
-    );
+    assert!(payload_len < 50, "Ping payload is {payload_len} bytes, expected < 50");
 }
 
 // -------------------------------------------------------------------
@@ -740,10 +723,7 @@ fn guest_msg_fails_to_decode_as_host() {
     let frame = encode_guest_msg(&msg).unwrap();
     let result = decode_host_msg(&frame[4..]);
     // Pong only exists in GuestToHost, not HostToGuest, so this must fail.
-    assert!(
-        result.is_err(),
-        "decoding GuestToHost::Pong as HostToGuest should fail"
-    );
+    assert!(result.is_err(), "decoding GuestToHost::Pong as HostToGuest should fail");
 }
 
 #[test]
@@ -752,10 +732,7 @@ fn host_msg_fails_to_decode_as_guest() {
     let frame = encode_host_msg(&msg).unwrap();
     let result = decode_guest_msg(&frame[4..]);
     // Ping only exists in HostToGuest, not GuestToHost, so this must fail.
-    assert!(
-        result.is_err(),
-        "decoding HostToGuest::Ping as GuestToHost should fail"
-    );
+    assert!(result.is_err(), "decoding HostToGuest::Ping as GuestToHost should fail");
 }
 
 #[test]
@@ -907,9 +884,7 @@ fn all_guest_variants_fit() {
             path: "/test".into(),
             size: u64::MAX,
         },
-        GuestToHost::FileDeleted {
-            path: "/test".into(),
-        },
+        GuestToHost::FileDeleted { path: "/test".into() },
         GuestToHost::FileContent {
             id: 1,
             path: "/test".into(),
@@ -944,10 +919,7 @@ fn max_frame_size_is_2mib() {
 
 #[test]
 fn exec_done_negative_exit_code() {
-    let msg = GuestToHost::ExecDone {
-        id: 1,
-        exit_code: -1,
-    };
+    let msg = GuestToHost::ExecDone { id: 1, exit_code: -1 };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -975,9 +947,7 @@ fn exec_max_id() {
 
 #[test]
 fn ready_empty_version() {
-    let msg = GuestToHost::Ready {
-        version: String::new(),
-    };
+    let msg = GuestToHost::Ready { version: String::new() };
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     match decoded {
@@ -1081,10 +1051,7 @@ fn validate_env_key_rejects_oversized() {
 #[test]
 fn validate_env_key_rejects_every_blocked_var() {
     for &var in BLOCKED_ENV_VARS {
-        assert!(
-            validate_env_key(var).is_err(),
-            "should reject blocked var: {var}"
-        );
+        assert!(validate_env_key(var).is_err(), "should reject blocked var: {var}");
     }
 }
 
@@ -1330,12 +1297,7 @@ fn roundtrip_file_write_v2() {
     let frame = encode_host_msg(&msg).unwrap();
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
-        HostToGuest::FileWrite {
-            id,
-            path,
-            data,
-            mode,
-        } => {
+        HostToGuest::FileWrite { id, path, data, mode } => {
             assert_eq!(id, 123);
             assert_eq!(path, "/tmp/test");
             assert_eq!(data, b"hello");
@@ -1475,10 +1437,7 @@ fn exec_command_shell_metacharacters_preserved() {
     let decoded = decode_host_msg(&frame[4..]).unwrap();
     match decoded {
         HostToGuest::Exec { command, .. } => {
-            assert_eq!(
-                command, cmd,
-                "Shell metacharacters must pass through unchanged"
-            );
+            assert_eq!(command, cmd, "Shell metacharacters must pass through unchanged");
         }
         other => panic!("expected Exec, got {other:?}"),
     }
@@ -1709,10 +1668,10 @@ fn detector_ignores_frame_shaped_bytes_that_do_not_start_the_buffer() {
 fn detector_ignores_ordinary_terminal_output() {
     for sample in [
         &b"$ ls -la\r\n"[..],
-        &b"\x1b[0;32mOK\x1b[0m\r\n"[..],   // ANSI colour
-        &b"\x00\x00\x00\x10"[..],          // a length prefix, not a body
-        &b"{\"jsonrpc\":\"2.0\"}"[..],     // JSON, not msgpack
-        &[0xff, 0xfe, 0xfd, 0xfc][..],     // arbitrary binary
+        &b"\x1b[0;32mOK\x1b[0m\r\n"[..], // ANSI colour
+        &b"\x00\x00\x00\x10"[..],        // a length prefix, not a body
+        &b"{\"jsonrpc\":\"2.0\"}"[..],   // JSON, not msgpack
+        &[0xff, 0xfe, 0xfd, 0xfc][..],   // arbitrary binary
     ] {
         assert!(
             !looks_like_ipc_frame(sample),

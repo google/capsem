@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 capsem-builder = "capsem_builder.image.cli:main"
+capsem-cache = "capsem_builder.cache.cli:main"
 capsem-gate = "capsem_builder.gatelaunch:main"
 
 [build-system]
@@ -25,6 +26,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = [
     "capsem_builder",
+    "capsem_builder.cache",
     "capsem_builder.gate",
     "capsem_builder.gate.tools",
     "capsem_builder.gate.tools.audit",

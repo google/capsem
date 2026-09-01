@@ -140,11 +140,7 @@ fn singleton_reacquires_after_drop_in_isolated_process() {
          exit 0;",
         lock.display()
     );
-    let status = Command::new("perl")
-        .arg("-e")
-        .arg(&script)
-        .status()
-        .expect("run perl");
+    let status = Command::new("perl").arg("-e").arg(&script).status().expect("run perl");
     assert!(
         status.success(),
         "flock acquire+release+reacquire in isolated process must succeed"
@@ -234,10 +230,7 @@ fn singleton_reacquires_after_ungraceful_holder_exit() {
 
 #[test]
 fn watch_parent_or_exit_rejects_missing_pid() {
-    assert!(matches!(
-        watch_parent_or_exit(None),
-        Err(GuardError::NoParent)
-    ));
+    assert!(matches!(watch_parent_or_exit(None), Err(GuardError::NoParent)));
 }
 
 #[test]
@@ -285,10 +278,7 @@ fn install_rejects_non_parent_before_touching_lock() {
     let lock = dir.path().join("x.lock");
     let r = install(Some(std::process::id()), &lock);
     assert!(matches!(r, Err(GuardError::ParentDead(_))));
-    assert!(
-        !lock.exists(),
-        "non-parent guard must not create the lockfile"
-    );
+    assert!(!lock.exists(), "non-parent guard must not create the lockfile");
 }
 
 // ---- PARENT_POLL_INTERVAL contract --------------------------------
@@ -461,7 +451,7 @@ fn singleton_fails_when_path_is_an_existing_directory() {
         "expected Io error for directory-as-lockfile"
     );
     // Registry must not still have a reservation for this path.
-    let canonical = std::fs::canonicalize(&as_lock).unwrap_or(as_lock.clone());
+    let canonical = std::fs::canonicalize(&as_lock).unwrap_or(as_lock);
     assert!(
         !held_locks().lock().unwrap().contains(&canonical),
         "lock reservation leaked into the registry on IO error"
@@ -495,12 +485,7 @@ fn singleton_fails_when_parent_cannot_be_created() {
     match result {
         Err(GuardError::Io { path, source: _ }) => {
             // Must report the unwritable parent, not the leaf.
-            assert_eq!(
-                path,
-                file,
-                "error path should be the parent, got {}",
-                path.display()
-            );
+            assert_eq!(path, file, "error path should be the parent, got {}", path.display());
         }
         Err(other) => panic!("expected Io error for unwritable parent, got {other:?}"),
         Ok(_) => panic!("expected Io error for unwritable parent, got Ok(_)"),
@@ -526,10 +511,7 @@ fn is_alive_reports_pid_one_as_alive() {
     // success when running as root, or via the EPERM-means-alive branch
     // when running as an ordinary user. Both paths are correct; we
     // don't care which one fires.
-    assert!(
-        is_alive(1),
-        "PID 1 (launchd/init) must always be reported alive"
-    );
+    assert!(is_alive(1), "PID 1 (launchd/init) must always be reported alive");
 }
 
 // ---- install() end-to-end ------------------------------------------

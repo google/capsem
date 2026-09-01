@@ -45,40 +45,6 @@ def dispatch(argv: list[str], runner: RecordingRunner) -> int:
     return 0
 
 
-def test_storage_release_reaches_the_policy_script(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "release", "completed-package-arm64"], recorded) == 0
-
-    assert recorded.matching(
-        r"docker-storage-policy.py release --boundary after-package-arm64 --rail install"
-    )
-
-
-def test_storage_gc_passes_its_rail_through(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "gc", "--rail", "install"], recorded) == 0
-
-    assert recorded.rendered[0].endswith("gc --rail install")
-
-
-def test_storage_gc_without_a_rail_omits_the_flag(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "gc"], recorded) == 0
-
-    assert recorded.rendered[0].endswith("docker-storage-policy.py gc")
-
-
-def test_storage_clean_carries_scope_and_rail(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "clean", "--scope", "working", "--rail", "default"], recorded) == 0
-
-    assert recorded.rendered[0].endswith("clean --scope working --rail default")
-
-
-def test_ensure_space_makes_the_boundary_optional(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "ensure-space", "package"], recorded) == 0
-    assert dispatch(["storage", "ensure-space", "default", "candidate-boundary"], recorded) == 0
-
-    assert recorded.rendered[0].endswith("ensure-docker-space.sh package")
-    assert recorded.rendered[1].endswith("ensure-docker-space.sh default candidate-boundary")
-
-
 def test_version_prints_the_workspace_version(
     recorded: RecordingRunner, capsys: pytest.CaptureFixture[str]
 ) -> None:

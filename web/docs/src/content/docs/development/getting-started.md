@@ -24,7 +24,7 @@ sidebar:
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM + vhost-vsock** | `/dev/kvm` and `/dev/vhost-vsock` must be accessible. Bootstrap loads and provisions both. |
 | **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
-| **Bubblewrap** | Installed/proved by bootstrap; gives `just test-full` a loopback-only host network namespace |
+| **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
 | **QEMU user/binfmt** | Installed and registration-proved by bootstrap; executes the non-host asset architecture |
 
 ## Clone and bootstrap
@@ -81,8 +81,8 @@ if you need to retune Colima resources.
 
 The build is profile-derived. `code` is the default coding-agent profile, and
 the runtime profile for the current local build is generated under
-`target/config/` by `capsem-admin profile materialize` during `just shell`,
-`just exec`, `just fast-test`, `just test-full`, and release packaging.
+`cache/target/config/` by `capsem-admin profile materialize` during `just shell`,
+`just exec`, `just fast-test`, `just test`, and release packaging.
 
 ## Verify
 
@@ -153,7 +153,7 @@ If `just run` or `just doctor` reports a codesign failure:
 1. **Xcode CLTools missing:** `xcode-select --install` (opens the system installer)
 2. **macOS packaging entitlements missing:** `git checkout build_system/packaging/macos/entitlements.plist`
 3. **Test sign fails but tools are present:**
-   - Try manually: `codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force target/debug/capsem`
+   - Try manually: `codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force cache/target/cargo/debug/capsem`
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 

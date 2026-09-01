@@ -93,7 +93,7 @@ def test_acquiring_the_service_starts_it_and_waits_for_its_socket(tmp_path, monk
     # `acquire` copies the materialized profiles into the workspace, and a
     # `RecordingRunner` only stubs subprocesses -- filesystem actions still
     # run. This test is about starting a daemon and waiting for its socket, so
-    # it makes that input rather than inheriting it: `target/config/profiles`
+    # it makes that input rather than inheriting it: `cache/target/config/profiles`
     # is build output from `prepare.materialize-config`, and depending on an
     # earlier build having left it is why this passed on a warm machine and
     # failed the moment a run got a checkout of its own.

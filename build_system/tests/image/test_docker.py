@@ -1265,6 +1265,12 @@ class TestBuildVersionScript:
                     dockerfile="build_system/docker/Dockerfile.guest-rust-builder",
                     tag_template="capsem-guest-rust-{arch}:{digest}",
                     identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+                    source_roots=(
+                        "Cargo.toml",
+                        "Cargo.lock",
+                        "rust-toolchain.toml",
+                        "crates",
+                    ),
                     cross_packages=("clang21=21.1.2-r2",),
                     runtime_network=ContainerNetwork.NONE,
                 ),
@@ -1688,7 +1694,7 @@ class TestBuildLedger:
     @patch("capsem_builder.image.docker.run_cmd")
     def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path):
         repo_root = tmp_path
-        (repo_root / "target" / "tmp").mkdir(parents=True)
+        (repo_root / "cache" / "target" / "tmp").mkdir(parents=True)
         rootfs_tar = tmp_path / "rootfs.tar"
         rootfs_tar.write_bytes(b"tar")
         output = tmp_path / "assets" / "arm64" / "obom.cdx.json"
@@ -2866,7 +2872,7 @@ class TestContainerCompileAgentShellScript:
     """Verify the script passed to POSIX sh in container builds.
 
     The script symlinks most of /src into /build, keeps the checked-in lockfile,
-    and handles the writable target/crates trees separately.
+    and handles the writable cache/target/crates trees separately.
     Regression: symlinked crates broke workspace resolution inside the container.
     """
 
@@ -2932,7 +2938,8 @@ class TestContainerCompileAgentShellScript:
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         for binary in GUEST_BINARIES:
             assert (
-                f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
+                f"cp /build/target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}"
+                in script
             )
 
     @patch("capsem_builder.image.docker.run_cmd")

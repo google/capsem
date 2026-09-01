@@ -402,15 +402,17 @@ impl KvmFd {
     /// `Layout::from_size_align(_, CPUID_BUFFER_ALIGN)`, whose alignment is
     /// derived from the very types being cast to, and `CPUID_HEADER_SIZE` is
     /// asserted at compile time to keep the entry array aligned.
-    #[allow(clippy::cast_ptr_alignment, reason = "buffer alignment is derived from the cast types")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "buffer alignment is derived from the cast types"
+    )]
     pub fn get_supported_cpuid(&self) -> Result<Vec<KvmCpuidEntry2>> {
         const MAX_ENTRIES: usize = 256;
         let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
         let header_size = CPUID_HEADER_SIZE;
         let total_size = header_size + MAX_ENTRIES * entry_size;
 
-        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN)
-            .context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN).context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
@@ -420,21 +422,12 @@ impl KvmFd {
             *(buf as *mut u32) = MAX_ENTRIES as u32;
         }
 
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_GET_SUPPORTED_CPUID as IoctlRequest,
-                buf as u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_SUPPORTED_CPUID as IoctlRequest, buf as u64) };
         if ret < 0 {
             unsafe {
                 std::alloc::dealloc(buf, layout);
             }
-            bail!(
-                "KVM_GET_SUPPORTED_CPUID failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_GET_SUPPORTED_CPUID failed: {}", std::io::Error::last_os_error());
         }
 
         let nent = unsafe { *(buf as *const u32) } as usize;
@@ -460,11 +453,7 @@ impl KvmFd {
     fn ioctl(&self, request: u64, arg: u64) -> Result<i32> {
         let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), request as IoctlRequest, arg) };
         if ret < 0 {
-            bail!(
-                "KVM ioctl 0x{:x} failed: {}",
-                request,
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM ioctl 0x{:x} failed: {}", request, std::io::Error::last_os_error());
         }
         Ok(ret)
     }
@@ -509,23 +498,14 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_SET_USER_MEMORY_REGION failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_SET_USER_MEMORY_REGION failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
 
     /// Create a vCPU, returning its fd wrapper with mmap'd kvm_run region.
     pub fn create_vcpu(&self, id: u32) -> Result<VcpuFd> {
-        let raw = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_CREATE_VCPU as IoctlRequest,
-                u64::from(id),
-            )
-        };
+        let raw = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_VCPU as IoctlRequest, u64::from(id)) };
         if raw < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EEXIST) {
@@ -591,10 +571,7 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_ARM_PREFERRED_TARGET failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_ARM_PREFERRED_TARGET failed: {}", std::io::Error::last_os_error());
         }
         Ok(init)
     }
@@ -617,10 +594,7 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_CREATE_DEVICE(GICv3) failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_CREATE_DEVICE(GICv3) failed: {}", std::io::Error::last_os_error());
         }
         let gic_fd = unsafe { OwnedFd::from_raw_fd(dev.fd as RawFd) };
 
@@ -679,22 +653,13 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_IRQFD(gsi={gsi}) failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_IRQFD(gsi={gsi}) failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
 
     /// Bind an eventfd to an MMIO write via KVM_IOEVENTFD.
-    pub fn ioeventfd(
-        &self,
-        eventfd: RawFd,
-        addr: u64,
-        len: u32,
-        datamatch: Option<u64>,
-    ) -> Result<()> {
+    pub fn ioeventfd(&self, eventfd: RawFd, addr: u64, len: u32, datamatch: Option<u64>) -> Result<()> {
         let flags = datamatch.map_or(0, |_| 1);
         let ioeventfd = KvmIoeventfd {
             datamatch: datamatch.unwrap_or(0),
@@ -729,13 +694,7 @@ fn set_device_attr(dev_fd: RawFd, group: u32, attr: u64, addr: u64) -> Result<()
         attr,
         addr,
     };
-    let ret = unsafe {
-        libc::ioctl(
-            dev_fd,
-            KVM_SET_DEVICE_ATTR as IoctlRequest,
-            &kda as *const _ as u64,
-        )
-    };
+    let ret = unsafe { libc::ioctl(dev_fd, KVM_SET_DEVICE_ATTR as IoctlRequest, &kda as *const _ as u64) };
     if ret < 0 {
         bail!(
             "KVM_SET_DEVICE_ATTR(group={group}, attr={attr}) failed: {}",
@@ -783,10 +742,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_ARM_VCPU_INIT failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_ARM_VCPU_INIT failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -820,7 +776,10 @@ impl VcpuFd {
     /// The casts into the mmap'd region are reviewed: `mmap` returns
     /// page-aligned memory and the constructor asserts it, so every fixed
     /// offset into the kernel's naturally-aligned `kvm_run` is aligned too.
-    #[allow(clippy::cast_ptr_alignment, reason = "kvm_run mmap is page-aligned, asserted at creation")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "kvm_run mmap is page-aligned, asserted at creation"
+    )]
     pub fn run(&self) -> Result<VcpuExit> {
         let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN as IoctlRequest, 0u64) };
         if ret < 0 {
@@ -836,8 +795,7 @@ impl VcpuFd {
 
         match exit_reason {
             KVM_EXIT_MMIO => {
-                let mmio =
-                    unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunMmio) };
+                let mmio = unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunMmio) };
                 Ok(VcpuExit::Mmio {
                     addr: mmio.phys_addr,
                     data_offset: KVM_RUN_EXIT_DATA_OFFSET + 8, // offset of data field in kvm_run
@@ -846,9 +804,7 @@ impl VcpuFd {
                 })
             }
             KVM_EXIT_SYSTEM_EVENT => {
-                let event = unsafe {
-                    &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunSystemEvent)
-                };
+                let event = unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunSystemEvent) };
                 Ok(VcpuExit::SystemEvent {
                     event_type: event.type_,
                 })
@@ -1136,12 +1092,11 @@ const CPUID_HEADER_SIZE: usize = std::mem::size_of::<u32>() * 2;
 /// undefined behaviour that no test would show, because the allocator usually
 /// returns generously aligned memory anyway.
 #[cfg(target_arch = "x86_64")]
-const CPUID_BUFFER_ALIGN: usize =
-    if std::mem::align_of::<KvmCpuidEntry2>() > std::mem::align_of::<u32>() {
-        std::mem::align_of::<KvmCpuidEntry2>()
-    } else {
-        std::mem::align_of::<u32>()
-    };
+const CPUID_BUFFER_ALIGN: usize = if std::mem::align_of::<KvmCpuidEntry2>() > std::mem::align_of::<u32>() {
+    std::mem::align_of::<KvmCpuidEntry2>()
+} else {
+    std::mem::align_of::<u32>()
+};
 
 /// The entry array starts at `CPUID_HEADER_SIZE`, so that offset has to be a
 /// multiple of the entry alignment or every entry after the header is
@@ -1379,13 +1334,9 @@ const _: () = {
 impl VmFd {
     /// Set the TSS address (required before creating IRQCHIP on x86_64).
     pub fn set_tss_addr(&self, addr: u64) -> Result<()> {
-        let ret =
-            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as IoctlRequest, addr) };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as IoctlRequest, addr) };
         if ret < 0 {
-            bail!(
-                "KVM_SET_TSS_ADDR failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_SET_TSS_ADDR failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1400,28 +1351,16 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_SET_IDENTITY_MAP_ADDR failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_SET_IDENTITY_MAP_ADDR failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
 
     /// Create an in-kernel i8259 PIC + IOAPIC + LAPIC.
     pub fn create_irqchip(&self) -> Result<()> {
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_CREATE_IRQCHIP as IoctlRequest,
-                0u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_IRQCHIP as IoctlRequest, 0u64) };
         if ret < 0 {
-            bail!(
-                "KVM_CREATE_IRQCHIP failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_CREATE_IRQCHIP failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1460,10 +1399,7 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_CREATE_PIT2 failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_CREATE_PIT2 failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1481,10 +1417,7 @@ impl VmFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_GET_IRQCHIP({chip_id}) failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_GET_IRQCHIP({chip_id}) failed: {}", std::io::Error::last_os_error());
         }
         Ok(irqchip)
     }
@@ -1666,8 +1599,7 @@ impl VcpuFd {
         let mut entries = Vec::with_capacity(count);
         for i in 0..count {
             let offset = header_len + i * entry_len;
-            let entry =
-                unsafe { std::ptr::read_unaligned(buf[offset..].as_ptr() as *const KvmMsrEntry) };
+            let entry = unsafe { std::ptr::read_unaligned(buf[offset..].as_ptr() as *const KvmMsrEntry) };
             entries.push(entry);
         }
         Ok(entries)
@@ -1688,22 +1620,13 @@ impl VcpuFd {
             }
         }
 
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_SET_MSRS as IoctlRequest,
-                buf.as_ptr() as u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_MSRS as IoctlRequest, buf.as_ptr() as u64) };
         if ret < 0 {
             bail!("KVM_SET_MSRS failed: {}", std::io::Error::last_os_error());
         }
         let count = ret as usize;
         if count != entries.len() {
-            bail!(
-                "KVM_SET_MSRS restored only {count}/{} entries",
-                entries.len()
-            );
+            bail!("KVM_SET_MSRS restored only {count}/{} entries", entries.len());
         }
         Ok(())
     }
@@ -1713,14 +1636,16 @@ impl VcpuFd {
     /// `Layout::from_size_align(_, CPUID_BUFFER_ALIGN)`, whose alignment is
     /// derived from the very types being cast to, and `CPUID_HEADER_SIZE` is
     /// asserted at compile time to keep the entry array aligned.
-    #[allow(clippy::cast_ptr_alignment, reason = "buffer alignment is derived from the cast types")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "buffer alignment is derived from the cast types"
+    )]
     pub fn set_cpuid2(&self, entries: &[KvmCpuidEntry2]) -> Result<()> {
         let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
         let header_size = CPUID_HEADER_SIZE;
         let total_size = header_size + std::mem::size_of_val(entries);
 
-        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN)
-            .context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN).context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
@@ -1734,13 +1659,7 @@ impl VcpuFd {
 
         // KVM_SET_CPUID2 uses the same ioctl number encoding as GET but with _IOW
         const KVM_SET_CPUID2: u64 = _iow(KVMIO, 0x90, 8);
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_SET_CPUID2 as IoctlRequest,
-                buf as u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_CPUID2 as IoctlRequest, buf as u64) };
         unsafe {
             std::alloc::dealloc(buf, layout);
         }
@@ -1761,10 +1680,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_GET_MP_STATE failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_GET_MP_STATE failed: {}", std::io::Error::last_os_error());
         }
         Ok(state)
     }
@@ -1827,10 +1743,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_GET_VCPU_EVENTS failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_GET_VCPU_EVENTS failed: {}", std::io::Error::last_os_error());
         }
         Ok(events)
     }
@@ -1844,10 +1757,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_SET_VCPU_EVENTS failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_SET_VCPU_EVENTS failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1862,10 +1772,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_GET_DEBUGREGS failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_GET_DEBUGREGS failed: {}", std::io::Error::last_os_error());
         }
         Ok(debugregs)
     }
@@ -1879,10 +1786,7 @@ impl VcpuFd {
             )
         };
         if ret < 0 {
-            bail!(
-                "KVM_SET_DEBUGREGS failed: {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("KVM_SET_DEBUGREGS failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1903,13 +1807,7 @@ impl VcpuFd {
     }
 
     pub fn set_fpu(&self, fpu: &KvmFpu) -> Result<()> {
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_SET_FPU as IoctlRequest,
-                fpu as *const _ as u64,
-            )
-        };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_FPU as IoctlRequest, fpu as *const _ as u64) };
         if ret < 0 {
             bail!("KVM_SET_FPU failed: {}", std::io::Error::last_os_error());
         }
@@ -1978,7 +1876,10 @@ impl VcpuFd {
     /// The casts into the mmap'd region are reviewed: `mmap` returns
     /// page-aligned memory and the constructor asserts it, so every fixed
     /// offset into the kernel's naturally-aligned `kvm_run` is aligned too.
-    #[allow(clippy::cast_ptr_alignment, reason = "kvm_run mmap is page-aligned, asserted at creation")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "kvm_run mmap is page-aligned, asserted at creation"
+    )]
     pub fn io_data(&self) -> &KvmRunIo {
         unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo) }
     }

@@ -91,12 +91,7 @@ fn default_dev_security_rules() -> SecurityRuleSet {
             match = 'http.host == "evil-unknown-domain.xyz"'
             "#,
     )
-    .and_then(|profile| {
-        SecurityRuleSet::compile_profile(
-            &profile,
-            crate::net::policy_config::SecurityRuleSource::User,
-        )
-    })
+    .and_then(|profile| SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User))
     .expect("test security rules compile")
 }
 
@@ -128,16 +123,10 @@ fn builtin_tool_annotations_all_present() {
 #[test]
 fn fetch_http_annotations_correct() {
     let defs = builtin_tool_defs();
-    let fetch = defs
-        .iter()
-        .find(|d| d.namespaced_name == "fetch_http")
-        .unwrap();
+    let fetch = defs.iter().find(|d| d.namespaced_name == "fetch_http").unwrap();
     let ann = fetch.annotations.as_ref().unwrap();
     assert!(ann.read_only_hint, "fetch_http should be read-only");
-    assert!(
-        !ann.destructive_hint,
-        "fetch_http should not be destructive"
-    );
+    assert!(!ann.destructive_hint, "fetch_http should not be destructive");
     assert!(ann.idempotent_hint, "fetch_http should be idempotent");
     assert!(ann.open_world_hint, "fetch_http should be open-world");
 }
@@ -145,10 +134,7 @@ fn fetch_http_annotations_correct() {
 #[test]
 fn grep_http_annotations_correct() {
     let defs = builtin_tool_defs();
-    let grep = defs
-        .iter()
-        .find(|d| d.namespaced_name == "grep_http")
-        .unwrap();
+    let grep = defs.iter().find(|d| d.namespaced_name == "grep_http").unwrap();
     let ann = grep.annotations.as_ref().unwrap();
     assert!(ann.read_only_hint, "grep_http should be read-only");
     assert!(!ann.destructive_hint, "grep_http should not be destructive");
@@ -159,16 +145,10 @@ fn grep_http_annotations_correct() {
 #[test]
 fn http_headers_annotations_correct() {
     let defs = builtin_tool_defs();
-    let headers = defs
-        .iter()
-        .find(|d| d.namespaced_name == "http_headers")
-        .unwrap();
+    let headers = defs.iter().find(|d| d.namespaced_name == "http_headers").unwrap();
     let ann = headers.annotations.as_ref().unwrap();
     assert!(ann.read_only_hint, "http_headers should be read-only");
-    assert!(
-        !ann.destructive_hint,
-        "http_headers should not be destructive"
-    );
+    assert!(!ann.destructive_hint, "http_headers should not be destructive");
     assert!(ann.idempotent_hint, "http_headers should be idempotent");
     assert!(ann.open_world_hint, "http_headers should be open-world");
 }
@@ -190,12 +170,7 @@ fn is_builtin_tool_rejects_unknown() {
 #[test]
 fn builtin_http_security_allows_when_no_rule_matches() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request(
-        "https://github.com/foo/bar",
-        "GET",
-        &rules,
-        &BTreeMap::new(),
-    );
+    let result = evaluate_builtin_http_request("https://github.com/foo/bar", "GET", &rules, &BTreeMap::new());
     assert!(result.is_ok());
     assert_eq!(result.unwrap().domain, "github.com");
 }
@@ -203,12 +178,7 @@ fn builtin_http_security_allows_when_no_rule_matches() {
 #[test]
 fn builtin_http_security_blocks_matching_rule() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request(
-        "https://evil-unknown-domain.xyz/hack",
-        "GET",
-        &rules,
-        &BTreeMap::new(),
-    );
+    let result = evaluate_builtin_http_request("https://evil-unknown-domain.xyz/hack", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("blocked"));
 }
@@ -216,8 +186,7 @@ fn builtin_http_security_blocks_matching_rule() {
 #[test]
 fn builtin_http_security_rejects_invalid_url() {
     let rules = default_dev_security_rules();
-    let result =
-        evaluate_builtin_http_request("not a url at all", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("not a url at all", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("invalid URL"));
 }
@@ -353,10 +322,7 @@ async fn fetch_http_blocked_domain() {
     .await;
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], true);
-    assert!(result["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("blocked"));
+    assert!(result["content"][0]["text"].as_str().unwrap().contains("blocked"));
 }
 
 #[tokio::test]
@@ -397,10 +363,7 @@ async fn grep_http_invalid_regex() {
     .await;
     let result = resp.result.unwrap();
     assert_eq!(result["isError"], true);
-    assert!(result["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("invalid regex"));
+    assert!(result["content"][0]["text"].as_str().unwrap().contains("invalid regex"));
 }
 
 // -----------------------------------------------------------------------
@@ -479,12 +442,7 @@ fn text_ct_empty() {
 #[test]
 fn builtin_http_security_rejects_ftp() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request(
-        "ftp://example.com/file",
-        "GET",
-        &rules,
-        &BTreeMap::new(),
-    );
+    let result = evaluate_builtin_http_request("ftp://example.com/file", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -492,8 +450,7 @@ fn builtin_http_security_rejects_ftp() {
 #[test]
 fn builtin_http_security_rejects_file() {
     let rules = default_dev_security_rules();
-    let result =
-        evaluate_builtin_http_request("file:///etc/passwd", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("file:///etc/passwd", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -501,12 +458,7 @@ fn builtin_http_security_rejects_file() {
 #[test]
 fn builtin_http_security_rejects_data_uri() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request(
-        "data:text/html,<h1>hi</h1>",
-        "GET",
-        &rules,
-        &BTreeMap::new(),
-    );
+    let result = evaluate_builtin_http_request("data:text/html,<h1>hi</h1>", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -514,8 +466,7 @@ fn builtin_http_security_rejects_data_uri() {
 #[test]
 fn builtin_http_security_rejects_javascript() {
     let rules = default_dev_security_rules();
-    let result =
-        evaluate_builtin_http_request("javascript:alert(1)", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("javascript:alert(1)", "GET", &rules, &BTreeMap::new());
     assert!(result.is_err());
     // reqwest::Url::parse may reject this as invalid, either way it errors
     assert!(result.is_err());
@@ -559,20 +510,14 @@ fn extract_text_svg_only_returns_empty() {
 fn extract_text_noscript_skipped() {
     let text = extract_text_from_html("<noscript>hidden</noscript>visible");
     assert!(text.contains("visible"), "visible text preserved: {text:?}");
-    assert!(
-        !text.contains("hidden"),
-        "noscript content skipped: {text:?}"
-    );
+    assert!(!text.contains("hidden"), "noscript content skipped: {text:?}");
 }
 
 #[test]
 fn extract_text_template_skipped() {
     let text = extract_text_from_html("<template><p>hidden</p></template>visible");
     assert!(text.contains("visible"), "visible text preserved: {text:?}");
-    assert!(
-        !text.contains("hidden"),
-        "template content skipped: {text:?}"
-    );
+    assert!(!text.contains("hidden"), "template content skipped: {text:?}");
 }
 
 #[test]
@@ -643,10 +588,7 @@ async fn fetch_http_rejects_ftp_scheme() {
     .await;
     assert!(is_tool_error(&resp));
     let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("only http"),
-        "error should mention http: {text}"
-    );
+    assert!(text.contains("only http"), "error should mention http: {text}");
 }
 
 #[tokio::test]
@@ -665,10 +607,7 @@ async fn fetch_http_rejects_file_scheme() {
     .await;
     assert!(is_tool_error(&resp));
     let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("only http"),
-        "error should mention http: {text}"
-    );
+    assert!(text.contains("only http"), "error should mention http: {text}");
 }
 
 #[tokio::test]
@@ -747,15 +686,9 @@ async fn fetch_http_start_index_negative_defaults_to_zero() {
     )
     .await;
     // Should succeed (negative start_index is silently treated as 0)
-    assert!(
-        !is_tool_error(&resp),
-        "should succeed with default start_index=0"
-    );
+    assert!(!is_tool_error(&resp), "should succeed with default start_index=0");
     let text = extract_tool_text(&resp);
-    assert!(
-        text.contains(&format!("URL: {}/", fixture.base_url)),
-        "got: {text}"
-    );
+    assert!(text.contains(&format!("URL: {}/", fixture.base_url)), "got: {text}");
 }
 
 // -----------------------------------------------------------------------
@@ -1034,10 +967,7 @@ fn extract_text_handles_nested_elements() {
     let text = extract_text_from_html(html);
     assert!(text.contains("Alice"), "must contain Alice, got: {text:?}");
     assert!(text.contains("Bob"), "must contain Bob, got: {text:?}");
-    assert!(
-        text.contains("Engineer"),
-        "must contain Engineer, got: {text:?}"
-    );
+    assert!(text.contains("Engineer"), "must contain Engineer, got: {text:?}");
 }
 
 #[test]
@@ -1048,14 +978,8 @@ fn extract_text_handles_links_and_attrs() {
 <img src="photo.jpg" alt="Photo of labs">
 </body></html>"#;
     let text = extract_text_from_html(html);
-    assert!(
-        text.contains("About page"),
-        "must contain link text, got: {text:?}"
-    );
-    assert!(
-        text.contains("Visit Example"),
-        "must contain link text, got: {text:?}"
-    );
+    assert!(text.contains("About page"), "must contain link text, got: {text:?}");
+    assert!(text.contains("Visit Example"), "must contain link text, got: {text:?}");
 }
 
 // -----------------------------------------------------------------------
@@ -1064,16 +988,11 @@ fn extract_text_handles_links_and_attrs() {
 
 /// Helper to extract the text content from a tool response.
 fn extract_tool_text(resp: &JsonRpcResponse) -> &str {
-    resp.result.as_ref().unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
+    resp.result.as_ref().unwrap()["content"][0]["text"].as_str().unwrap()
 }
 
 fn is_tool_error(resp: &JsonRpcResponse) -> bool {
-    resp.result
-        .as_ref()
-        .map(|r| r["isError"] == true)
-        .unwrap_or(false)
+    resp.result.as_ref().map(|r| r["isError"] == true).unwrap_or(false)
 }
 
 #[tokio::test]
@@ -1094,10 +1013,7 @@ async fn integration_fetch_http_local_fixture() {
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed");
     let text = extract_tool_text(&resp);
-    assert!(
-        text.contains(&fixture.base_url),
-        "response must reference the domain"
-    );
+    assert!(text.contains(&fixture.base_url), "response must reference the domain");
     // The extracted content must contain real text from the page
     assert!(
         text.to_lowercase().contains("elie"),
@@ -1175,10 +1091,7 @@ async fn integration_http_headers_local_fixture() {
     .await;
     assert!(!is_tool_error(&resp), "http_headers should succeed");
     let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("Status: 200"),
-        "must return a valid HTTP status: {text}"
-    );
+    assert!(text.contains("Status: 200"), "must return a valid HTTP status: {text}");
     assert!(
         text.to_lowercase().contains("content-type"),
         "must include content-type header: {text}"
@@ -1239,8 +1152,7 @@ fn load_fixture(name: &str) -> String {
         "{}/tests/fixtures/mcp/html/{name}",
         env!("CARGO_MANIFEST_DIR").replace("/crates/capsem-core", "")
     );
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to load fixture {path}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to load fixture {path}: {e}"))
 }
 
 #[test]
@@ -1253,16 +1165,9 @@ fn extract_elie_about_has_real_content() {
         &text[..200.min(text.len())]
     );
     assert!(text.contains("Google"), "must contain 'Google'");
-    assert!(
-        text.to_lowercase().contains("security"),
-        "must contain 'security'"
-    );
+    assert!(text.to_lowercase().contains("security"), "must contain 'security'");
     assert!(text.contains("Stanford"), "must contain 'Stanford'");
-    assert!(
-        text.len() > 3000,
-        "extracted text too short: {} chars",
-        text.len()
-    );
+    assert!(text.len() > 3000, "extracted text too short: {} chars", text.len());
     assert!(!text.contains("<script"), "must not contain script tags");
     assert!(!text.contains("<style"), "must not contain style tags");
     assert!(!text.contains("function()"), "must not contain JS code");
@@ -1319,10 +1224,7 @@ fn paginate_multibyte_emoji_boundary() {
     let (chunk, _total, has_more) = paginate(text, 0, 7);
     assert!(has_more, "should have more content");
     // chunk must end at a valid char boundary
-    assert!(
-        chunk.is_char_boundary(chunk.len()),
-        "chunk must end at char boundary"
-    );
+    assert!(chunk.is_char_boundary(chunk.len()), "chunk must end at char boundary");
     // Should include "Hello " but not the emoji (can't fit 4 bytes after byte 6)
     assert_eq!(chunk, "Hello ", "should stop before emoji: {chunk:?}");
 }
@@ -1337,14 +1239,8 @@ fn paginate_multibyte_cyrillic() {
     assert!(!chunk.is_empty(), "should produce content");
     // Start at byte 3 (mid-char) -- should align to byte 2
     let (chunk, _, _) = paginate(text, 3, 4);
-    assert!(
-        chunk.is_char_boundary(0),
-        "chunk start must be char boundary"
-    );
-    assert!(
-        chunk.is_char_boundary(chunk.len()),
-        "chunk end must be char boundary"
-    );
+    assert!(chunk.is_char_boundary(0), "chunk start must be char boundary");
+    assert!(chunk.is_char_boundary(chunk.len()), "chunk end must be char boundary");
 }
 
 #[test]
@@ -1377,10 +1273,7 @@ fn paginate_real_wiki_unicode_content() {
         }
         offset += chunk.len();
     }
-    assert_eq!(
-        collected, text,
-        "round-trip pagination must reconstruct original text"
-    );
+    assert_eq!(collected, text, "round-trip pagination must reconstruct original text");
 }
 
 #[test]
@@ -1398,10 +1291,7 @@ fn paginate_continuation_round_trip() {
         }
         offset += chunk.len();
     }
-    assert_eq!(
-        collected, text,
-        "round-trip must match: {collected:?} vs {text:?}"
-    );
+    assert_eq!(collected, text, "round-trip must match: {collected:?} vs {text:?}");
 }
 
 // -----------------------------------------------------------------------
@@ -1458,14 +1348,8 @@ fn raw_vs_content_mode_differ() {
         content_mode.len()
     );
     // Content mode has no HTML tags
-    assert!(
-        !content_mode.contains("<script"),
-        "content mode must strip scripts"
-    );
-    assert!(
-        !content_mode.contains("<div"),
-        "content mode must strip div tags"
-    );
+    assert!(!content_mode.contains("<script"), "content mode must strip scripts");
+    assert!(!content_mode.contains("<div"), "content mode must strip div tags");
     // Raw mode has HTML tags
     assert!(
         raw_mode.contains("<script") || raw_mode.contains("<div"),
@@ -1506,10 +1390,7 @@ fn markdown_elie_about_has_structure() {
     assert!(md.contains("Bursztein"), "must contain 'Bursztein'");
     assert!(md.contains("Google"), "must contain 'Google'");
     // Must have markdown headings
-    assert!(
-        md.contains("# ") || md.contains("## "),
-        "must have markdown headings"
-    );
+    assert!(md.contains("# ") || md.contains("## "), "must have markdown headings");
     // Must have markdown links
     assert!(md.contains("]("), "must have markdown links [text](url)");
     // Must NOT contain script/style content
@@ -1522,10 +1403,7 @@ fn markdown_preserves_headings() {
     let html = "<h1>Title</h1><h2>Subtitle</h2><p>Body text</p>";
     let md = extract_markdown_from_html(html);
     assert!(md.contains("# Title"), "h1 -> '# Title', got: {md:?}");
-    assert!(
-        md.contains("## Subtitle"),
-        "h2 -> '## Subtitle', got: {md:?}"
-    );
+    assert!(md.contains("## Subtitle"), "h2 -> '## Subtitle', got: {md:?}");
     assert!(md.contains("Body text"), "body preserved");
 }
 
@@ -1533,10 +1411,7 @@ fn markdown_preserves_headings() {
 fn markdown_preserves_links() {
     let html = r#"<a href="https://example.com">Example</a>"#;
     let md = extract_markdown_from_html(html);
-    assert!(
-        md.contains("[Example](https://example.com)"),
-        "link preserved: {md:?}"
-    );
+    assert!(md.contains("[Example](https://example.com)"), "link preserved: {md:?}");
 }
 
 #[test]
@@ -1587,8 +1462,7 @@ fn markdown_preserves_blockquotes() {
 
 #[test]
 fn markdown_vs_content_mode() {
-    let html =
-        r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
+    let html = r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
     let md = extract_markdown_from_html(html);
     let text = extract_text_from_html(html);
     // Markdown has structure markers
@@ -1650,10 +1524,7 @@ async fn integration_fetch_http_local_about() {
     // Verify substantial content (not just 93 bytes)
     let content_line = text.lines().find(|l| l.starts_with("Content length:"));
     if let Some(cl) = content_line {
-        let len: usize = cl
-            .trim_start_matches("Content length: ")
-            .parse()
-            .unwrap_or(0);
+        let len: usize = cl.trim_start_matches("Content length: ").parse().unwrap_or(0);
         assert!(len > 3000, "content length must be substantial, got {len}");
     }
 }
@@ -1677,14 +1548,8 @@ async fn integration_fetch_http_local_about_content_mode() {
     let text = extract_tool_text(&resp);
     assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
     // Content mode: no markdown markers
-    assert!(
-        !text.contains("]("),
-        "content mode must not have markdown links"
-    );
-    assert!(
-        !text.contains("**"),
-        "content mode must not have bold markers"
-    );
+    assert!(!text.contains("]("), "content mode must not have markdown links");
+    assert!(!text.contains("**"), "content mode must not have bold markers");
 }
 
 #[tokio::test]
@@ -1728,14 +1593,8 @@ async fn integration_grep_http_local_about() {
     .await;
     assert!(!is_tool_error(&resp), "grep should succeed");
     let text = extract_tool_text(&resp);
-    assert!(
-        !text.contains("Matches found: 0"),
-        "must find matches: {text}"
-    );
-    assert!(
-        text.contains("Match 1"),
-        "must have at least one match block"
-    );
+    assert!(!text.contains("Matches found: 0"), "must find matches: {text}");
+    assert!(text.contains("Match 1"), "must have at least one match block");
 }
 
 #[tokio::test]
@@ -1833,10 +1692,7 @@ async fn integration_grep_http_local_wiki_rust_finds_mozilla() {
     .await;
     assert!(!is_tool_error(&resp), "grep should succeed");
     let text = extract_tool_text(&resp);
-    assert!(
-        !text.contains("Matches found: 0"),
-        "must find Mozilla matches"
-    );
+    assert!(!text.contains("Matches found: 0"), "must find Mozilla matches");
 }
 
 #[tokio::test]
@@ -1857,10 +1713,7 @@ async fn integration_fetch_http_local_wiki_unicode_multibyte() {
         &test_db(),
     )
     .await;
-    assert!(
-        !is_tool_error(&resp),
-        "fetch should succeed (no panic from multi-byte)"
-    );
+    assert!(!is_tool_error(&resp), "fetch should succeed (no panic from multi-byte)");
     let text = extract_tool_text(&resp);
     assert!(text.contains("Unicode"), "must contain 'Unicode'");
 }

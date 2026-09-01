@@ -24,7 +24,7 @@ def test_the_observer_knows_the_exact_source_replica_root() -> None:
 def _source(tmp_path: Path):
     """A tiny real Git subject using the gate's authoritative digest script."""
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
-    (tmp_path / ".gitignore").write_text("target/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("cache/\n", encoding="utf-8")
     script = tmp_path / CONFIG.candidate.source_digest_script
     script.parent.mkdir(parents=True)
     script.write_bytes((PROJECT_ROOT / CONFIG.candidate.source_digest_script).read_bytes())
@@ -47,7 +47,15 @@ def _source(tmp_path: Path):
         cwd=tmp_path,
         check=True,
     )
-    return CONFIG.model_copy(update={"root": tmp_path}), tracked
+    prefix = CONFIG.prefix.model_copy(
+        update={
+            "parent": str(tmp_path / "cache" / "worktrees"),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
+        }
+    )
+    return CONFIG.model_copy(update={"root": tmp_path, "prefix": prefix}), tracked
 
 
 def _capture(config):

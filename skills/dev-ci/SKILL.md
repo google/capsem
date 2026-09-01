@@ -58,7 +58,7 @@ That whole class is now mechanized, so it should never cost a CI round-trip
 again: `tests/capsem-release/test_release_test_composition.py` asserts every
 job in `ci.yaml`, `release.yaml`, and `release-assets.yaml` installs the tools
 its own steps invoke, following justfile recipe dependencies transitively. It
-runs in `_test-fast`, so the gap fails locally in seconds. Local `just test-full`
+runs in `_test-fast`, so the gap fails locally in seconds. Local `just test`
 cannot catch provisioning drift any other way -- it runs where `just`, `pnpm`,
 `node`, and `uv` are already on PATH, while CI provisions per job.
 
@@ -71,7 +71,7 @@ not exist". Provision generously; cache only where the store is observed.
 The independently executable `_test-fast` module is the first local and CI
 gate. It owns YAML/workflow and source syntax, source contracts, Clippy,
 Python lint/type checks, JavaScript checks/builds, and the blocking Rust,
-Python, and JavaScript vulnerability audits. `just fast-test`, local `just test-full`,
+Python, and JavaScript vulnerability audits. `just fast-test`, local `just test`,
 ordinary CI, and both release lanes call that exact module; workflows must not
 reimplement or trim it. The scheduled/manual `security-audit.yaml` retains its
 dedicated scanner schedule. A newly published advisory is a real red gate:
@@ -112,11 +112,11 @@ gh run download <run-id> -n test-artifacts-macOS-1
 
 ## Docker storage budget
 
-`config/storage-policy.toml` governs the gate's Docker footprint. The numbers
+`config/cache.toml` governs the gate's Docker footprint. The numbers
 are coupled and must stay satisfiable:
 
 ```
-buildkit_keep_gib + minimum_free_gib + fixed usage  <=  minimum_disk_gib
+build_cache_keep_bytes + minimum_free_bytes + fixed usage <= minimum_disk_bytes
 ```
 
 Violate it and the floor can never be met by the one action taken to meet it —
@@ -127,7 +127,7 @@ capacity probe *starts a container* to run `df`, so a thrashing daemon makes it
 
 Fixed usage is the declared cache volumes plus base images (~18 GiB here).
 
-**A too-small `buildkit_keep_gib` is a speed bug, not a safety margin.** At 24 GiB
+**A too-small `build_cache_keep_bytes` is a speed bug, not a safety margin.** At 24 GiB
 against a ~35 GB hot graph, every pressure prune discarded layers about to be
 reused and the host-builder image recompiled cold each run.
 
@@ -136,15 +136,15 @@ structurally cannot help during a burst of same-day runs — everything is young
 than the threshold. Expect `gc` to return near-zero after a heavy session; that
 is the policy working, not failing. Provision headroom instead of pruning harder.
 
-Thresholds are asserted in `build_system/tests/policy/test_docker_storage_policy.py`, so config and
-contract move together.
+Thresholds are validated by the strict cache policy and exercised in
+`build_system/tests/cache/`, so config and contract move together.
 
 ## Release CI is orthogonal
 
 Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 `/release-process`.
 
-- `just test-full` is the complete local all-artifact proof.
+- `just test` is the complete local all-artifact proof.
 - Binary CI builds packages only, pulls every selected profile, and runs the
   shared complete modules against that resolved pairing.
 - Profile CI builds one channel/profile only, pulls the current package, and

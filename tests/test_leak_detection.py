@@ -59,7 +59,7 @@ def patch_iter(monkeypatch):
 def test_ignores_non_capsem_cmdline_errors(patch_iter):
     """SystemError from a non-capsem sibling proc must not crash iteration.
 
-    Re-creates the failure class observed under `just test-full` stage 5: psutil's
+    Re-creates the failure class observed under `just test` stage 5: psutil's
     `_psosx.py::cmdline` returns a SystemError for some host proc, and that
     propagates past the old attrs-prefetch implementation of get_capsem_processes.
     """
@@ -224,7 +224,7 @@ def test_thread_exception_hook_captures_daemon_thread_exception():
 # ---------------------------------------------------------------------------
 # CI artifact gate. Locally, tests that depend on built artifacts (manifest,
 # initrd, cross-compiled agent) skip when those artifacts are absent. In CI
-# that silent skip is a bug -- stages earlier in `just test-full` were supposed
+# that silent skip is a bug -- stages earlier in `just test` were supposed
 # to build the artifact, and a skip masks the breakage. `CAPSEM_REQUIRE
 # _ARTIFACTS=1` flips the gate to fail-fast.
 # ---------------------------------------------------------------------------
@@ -253,7 +253,7 @@ def test_missing_required_artifacts_lists_missing_when_env_set(tmp_path):
 
 
 def test_required_artifacts_manifest_path_is_flat():
-    """The asset manifest lives at target/assets/manifest.json, not per-arch.
+    """The asset manifest lives at cache/target/assets/manifest.json, not per-arch.
 
     Every production reader (capsem-service boot, capsem setup, gen_manifest,
     release workflow) and the builder's generate_checksums writer agree on
@@ -264,8 +264,8 @@ def test_required_artifacts_manifest_path_is_flat():
     from conftest import _REQUIRED_ARTIFACTS
     from helpers.constants import ASSETS_DIR
 
-    assert "target/assets/manifest.json" in _REQUIRED_ARTIFACTS
-    assert _REQUIRED_ARTIFACTS["target/assets/manifest.json"] == ASSETS_DIR / "manifest.json"
+    assert "cache/target/assets/manifest.json" in _REQUIRED_ARTIFACTS
+    assert _REQUIRED_ARTIFACTS["cache/target/assets/manifest.json"] == ASSETS_DIR / "manifest.json"
 
 
 # ---------------------------------------------------------------------------

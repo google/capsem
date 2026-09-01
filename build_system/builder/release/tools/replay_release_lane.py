@@ -2,7 +2,7 @@
 
 `just test` runs the lanes' *steps* -- the rehearsal composes the same
 fragments a release does -- but not their *layout*. A release qualifies from a
-prefix carrying only tracked files, where `target/debug` and `target/config`
+prefix carrying only tracked files, where `cache/target/cargo/debug` and `cache/target/config`
 hold staged input rather than build output, and that difference is where the
 0.6.0 binaries lost four dispatches: a hardcoded binary path, a missing profile
 tree, a missing tool, and a nested pytest inheriting an environment that no
@@ -54,7 +54,7 @@ DESTRUCTIVE_STEP = "glowup.package"
 
 #: Where the fabricated cohort lands. Distinct from the rehearsal's own paths so
 #: a replay never consumes or clobbers what a running `just test` staged.
-WORK = "target/replay-lane"
+WORK = "cache/target/replay-lane"
 
 _TEST_SELECTION_ENV = (
     "CAPSEM_TEST_BINARY",
@@ -80,7 +80,7 @@ def fabricate(channel: str, profile: str, version: str) -> dict:
             "uv", "run", "--project", "build_system", "--frozen", "python",
             str(ROOT / "build_system" / "scripts" / "release" / "rehearse-release-cohort.py"),
             "--assets-dir", "assets",
-            "--bin-dir", "target/debug",
+            "--bin-dir", "cache/target/cargo/debug",
             "--packages-dir", "dist",
             "--work-dir", WORK,
             "--inputs-dir", f"{WORK}-inputs",
@@ -119,8 +119,8 @@ def released_environment(cohort: dict, channel: str) -> dict[str, str]:
     return {
         **clean_environment(),
         "CAPSEM_RELEASE_PACKAGE": cohort["package"],
-        "CAPSEM_RELEASE_BIN_DIR": f"{ROOT}/target/debug",
-        "CAPSEM_TEST_BINARY": f"{ROOT}/target/debug/capsem",
+        "CAPSEM_RELEASE_BIN_DIR": f"{ROOT}/cache/target/cargo/debug",
+        "CAPSEM_TEST_BINARY": f"{ROOT}/cache/target/cargo/debug/capsem",
         "CAPSEM_RELEASE_INPUT_DIR": cohort["inputs"],
         "CAPSEM_RELEASE_CHANNEL": channel,
         "CAPSEM_RELEASE_BASELINE_CHANNEL": channel,
@@ -134,7 +134,7 @@ def released_environment(cohort: dict, channel: str) -> dict[str, str]:
         "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS": cohort["before_profile_inputs"],
         "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS": cohort["inputs"],
         "CAPSEM_TEST_ASSETS_DIR": f"{workspace_text}/assets",
-        "CAPSEM_TEST_CONFIG_ROOT": f"{workspace_text}/target/config",
+        "CAPSEM_TEST_CONFIG_ROOT": f"{workspace_text}/cache/target/config",
     }
 
 

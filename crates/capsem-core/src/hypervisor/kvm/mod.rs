@@ -43,11 +43,7 @@ const KVM_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 fn kvm_vsock_seed(config: &VmConfig) -> u32 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(config.kernel_path.to_string_lossy().as_bytes());
-    if let Some(path) = config
-        .scratch_disk_path
-        .as_ref()
-        .or(config.disk_path.as_ref())
-    {
+    if let Some(path) = config.scratch_disk_path.as_ref().or(config.disk_path.as_ref()) {
         hasher.update(path.to_string_lossy().as_bytes());
     }
     for share in &config.virtio_fs_shares {
@@ -130,9 +126,7 @@ impl Hypervisor for KvmHypervisor {
     ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>)> {
         #[cfg(not(target_arch = "x86_64"))]
         if config.checkpoint_path.is_some() {
-            anyhow::bail!(
-                "KVM checkpoint restore is only implemented for x86_64; refusing to ignore checkpoint_path"
-            );
+            anyhow::bail!("KVM checkpoint restore is only implemented for x86_64; refusing to ignore checkpoint_path");
         }
 
         // -- Shared: open KVM, create VM, allocate memory -----------------
@@ -179,24 +173,19 @@ impl Hypervisor for KvmHypervisor {
                     match vm.create_pit2() {
                         Ok(()) => true,
                         Err(e) => {
-                            tracing::warn!(
-                                "KVM_CREATE_PIT2 unavailable ({}), booting without PIT",
-                                e
-                            );
+                            tracing::warn!("KVM_CREATE_PIT2 unavailable ({}), booting without PIT", e);
                             false
                         }
                     }
                 }
                 Err(e) => {
-                    let split_available =
-                        kvm.check_extension(sys::KVM_CAP_SPLIT_IRQCHIP).unwrap_or(0) > 0;
+                    let split_available = kvm.check_extension(sys::KVM_CAP_SPLIT_IRQCHIP).unwrap_or(0) > 0;
                     if split_available {
                         tracing::warn!(
                             "KVM full IRQCHIP failed ({e:#}); split IRQCHIP is available but Capsem does not yet emulate userspace IOAPIC/PIC"
                         );
                     }
-                    return Err(e)
-                        .context("KVM full IRQCHIP is required for x86_64 virtio-mmio interrupts");
+                    return Err(e).context("KVM full IRQCHIP is required for x86_64 virtio-mmio interrupts");
                 }
             }
         };
@@ -206,9 +195,7 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         if let Err(e) = kvm.get_supported_cpuid() {
             tracing::warn!(error = format!("{e:#}"), "KVM CPUID probe failed");
-            tracing::warn!(
-                "This indicates restricted/nested KVM -- vCPU creation will likely fail"
-            );
+            tracing::warn!("This indicates restricted/nested KVM -- vCPU creation will likely fail");
         }
 
         // Create vCPUs (must happen before GIC init on aarch64)
@@ -313,10 +300,7 @@ impl Hypervisor for KvmHypervisor {
                 cpu_count: config.cpu_count,
                 cmdline: kernel_cmdline.clone(),
                 initrd_start: initrd_info.as_ref().map(|i| i.guest_addr).unwrap_or(0),
-                initrd_end: initrd_info
-                    .as_ref()
-                    .map(|i| i.guest_addr + i.size as u64)
-                    .unwrap_or(0),
+                initrd_end: initrd_info.as_ref().map(|i| i.guest_addr + i.size as u64).unwrap_or(0),
                 virtio_devices,
             };
             let fdt_blob = fdt::build_fdt(&fdt_config)?;
@@ -328,11 +312,8 @@ impl Hypervisor for KvmHypervisor {
         if restored_checkpoint.is_some() {
             tracing::info!("KVM checkpoint restore: skipping cold boot x86_64 boot state setup");
         } else if let Some(kernel_info) = kernel_info.as_ref() {
-            let cmdline = boot_x86_64::build_cmdline(
-                &kernel_cmdline,
-                virtio_mmio_device_count(config, vsock_ports),
-                has_pit,
-            );
+            let cmdline =
+                boot_x86_64::build_cmdline(&kernel_cmdline, virtio_mmio_device_count(config, vsock_ports), has_pit);
             tracing::info!("[boot-audit] x86_64 final kernel cmdline: {}", cmdline);
             let e820 = memory::build_e820_map(config.ram_bytes);
 
@@ -347,11 +328,7 @@ impl Hypervisor for KvmHypervisor {
                 &kernel_info.setup_header,
             )?;
             boot_x86_64::setup_cpuid(&kvm, &vcpu_fds[0], 0, config.cpu_count)?;
-            boot_x86_64::setup_boot_regs(
-                &vcpu_fds[0],
-                kernel_info.entry_addr,
-                memory::BOOT_PARAMS_ADDR,
-            )?;
+            boot_x86_64::setup_boot_regs(&vcpu_fds[0], kernel_info.entry_addr, memory::BOOT_PARAMS_ADDR)?;
         }
 
         // -- Arch-specific: vCPU initialization ---------------------------
@@ -391,18 +368,12 @@ impl Hypervisor for KvmHypervisor {
             // for the serial console (boot output goes through ttyS0, not hvc0).
             let (output_read, output_write) = {
                 let mut fds = [0i32; 2];
-                anyhow::ensure!(
-                    unsafe { libc::pipe(fds.as_mut_ptr()) } == 0,
-                    "pipe() failed"
-                );
+                anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
                 (fds[0], fds[1])
             };
             let (input_read, input_write) = {
                 let mut fds = [0i32; 2];
-                anyhow::ensure!(
-                    unsafe { libc::pipe(fds.as_mut_ptr()) } == 0,
-                    "pipe() failed"
-                );
+                anyhow::ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe() failed");
                 (fds[0], fds[1])
             };
             (
@@ -420,10 +391,7 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         let console_irq_fd = create_irq_eventfd()?;
         #[cfg(target_arch = "x86_64")]
-        vm.irqfd(
-            console_irq_fd.as_raw_fd(),
-            irq_to_gsi(memory::virtio_mmio_irq(0)),
-        )?;
+        vm.irqfd(console_irq_fd.as_raw_fd(), irq_to_gsi(memory::virtio_mmio_irq(0)))?;
         #[cfg(target_arch = "x86_64")]
         let console_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt(
             Box::new(console_device),
@@ -431,10 +399,8 @@ impl Hypervisor for KvmHypervisor {
             console_irq_fd,
         );
         #[cfg(not(target_arch = "x86_64"))]
-        let console_mmio = virtio_mmio::VirtioMmioTransport::new(
-            Box::new(console_device),
-            guest_mem.clone_ref(memory::RAM_BASE),
-        );
+        let console_mmio =
+            virtio_mmio::VirtioMmioTransport::new(Box::new(console_device), guest_mem.clone_ref(memory::RAM_BASE));
         #[cfg(target_arch = "x86_64")]
         let console_mmio = {
             let transport = Arc::new(console_mmio);
@@ -443,11 +409,7 @@ impl Hypervisor for KvmHypervisor {
         };
         #[cfg(not(target_arch = "x86_64"))]
         let console_mmio = Arc::new(console_mmio);
-        mmio_bus.register(
-            memory::virtio_mmio_addr(0),
-            memory::VIRTIO_MMIO_SIZE,
-            console_mmio,
-        )?;
+        mmio_bus.register(memory::virtio_mmio_addr(0), memory::VIRTIO_MMIO_SIZE, console_mmio)?;
 
         // -- x86_64: PIO bus + 16550 UART ---------------------------------
         #[cfg(target_arch = "x86_64")]
@@ -467,10 +429,7 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let blk_interrupt_status = Arc::new(AtomicU32::new(0));
             #[cfg(target_arch = "x86_64")]
-            vm.irqfd(
-                blk_irq_fd.as_raw_fd(),
-                irq_to_gsi(memory::virtio_mmio_irq(1)),
-            )?;
+            vm.irqfd(blk_irq_fd.as_raw_fd(), irq_to_gsi(memory::virtio_mmio_irq(1)))?;
             #[cfg(target_arch = "x86_64")]
             vm.ioeventfd(
                 blk_notify_fd.as_raw_fd(),
@@ -480,11 +439,8 @@ impl Hypervisor for KvmHypervisor {
             )?;
             let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?;
             #[cfg(target_arch = "x86_64")]
-            let blk_device = blk_device.with_async_notify(
-                blk_irq_fd.as_raw_fd(),
-                Arc::clone(&blk_interrupt_status),
-                blk_notify_fd,
-            );
+            let blk_device =
+                blk_device.with_async_notify(blk_irq_fd.as_raw_fd(), Arc::clone(&blk_interrupt_status), blk_notify_fd);
             #[cfg(target_arch = "x86_64")]
             let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
                 Box::new(blk_device),
@@ -493,10 +449,8 @@ impl Hypervisor for KvmHypervisor {
                 blk_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
-            let blk_mmio = virtio_mmio::VirtioMmioTransport::new(
-                Box::new(blk_device),
-                guest_mem.clone_ref(memory::RAM_BASE),
-            );
+            let blk_mmio =
+                virtio_mmio::VirtioMmioTransport::new(Box::new(blk_device), guest_mem.clone_ref(memory::RAM_BASE));
             #[cfg(target_arch = "x86_64")]
             let blk_mmio = {
                 let transport = Arc::new(blk_mmio);
@@ -505,11 +459,7 @@ impl Hypervisor for KvmHypervisor {
             };
             #[cfg(not(target_arch = "x86_64"))]
             let blk_mmio = Arc::new(blk_mmio);
-            mmio_bus.register(
-                memory::virtio_mmio_addr(1),
-                memory::VIRTIO_MMIO_SIZE,
-                blk_mmio,
-            )?;
+            mmio_bus.register(memory::virtio_mmio_addr(1), memory::VIRTIO_MMIO_SIZE, blk_mmio)?;
         }
 
         if let Some(ref scratch_path) = config.scratch_disk_path {
@@ -520,10 +470,7 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let scratch_interrupt_status = Arc::new(AtomicU32::new(0));
             #[cfg(target_arch = "x86_64")]
-            vm.irqfd(
-                scratch_irq_fd.as_raw_fd(),
-                irq_to_gsi(memory::virtio_mmio_irq(2)),
-            )?;
+            vm.irqfd(scratch_irq_fd.as_raw_fd(), irq_to_gsi(memory::virtio_mmio_irq(2)))?;
             #[cfg(target_arch = "x86_64")]
             vm.ioeventfd(
                 scratch_notify_fd.as_raw_fd(),
@@ -546,10 +493,8 @@ impl Hypervisor for KvmHypervisor {
                 scratch_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
-            let scratch_mmio = virtio_mmio::VirtioMmioTransport::new(
-                Box::new(scratch_device),
-                guest_mem.clone_ref(memory::RAM_BASE),
-            );
+            let scratch_mmio =
+                virtio_mmio::VirtioMmioTransport::new(Box::new(scratch_device), guest_mem.clone_ref(memory::RAM_BASE));
             #[cfg(target_arch = "x86_64")]
             let scratch_mmio = {
                 let transport = Arc::new(scratch_mmio);
@@ -558,11 +503,7 @@ impl Hypervisor for KvmHypervisor {
             };
             #[cfg(not(target_arch = "x86_64"))]
             let scratch_mmio = Arc::new(scratch_mmio);
-            mmio_bus.register(
-                memory::virtio_mmio_addr(2),
-                memory::VIRTIO_MMIO_SIZE,
-                scratch_mmio,
-            )?;
+            mmio_bus.register(memory::virtio_mmio_addr(2), memory::VIRTIO_MMIO_SIZE, scratch_mmio)?;
         }
 
         // -- Shared: VirtioFS (slot 4+) -----------------------------------
@@ -592,11 +533,7 @@ impl Hypervisor for KvmHypervisor {
             let fs_mmio = Arc::new(fs_mmio);
             #[cfg(target_arch = "x86_64")]
             mmio_transports.push((slot, Arc::clone(&fs_mmio)));
-            mmio_bus.register(
-                memory::virtio_mmio_addr(slot),
-                memory::VIRTIO_MMIO_SIZE,
-                fs_mmio,
-            )?;
+            mmio_bus.register(memory::virtio_mmio_addr(slot), memory::VIRTIO_MMIO_SIZE, fs_mmio)?;
         }
 
         // -- Shared: vsock ------------------------------------------------
@@ -609,8 +546,7 @@ impl Hypervisor for KvmHypervisor {
         if let Some(vsock_bindings) = vsock_bindings {
             let guest_cid = vsock_bindings.guest_cid();
             let vhost_fd = virtio_vsock::open_vhost_vsock()?;
-            let (vsock_device, call_fds) =
-                virtio_vsock::VhostVsockDevice::new(guest_cid, vhost_fd)?;
+            let (vsock_device, call_fds) = virtio_vsock::VhostVsockDevice::new(guest_cid, vhost_fd)?;
             let vsock_interrupt_status = Arc::new(AtomicU32::new(0));
 
             let vsock_mmio = virtio_mmio::VirtioMmioTransport::new_with_shared_interrupt_status(
@@ -621,11 +557,7 @@ impl Hypervisor for KvmHypervisor {
             let vsock_mmio = Arc::new(vsock_mmio);
             #[cfg(target_arch = "x86_64")]
             mmio_transports.push((3, Arc::clone(&vsock_mmio)));
-            mmio_bus.register(
-                memory::virtio_mmio_addr(3),
-                memory::VIRTIO_MMIO_SIZE,
-                vsock_mmio,
-            )?;
+            mmio_bus.register(memory::virtio_mmio_addr(3), memory::VIRTIO_MMIO_SIZE, vsock_mmio)?;
 
             let vsock_gsi = irq_to_gsi(memory::virtio_mmio_irq(3));
             let mut irq_fds = Vec::with_capacity(call_fds.len());
@@ -634,8 +566,7 @@ impl Hypervisor for KvmHypervisor {
                 vm.irqfd(irq_fd.as_raw_fd(), vsock_gsi)?;
                 irq_fds.push(irq_fd);
             }
-            pending_vsock_workers =
-                Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status));
+            pending_vsock_workers = Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status));
         }
 
         #[cfg(target_arch = "x86_64")]
@@ -646,20 +577,15 @@ impl Hypervisor for KvmHypervisor {
         // Listener and IRQ bridge threads retain shutdown/device resources.
         // Start them only after the complete restored device graph has been
         // prepared and activated successfully.
-        if let Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status)) =
-            pending_vsock_workers
-        {
+        if let Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status)) = pending_vsock_workers {
             vsock_irq_handles = virtio_vsock::spawn_call_irq_bridges(
                 &call_fds,
                 irq_fds,
                 vsock_interrupt_status,
                 Arc::clone(&shutdown),
             )?;
-            vsock_listener_handles = virtio_vsock::spawn_vsock_listeners(
-                vsock_bindings,
-                vsock_tx,
-                Arc::clone(&shutdown),
-            );
+            vsock_listener_handles =
+                virtio_vsock::spawn_vsock_listeners(vsock_bindings, vsock_tx, Arc::clone(&shutdown));
         }
 
         // -- Shared: spawn vCPU threads -----------------------------------
@@ -907,13 +833,7 @@ impl VmHandle for KvmHandle {
                 path = %path.display(),
                 "stage start"
             );
-            checkpoint::write_checkpoint(
-                path,
-                &self._guest_mem,
-                &snapshots,
-                &vm_snapshot,
-                &mmio_snapshots,
-            )?;
+            checkpoint::write_checkpoint(path, &self._guest_mem, &snapshots, &vm_snapshot, &mmio_snapshots)?;
             tracing::info!(
                 target: "suspend",
                 op = "kvm_write_checkpoint",
@@ -923,9 +843,7 @@ impl VmHandle for KvmHandle {
             Ok(())
         });
         #[cfg(not(target_arch = "x86_64"))]
-        let result = Err(anyhow::anyhow!(
-            "KVM save_state is only implemented for x86_64"
-        ));
+        let result = Err(anyhow::anyhow!("KVM save_state is only implemented for x86_64"));
         self.state.store(VmState::Paused as u8, Ordering::SeqCst);
         result
     }
@@ -936,10 +854,7 @@ impl VmHandle for KvmHandle {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn validate_mmio_topology(
-    live_devices: &[(u32, u32)],
-    snapshots: &[checkpoint::MmioDeviceSnapshot],
-) -> Result<()> {
+fn validate_mmio_topology(live_devices: &[(u32, u32)], snapshots: &[checkpoint::MmioDeviceSnapshot]) -> Result<()> {
     use std::collections::BTreeMap;
 
     let mut live = BTreeMap::new();
@@ -1009,13 +924,7 @@ fn validate_mmio_queue_nonoverlap(snapshots: &[checkpoint::MmioDeviceSnapshot]) 
     let mut ranges = Vec::new();
     for snapshot in snapshots {
         for range in virtio_mmio::ready_queue_memory_ranges(&snapshot.transport)? {
-            ranges.push((
-                range.start,
-                range.end,
-                snapshot.slot,
-                range.queue,
-                range.name,
-            ));
+            ranges.push((range.start, range.end, snapshot.slot, range.queue, range.name));
         }
     }
     ranges.sort_unstable_by_key(|range| (range.0, range.1));
@@ -1080,15 +989,10 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
     match kvm.create_vm() {
         Ok(probe_vm) => match probe_vm.create_vcpu(0) {
             Ok(_vcpu) => {
-                tracing::error!(
-                    "probe: vCPU(0) succeeds WITHOUT IRQCHIP -- IRQCHIP causes the conflict"
-                );
+                tracing::error!("probe: vCPU(0) succeeds WITHOUT IRQCHIP -- IRQCHIP causes the conflict");
             }
             Err(e) => {
-                tracing::error!(
-                    error = format!("{e:#}"),
-                    "probe: vCPU(0) fails even WITHOUT IRQCHIP"
-                );
+                tracing::error!(error = format!("{e:#}"), "probe: vCPU(0) fails even WITHOUT IRQCHIP");
                 tracing::error!("probe: this KVM environment cannot create vCPUs at all");
             }
         },
@@ -1098,9 +1002,7 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
     }
 
     tracing::error!("--- end KVM diagnostics ---");
-    tracing::error!(
-        "For detailed probing, run: python3 build_system/scripts/doctor/kvm-diagnostic.py"
-    );
+    tracing::error!("For detailed probing, run: python3 build_system/scripts/doctor/kvm-diagnostic.py");
 }
 
 /// Minimal uname wrapper for diagnostics.

@@ -104,23 +104,23 @@ jobs:
             --channel "$RELEASE_CHANNEL" \
             --source-commit "${{ inputs.source_commit }}" \
             --require-profile-membership \
-            --output target/channel-source/manifest.json
+            --output cache/target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
         run: |
           python3 build_system/scripts/release/project-first-channel-before.py \
-            --source-manifest target/channel-source/manifest.json \
+            --source-manifest cache/target/channel-source/manifest.json \
             --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
             --retired "${{ steps.public-before.outputs.retired }}" \
-            --output target/channel-source/public-before.json
+            --output cache/target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing
         id: public-before-authority
         run: |
           if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
-            echo "manifest-url=file://$PWD/target/channel-source/public-before.json" \
+            echo "manifest-url=file://$PWD/cache/target/channel-source/public-before.json" \
               >> "$GITHUB_OUTPUT"
           else
             echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
@@ -133,7 +133,7 @@ jobs:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
           allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}
           kind: packages
-          output: target/binary-public-before/packages
+          output: cache/target/binary-public-before/packages
 
       - name: Fetch exact deployed public-before profiles
         uses: ./.github/actions/fetch-release-inputs
@@ -142,28 +142,28 @@ jobs:
           allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
           kind: profiles
           architecture: x86_64
-          output: target/binary-public-before/profiles
+          output: cache/target/binary-public-before/profiles
 
       - name: Prove public-before cohorts use one manifest
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir target/binary-public-before/profiles
+            --input-dir cache/target/binary-public-before/profiles
           cmp \
-            target/binary-public-before/packages/manifest.json \
-            target/binary-public-before/profiles/manifest.json
+            cache/target/binary-public-before/packages/manifest.json \
+            cache/target/binary-public-before/profiles/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-source
-          path: target/channel-source/manifest.json
+          path: cache/target/channel-source/manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-public-before-packages
-          path: target/binary-public-before/packages/
+          path: cache/target/binary-public-before/packages/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-public-before-profiles
-          path: target/binary-public-before/profiles/
+          path: cache/target/binary-public-before/profiles/
 
   preflight:
     needs: [runtime-preflight, fast-gate]
@@ -260,12 +260,12 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-source
-          path: target/channel-source/
+          path: cache/target/channel-source/
 
       - name: Select serialized pre-activation manifest
         run: |
-          test -s target/channel-source/manifest.json
-          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
+          test -s cache/target/channel-source/manifest.json
+          echo "PREACTIVATION_MANIFEST=file://$PWD/cache/target/channel-source/manifest.json" \
             >> "$GITHUB_ENV"
 
       - name: Select Xcode 16.2
@@ -283,24 +283,24 @@ jobs:
       - name: Fetch exact selected arm64 profiles
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          manifest-url: file://${{ github.workspace }}/cache/target/channel-source/manifest.json
           kind: profiles
           architecture: arm64
-          output: target/binary-selected-profiles
+          output: cache/target/binary-selected-profiles
 
       - name: Stage exact selected profile inputs
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/binary-selected-profiles \
-            --assets-dir target/release-assets \
-            --config-root target/release-config \
+            --input-dir cache/target/binary-selected-profiles \
+            --assets-dir cache/target/release/staging/assets \
+            --config-root cache/target/release/staging/config \
             --shared-config-root config
 
       - name: Materialize runtime config
         run: |
           CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
-          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
           CAPSEM_ARCH=arm64 \
             bash build_system/scripts/build/materialize-config.sh
 
@@ -388,7 +388,7 @@ jobs:
             -p capsem-admin \
             -p capsem-mock-server \
             -p capsem-bench
-          bash build_system/scripts/build/check-build-provenance.sh target/release/capsem
+          bash build_system/scripts/build/check-build-provenance.sh cache/target/cargo/release/capsem
 
       - name: Codesign companion binaries
         env:
@@ -400,7 +400,7 @@ jobs:
               --timestamp \
               --entitlements build_system/packaging/macos/entitlements.plist \
               --force \
-              "target/release/$bin"
+              "cache/target/cargo/release/$bin"
           done
 
       - name: Build .pkg installer
@@ -408,10 +408,10 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           bash build_system/packaging/macos/build-pkg.sh \
             --manifest "$ASSET_MANIFEST_URL" \
-            "target/release/bundle/macos/Capsem.app" \
-            "target/release" \
+            "cache/target/cargo/release/bundle/macos/Capsem.app" \
+            "cache/target/release" \
             "assets" \
-            "target/config" \
+            "cache/target/config" \
             "$VERSION" \
             "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
 
@@ -421,7 +421,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           EXPANDED_ROOT="$(mktemp -d "$RUNNER_TEMP/capsem-pkg-policy.XXXXXX")"
           pkgutil --expand-full \
-            "target/packages/Capsem-$VERSION.pkg" \
+            "cache/target/packages/Capsem-$VERSION.pkg" \
             "$EXPANDED_ROOT/expanded"
           python3 - "$EXPANDED_ROOT/expanded" <<'PY'
           import pathlib
@@ -457,30 +457,30 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         run: |
           VERSION="${RELEASE_TAG#v}"
-          xcrun notarytool submit "target/packages/Capsem-$VERSION.pkg" \
+          xcrun notarytool submit "cache/target/packages/Capsem-$VERSION.pkg" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
             --wait --timeout 30m
-          xcrun stapler staple "target/packages/Capsem-$VERSION.pkg"
-          xcrun stapler validate "target/packages/Capsem-$VERSION.pkg"
+          xcrun stapler staple "cache/target/packages/Capsem-$VERSION.pkg"
+          xcrun stapler validate "cache/target/packages/Capsem-$VERSION.pkg"
 
       - name: Verify exact notarized package identity and Gatekeeper acceptance
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          pkgutil --check-signature "target/packages/Capsem-$VERSION.pkg"
-          spctl -a -vv -t install "target/packages/Capsem-$VERSION.pkg"
+          pkgutil --check-signature "cache/target/packages/Capsem-$VERSION.pkg"
+          spctl -a -vv -t install "cache/target/packages/Capsem-$VERSION.pkg"
 
       - name: Collect macOS artifacts
         run: |
           VERSION="${RELEASE_TAG#v}"
           mkdir -p release-artifacts
-          if [ ! -f "target/packages/Capsem-$VERSION.pkg" ]; then
+          if [ ! -f "cache/target/packages/Capsem-$VERSION.pkg" ]; then
             echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
             exit 1
           fi
-          cp "target/packages/Capsem-$VERSION.pkg" release-artifacts/
+          cp "cache/target/packages/Capsem-$VERSION.pkg" release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -507,7 +507,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-source
-          path: target/channel-source/
+          path: cache/target/channel-source/
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -522,25 +522,25 @@ jobs:
       - name: Fetch exact selected ${{ matrix.arch }} profiles
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          manifest-url: file://${{ github.workspace }}/cache/target/channel-source/manifest.json
           kind: profiles
           architecture: ${{ matrix.arch }}
-          output: target/binary-selected-profiles
+          output: cache/target/binary-selected-profiles
 
       - name: Stage exact selected profile inputs
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/binary-selected-profiles \
-            --assets-dir target/package-content/assets \
-            --config-root target/package-source-config \
+            --input-dir cache/target/binary-selected-profiles \
+            --assets-dir cache/target/package-content/assets \
+            --config-root cache/target/package-source-config \
             --shared-config-root config
 
       - name: Materialize runtime config
         run: |
-          CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config" \
+          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/package-source-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
@@ -552,7 +552,7 @@ jobs:
           CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
         run: |
           uv run --project build_system --frozen capsem-gate cross-compile "${{ matrix.arch }}" \
-            --content-root target/package-content \
+            --content-root cache/target/package-content \
             --defer-proof
 
       - name: Upload Linux package gate evidence
@@ -560,13 +560,13 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-linux-${{ matrix.arch }}-gate-runs-${{ github.run_attempt }}
-          path: target/gate-runs/
+          path: cache/target/gate-runs/
           if-no-files-found: error
 
       - name: Collect Linux artifacts
         run: |
           mkdir -p release-artifacts
-          cp target/packages/*.deb release-artifacts/
+          cp cache/target/packages/*.deb release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -609,7 +609,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-source
-          path: target/binary-channel/${{ inputs.channel }}/
+          path: cache/target/binary-channel/${{ inputs.channel }}/
 
       - name: Install host SBOM archive deps
         run: |
@@ -640,10 +640,10 @@ jobs:
       - name: Preserve serialized public-before manifest
         run: |
           set -euo pipefail
-          manifest="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          manifest="cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
           test -f "$manifest"
           cp "$manifest" \
-            "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+            "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
       - name: Record binary candidate metadata once
         env:
@@ -656,11 +656,11 @@ jobs:
             [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
           done
           cargo run -p capsem-admin -- assets channel record-binary \
-            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --manifest-path "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --version "$VERSION" \
             --source-commit "$SOURCE_COMMIT" \
             "${ARTIFACT_ARGS[@]}"
-          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+          test -f "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
       - name: Prove binary candidate preserved every profile
         run: |
@@ -671,7 +671,7 @@ jobs:
           from pathlib import Path
 
           channel = sys.argv[1]
-          root = Path("target/binary-channel") / channel
+          root = Path("cache/target/binary-channel") / channel
           before = json.loads((root / "manifest.before.json").read_text())
           after = json.loads((root / "manifest.json").read_text())
           if before.get("profiles") != after.get("profiles"):
@@ -687,7 +687,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -711,11 +711,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - name: Select exact candidate manifest
         run: |
-          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          manifest="$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
           test -s "$manifest"
           echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
           echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
@@ -809,11 +809,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - name: Select exact candidate manifest
         run: |
-          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          manifest="$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
           test -s "$manifest"
           echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
           echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
@@ -938,47 +938,47 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-public-before-packages
-          path: target/binary-public-before/packages/
+          path: cache/target/binary-public-before/packages/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-public-before-profiles
-          path: target/binary-public-before/profiles/
+          path: cache/target/binary-public-before/profiles/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - name: Verify exact public-before cohorts
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir target/binary-public-before/packages
+            --input-dir cache/target/binary-public-before/packages
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir target/binary-public-before/profiles
+            --input-dir cache/target/binary-public-before/profiles
           cmp \
-            target/binary-public-before/packages/manifest.json \
-            target/binary-public-before/profiles/manifest.json
+            cache/target/binary-public-before/packages/manifest.json \
+            cache/target/binary-public-before/profiles/manifest.json
 
       - name: Resolve exact candidate-after profiles
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: file://${{ github.workspace }}/target/binary-channel/${{ inputs.channel }}/manifest.json
+          manifest-url: file://${{ github.workspace }}/cache/target/binary-channel/${{ inputs.channel }}/manifest.json
           kind: profiles
           architecture: x86_64
-          output: target/candidate-profile-inputs
+          output: cache/target/candidate-profile-inputs
 
       - name: Stage exact candidate-after profiles
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir target/candidate-profile-inputs
+            --input-dir cache/target/candidate-profile-inputs
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/candidate-profile-inputs \
-            --assets-dir target/assets \
-            --config-root target/release-config \
+            --input-dir cache/target/candidate-profile-inputs \
+            --assets-dir cache/target/assets \
+            --config-root cache/target/release/staging/config \
             --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/target/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
+          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/cache/target/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
@@ -988,25 +988,25 @@ jobs:
           test -n "$package"
           uv run --project build_system --frozen python build_system/packaging/linux/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
           before_package=$(uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/binary-public-before/packages \
+            --input-dir cache/target/binary-public-before/packages \
             --print-package-path)
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --package-file "$package" \
-            --binary-dir target/debug
+            --binary-dir cache/target/cargo/debug
           {
             echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
-            echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"
-            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_BIN_DIR=$PWD/cache/target/cargo/debug"
+            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/cache/target/candidate-profile-inputs"
             printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "${{ needs.resolve-channel-source.outputs.baseline_channel }}"
             echo "CAPSEM_RELEASE_TRANSITION=auto"
-            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/binary-public-before/profiles/manifest.json"
-            echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/cache/target/binary-public-before/profiles/manifest.json"
+            echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
             echo "CAPSEM_RELEASE_BEFORE_PACKAGE=${before_package:+$PWD/$before_package}"
-            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/binary-public-before/profiles"
-            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
-            echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
-            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/target/assets"
-            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
+            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/cache/target/binary-public-before/profiles"
+            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/cache/target/candidate-profile-inputs"
+            echo "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem"
+            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/cache/target/assets"
+            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/cache/target/config"
           } >> "$GITHUB_ENV"
 
       - name: Qualify the candidate binaries
@@ -1023,10 +1023,10 @@ jobs:
         with:
           name: binary-pairing-evidence-${{ github.run_attempt }}
           path: |
-            target/test-artifacts/
-            target/gate-runs/
-            target/test-home/.capsem/run/sessions/
-            target/test-home/.capsem/logs/
+            cache/target/tests/evidence/
+            cache/target/gate-runs/
+            cache/target/tests/home/.capsem/run/sessions/
+            cache/target/tests/home/.capsem/logs/
           retention-days: 7
           include-hidden-files: true
           if-no-files-found: error
@@ -1088,8 +1088,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          owned="target/binary-release-publication"
-          notes="target/binary-release-notes.md"
+          owned="cache/target/binary-release-publication"
+          notes="cache/target/binary-release-notes.md"
           mkdir -p "$owned"
           cp release-artifacts/*.pkg "$owned/"
           cp release-artifacts/*.deb "$owned/"
@@ -1135,35 +1135,35 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - name: Verify tested binary candidate source is present
         run: |
           set -euo pipefail
-          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
-          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+          test -s "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
 
       - name: Build complete release channels with existing VM assets
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
-            --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --channel-source "$RELEASE_CHANNEL=file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir target/distribution
+            --out-dir cache/target/release/distribution
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: target/distribution/
+          path: cache/target/release/distribution/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before
-          path: target/binary-channel/*/manifest.before.json
+          path: cache/target/binary-channel/*/manifest.before.json
 
   # The GitHub release is public storage but remains undiscoverable to Capsem
   # clients until release.capsem.org advances. Prove the public package URLs,
@@ -1186,7 +1186,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
 
       - name: Verify public GitHub package storage from the candidate manifest
         run: |
@@ -1206,8 +1206,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-          owned="target/binary-source-publication"
+          source="cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          owned="cache/target/binary-source-publication"
           named="$owned/channel-source-$RELEASE_CHANNEL.json"
           mkdir -p "$owned"
           cp "$source" "$named"

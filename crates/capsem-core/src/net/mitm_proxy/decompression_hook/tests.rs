@@ -41,14 +41,9 @@ async fn truncated_gzip_header_is_emitted_on_eof() {
             .register_chunk(Arc::new(DecompressionHook::new()))
             .build(),
     );
-    let body = super::super::body::ChunkDispatchBody::new(
-        Full::new(truncated.clone()),
-        pipeline,
-        any_conn(),
-        None,
-    )
-    .seed(DecompressionConfig { gzip: true })
-    .without_size_hint();
+    let body = super::super::body::ChunkDispatchBody::new(Full::new(truncated.clone()), pipeline, any_conn(), None)
+        .seed(DecompressionConfig { gzip: true })
+        .without_size_hint();
 
     let received = body.collect().await.unwrap().to_bytes();
 

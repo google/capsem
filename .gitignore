@@ -60,9 +60,8 @@ private/
 # reviewed baselines; new data must be explicitly force-added to become approved.
 benchmarks/**/data_*.json
 
-# Canonical repository-generated output root: Rust builds, VM assets,
-# packages, distributions, coverage, benchmarks, and failure evidence.
-target/
+# Canonical repository cache and generated-output root.
+/cache/
 
 # Git worktrees
 worktrees/

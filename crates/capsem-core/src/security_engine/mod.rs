@@ -5,11 +5,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use capsem_logger::{
-    AuditEvent, DbWriter, ExecEvent, ExecEventComplete, FileAction, FileEvent, SecurityAskEvent,
-    SecurityAskPending, SecurityAskStatus, SecurityDecision as LoggedSecurityDecision,
-    SecurityDecisionEvent, SecurityDecisionStage as LoggedSecurityDecisionStage,
-    SecurityDetectionLevel as LoggedDetectionLevel, SecurityRuleAction as LoggedRuleAction,
-    SecurityRuleEvent, SubstitutionEvent, WriteOp,
+    AuditEvent, DbWriter, ExecEvent, ExecEventComplete, FileAction, FileEvent, SecurityAskEvent, SecurityAskPending,
+    SecurityAskStatus, SecurityDecision as LoggedSecurityDecision, SecurityDecisionEvent,
+    SecurityDecisionStage as LoggedSecurityDecisionStage, SecurityDetectionLevel as LoggedDetectionLevel,
+    SecurityRuleAction as LoggedRuleAction, SecurityRuleEvent, SubstitutionEvent, WriteOp,
 };
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
@@ -17,27 +16,22 @@ use serde_json::json;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::credential_broker::{
-    BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation,
-};
+use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicySubject, PolicySubjectValue,
-    SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SecurityRuleSet,
+    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicySubject, PolicySubjectValue, SecurityPluginConfig,
+    SecurityPluginMode, SecurityRuleAction, SecurityRuleSet,
 };
 
 mod plugins;
-use plugins::{
-    CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin,
-};
+use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
 pub const SECURITY_EVENT_EMIT_DURATION_MS: &str = "security_event.emit_duration_ms";
 pub const SECURITY_PLUGIN_EXECUTION_TOTAL: &str = "security_plugin.execution_total";
 pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.execution_duration_ms";
-pub const DUMMY_EICAR_TEST_STRING: &str =
-    r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
+pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeSecurityEventFamily {
@@ -156,9 +150,7 @@ impl RuntimeSecurityEventType {
             RuntimeSecurityEventType::ProcessExec
             | RuntimeSecurityEventType::ProcessExecComplete
             | RuntimeSecurityEventType::ProcessAudit => RuntimeSecurityEventFamily::Process,
-            RuntimeSecurityEventType::CredentialSubstitution => {
-                RuntimeSecurityEventFamily::Credential
-            }
+            RuntimeSecurityEventType::CredentialSubstitution => RuntimeSecurityEventFamily::Credential,
             RuntimeSecurityEventType::SecurityRule => RuntimeSecurityEventFamily::Security,
             RuntimeSecurityEventType::SecurityAsk => RuntimeSecurityEventFamily::Security,
         }
@@ -246,11 +238,7 @@ impl SecurityEventId {
 
     pub fn parse(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();
-        if value.len() == 12
-            && value
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        {
+        if value.len() == 12 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
             Ok(Self(value))
         } else {
             Err("security event id must be 12 lowercase hex characters".to_string())
@@ -311,9 +299,7 @@ pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityE
     let started = Instant::now();
     span.in_scope(|| trace_runtime_security_event(&event));
     let event_id = event.event_id.clone();
-    db.write(event.into_logger_write())
-        .instrument(span.clone())
-        .await;
+    db.write(event.into_logger_write()).instrument(span.clone()).await;
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
         "event_type" => event_type,
@@ -328,45 +314,6 @@ pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityE
     span.record("status", "ok");
     span.record("queue_result", "queued");
     event_id
-}
-
-pub fn emit_security_write_try(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
-    let event_type = event.event_type.as_str();
-    let event_family = event.event_family.as_str();
-    let span = tracing::debug_span!(
-        target: "capsem.security_event",
-        SECURITY_EVENT_EMIT_SPAN,
-        event_type,
-        event_family,
-        status = tracing::field::Empty,
-        queue_result = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    span.in_scope(|| trace_runtime_security_event(&event));
-    let event_id = event.event_id.clone();
-    let accepted = span.in_scope(|| db.try_write(event.into_logger_write()));
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let status = if accepted { "ok" } else { "dropped" };
-    let queue_result = if accepted { "queued" } else { "closed" };
-    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
-        "event_type" => event_type,
-        "event_family" => event_family,
-        "status" => status,
-        "queue_result" => queue_result)
-    .increment(1);
-    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
-        "event_type" => event_type,
-        "event_family" => event_family)
-    .record(elapsed_ms);
-    span.record("status", status);
-    span.record("queue_result", queue_result);
-    if accepted {
-        event_id
-    } else {
-        tracing::warn!("db writer channel closed, dropping nonblocking security event");
-        None
-    }
 }
 
 pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
@@ -488,15 +435,9 @@ async fn emit_security_boundary_with_plugins(
     };
     let security_event = prepare_event_for_security_rule_ledger(plugin_policy, security_event)?;
     let plugin_decision = security_event.decision.effective;
-    let mut emission = emit_matching_security_rules_with_decision(
-        db,
-        event_id,
-        event_type,
-        rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await?;
+    let mut emission =
+        emit_matching_security_rules_with_decision(db, event_id, event_type, rules, &security_event, current_unix_ms())
+            .await?;
     apply_plugin_decision_to_emission_labelled(plugin_decision, boundary, &mut emission);
     Ok(Some(emission))
 }
@@ -526,10 +467,7 @@ fn apply_plugin_decision_to_emission_labelled(
     }
 }
 
-fn apply_plugin_decision_to_emission(
-    plugin_decision: SecurityDecisionKind,
-    emission: &mut SecurityRuleEmission,
-) {
+fn apply_plugin_decision_to_emission(plugin_decision: SecurityDecisionKind, emission: &mut SecurityRuleEmission) {
     let boundary = emission.event.event_type.as_str().to_string();
     apply_plugin_decision_to_emission_labelled(plugin_decision, &boundary, emission);
 }
@@ -616,11 +554,9 @@ pub const fn runtime_file_event_type(action: FileAction) -> RuntimeSecurityEvent
     match action {
         FileAction::Imported => RuntimeSecurityEventType::FileImport,
         FileAction::Exported => RuntimeSecurityEventType::FileExport,
-        FileAction::Created
-        | FileAction::Modified
-        | FileAction::Deleted
-        | FileAction::Restored
-        | FileAction::Read => RuntimeSecurityEventType::FileEvent,
+        FileAction::Created | FileAction::Modified | FileAction::Deleted | FileAction::Restored | FileAction::Read => {
+            RuntimeSecurityEventType::FileEvent
+        }
     }
 }
 
@@ -661,8 +597,7 @@ pub fn security_event_from_file_event(event: &FileEvent) -> SecurityEvent {
             file.export_ext = ext;
         }
     }
-    let mut security_event =
-        SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
+    let mut security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
     if let Some(trace_id) = event.trace_id.clone() {
         security_event = security_event.with_trace_id(trace_id);
     }
@@ -724,8 +659,7 @@ pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent
             file.export_content = content;
         }
     }
-    let mut security_event =
-        SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
+    let mut security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
     if let Some(trace_id) = event.trace_id.clone() {
         security_event = security_event.with_trace_id(trace_id);
     }
@@ -814,17 +748,15 @@ pub async fn emit_substitution_security_write_and_rules(
 }
 
 pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(
-        ProcessSecurityEvent {
-            exec_id: Some(event.exec_id.to_string()),
-            exec_path: None,
-            name: event.process_name.clone(),
-            command: Some(event.command.clone()),
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-        },
-    );
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(ProcessSecurityEvent {
+        exec_id: Some(event.exec_id.to_string()),
+        exec_path: None,
+        name: event.process_name.clone(),
+        command: Some(event.command.clone()),
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+    });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -832,22 +764,20 @@ pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
 }
 
 pub fn security_event_from_exec_complete_event(event: &ExecEventComplete) -> SecurityEvent {
-    SecurityEvent::new(RuntimeSecurityEventType::ProcessExecComplete).with_process(
-        ProcessSecurityEvent {
-            exec_id: Some(event.exec_id.to_string()),
-            exec_path: None,
-            name: None,
-            command: None,
-            exit_code: Some(event.exit_code.to_string()),
-            stdout: event.stdout_preview.clone(),
-            stderr: event.stderr_preview.clone(),
-        },
-    )
+    SecurityEvent::new(RuntimeSecurityEventType::ProcessExecComplete).with_process(ProcessSecurityEvent {
+        exec_id: Some(event.exec_id.to_string()),
+        exec_path: None,
+        name: None,
+        command: None,
+        exit_code: Some(event.exit_code.to_string()),
+        stdout: event.stdout_preview.clone(),
+        stderr: event.stderr_preview.clone(),
+    })
 }
 
 pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessAudit).with_process(
-        ProcessSecurityEvent {
+    let security_event =
+        SecurityEvent::new(RuntimeSecurityEventType::ProcessAudit).with_process(ProcessSecurityEvent {
             exec_id: event.audit_id.clone(),
             exec_path: Some(event.exe.clone()),
             name: event.comm.clone(),
@@ -855,8 +785,7 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
             exit_code: None,
             stdout: None,
             stderr: None,
-        },
-    );
+        });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -901,16 +830,9 @@ pub async fn emit_matching_security_rules(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision(
-        db,
-        event_id,
-        event_type,
-        rules,
-        event,
-        timestamp_unix_ms,
-    )
-    .await
-    .map(|emission| emission.emitted)
+    emit_matching_security_rules_with_decision(db, event_id, event_type, rules, event, timestamp_unix_ms)
+        .await
+        .map(|emission| emission.emitted)
 }
 
 /// Run the plugin stages over an event, evaluate the rule set, write the ledger
@@ -931,15 +853,8 @@ pub async fn emit_matching_security_rules_with_plugins(
 ) -> Result<SecurityRuleEmission, String> {
     let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
     let plugin_decision = event.decision.effective;
-    let mut emission = emit_matching_security_rules_with_decision(
-        db,
-        event_id,
-        event_type,
-        rules,
-        &event,
-        timestamp_unix_ms,
-    )
-    .await?;
+    let mut emission =
+        emit_matching_security_rules_with_decision(db, event_id, event_type, rules, &event, timestamp_unix_ms).await?;
     apply_plugin_decision_to_emission(plugin_decision, &mut emission);
     Ok(emission)
 }
@@ -979,14 +894,7 @@ pub fn emit_matching_security_rules_for_evaluated_event_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<usize, String> {
     let event = prepare_evaluated_event_for_security_rule_ledger(plugin_policy, event)?;
-    emit_matching_security_rules_blocking(
-        db,
-        event_id,
-        event_type,
-        rules,
-        &event,
-        timestamp_unix_ms,
-    )
+    emit_matching_security_rules_blocking(db, event_id, event_type, rules, &event, timestamp_unix_ms)
 }
 
 pub async fn emit_matching_security_rules_for_evaluated_event(
@@ -1034,8 +942,7 @@ fn prepare_event_for_security_rule_ledger(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
-    let action_registry =
-        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
+    let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
     event = action_registry
         .apply_security_plugins(SecurityPluginStage::Preprocess, event)
         .map_err(|error| error.to_string())?;
@@ -1052,8 +959,7 @@ fn prepare_evaluated_event_for_security_rule_ledger(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
-    let action_registry =
-        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
+    let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
     event = action_registry
         .apply_security_plugins(SecurityPluginStage::Logging, event)
         .map_err(|error| error.to_string())?;
@@ -1102,10 +1008,7 @@ impl SecurityEnforcementDecision {
         matches!(self.action, SecurityEnforcementAction::Allow)
     }
 
-    pub fn with_ask_resolution(
-        &self,
-        resolution: &SecurityAskEvent,
-    ) -> Result<Self, SecurityActionError> {
+    pub fn with_ask_resolution(&self, resolution: &SecurityAskEvent) -> Result<Self, SecurityActionError> {
         if !matches!(self.action, SecurityEnforcementAction::Ask) {
             return Err(SecurityActionError::new(
                 "only ask enforcement decisions can consume ask resolutions",
@@ -1175,13 +1078,7 @@ pub async fn emit_matching_security_rules_with_decision(
         .await?;
     }
     for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )?;
+        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
         trace_security_rule_match(&rule_event, rule);
         emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event.clone())).await;
         rule_events.push(rule_event);
@@ -1219,15 +1116,8 @@ pub fn emit_matching_security_rules_blocking(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision_blocking(
-        db,
-        event_id,
-        event_type,
-        rules,
-        event,
-        timestamp_unix_ms,
-    )
-    .map(|emission| emission.emitted)
+    emit_matching_security_rules_with_decision_blocking(db, event_id, event_type, rules, event, timestamp_unix_ms)
+        .map(|emission| emission.emitted)
 }
 
 pub fn emit_matching_security_rules_with_decision_blocking(
@@ -1257,13 +1147,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         )?;
     }
     for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )?;
+        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
         trace_security_rule_match(&rule_event, rule);
         emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()));
         rule_events.push(rule_event);
@@ -1379,14 +1263,7 @@ pub async fn emit_security_decision_transition(
     decision_state: &mut SecurityDecisionState,
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
-    let decision_event = security_decision_event(
-        event_id,
-        event_type,
-        rule,
-        event,
-        decision_state,
-        timestamp_unix_ms,
-    )?;
+    let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
     emit_security_write(db, WriteOp::SecurityDecisionEvent(decision_event)).await;
     Ok(())
 }
@@ -1400,14 +1277,7 @@ pub fn emit_security_decision_transition_blocking(
     decision_state: &mut SecurityDecisionState,
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
-    let decision_event = security_decision_event(
-        event_id,
-        event_type,
-        rule,
-        event,
-        decision_state,
-        timestamp_unix_ms,
-    )?;
+    let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
     emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event));
     Ok(())
 }
@@ -1424,10 +1294,7 @@ fn selected_enforcement_rule<'a>(
 /// `ask` or `block` mode has to be able to raise an allowing rule verdict. The
 /// merge behind `decision.effective` is escalate-only, so this can only ever
 /// tighten the decision -- a plugin cannot talk a blocking rule down to allow.
-fn apply_event_decision_to_enforcement(
-    event: &SecurityEvent,
-    enforcement: &mut SecurityEnforcementDecision,
-) {
+fn apply_event_decision_to_enforcement(event: &SecurityEvent, enforcement: &mut SecurityEnforcementDecision) {
     match event.decision.effective {
         SecurityDecisionKind::Block => enforcement.action = SecurityEnforcementAction::Block,
         SecurityDecisionKind::Ask => {
@@ -1439,9 +1306,7 @@ fn apply_event_decision_to_enforcement(
     }
 }
 
-fn security_enforcement_decision(
-    rule: Option<&CompiledSecurityRule>,
-) -> SecurityEnforcementDecision {
+fn security_enforcement_decision(rule: Option<&CompiledSecurityRule>) -> SecurityEnforcementDecision {
     let Some(rule) = rule else {
         return SecurityEnforcementDecision::allow();
     };
@@ -1450,9 +1315,9 @@ fn security_enforcement_decision(
             SecurityRuleAction::Allow => SecurityEnforcementAction::Allow,
             SecurityRuleAction::Ask => SecurityEnforcementAction::Ask,
             SecurityRuleAction::Block => SecurityEnforcementAction::Block,
-            SecurityRuleAction::Preprocess
-            | SecurityRuleAction::Rewrite
-            | SecurityRuleAction::Postprocess => SecurityEnforcementAction::Allow,
+            SecurityRuleAction::Preprocess | SecurityRuleAction::Rewrite | SecurityRuleAction::Postprocess => {
+                SecurityEnforcementAction::Allow
+            }
         },
         rule_id: Some(rule.rule_id.clone()),
         rule_name: Some(rule.name.clone()),
@@ -1466,8 +1331,7 @@ pub fn evaluate_security_boundary(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
-    let action_registry =
-        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
+    let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
 
@@ -1554,14 +1418,7 @@ pub async fn emit_security_ask_pending(
     timestamp_unix_ms: i64,
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
-    let ask_event = security_ask_pending_event(
-        ask_id.clone(),
-        event_id,
-        event_type,
-        rule,
-        event,
-        timestamp_unix_ms,
-    )?;
+    let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
     emit_security_write(db, WriteOp::SecurityAskEvent(ask_event)).await;
     Ok(ask_id)
 }
@@ -1575,14 +1432,7 @@ pub fn emit_security_ask_pending_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
-    let ask_event = security_ask_pending_event(
-        ask_id.clone(),
-        event_id,
-        event_type,
-        rule,
-        event,
-        timestamp_unix_ms,
-    )?;
+    let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
     emit_security_write_blocking(db, WriteOp::SecurityAskEvent(ask_event));
     Ok(ask_id)
 }
@@ -1595,8 +1445,7 @@ pub fn emit_security_ask_resolution_blocking(
     reason: Option<String>,
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
-    let event =
-        security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
+    let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
     emit_security_write_blocking(db, WriteOp::SecurityAskEvent(event));
     Ok(())
 }
@@ -1609,8 +1458,7 @@ pub async fn emit_security_ask_resolution(
     reason: Option<String>,
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
-    let event =
-        security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
+    let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
     emit_security_write(db, WriteOp::SecurityAskEvent(event)).await;
     Ok(())
 }
@@ -1800,10 +1648,7 @@ impl SecurityRuleTraceLabels {
             rule_id: rule.rule_id.clone(),
             rule_name: rule.name.clone(),
             rule_action: rule.action.as_str(),
-            rule_detection_level: rule
-                .detection_level
-                .map(|level| level.as_str())
-                .unwrap_or("none"),
+            rule_detection_level: rule.detection_level.map(|level| level.as_str()).unwrap_or("none"),
             provider: rule.provider.clone(),
         }
     }
@@ -1918,10 +1763,7 @@ impl Default for SecurityDecisionState {
 }
 
 impl SecurityDecisionState {
-    pub fn request(
-        &mut self,
-        requested: SecurityDecisionKind,
-    ) -> (SecurityDecisionKind, SecurityDecisionKind) {
+    pub fn request(&mut self, requested: SecurityDecisionKind) -> (SecurityDecisionKind, SecurityDecisionKind) {
         let previous = self.effective;
         self.effective = self.effective.merge(requested);
         (previous, self.effective)
@@ -2069,10 +1911,7 @@ impl SecurityEvent {
         self
     }
 
-    pub fn with_credential_observations(
-        mut self,
-        observations: Vec<CredentialObservation>,
-    ) -> Self {
+    pub fn with_credential_observations(mut self, observations: Vec<CredentialObservation>) -> Self {
         self.credential_observations = observations;
         self
     }
@@ -2413,27 +2252,11 @@ impl McpSecurityEvent {
             "tool_list.valid" => Some(PolicySubjectValue::Bool(self.tool_list.is_some())),
             "tool_list" => borrowed_string(self.tool_list.as_deref()),
             "request.valid" => Some(PolicySubjectValue::Bool(self.request.is_some())),
-            "request.id" => borrowed_string(
-                self.request
-                    .as_ref()
-                    .and_then(|request| request.id.as_deref()),
-            ),
-            "request.method" => borrowed_string(
-                self.request
-                    .as_ref()
-                    .and_then(|request| request.method.as_deref()),
-            ),
-            "request.arguments" => json_string(
-                self.request
-                    .as_ref()
-                    .and_then(|request| request.arguments.as_ref()),
-            ),
+            "request.id" => borrowed_string(self.request.as_ref().and_then(|request| request.id.as_deref())),
+            "request.method" => borrowed_string(self.request.as_ref().and_then(|request| request.method.as_deref())),
+            "request.arguments" => json_string(self.request.as_ref().and_then(|request| request.arguments.as_ref())),
             "response.valid" => Some(PolicySubjectValue::Bool(self.response.is_some())),
-            "response.content" => json_string(
-                self.response
-                    .as_ref()
-                    .and_then(|response| response.content.as_ref()),
-            ),
+            "response.content" => json_string(self.response.as_ref().and_then(|response| response.content.as_ref())),
             "event.valid" => Some(PolicySubjectValue::Bool(self.method.is_some())),
             _ => None,
         }
@@ -2751,10 +2574,7 @@ pub fn materialize_http_request_for_upstream(
         ));
     };
 
-    if !event
-        .action_trace
-        .contains(&PolicyActionId::CredentialBrokerSubstitute)
-    {
+    if !event.action_trace.contains(&PolicyActionId::CredentialBrokerSubstitute) {
         return Ok(MaterializedHttpRequest {
             headers: request.headers.clone(),
             query: request.query.clone(),
@@ -2763,16 +2583,14 @@ pub fn materialize_http_request_for_upstream(
     }
 
     let mut headers = request.headers.clone();
-    let BrokeredUpstreamCredentials {
-        credential_ref,
-        query,
-    } = crate::credential_broker::substitute_brokered_upstream_credentials(
-        &request.domain,
-        request.ai_provider,
-        &mut headers,
-        request.query.as_deref(),
-    )
-    .map_err(SecurityActionError::new)?;
+    let BrokeredUpstreamCredentials { credential_ref, query } =
+        crate::credential_broker::substitute_brokered_upstream_credentials(
+            &request.domain,
+            request.ai_provider,
+            &mut headers,
+            request.query.as_deref(),
+        )
+        .map_err(SecurityActionError::new)?;
 
     Ok(MaterializedHttpRequest {
         headers,
@@ -2851,17 +2669,11 @@ pub struct SecurityPluginResult {
 
 impl SecurityPluginResult {
     pub const fn applied(event: SecurityEvent) -> Self {
-        Self {
-            event,
-            applied: true,
-        }
+        Self { event, applied: true }
     }
 
     pub const fn skipped(event: SecurityEvent) -> Self {
-        Self {
-            event,
-            applied: false,
-        }
+        Self { event, applied: false }
     }
 }
 
@@ -2902,18 +2714,12 @@ impl SecurityActionRegistry {
             .expect("built-in security plugin ids are unique")
     }
 
-    pub fn with_plugin_policy(
-        mut self,
-        plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
-    ) -> Self {
+    pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
         self.plugin_policy = plugin_policy.into();
         self
     }
 
-    pub fn register_plugin(
-        mut self,
-        plugin: impl SecurityPlugin + 'static,
-    ) -> Result<Self, SecurityActionError> {
+    pub fn register_plugin(mut self, plugin: impl SecurityPlugin + 'static) -> Result<Self, SecurityActionError> {
         let id = plugin.id();
         if self.plugins.contains_key(id) {
             return Err(SecurityActionError::new(format!(
@@ -2950,26 +2756,12 @@ impl SecurityActionRegistry {
             let result = match plugin.apply(event, plugin_config) {
                 Ok(result) => result,
                 Err(error) => {
-                    record_plugin_metrics(
-                        plugin_id,
-                        stage,
-                        plugin_config.mode,
-                        false,
-                        "error",
-                        started,
-                    );
+                    record_plugin_metrics(plugin_id, stage, plugin_config.mode, false, "error", started);
                     return Err(error);
                 }
             };
             let duration_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
-            record_plugin_metrics(
-                plugin_id,
-                stage,
-                plugin_config.mode,
-                result.applied,
-                "ok",
-                started,
-            );
+            record_plugin_metrics(plugin_id, stage, plugin_config.mode, result.applied, "ok", started);
             event = result.event;
             event.record_plugin_execution(SecurityPluginExecution {
                 plugin_id: plugin_id.clone(),
@@ -3031,11 +2823,7 @@ fn record_plugin_metrics(
     );
 }
 
-fn record_plugin_detection(
-    event: &mut SecurityEvent,
-    plugin_id: &str,
-    config: SecurityPluginConfig,
-) {
+fn record_plugin_detection(event: &mut SecurityEvent, plugin_id: &str, config: SecurityPluginConfig) {
     let Some(detection_level) = config.active_detection_level() else {
         return;
     };
@@ -3053,9 +2841,7 @@ fn record_plugin_detection(
 fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind> {
     match mode {
         SecurityPluginMode::Disable => None,
-        SecurityPluginMode::Allow | SecurityPluginMode::Rewrite => {
-            Some(SecurityDecisionKind::Allow)
-        }
+        SecurityPluginMode::Allow | SecurityPluginMode::Rewrite => Some(SecurityDecisionKind::Allow),
         SecurityPluginMode::Ask => Some(SecurityDecisionKind::Ask),
         SecurityPluginMode::Block => Some(SecurityDecisionKind::Block),
     }
@@ -3065,10 +2851,7 @@ pub(super) fn security_event_contains_text(event: &SecurityEvent, needle: &str) 
     if needle.is_empty() {
         return false;
     }
-    event
-        .file
-        .as_ref()
-        .is_some_and(|file| file_contains_text(file, needle))
+    event.file.as_ref().is_some_and(|file| file_contains_text(file, needle))
         || event
             .http
             .as_ref()

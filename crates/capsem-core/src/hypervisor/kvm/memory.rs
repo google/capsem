@@ -327,10 +327,7 @@ impl GuestMemory {
             )
         };
         if ptr == libc::MAP_FAILED {
-            bail!(
-                "mmap guest memory ({size} bytes): {}",
-                std::io::Error::last_os_error()
-            );
+            bail!("mmap guest memory ({size} bytes): {}", std::io::Error::last_os_error());
         }
 
         Ok(Self {
@@ -396,11 +393,7 @@ impl GuestMemory {
             );
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.ptr.add(offset as usize),
-                buf.as_mut_ptr(),
-                buf.len(),
-            );
+            std::ptr::copy_nonoverlapping(self.ptr.add(offset as usize), buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -411,7 +404,9 @@ impl GuestMemory {
     /// The caller must ensure the offset + len is within bounds and the
     /// returned pointer is not used after the GuestMemory is dropped.
     pub unsafe fn host_ptr(&self, offset: u64) -> *mut u8 {
-        self.ptr.add(offset as usize)
+        // SAFETY: The caller owns the offset-in-bounds obligation documented
+        // above; this block keeps that obligation visible at the operation.
+        unsafe { self.ptr.add(offset as usize) }
     }
 
     /// Clone a reference to this guest memory (for passing to virtio devices).
@@ -526,11 +521,7 @@ impl GuestMemoryRef {
             bail!("guest memory read out of bounds");
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.ptr.add(offset as usize),
-                buf.as_mut_ptr(),
-                buf.len(),
-            );
+            std::ptr::copy_nonoverlapping(self.ptr.add(offset as usize), buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }

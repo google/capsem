@@ -7,11 +7,7 @@ fn hello_serializes_compactly() {
     let h = Hello::ours("capsem-service-test", "");
     let bytes = rmp_serde::to_vec_named(&h).unwrap();
     // Sanity: small, fits well under MAX_FRAME_SIZE.
-    assert!(
-        bytes.len() < 256,
-        "hello unexpectedly large: {}",
-        bytes.len()
-    );
+    assert!(bytes.len() < 256, "hello unexpectedly large: {}", bytes.len());
     let decoded: Hello = rmp_serde::from_slice(&bytes).unwrap();
     assert_eq!(decoded, h);
 }
@@ -51,10 +47,7 @@ fn verify_detects_version_mismatch() {
     let err = verify(&h).unwrap_err();
     assert!(matches!(err, HandshakeError::Version { .. }), "{err:?}");
     let msg = err.to_string();
-    assert!(
-        msg.contains("capsem-process-old"),
-        "msg should name peer: {msg}"
-    );
+    assert!(msg.contains("capsem-process-old"), "msg should name peer: {msg}");
 }
 
 #[test]
@@ -64,8 +57,5 @@ fn verify_detects_schema_mismatch() {
     let err = verify(&h).unwrap_err();
     assert!(matches!(err, HandshakeError::Schema { .. }), "{err:?}");
     let msg = err.to_string();
-    assert!(
-        msg.contains("capsem-process-rebuilt"),
-        "msg should name peer: {msg}"
-    );
+    assert!(msg.contains("capsem-process-rebuilt"), "msg should name peer: {msg}");
 }

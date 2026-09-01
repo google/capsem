@@ -138,6 +138,9 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     packages = tmp_path / CONFIG.outputs.packages
     packages.mkdir(parents=True)
     (packages / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
@@ -163,7 +166,7 @@ def _local_content(root: Path) -> ProfileContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)
     profile = content.profiles(config) / config.suites.pytest.base_profile / "profile.toml"
@@ -191,7 +194,7 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     }
     manifest_bytes = json.dumps(manifest).encode()
     (content.assets / config.install.manifest_name).write_bytes(manifest_bytes)
-    (content.config / config.suites.pytest.test_manifest).write_bytes(manifest_bytes)
+    content.config_manifest(config).write_bytes(manifest_bytes)
     (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
     (inputs / config.package.release_inputs_name).write_text("{}\n")
     return SelectedInstallContent(content)
@@ -472,7 +475,7 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {content.root}:{content.root}:ro" in started
 
 
@@ -486,7 +489,7 @@ def test_local_install_mounts_only_the_selected_content_pair(
     canonical_assets = root / CONFIG.outputs.assets
     canonical_assets.parent.mkdir(parents=True, exist_ok=True)
     canonical_assets.symlink_to(selected.relative_to(canonical_assets.parent))
-    canonical = root / "target/config"
+    canonical = root / "cache/target/config"
     canonical.mkdir(parents=True)
     sentinel = canonical / "stale"
     sentinel.write_text("untouched")
@@ -501,9 +504,9 @@ def test_local_install_mounts_only_the_selected_content_pair(
 
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {canonical_assets}:/src/{CONFIG.outputs.assets}:ro" not in started
-    assert f"-v {canonical}:/src/target/config:ro" not in started
+    assert f"-v {canonical}:/src/cache/target/config:ro" not in started
     assert canonical_assets.is_symlink()
     assert canonical_assets.readlink() == selected.relative_to(canonical_assets.parent)
     assert sentinel.read_text() == "untouched"
@@ -549,13 +552,16 @@ def _checkout_without_package(tmp_path: Path) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     return tmp_path
 
 
 def test_a_package_from_another_version_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stale `target/packages/` entry must not replace this checkout's candidate."""
+    """A stale `cache/target/packages/` entry must not replace this checkout's candidate."""
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = RecordingRunner(
         root,
@@ -655,7 +661,7 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
     assert runner.last_index_of(r"docker rm -f -v capsem-install-test") > runner.index_of(
         r"dpkg -i"
     )
-    assert runner.ran(r"docker-storage-policy\.py gc --rail install")
+    assert runner.ran(r"capsem-cache .* prune --apply")
 
 
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:

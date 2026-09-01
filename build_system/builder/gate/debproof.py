@@ -69,7 +69,7 @@ class DebProof:
     def _resolve(self, package: Path) -> Path:
         """Only a package this checkout built, named absolutely.
 
-        `target/packages/*.deb` is the whole accepted set: anything else is a
+        `cache/target/packages/*.deb` is the whole accepted set: anything else is a
         package whose provenance this proof cannot speak for.
         """
         resolved = Path(package).resolve()

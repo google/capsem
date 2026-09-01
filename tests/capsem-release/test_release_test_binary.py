@@ -41,7 +41,7 @@ class FakeRunner:
 def test_release_mode_rejects_binary_missing_from_staged_package(
     tmp_path: Path,
 ) -> None:
-    binary = tmp_path / "target/debug/capsem-gateway"
+    binary = tmp_path / "cache/target/cargo/debug/capsem-gateway"
 
     with pytest.raises(FileNotFoundError, match="manifest-selected package"):
         HELPER.ensure_host_test_binary(
@@ -57,7 +57,7 @@ def test_release_mode_rejects_binary_missing_from_staged_package(
 def test_release_mode_uses_exact_package_binary_regardless_of_checkout_mtime(
     tmp_path: Path,
 ) -> None:
-    binary = tmp_path / "target/debug/capsem-gateway"
+    binary = tmp_path / "cache/target/cargo/debug/capsem-gateway"
     source = tmp_path / "crates/capsem-gateway/src/main.rs"
     binary.parent.mkdir(parents=True)
     source.parent.mkdir(parents=True)
@@ -80,7 +80,7 @@ def test_release_mode_uses_exact_package_binary_regardless_of_checkout_mtime(
 
 
 def test_local_mode_builds_a_missing_binary(tmp_path: Path) -> None:
-    binary = tmp_path / "target/debug/capsem-gateway"
+    binary = tmp_path / "cache/target/cargo/debug/capsem-gateway"
     runner = FakeRunner(binary)
 
     HELPER.ensure_host_test_binary(
@@ -97,7 +97,7 @@ def test_local_mode_builds_a_missing_binary(tmp_path: Path) -> None:
 
 
 def test_local_mode_rebuilds_only_when_source_is_newer(tmp_path: Path) -> None:
-    binary = tmp_path / "target/debug/capsem-admin"
+    binary = tmp_path / "cache/target/cargo/debug/capsem-admin"
     source = tmp_path / "crates/capsem-admin/src/main.rs"
     binary.parent.mkdir(parents=True)
     source.parent.mkdir(parents=True)

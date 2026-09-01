@@ -1,6 +1,32 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn handler_without_snapshots() -> BuiltinHandler {
+    BuiltinHandler {
+        http_client: reqwest::Client::new(),
+        db: Arc::new(DbWriter::open_in_memory(8).expect("in-memory DB")),
+        security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
+        plugin_policy: Arc::new(BTreeMap::new()),
+        scheduler: None,
+        workspace_dir: None,
+    }
+}
+
+fn handler_with_snapshots(root: &std::path::Path) -> BuiltinHandler {
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    BuiltinHandler {
+        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
+            root.to_path_buf(),
+            2,
+            2,
+            Duration::from_secs(60),
+        )))),
+        workspace_dir: Some(workspace),
+        ..handler_without_snapshots()
+    }
+}
+
 #[test]
 fn snapshot_pagination_params_preserve_include_changes() {
     let params: SnapshotPaginationParams = serde_json::from_value(serde_json::json!({
@@ -12,6 +38,135 @@ fn snapshot_pagination_params_preserve_include_changes() {
     let args = to_args(&params);
     assert_eq!(args["format"], "json");
     assert_eq!(args["include_changes"], true);
+}
+
+#[test]
+fn router_and_server_info_expose_the_complete_builtin_surface() {
+    let tools = BuiltinHandler::tool_router();
+    let names = tools
+        .list_all()
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .collect::<Vec<_>>();
+    for expected in [
+        "echo",
+        "fetch_http",
+        "grep_http",
+        "http_headers",
+        "snapshots_changes",
+        "snapshots_list",
+        "snapshots_revert",
+        "snapshots_create",
+        "snapshots_delete",
+        "snapshots_history",
+        "snapshots_compact",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "missing builtin tool {expected}"
+        );
+    }
+
+    let info = handler_without_snapshots().get_info();
+    assert_eq!(info.server_info.name, "capsem-local");
+    assert!(!info.server_info.version.is_empty());
+}
+
+#[tokio::test]
+async fn echo_handler_returns_input_without_touching_io() {
+    let handler = handler_without_snapshots();
+    let value = handler
+        .echo(Parameters(EchoParams {
+            text: "transport fixture".to_string(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(value, "transport fixture");
+}
+
+#[tokio::test]
+async fn snapshot_handlers_operate_on_real_scheduler_state() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler_with_snapshots(root.path());
+    let pagination = || SnapshotPaginationParams {
+        start_index: None,
+        max_length: None,
+        format: Some("json".to_string()),
+        include_changes: Some(true),
+    };
+
+    assert!(!handler
+        .snapshots_changes(Parameters(pagination()))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!handler
+        .snapshots_list(Parameters(pagination()))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(handler
+        .snapshots_history(Parameters(SnapshotHistoryParams {
+            path: "missing.txt".to_string(),
+            start_index: None,
+            max_length: None,
+            format: Some("json".to_string()),
+        }))
+        .await
+        .is_ok());
+
+    let created = handler
+        .snapshots_create(Parameters(SnapshotNameParams {
+            name: "fixture".to_string(),
+        }))
+        .await;
+    assert!(created.is_ok(), "manual snapshot failed: {created:?}");
+    assert!(handler
+        .snapshots_revert(Parameters(SnapshotRevertParams {
+            path: "missing.txt".to_string(),
+            checkpoint: None,
+        }))
+        .await
+        .is_err());
+    assert!(handler
+        .snapshots_delete(Parameters(SnapshotDeleteParams {
+            checkpoint: "cp-missing".to_string(),
+        }))
+        .await
+        .is_err());
+    assert!(handler
+        .snapshots_compact(Parameters(SnapshotCompactParams {
+            checkpoints: vec!["cp-missing".to_string()],
+            name: Some("compacted".to_string()),
+        }))
+        .await
+        .is_err());
+}
+
+#[test]
+fn snapshot_tools_fail_closed_when_session_state_is_absent() {
+    let handler = handler_without_snapshots();
+    let error = match handler.snapshot_state() {
+        Ok(_) => panic!("snapshot state unexpectedly available"),
+        Err(error) => error,
+    };
+    assert!(error.contains("no session directory"));
+
+    let session = tempfile::tempdir().unwrap();
+    let handler = BuiltinHandler {
+        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
+            session.path().to_path_buf(),
+            1,
+            1,
+            Duration::from_secs(60),
+        )))),
+        ..handler_without_snapshots()
+    };
+    let error = match handler.snapshot_state() {
+        Ok(_) => panic!("snapshot state unexpectedly available"),
+        Err(error) => error,
+    };
+    assert!(error.contains("no workspace directory"));
 }
 
 async fn spawn_one_response_http_server() -> String {
@@ -140,7 +295,7 @@ fn response(body: serde_json::Value) -> JsonRpcResponse {
 #[test]
 fn transport_error_becomes_err_with_its_message() {
     let mut resp = response(serde_json::json!({"content": [{"text": "ignored"}]}));
-    resp.error = Some(capsem_core::mcp::types::JsonRpcError {
+    resp.error = Some(capsem_proto::mcp_contracts::JsonRpcError {
         code: -32000,
         message: "vsock closed".to_string(),
         data: None,
@@ -223,7 +378,7 @@ fn transport_error_wins_over_a_logical_failure() {
         "isError": true,
         "content": [{"text": "policy refusal"}]
     }));
-    resp.error = Some(capsem_core::mcp::types::JsonRpcError {
+    resp.error = Some(capsem_proto::mcp_contracts::JsonRpcError {
         code: -32000,
         message: "connection reset".to_string(),
         data: None,
@@ -242,11 +397,7 @@ fn a_non_boolean_is_error_does_not_signal_failure() {
     // sending the string "true" or the number 1 yields Ok. Anything other than
     // a JSON boolean is not a refusal signal, and a builtin that wants to
     // refuse must send a real `true`.
-    for weird in [
-        serde_json::json!("true"),
-        serde_json::json!(1),
-        serde_json::json!(null),
-    ] {
+    for weird in [serde_json::json!("true"), serde_json::json!(1), serde_json::json!(null)] {
         let resp = response(serde_json::json!({
             "isError": weird,
             "content": [{"text": "body"}]

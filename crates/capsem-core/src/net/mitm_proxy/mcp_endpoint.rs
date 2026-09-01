@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use crate::mcp::aggregator::AggregatorClient;
-use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
 use crate::net::policy_config::{SecurityRuleSet, SharedPluginPolicy};
+use capsem_proto::mcp_aggregator::AggregatorClient;
+use capsem_proto::mcp_contracts::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;
@@ -31,17 +31,14 @@ impl Default for McpTimeouts {
 
 impl McpTimeouts {
     pub fn from_env() -> Self {
-        let default_timeout =
-            env_duration_secs("CAPSEM_MCP_DEFAULT_TIMEOUT_SECS", DEFAULT_MCP_TIMEOUT_SECS);
+        let default_timeout = env_duration_secs("CAPSEM_MCP_DEFAULT_TIMEOUT_SECS", DEFAULT_MCP_TIMEOUT_SECS);
         let tool_call_ceiling = env_duration_secs(
             "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
             DEFAULT_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS,
         );
-        let tool_call_default = env_duration_secs(
-            "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
-            DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS,
-        )
-        .min(tool_call_ceiling);
+        let tool_call_default =
+            env_duration_secs("CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS", DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS)
+                .min(tool_call_ceiling);
 
         Self {
             default_timeout,
@@ -120,9 +117,7 @@ impl McpEndpointState {
             return None;
         }
 
-        let timeout = self
-            .timeout_for_request(&req.method, param_str(req, "name"))
-            .await;
+        let timeout = self.timeout_for_request(&req.method, param_str(req, "name")).await;
         match tokio::time::timeout(timeout, self.dispatch(req)).await {
             Ok(response) => Some(response),
             Err(_) => Some(JsonRpcResponse::err(
@@ -170,9 +165,7 @@ impl McpEndpointState {
                         .collect();
                     JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"tools": tools}))
                 }
-                Err(e) => {
-                    JsonRpcResponse::err(req.id.clone(), -32603, format!("tools list failed: {e}"))
-                }
+                Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("tools list failed: {e}")),
             },
 
             "tools/call" => {
@@ -189,11 +182,7 @@ impl McpEndpointState {
                     .unwrap_or_else(|| serde_json::json!({}));
                 match self.aggregator.call_tool(tool_name, arguments).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
-                    Err(e) => JsonRpcResponse::err(
-                        req.id.clone(),
-                        -32603,
-                        format!("tool call failed: {e}"),
-                    ),
+                    Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("tool call failed: {e}")),
                 }
             }
 
@@ -212,11 +201,7 @@ impl McpEndpointState {
                         .collect();
                     JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"resources": resources}))
                 }
-                Err(e) => JsonRpcResponse::err(
-                    req.id.clone(),
-                    -32603,
-                    format!("resources list failed: {e}"),
-                ),
+                Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("resources list failed: {e}")),
             },
 
             "resources/read" => {
@@ -227,11 +212,7 @@ impl McpEndpointState {
 
                 match self.aggregator.read_resource(uri).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
-                    Err(e) => JsonRpcResponse::err(
-                        req.id.clone(),
-                        -32603,
-                        format!("resource read failed: {e}"),
-                    ),
+                    Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("resource read failed: {e}")),
                 }
             }
 
@@ -249,11 +230,7 @@ impl McpEndpointState {
                         .collect();
                     JsonRpcResponse::ok(req.id.clone(), serde_json::json!({"prompts": prompts}))
                 }
-                Err(e) => JsonRpcResponse::err(
-                    req.id.clone(),
-                    -32603,
-                    format!("prompts list failed: {e}"),
-                ),
+                Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("prompts list failed: {e}")),
             },
 
             "prompts/get" => {
@@ -270,19 +247,11 @@ impl McpEndpointState {
                     .unwrap_or_else(|| serde_json::json!({}));
                 match self.aggregator.get_prompt(prompt_name, arguments).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
-                    Err(e) => JsonRpcResponse::err(
-                        req.id.clone(),
-                        -32603,
-                        format!("prompt get failed: {e}"),
-                    ),
+                    Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("prompt get failed: {e}")),
                 }
             }
 
-            _ => JsonRpcResponse::err(
-                req.id.clone(),
-                -32601,
-                format!("method not found: {}", req.method),
-            ),
+            _ => JsonRpcResponse::err(req.id.clone(), -32601, format!("method not found: {}", req.method)),
         }
     }
 }

@@ -25,12 +25,26 @@ them whatever order the steps are written in.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .harnessschema import Exclusive
 from .pythonenv import pytest
+
+
+class CoverageMode(StrEnum):
+    """How one pytest cohort participates in a composed coverage proof."""
+
+    NONE = "none"
+    SINGLE = "single"
+    SEED = "seed"
+    APPEND = "append"
+    FINISH = "finish"
+
+    def __bool__(self) -> bool:
+        return self is not CoverageMode.NONE
 
 
 @dataclass(frozen=True)
@@ -44,7 +58,7 @@ class Suite:
     ignore_globs: tuple[str, ...] = ()
     deselect: str = ""
     parallel: bool = False
-    coverage: bool = False
+    coverage: CoverageMode = CoverageMode.NONE
     stop_at_first_failure: bool = True
     profile: str = ""
     assets_dir: str = ""
@@ -63,9 +77,19 @@ class Suite:
         if self.stop_at_first_failure:
             argv.append(settings.stop_at_first)
         if self.parallel:
-            argv += settings.parallel_flags
-        if self.coverage:
-            argv += settings.coverage_flags
+            argv += [
+                "-n",
+                str(settings.parallel_workers),
+                f"--dist={settings.parallel_distribution}",
+            ]
+        coverage_flags = {
+            CoverageMode.NONE: (),
+            CoverageMode.SINGLE: settings.coverage_flags,
+            CoverageMode.SEED: settings.coverage_seed_flags,
+            CoverageMode.APPEND: settings.coverage_append_flags,
+            CoverageMode.FINISH: settings.coverage_finish_flags,
+        }
+        argv += coverage_flags[self.coverage]
         if self.markers:
             argv += ["-m", self.markers]
         if self.deselect:
@@ -103,6 +127,7 @@ class Suite:
             kind=Kind.UNIT_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.SLOW,
+            concurrency=(config.suites.pytest.parallel_workers if self.parallel else 1),
         )
 
 
@@ -126,28 +151,25 @@ def citadel(config: GateConfig) -> Suite:
     return Suite(
         label="citadel",
         paths=(config.suites.pytest.citadel,),
+        parallel=True,
         stop_at_first_failure=False,
         require_artifacts=False,
     )
 
 
 def collection(config: GateConfig) -> Step:
-    """Strictly import and collect every Python test without touching caches."""
+    """Strictly collect both Python test roots in one interpreter."""
     settings = config.suites.pytest
     return step(
         "pytest.collection",
-        Run(pytest(config, settings.root, *settings.collection_flags)),
-        kind=Kind.STATIC_TEST,
-        speed=Speed.FAST,
-    )
-
-
-def build_system_collection(config: GateConfig) -> Step:
-    """Collect build-system tests through their own locked project."""
-    settings = config.suites.pytest
-    return step(
-        "pytest.build-system-collection",
-        Run(pytest(config, settings.build_system_root, *settings.collection_flags)),
+        Run(
+            pytest(
+                config,
+                settings.root,
+                settings.build_system_root,
+                *settings.collection_flags,
+            )
+        ),
         kind=Kind.STATIC_TEST,
         speed=Speed.FAST,
     )
@@ -158,20 +180,28 @@ def build_system_collection(config: GateConfig) -> Step:
 # ---------------------------------------------------------------------------
 
 
-def broad(config: GateConfig, *, profile: str) -> Suite:
+def broad(
+    config: GateConfig,
+    *,
+    profile: str,
+    source_contracts_proved: bool = False,
+) -> Suite:
     """Everything that can share a machine, four VMs at a time.
 
     The dogfooding canary. `--dist=loadfile` keeps per-file fixtures on one
     worker, which matters because the fixtures build VMs.
     """
     settings = config.suites.pytest
+    proven_paths = config.suites.source_contract if source_contracts_proved else ()
+    proven_globs = config.modules.contract_globs if source_contracts_proved else ()
     return Suite(
         label=f"pytest.broad.{profile}",
         paths=(settings.root,),
         markers="not serial",
-        ignores=(*settings.host_snapshot_serial, *settings.broad_ignores),
+        ignores=(*settings.host_snapshot_serial, *settings.broad_ignores, *proven_paths),
+        ignore_globs=proven_globs,
         parallel=True,
-        coverage=True,
+        coverage=(CoverageMode.FINISH if source_contracts_proved else CoverageMode.SINGLE),
         profile=profile,
         contends=(config.exclusive("workspace_binaries"),),
     )

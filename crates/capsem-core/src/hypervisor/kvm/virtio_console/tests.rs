@@ -87,10 +87,8 @@ fn transmit_queue_writes_guest_output_to_console_pipe() {
     desc0[8..12].copy_from_slice(&(12u32).to_le_bytes());
     desc0[12..14].copy_from_slice(&0u16.to_le_bytes());
     mem.write_at(desc - RAM_BASE, &desc0).unwrap();
-    mem.write_at(avail - RAM_BASE + 2, &1u16.to_le_bytes())
-        .unwrap();
-    mem.write_at(avail - RAM_BASE + 4, &0u16.to_le_bytes())
-        .unwrap();
+    mem.write_at(avail - RAM_BASE + 2, &1u16.to_le_bytes()).unwrap();
+    mem.write_at(avail - RAM_BASE + 4, &0u16.to_le_bytes()).unwrap();
 
     let queues = [
         QueueConfig {

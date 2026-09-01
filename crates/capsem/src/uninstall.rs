@@ -6,13 +6,10 @@ use crate::platform;
 
 /// Run full uninstall: stop service, remove unit, remove binaries and data.
 pub async fn run_uninstall(yes: bool) -> Result<()> {
-    let capsem_dir = capsem_core::paths::capsem_home_opt().context("HOME not set")?;
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt().context("HOME not set")?;
 
     if !capsem_dir.exists() {
-        println!(
-            "Nothing to uninstall ({} does not exist).",
-            capsem_dir.display()
-        );
+        println!("Nothing to uninstall ({} does not exist).", capsem_dir.display());
         return Ok(());
     }
 
@@ -20,10 +17,7 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         println!("This will remove:");
         println!("  - Capsem service (LaunchAgent / systemd unit)");
         println!("  - All binaries in {}/bin/", capsem_dir.display());
-        println!(
-            "  - All data in {}/ (assets, config, state)",
-            capsem_dir.display()
-        );
+        println!("  - All data in {}/ (assets, config, state)", capsem_dir.display());
 
         let confirm = inquire::Confirm::new("Proceed with uninstall?")
             .with_default(false)
@@ -38,28 +32,20 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     // Stop and uninstall service
     println!("Stopping service...");
     if let Err(e) = crate::service_install::uninstall_service().await {
-        eprintln!(
-            "Warning: service uninstall failed: {}. Continuing anyway.",
-            e
-        );
+        eprintln!("Warning: service uninstall failed: {}. Continuing anyway.", e);
     }
 
     // Kill any running processes (SIGKILL to prevent respawn by KeepAlive).
     //
     // Scope the match to this binary's install dir so `capsem uninstall`
     // from ~/.capsem/bin never touches unrelated capsem-* processes running
-    // from other locations (for example dev services under target/debug/, or
+    // from other locations (for example dev services under cache/target/cargo/debug/, or
     // parallel pytest workers). Users uninstalling the installation should
     // only affect the installation -- `-x <name>` matches too broadly.
     let install_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    for name in [
-        "capsem-service",
-        "capsem-process",
-        "capsem-gateway",
-        "capsem-tray",
-    ] {
+    for name in ["capsem-service", "capsem-process", "capsem-gateway", "capsem-tray"] {
         let pattern = match install_dir.as_ref() {
             Some(dir) => format!("{}/{name}", dir.display()),
             None => name.to_string(),

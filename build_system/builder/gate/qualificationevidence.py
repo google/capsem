@@ -176,6 +176,29 @@ def find_complete(config: GateConfig, commit: SourceCommit) -> QualificationEvid
     return None
 
 
+def latest_complete(
+    config: GateConfig,
+) -> tuple[SourceCommit, QualificationEvidence] | None:
+    """Newest valid complete candidate across retained source archives."""
+    archive = config.path(config.runlog.root) / config.runlog.source_archive_dir
+    if not archive.is_dir() or archive.is_symlink():
+        return None
+    latest: tuple[SourceCommit, QualificationEvidence] | None = None
+    for directory in archive.iterdir():
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        try:
+            commit = SourceCommit(directory.name)
+        except ValueError:
+            continue
+        evidence = find_complete(config, commit)
+        if evidence is None:
+            continue
+        if latest is None or evidence.reference.run_id > latest[1].reference.run_id:
+            latest = (commit, evidence)
+    return latest
+
+
 def find_resume(config: GateConfig, commit: SourceCommit, plan: Plan) -> ResumeEvidence | None:
     """Deepest graph frontier supported by one retained attempt lineage."""
     shape = PlanShape(steps=plan.labels, edges=plan.edges)
@@ -202,7 +225,7 @@ def require_complete(config: GateConfig, commit: SourceCommit) -> QualificationE
     if found is None:
         raise GateError(
             f"source commit {commit} has no complete exact qualification run log; "
-            f"run `just test-full {commit}` first"
+            f"run `just test {commit}` first"
         )
     return found
 

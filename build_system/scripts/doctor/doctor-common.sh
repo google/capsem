@@ -21,7 +21,7 @@ CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml
 # shellcheck disable=SC2034
 ENTITLEMENTS="build_system/packaging/macos/entitlements.plist"
 # shellcheck disable=SC2034
-ASSETS_DIR="target/assets"
+ASSETS_DIR="cache/target/assets"
 
 # ---------------------------------------------------------------------------
 # Colors (disabled when not a TTY)

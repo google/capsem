@@ -154,7 +154,7 @@ def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
 def test_the_lane_owns_its_base_image_instead_of_asking_the_operator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A module owns its prerequisites, or `just test-full` is not self-sufficient.
+    """A module owns its prerequisites, or `just test` is not self-sufficient.
 
     The lane refuses to build the base image inside itself -- correctly, since
     it runs sealed and a multi-gigabyte fetch mid-run is the thing sealing
@@ -218,7 +218,7 @@ def test_the_build_context_is_bounded() -> None:
 
     A bare `target` pattern matches only the repository root. This checkout
     carries agent worktrees under `.claude/` -- 55 GB of them, each with its
-    own `target/` -- so the first build swept them in and died with `no space
+    own `cache/target/` -- so the first build swept them in and died with `no space
     left on device` after nineteen minutes. Every exclusion is `**`-prefixed
     now, and this asserts the outcome rather than the patterns: a new cache
     directory nobody thought to exclude fails here in a second instead of
@@ -235,7 +235,7 @@ def test_the_build_context_is_bounded() -> None:
     def ignored(relative: str) -> bool:
         parts = relative.split("/")
         for pattern in patterns:
-            bare = pattern.removeprefix("**/")
+            bare = pattern.removeprefix("**/").removeprefix("/")
             if pattern.startswith("**/"):
                 if any(fnmatch.fnmatch(segment, bare) for segment in parts):
                     return True

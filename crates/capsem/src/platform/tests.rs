@@ -40,7 +40,7 @@ fn detect_user_dir_linux() {
 
 #[test]
 fn detect_development_layout() {
-    let path = Path::new("/Users/elie/git/capsem/target/debug/capsem");
+    let path = Path::new("/Users/elie/git/capsem/cache/target/cargo/debug/capsem");
     assert_eq!(detect_layout_from_path(path), InstallLayout::Development);
 }
 

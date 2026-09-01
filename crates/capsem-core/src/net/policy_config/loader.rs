@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::{
-    setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract,
-    validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
+    setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract, validate_stored_setting_contract,
+    ConfigOwner, SettingValue, SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ use super::{
 
 /// Local UI settings path: `<capsem_home>/settings.toml`.
 pub fn settings_config_path() -> Option<std::path::PathBuf> {
-    crate::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
+    capsem_foundation::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
 }
 
 /// Corporate config path: returns the first available corp config path.
@@ -40,7 +40,7 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
     if system.exists() {
         paths.push(system);
     }
-    if let Some(capsem_home) = crate::paths::capsem_home_opt() {
+    if let Some(capsem_home) = capsem_foundation::paths::capsem_home_opt() {
         let user_corp = capsem_home.join("corp.toml");
         if user_corp.exists() {
             paths.push(user_corp);
@@ -56,8 +56,8 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
         Ok(content) => {
             reject_retired_mcp_policy_keys(path, &content)?;
             reject_retired_ai_setting_ids(path, &content)?;
-            let mut file: SettingsFile = toml::from_str(&content)
-                .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+            let mut file: SettingsFile =
+                toml::from_str(&content).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
             migrate_setting_ids(&mut file);
             if let Some(profile) = load_referenced_enforcement_rules(path, &file)? {
                 merge_referenced_security_rule_profile(&mut file, profile)?;
@@ -77,30 +77,24 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
 /// Load a local UI/application settings file and reject profile-owned behavior.
 pub fn load_local_settings_file(path: &Path) -> Result<SettingsFile, String> {
     let file = load_settings_file(path)?;
-    validate_settings_toml_contract(&file)
-        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    validate_settings_toml_contract(&file).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
     Ok(file)
 }
 
 /// Load a corporate constraint file and reject UI preferences.
 pub fn load_corp_settings_file(path: &Path) -> Result<SettingsFile, String> {
     let file = load_settings_file(path)?;
-    validate_corp_toml_contract(&file)
-        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    validate_corp_toml_contract(&file).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
     Ok(file)
 }
 
 fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), String> {
-    let root: toml::Value = toml::from_str(content)
-        .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    let root: toml::Value =
+        toml::from_str(content).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
     let Some(mcp) = root.get("mcp").and_then(|value| value.as_table()) else {
         return Ok(());
     };
-    for retired in [
-        "global_policy",
-        "default_tool_permission",
-        "tool_permissions",
-    ] {
+    for retired in ["global_policy", "default_tool_permission", "tool_permissions"] {
         if mcp.contains_key(retired) {
             return Err(format!(
                 "failed to validate {}: retired MCP policy key mcp.{retired}; use profile security rules instead",
@@ -115,12 +109,8 @@ fn reject_retired_ai_setting_ids(path: &Path, content: &str) -> Result<(), Strin
     reject_retired_ai_setting_ids_in_content(&path.display().to_string(), content)
 }
 
-pub(super) fn reject_retired_ai_setting_ids_in_content(
-    label: &str,
-    content: &str,
-) -> Result<(), String> {
-    let root: toml::Value =
-        toml::from_str(content).map_err(|e| format!("failed to parse {label}: {e}"))?;
+pub(super) fn reject_retired_ai_setting_ids_in_content(label: &str, content: &str) -> Result<(), String> {
+    let root: toml::Value = toml::from_str(content).map_err(|e| format!("failed to parse {label}: {e}"))?;
     let Some(settings) = root.get("settings").and_then(|value| value.as_table()) else {
         return Ok(());
     };
@@ -164,10 +154,7 @@ pub fn resolve_rule_file_path(settings_path: &Path, rule_file: &str) -> std::pat
     if path.is_absolute() {
         return path;
     }
-    settings_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(path)
+    settings_path.parent().unwrap_or_else(|| Path::new(".")).join(path)
 }
 
 pub fn load_referenced_enforcement_rules(
@@ -178,20 +165,11 @@ pub fn load_referenced_enforcement_rules(
         return Ok(None);
     };
     let path = resolve_rule_file_path(settings_path, rule_file);
-    let content = std::fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "failed to read enforcement rules {}: {error}",
-            path.display()
-        )
-    })?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read enforcement rules {}: {error}", path.display()))?;
     super::SecurityRuleProfile::parse_toml(&content)
         .map(Some)
-        .map_err(|error| {
-            format!(
-                "failed to parse enforcement rules {}: {error}",
-                path.display()
-            )
-        })
+        .map_err(|error| format!("failed to parse enforcement rules {}: {error}", path.display()))
 }
 
 pub fn load_referenced_sigma_rules(
@@ -202,20 +180,11 @@ pub fn load_referenced_sigma_rules(
         return Ok(None);
     };
     let path = resolve_rule_file_path(settings_path, rule_file);
-    let content = std::fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "failed to read Sigma detection rules {}: {error}",
-            path.display()
-        )
-    })?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read Sigma detection rules {}: {error}", path.display()))?;
     super::SecurityRuleProfile::parse_sigma_yaml(&content)
         .map(Some)
-        .map_err(|error| {
-            format!(
-                "failed to parse Sigma detection rules {}: {error}",
-                path.display()
-            )
-        })
+        .map_err(|error| format!("failed to parse Sigma detection rules {}: {error}", path.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -224,22 +193,10 @@ pub fn load_referenced_sigma_rules(
 
 /// Migration map: old setting IDs -> new setting IDs.
 const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
-    (
-        "web.search.google.allow",
-        "security.services.search.google.allow",
-    ),
-    (
-        "web.search.google.domains",
-        "security.services.search.google.domains",
-    ),
-    (
-        "web.search.bing.allow",
-        "security.services.search.bing.allow",
-    ),
-    (
-        "web.search.bing.domains",
-        "security.services.search.bing.domains",
-    ),
+    ("web.search.google.allow", "security.services.search.google.allow"),
+    ("web.search.google.domains", "security.services.search.google.domains"),
+    ("web.search.bing.allow", "security.services.search.bing.allow"),
+    ("web.search.bing.domains", "security.services.search.bing.domains"),
     (
         "web.search.duckduckgo.allow",
         "security.services.search.duckduckgo.allow",
@@ -248,35 +205,14 @@ const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
         "web.search.duckduckgo.domains",
         "security.services.search.duckduckgo.domains",
     ),
-    (
-        "registry.debian.allow",
-        "security.services.registry.debian.allow",
-    ),
-    (
-        "registry.debian.domains",
-        "security.services.registry.debian.domains",
-    ),
+    ("registry.debian.allow", "security.services.registry.debian.allow"),
+    ("registry.debian.domains", "security.services.registry.debian.domains"),
     ("registry.npm.allow", "security.services.registry.npm.allow"),
-    (
-        "registry.npm.domains",
-        "security.services.registry.npm.domains",
-    ),
-    (
-        "registry.pypi.allow",
-        "security.services.registry.pypi.allow",
-    ),
-    (
-        "registry.pypi.domains",
-        "security.services.registry.pypi.domains",
-    ),
-    (
-        "registry.crates.allow",
-        "security.services.registry.crates.allow",
-    ),
-    (
-        "registry.crates.domains",
-        "security.services.registry.crates.domains",
-    ),
+    ("registry.npm.domains", "security.services.registry.npm.domains"),
+    ("registry.pypi.allow", "security.services.registry.pypi.allow"),
+    ("registry.pypi.domains", "security.services.registry.pypi.domains"),
+    ("registry.crates.allow", "security.services.registry.crates.allow"),
+    ("registry.crates.domains", "security.services.registry.crates.domains"),
 ];
 
 /// Rename old setting IDs to new ones in a loaded settings file.
@@ -292,11 +228,9 @@ pub fn migrate_setting_ids(file: &mut SettingsFile) {
 /// Write a settings file to disk as TOML. Creates parent dirs if needed.
 pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create dir {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir {}: {}", parent.display(), e))?;
     }
-    let content =
-        toml::to_string_pretty(file).map_err(|e| format!("failed to serialize settings: {e}"))?;
+    let content = toml::to_string_pretty(file).map_err(|e| format!("failed to serialize settings: {e}"))?;
     std::fs::write(path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
@@ -351,10 +285,7 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
                     corp.network.dns.upstreams = file.network.dns.upstreams;
                 }
                 for (target, override_config) in file.network.upstream_overrides {
-                    corp.network
-                        .upstream_overrides
-                        .entry(target)
-                        .or_insert(override_config);
+                    corp.network.upstream_overrides.entry(target).or_insert(override_config);
                 }
             }
             Err(e) => {
@@ -400,27 +331,20 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
 /// Validates ALL changes upfront. If any change is invalid (corp-locked,
 /// type mismatch, unknown ID, disabled), the entire batch is rejected and
 /// nothing is written. Returns the list of applied setting IDs on success.
-pub fn batch_update_settings(
-    changes: &HashMap<String, SettingValue>,
-) -> Result<Vec<String>, String> {
+pub fn batch_update_settings(changes: &HashMap<String, SettingValue>) -> Result<Vec<String>, String> {
     let mut raw = HashMap::new();
     for (id, value) in changes {
-        let json = serde_json::to_value(value)
-            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
+        let json = serde_json::to_value(value).map_err(|e| format!("failed to encode setting {id}: {e}"))?;
         raw.insert(id.clone(), json);
     }
     batch_update_settings_json(&raw)
 }
 
-pub fn batch_update_settings_json(
-    changes: &HashMap<String, serde_json::Value>,
-) -> Result<Vec<String>, String> {
+pub fn batch_update_settings_json(changes: &HashMap<String, serde_json::Value>) -> Result<Vec<String>, String> {
     batch_update_settings_json_inner(changes)
 }
 
-fn batch_update_settings_json_inner(
-    changes: &HashMap<String, serde_json::Value>,
-) -> Result<Vec<String>, String> {
+fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>) -> Result<Vec<String>, String> {
     use super::settings_metadata::setting_definitions;
 
     if changes.is_empty() {
@@ -518,8 +442,7 @@ pub fn validate_setting_value(id: &str, value: &SettingValue) -> Result<(), Stri
     validate_stored_setting_contract(id, value)?;
     if let SettingValue::File { path, content } = value {
         // Validate path
-        capsem_proto::validate_file_path(path)
-            .map_err(|e| format!("invalid path for {id}: {e}"))?;
+        capsem_proto::validate_file_path(path).map_err(|e| format!("invalid path for {id}: {e}"))?;
         // Validate JSON syntax for .json paths (zero-allocation check).
         if path.ends_with(".json") && !content.is_empty() {
             serde_json::from_str::<serde::de::IgnoredAny>(content)

@@ -1,0 +1,23 @@
+[package]
+name = "capsem-credentials"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description = "Broker-owned credential storage and resolution for Capsem."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-proto = { path = "../capsem-proto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"

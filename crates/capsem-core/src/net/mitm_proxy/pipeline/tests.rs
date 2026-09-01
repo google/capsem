@@ -153,10 +153,7 @@ impl Hook for CycleViolator {
         Box::pin(async move {
             let mut chunk = bytes::Bytes::from_static(b"oops");
             let res = ctx.emit(Event::RawResponseChunk(&mut chunk)).await;
-            if matches!(
-                res,
-                Err(super::super::hooks::EmitError::CycleAttempt { .. })
-            ) {
+            if matches!(res, Err(super::super::hooks::EmitError::CycleAttempt { .. })) {
                 rejected.fetch_add(1, Ordering::SeqCst);
             }
             HookOutcome::Continue
@@ -225,10 +222,7 @@ async fn dispatch_runs_only_matching_hooks() {
 
     let mut chunk = bytes::Bytes::from_static(b"x");
     dispatch_one(&pipeline, Event::RawResponseChunk(&mut chunk), None).await;
-    assert!(
-        log.lock().unwrap().is_empty(),
-        "no hook should match RawResponseChunk"
-    );
+    assert!(log.lock().unwrap().is_empty(), "no hook should match RawResponseChunk");
 
     let req = http::Request::new(()).into_parts().0;
     let mut req = req;
@@ -282,10 +276,7 @@ async fn stop_short_circuits_subsequent_hooks() {
         .build();
 
     let outcome = dispatch_one(&pipeline, Event::RawRequestEnd, None).await;
-    assert!(matches!(
-        outcome,
-        DispatchOutcome::Stopped(StopAction::Drop)
-    ));
+    assert!(matches!(outcome, DispatchOutcome::Stopped(StopAction::Drop)));
     assert!(
         log.lock().unwrap().is_empty(),
         "after_stop must not fire when an earlier hook returns Stop"
@@ -363,11 +354,7 @@ async fn cycle_attempt_rejected_when_l3_emits_l1() {
         tool_responses: Vec::new(),
     });
     dispatch_one(&pipeline, Event::AiCallEnd(&mut model_call), None).await;
-    assert_eq!(
-        rejected.load(Ordering::SeqCst),
-        1,
-        "L3 -> L1 must be rejected"
-    );
+    assert_eq!(rejected.load(Ordering::SeqCst), 1, "L3 -> L1 must be rejected");
     assert_eq!(
         l1_count.load(Ordering::SeqCst),
         0,
@@ -407,11 +394,7 @@ impl super::super::hooks::ChunkHook for UppercaseHook {
     fn name(&self) -> &'static str {
         "uppercase"
     }
-    fn on_response_chunk(
-        &self,
-        chunk: &mut bytes::Bytes,
-        _ctx: &mut super::super::hooks::ChunkCtx<'_>,
-    ) {
+    fn on_response_chunk(&self, chunk: &mut bytes::Bytes, _ctx: &mut super::super::hooks::ChunkCtx<'_>) {
         let upper: bytes::Bytes = chunk.iter().map(|b| b.to_ascii_uppercase()).collect();
         *chunk = upper;
     }
@@ -443,11 +426,7 @@ impl super::super::hooks::ChunkHook for CountChunks {
     fn name(&self) -> &'static str {
         "count_chunks"
     }
-    fn on_response_chunk(
-        &self,
-        chunk: &mut bytes::Bytes,
-        ctx: &mut super::super::hooks::ChunkCtx<'_>,
-    ) {
+    fn on_response_chunk(&self, chunk: &mut bytes::Bytes, ctx: &mut super::super::hooks::ChunkCtx<'_>) {
         let st = ctx.state::<CountState>(CountState::default);
         st.chunks += 1;
         st.bytes += chunk.len();
@@ -477,7 +456,8 @@ fn chunk_hooks_run_in_registration_order_and_can_rewrite() {
     pipeline.dispatch_response_chunk(&mut b, &mut state, &conn, None);
     assert_eq!(&b[..], b"WORLD!");
 
-    pipeline.dispatch_response_end(&mut state, &conn, None);
+    let end = pipeline.dispatch_response_end(&mut state, &conn, None);
+    assert!(end.pending.is_empty());
 
     let cs = state.peek::<CountState>().expect("count state present");
     assert_eq!(cs.chunks, 2);
@@ -497,9 +477,10 @@ fn response_tail_runs_through_later_hooks_before_their_end_callbacks() {
     let mut state = super::super::hooks::HookState::default();
     let conn = super::super::hooks::ConnMeta::default();
 
-    let tail = pipeline.dispatch_response_end(&mut state, &conn, None);
+    let end = pipeline.dispatch_response_end(&mut state, &conn, None);
 
-    assert_eq!(tail.as_ref(), b"TAIL");
+    assert_eq!(end.tail.as_ref(), b"TAIL");
+    assert!(end.pending.is_empty());
     let counted = state.peek::<CountState>().unwrap();
     assert_eq!(counted.chunks, 1);
     assert_eq!(counted.bytes, 4);
@@ -549,9 +530,9 @@ async fn dispatch_records_hook_metrics() {
         .expect("mitm.hook_invocations_total counter present");
     assert_eq!(inv_count, 1, "exactly one hook invocation recorded");
 
-    let dur_present = snap.iter().any(|(k, _, _, v)| {
-        matches!(v, DebugValue::Histogram(_)) && k.key().name() == "mitm.hook_duration_ms"
-    });
+    let dur_present = snap
+        .iter()
+        .any(|(k, _, _, v)| matches!(v, DebugValue::Histogram(_)) && k.key().name() == "mitm.hook_duration_ms");
     assert!(dur_present, "mitm.hook_duration_ms histogram recorded");
 }
 

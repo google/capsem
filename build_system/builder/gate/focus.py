@@ -11,11 +11,39 @@ from __future__ import annotations
 import argparse
 
 from . import bench, module_contracts, staticmodule, vmmodules
+from .actions import Script
 from .command import GateCommand
+from .execution import SATURATES, Kind, Needs, Speed, step
 from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
 from .qualification import Qualification
+
+
+class RustAffectedCommand(
+    GateCommand,
+    name="test-rust-affected",
+    help="test Rust packages affected by working-tree changes",
+):
+    """Source-local Rust feedback selected from the Cargo dependency graph."""
+
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        phase = plan.phase("rust")
+        phase.add(
+            step(
+                "affected",
+                Script(self._config, self._config.devloop.rust_affected),
+                contends=(self._config.exclusive("workspace_binaries"),),
+                kind=Kind.UNIT_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.SLOW,
+                concurrency=SATURATES,
+            )
+        )
+        return plan
 
 TARGETS: dict[str, type[GateCommand]] = {
     "assets": vmmodules.ArtifactsModule,
@@ -24,6 +52,7 @@ TARGETS: dict[str, type[GateCommand]] = {
     "functional": vmmodules.FunctionalModule,
     "install": vmmodules.GlowupModule,
     "release-system": module_contracts.ReleaseContractsModule,
+    "rust": RustAffectedCommand,
 }
 
 

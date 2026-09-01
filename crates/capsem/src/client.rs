@@ -239,9 +239,8 @@ impl ExecResponse {
     /// is deliberately not repeated here -- it lives in capsem-process, and
     /// restating the number invites the two drifting apart.
     pub fn truncation_notice(&self) -> Option<&'static str> {
-        self.truncated.then_some(
-            "capsem: guest output exceeded the capture limit; showing the retained prefix",
-        )
+        self.truncated
+            .then_some("capsem: guest output exceeded the capture limit; showing the retained prefix")
     }
 }
 
@@ -451,9 +450,9 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
     }
     let mut map = HashMap::new();
     for kv in env {
-        let (k, v) = kv.split_once('=').ok_or_else(|| {
-            anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv)
-        })?;
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("invalid env format: expected KEY=VALUE, got: {}", kv))?;
         map.insert(k.to_string(), v.to_string());
     }
     Ok(Some(map))
@@ -467,9 +466,7 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
 /// child service inherits `CAPSEM_HOME` and binds the socket the client
 /// is actually watching.
 fn isolation_mode_active() -> bool {
-    std::env::var("CAPSEM_HOME")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false)
+    std::env::var("CAPSEM_HOME").map(|v| !v.is_empty()).unwrap_or(false)
 }
 
 fn direct_spawn_service_args(
@@ -612,19 +609,16 @@ impl UdsClient {
         match std::fs::remove_file(&self.uds_path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error).with_context(|| {
-                format!(
-                    "failed to remove owned service socket {}",
-                    self.uds_path.display()
-                )
-            }),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to remove owned service socket {}", self.uds_path.display()))
+            }
         }
     }
 
     /// Connect to the service socket using the shared `poll_until`
     /// primitive. The 5 s deadline, 50ms-500ms exponential backoff, and
     /// "poll succeeded / poll timed out" tracing all come from
-    /// `capsem_core::poll`; this function only provides the
+    /// `capsem_foundation::poll`; this function only provides the
     /// connect-attempt closure and the retryable-vs-permanent
     /// classification (see `ConnectMode`).
     async fn connect_with_timeout(&self, mode: ConnectMode) -> Result<UnixStream> {
@@ -639,14 +633,11 @@ impl UdsClient {
         mode: ConnectMode,
         timeout: std::time::Duration,
     ) -> Result<UnixStream> {
-        let opts = capsem_core::poll::PollOpts::new("service-connect", timeout);
+        let opts = capsem_foundation::poll::PollOpts::new("service-connect", timeout);
         let uds_path = &self.uds_path;
-        let outcome = capsem_core::poll::poll_until(opts, || async move {
-            let attempt = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                UnixStream::connect(uds_path),
-            )
-            .await;
+        let outcome = capsem_foundation::poll::poll_until(opts, || async move {
+            let attempt =
+                tokio::time::timeout(std::time::Duration::from_millis(500), UnixStream::connect(uds_path)).await;
             match attempt {
                 Ok(Ok(stream)) => Some(Ok(stream)),
                 // Retry loops must classify errors (see
@@ -698,7 +689,7 @@ impl UdsClient {
         // Direct-spawning when a unit exists would create an unmanaged duplicate.
         // Isolation-mode guard skips this path: when CAPSEM_HOME is set the
         // caller runs against a non-default layout (e.g. `just test` under
-        // target/test-home). The installed LaunchAgent / systemd unit was
+        // cache/target/tests/home). The installed LaunchAgent / systemd unit was
         // registered against $HOME/.capsem, so kickstarting it would bind a
         // socket under the real home while this client polls the test home --
         // a guaranteed 5s timeout. Direct-spawn instead; the child inherits
@@ -708,14 +699,11 @@ impl UdsClient {
             match paths::try_start_via_service_manager().await {
                 Ok(true) => {
                     info!("Service start requested via service manager");
-                    return self
-                        .connect_with_timeout(ConnectMode::AwaitStartup)
-                        .await
-                        .context(
-                            "Service manager started capsem but socket not ready. \
+                    return self.connect_with_timeout(ConnectMode::AwaitStartup).await.context(
+                        "Service manager started capsem but socket not ready. \
                              Check logs: journalctl --user -u capsem (Linux) or \
                              ~/Library/Logs/capsem/service.log (macOS)",
-                        );
+                    );
                 }
                 Ok(false) => {
                     return Err(anyhow::anyhow!(
@@ -733,8 +721,7 @@ impl UdsClient {
         }
 
         // No service unit installed -- direct spawn fallback
-        let paths =
-            paths::discover_paths().context("cannot find capsem binaries for auto-launch")?;
+        let paths = paths::discover_paths().context("cannot find capsem binaries for auto-launch")?;
 
         if !paths.service_bin.exists() {
             return Err(anyhow::anyhow!(
@@ -767,7 +754,7 @@ impl UdsClient {
         // unlinking this file would not disturb the fd already open on it.
         // The service would go on writing panics into an inode nobody can
         // reach -- the same silence, harder to notice.
-        let stderr_dir = capsem_core::paths::capsem_run_dir().join("stderr");
+        let stderr_dir = capsem_foundation::paths::capsem_run_dir().join("stderr");
         let service_stderr = std::fs::create_dir_all(&stderr_dir)
             .and_then(|()| {
                 std::fs::OpenOptions::new()
@@ -874,11 +861,7 @@ impl UdsClient {
         })
     }
 
-    pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(
-        &self,
-        path: &str,
-        body: T,
-    ) -> Result<R> {
+    pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
         self.request("POST", path, Some(body)).await
     }
 

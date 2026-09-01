@@ -672,7 +672,9 @@ dependencies = [
  "anyhow",
  "blake3",
  "bytes",
+ "capsem-assets",
  "capsem-core",
+ "capsem-foundation",
  "capsem-proto",
  "clap",
  "clap_complete",
@@ -705,6 +707,7 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
+ "capsem-assets",
  "capsem-core",
  "clap",
  "flate2",
@@ -754,10 +757,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-assets"
+version = "0.6.2"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "capsem-foundation",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "capsem-bench"
 version = "0.6.2"
 dependencies = [
  "anyhow",
+ "capsem-core",
  "clap",
  "futures",
  "reqwest 0.12.28",
@@ -766,6 +786,19 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "capsem-config"
+version = "0.6.2"
+dependencies = [
+ "capsem-proto",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "toml 0.8.2",
+ "tracing",
 ]
 
 [[package]]
@@ -778,6 +811,10 @@ dependencies = [
  "blake3",
  "block2",
  "bytes",
+ "capsem-assets",
+ "capsem-config",
+ "capsem-credentials",
+ "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
  "core-foundation-sys",
@@ -836,13 +873,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-credentials"
+version = "0.6.2"
+dependencies = [
+ "capsem-foundation",
+ "capsem-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "capsem-foundation"
+version = "0.6.2"
+dependencies = [
+ "blake3",
+ "capsem-proto",
+ "libc",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "capsem-gateway"
 version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
  "bytes",
- "capsem-core",
+ "capsem-foundation",
  "capsem-guard",
  "clap",
  "futures",
@@ -879,6 +945,8 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
+ "capsem-foundation",
+ "capsem-proto",
  "criterion",
  "humantime",
  "memmap2",
@@ -900,7 +968,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "capsem-core",
+ "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
  "futures",
@@ -923,14 +991,23 @@ name = "capsem-mcp-aggregator"
 version = "0.6.2"
 dependencies = [
  "anyhow",
- "capsem-core",
+ "axum",
+ "capsem-credentials",
+ "capsem-foundation",
  "capsem-guard",
+ "capsem-proto",
  "clap",
+ "futures",
+ "http",
  "reqwest 0.12.28",
+ "rmcp",
  "rmp-serde",
  "serde",
  "serde_json",
+ "sse-stream",
+ "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -942,8 +1019,10 @@ dependencies = [
  "anyhow",
  "blake3",
  "capsem-core",
+ "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
+ "capsem-proto",
  "regex",
  "reqwest 0.12.28",
  "rmcp",
@@ -991,7 +1070,9 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
+ "capsem-assets",
  "capsem-core",
+ "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
  "clap",
@@ -1016,11 +1097,13 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "bincode",
+ "blake3",
  "rmp-serde",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -1031,7 +1114,9 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "blake3",
+ "capsem-assets",
  "capsem-core",
+ "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
  "capsem-proto",
@@ -1065,7 +1150,7 @@ name = "capsem-tray"
 version = "0.6.2"
 dependencies = [
  "anyhow",
- "capsem-core",
+ "capsem-foundation",
  "capsem-guard",
  "clap",
  "muda 0.17.2",

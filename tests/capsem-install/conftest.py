@@ -68,7 +68,7 @@ def _resolve_capsem_home() -> Path:
       - ``CAPSEM_DEB_INSTALLED=1`` (Docker install-test harness): we are
         the system under test -- write to the real $HOME/.capsem there.
       - ``CAPSEM_HOME`` already set by the caller: honor it (lets `just
-        test` point the suite at its isolated ``target/test-home``).
+        test` point the suite at its isolated ``cache/target/tests/home``).
     """
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
         return Path.home() / ".capsem"
@@ -122,7 +122,7 @@ def fresh_capsem_binary() -> Path:
     )
 
     repo_root = Path(__file__).resolve().parents[2]
-    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", repo_root / "target" / "debug"))
+    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", repo_root / "cache" / "target" / "cargo" / "debug"))
     binary = bin_src / "capsem"
     source_paths = (
         repo_root / "crates" / "capsem" / "src" / "update.rs",
@@ -234,7 +234,7 @@ def _kill_service() -> None:
     installed layout at ``~/.capsem/bin/``.
 
     Scoped to the installed prefix so it never reaches into parallel test
-    workers running ``target/debug/capsem-service``. A broad ``pkill -f
+    workers running ``cache/target/cargo/debug/capsem-service``. A broad ``pkill -f
     capsem-service`` would race with every other pytest worker on the box,
     which was the original cascade that poisoned the full suite.
     """
@@ -261,7 +261,7 @@ def _kill_service() -> None:
 
     # Fallback: only kill processes whose executable path lives under the
     # installed prefix. We build the pattern from INSTALL_DIR so HOME expansion
-    # is consistent and we never match target/debug binaries.
+    # is consistent and we never match cache/target/cargo/debug binaries.
     install_prefix = str(INSTALL_DIR) + "/"
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and shutil.which("systemctl"):
         with suppress(subprocess.TimeoutExpired):
@@ -303,9 +303,9 @@ def _ensure_installed() -> None:
     if all((INSTALL_DIR / name).exists() for name in BINARIES):
         return
 
-    bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
+    bin_src = os.environ.get("CAPSEM_BIN_SRC", "cache/target/cargo/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
-    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "target/config")
+    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "cache/target/config")
     script = (
         Path(__file__).parent.parent.parent
         / "build_system"

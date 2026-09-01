@@ -9,10 +9,10 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
-BUILD_LOG="$ROOT_DIR/target/build.log"
-SIGN_LOCK_DIR="$ROOT_DIR/target/.run_signed_codesign.lock"
+BUILD_LOG="$ROOT_DIR/cache/containers/logs/build.log"
+SIGN_LOCK_DIR="$ROOT_DIR/cache/target/.run_signed_codesign.lock"
 
-# Ensure target/ exists (cargo creates it, but just in case)
+# Ensure cache/target/ exists (cargo creates it, but just in case)
 mkdir -p "$ROOT_DIR/target"
 
 log() {

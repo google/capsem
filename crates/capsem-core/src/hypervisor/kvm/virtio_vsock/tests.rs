@@ -53,8 +53,7 @@ impl VhostIoctl for RecordingIoctl {
             }
             VHOST_GET_VRING_BASE => {
                 let state = unsafe { &mut *(arg as *mut VhostVringState) };
-                self.events
-                    .push(RecordedIoctl::GetBase { index: state.index });
+                self.events.push(RecordedIoctl::GetBase { index: state.index });
                 state.num = self.vring_bases[state.index as usize];
             }
             _ => self.events.push(RecordedIoctl::Request(request)),
@@ -198,8 +197,7 @@ fn vhost_backend_configures_rx_tx_only() {
 
 #[test]
 fn kvm_vsock_port_block_stays_in_valid_port_range() {
-    let max_offset =
-        VSOCK_PORT_BLOCK_BASE_OFFSET + (VSOCK_PORT_BLOCK_COUNT - 1) * VSOCK_PORT_BLOCK_SIZE;
+    let max_offset = VSOCK_PORT_BLOCK_BASE_OFFSET + (VSOCK_PORT_BLOCK_COUNT - 1) * VSOCK_PORT_BLOCK_SIZE;
     let physical = physical_vsock_port(5007, max_offset).unwrap();
 
     assert!(u16::try_from(physical).is_ok());
@@ -261,9 +259,7 @@ fn vsock_checkpoint_inactive_state_is_nonempty_and_cid_bound() {
     let expected = checkpoint_fixture(41, 0, &[]);
 
     assert_eq!(device.checkpoint_state().unwrap(), expected);
-    device
-        .quiesce_with(&mut RecordingIoctl::new([0, 0]))
-        .unwrap();
+    device.quiesce_with(&mut RecordingIoctl::new([0, 0])).unwrap();
     let encoded = device.checkpoint_state().unwrap();
 
     assert_eq!(encoded, expected);
@@ -288,10 +284,7 @@ fn vsock_checkpoint_restore_rejects_wrong_cid_without_mutation() {
 
     let error = device.restore_checkpoint_state(&encoded).unwrap_err();
 
-    assert!(
-        error.to_string().contains("CID identity mismatch"),
-        "{error:#}"
-    );
+    assert!(error.to_string().contains("CID identity mismatch"), "{error:#}");
     assert!(device.checkpoint_state.is_none());
     assert!(device.restore_vring_bases.is_none());
 }
@@ -384,12 +377,7 @@ fn warm_restore_applies_captured_bases_before_restarting_backend() {
     let lifecycle: Vec<_> = ioctl
         .events
         .into_iter()
-        .filter(|event| {
-            matches!(
-                event,
-                RecordedIoctl::SetBase { .. } | RecordedIoctl::Running(_)
-            )
-        })
+        .filter(|event| matches!(event, RecordedIoctl::SetBase { .. } | RecordedIoctl::Running(_)))
         .collect();
     assert_eq!(
         lifecycle,
@@ -455,9 +443,7 @@ fn warm_restore_requires_captured_bases_before_any_ioctl() {
         .restore_activate_with(mem.clone_ref(RAM_BASE), &queues, &mut ioctl)
         .unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("missing vhost-vsock checkpoint state"));
+    assert!(error.to_string().contains("missing vhost-vsock checkpoint state"));
     assert!(ioctl.events.is_empty());
     assert!(!device.activated);
 }

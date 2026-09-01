@@ -36,10 +36,10 @@ flowchart TD
 
   subgraph Output["Build Outputs"]
     Docker["Docker Build"]
-    Assets["target/assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
+    Assets["cache/target/assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
     Ledger["build-ledger.log\nconfig inputs + hashes"]
     BOM["manifest.json\n+ B3SUMS\n+ obom.cdx.json"]
-    RuntimeConfig["target/config/\nmaterialized runtime profiles"]
+    RuntimeConfig["cache/target/config/\nmaterialized runtime profiles"]
   end
 
   PROFILE --> Profile
@@ -80,9 +80,9 @@ Four outputs are produced:
 3. **build-ledger.log** -- JSONL debug evidence for rendered inputs, context
    hashes, profile/package inputs, EROFS settings, git revision, and project
    version.
-4. **target/config/** -- generated runtime config produced by
+4. **cache/target/config/** -- generated runtime config produced by
    `capsem-admin profile materialize` from checked-in `config/` plus
-   `target/assets/manifest.json`.
+   `cache/target/assets/manifest.json`.
 
 ## Backend Image Spec
 
@@ -94,7 +94,7 @@ Four outputs are produced:
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
 
-These files are backend image spec, usually generated under `target/` by the
+These files are backend image spec, usually generated under `cache/target/` by the
 profile-derived build rail. They are implementation detail, not product
 authoring API. Do not add provider authorization, credentials, security policy,
 UI settings, or MCP runtime truth to the backend image spec. Those belong to
@@ -196,7 +196,7 @@ Two architectures are supported. Each is self-contained in `build.toml` and prod
 Output layout:
 
 ```
-target/assets/
+cache/target/assets/
   arm64/
     vmlinuz
     initrd.img
@@ -209,9 +209,9 @@ target/assets/
     tool-versions.txt
   manifest.json
   B3SUMS
-target/
+cache/target/
   config/
-    target/assets/manifest.json
+    cache/target/assets/manifest.json
     profiles/code/profile.toml
 ```
 
@@ -230,7 +230,7 @@ flowchart TD
   Export --> Erofs["mkfs.erofs (lz4hc level 12)"]
   Erofs --> Versions["Extract tool versions"]
   Versions --> Checksums["Generate B3SUMS + manifest.json"]
-  Checksums --> Materialize["Materialize target/config\nfrom profile + manifest"]
+  Checksums --> Materialize["Materialize cache/target/config\nfrom profile + manifest"]
 ```
 
 The kernel build follows a parallel path:
@@ -267,16 +267,16 @@ build runs apt, npm, and profile install steps, requiring substantial memory.
 ```bash
 # Colima (macOS): configure VM resources
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 200
 
 # Linux: Docker runs natively, no memory tuning needed
 # sudo apt install docker.io
 ```
 
-The release-gate storage policy supports existing Colima disks from 96 GiB,
-recommends 128 GiB for new runtimes, keeps a 24 GiB BuildKit cache cohort, and
-reserves 24 GiB free for the active rail. The source of truth is
-`config/storage-policy.toml`; `just doctor` reports an undersized existing
+The cache policy requires 160 GiB Docker disks, recommends 200 GiB for new
+runtimes, keeps an 80 GiB BuildKit cache cohort, and reserves 40 GiB free for
+the active rail. The source of truth is `config/cache.toml`; `just doctor`
+reports an undersized existing
 Colima disk before an expensive gate begins.
 
 ## Install Manager Types

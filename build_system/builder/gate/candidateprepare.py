@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from . import host, hostpackage, imagebuild, initrd
+from . import bench, host, hostpackage, imagebuild, initrd, packagepreflight
 from .actions import Call, Run, Script
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Remove
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
-from .storage import Storage
 
 
 def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -58,7 +58,7 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
         )
     bounded = phase.add(
         step(
-            "storage-budget",
+            "cache-budget",
             _ensure_space(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
@@ -91,7 +91,11 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
         ),
         after=(cleaned,),
     )
-    return _runtime(plan, config, after=(checked,))
+    harness, fitness = bench.fitness(config)
+    built_harness = phase.add(harness, after=(checked,))
+    fit = phase.add(fitness, after=(built_harness,))
+    dependencies = packagepreflight.fragment(plan, config, after=(fit,))
+    return _runtime(plan, config, after=(dependencies,))
 
 
 def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -126,7 +130,7 @@ def _ensure_space(config: GateConfig) -> Call:
     settings = config.candidate
     return Call(
         "refuse to start a gate the daemon has no room to finish",
-        lambda ctx: Storage(ctx.runner).ensure_space(*settings.candidate_budget),
+        lambda ctx: CacheControl(ctx.runner).ensure_space(*settings.candidate_budget),
         justification=CallJustification(
             kind=OpaqueKind.PURE_INSPECTION,
             reason="reads the daemon's free space and refuses a gate it has no room to finish",

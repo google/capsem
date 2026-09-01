@@ -32,11 +32,7 @@ impl KvmSerialConsole {
     /// - `input_fd`: write end of the input pipe (host -> guest input)
     pub fn new(read_fd: RawFd, input_fd: RawFd) -> Self {
         let (tx, _rx) = broadcast::channel(256);
-        Self {
-            tx,
-            read_fd,
-            input_fd,
-        }
+        Self { tx, read_fd, input_fd }
     }
 
     /// Subscribe to serial output bytes.
@@ -79,7 +75,7 @@ fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBu
     // Same capped writer the Apple VZ backend uses: one rule, one function,
     // and a persistent VM cannot fill the disk with console output.
     let mut log_file = log_path.and_then(|path| {
-        crate::telemetry::CappedLogWriter::open(&path, crate::telemetry::SERIAL_LOG_MAX_BYTES)
+        capsem_foundation::telemetry::CappedLogWriter::open(&path, capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES)
             .map_err(|e| {
                 warn!(error = %e, path = %path.display(), "failed to open KVM serial log file");
                 e

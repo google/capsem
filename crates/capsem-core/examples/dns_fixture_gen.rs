@@ -70,14 +70,8 @@ fn main() {
     // Multi-question (RFC-legal but resolver-rare).
     let mut multi = Message::new(0x5555, MessageType::Query, OpCode::Query);
     multi.metadata.recursion_desired = true;
-    multi.add_query(Query::query(
-        Name::from_ascii("first.com.").unwrap(),
-        RecordType::A,
-    ));
-    multi.add_query(Query::query(
-        Name::from_ascii("second.com.").unwrap(),
-        RecordType::A,
-    ));
+    multi.add_query(Query::query(Name::from_ascii("first.com.").unwrap(), RecordType::A));
+    multi.add_query(Query::query(Name::from_ascii("second.com.").unwrap(), RecordType::A));
     write("multi_question_query.bin", &multi.to_vec().unwrap());
 
     // Synthetic responses produced by our own builders.
@@ -109,9 +103,7 @@ fn main() {
 
     // Truncated query: header + qdcount=1 + length byte saying 5
     // bytes of label, only 2 present.
-    let mut trunc = vec![
-        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
+    let mut trunc = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     trunc.push(5);
     trunc.extend_from_slice(b"ab");
     write("truncated_query.bin", &trunc);

@@ -12,14 +12,8 @@ fn trace_state_register_and_lookup() {
     let mut state = TraceState::new();
     state.register_tool_calls("trace_A", &["call_1".to_string(), "call_2".to_string()]);
 
-    assert_eq!(
-        state.lookup(&["call_1".to_string()]).as_deref(),
-        Some("trace_A")
-    );
-    assert_eq!(
-        state.lookup(&["call_2".to_string()]).as_deref(),
-        Some("trace_A")
-    );
+    assert_eq!(state.lookup(&["call_1".to_string()]).as_deref(), Some("trace_A"));
+    assert_eq!(state.lookup(&["call_2".to_string()]).as_deref(), Some("trace_A"));
     assert!(state.lookup(&["call_3".to_string()]).is_none());
 }
 
@@ -39,22 +33,13 @@ fn trace_state_concurrent_traces_isolated() {
     state.register_tool_calls("trace_A", &["call_A1".to_string()]);
     state.register_tool_calls("trace_B", &["call_B1".to_string()]);
 
-    assert_eq!(
-        state.lookup(&["call_A1".to_string()]).as_deref(),
-        Some("trace_A")
-    );
-    assert_eq!(
-        state.lookup(&["call_B1".to_string()]).as_deref(),
-        Some("trace_B")
-    );
+    assert_eq!(state.lookup(&["call_A1".to_string()]).as_deref(), Some("trace_A"));
+    assert_eq!(state.lookup(&["call_B1".to_string()]).as_deref(), Some("trace_B"));
 
     // Complete trace_A, trace_B remains.
     state.complete_trace("trace_A");
     assert!(state.lookup(&["call_A1".to_string()]).is_none());
-    assert_eq!(
-        state.lookup(&["call_B1".to_string()]).as_deref(),
-        Some("trace_B")
-    );
+    assert_eq!(state.lookup(&["call_B1".to_string()]).as_deref(), Some("trace_B"));
 }
 
 #[test]
@@ -64,10 +49,7 @@ fn trace_state_multiple_tool_calls_same_trace() {
     state.register_tool_calls("trace_X", &calls);
 
     for call in &calls {
-        assert_eq!(
-            state.lookup(std::slice::from_ref(call)).as_deref(),
-            Some("trace_X"),
-        );
+        assert_eq!(state.lookup(std::slice::from_ref(call)).as_deref(), Some("trace_X"),);
     }
 }
 
@@ -76,9 +58,7 @@ fn trace_state_registers_workspace_file_hints_from_tool_arguments() {
     let mut state = TraceState::new();
     state.register_tool_file_hints(
         "trace_file",
-        [
-            r#"{"cmd":"printf '%s\n' abc > /root/openai-two-123.txt","file_path":"/root/direct.txt"}"#,
-        ],
+        [r#"{"cmd":"printf '%s\n' abc > /root/openai-two-123.txt","file_path":"/root/direct.txt"}"#],
     );
 
     assert_eq!(
@@ -100,16 +80,10 @@ fn trace_state_registers_workspace_file_hints_from_tool_arguments() {
 fn trace_state_keeps_file_hints_after_tool_trace_completes() {
     let mut state = TraceState::new();
     state.register_tool_calls("trace_file", &["call_1".to_string()]);
-    state.register_tool_file_hints(
-        "trace_file",
-        [r#"{"cmd":"printf '%s\n' abc > /root/later.txt"}"#],
-    );
+    state.register_tool_file_hints("trace_file", [r#"{"cmd":"printf '%s\n' abc > /root/later.txt"}"#]);
 
     state.complete_trace("trace_file");
 
     assert!(state.lookup(&["call_1".to_string()]).is_none());
-    assert_eq!(
-        state.lookup_file_path("later.txt").as_deref(),
-        Some("trace_file")
-    );
+    assert_eq!(state.lookup_file_path("later.txt").as_deref(), Some("trace_file"));
 }

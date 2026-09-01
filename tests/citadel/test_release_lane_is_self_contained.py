@@ -7,7 +7,7 @@ face.
 `qualify-binaries` isolates itself into a private prefix holding tracked files
 and nothing else, while the workflow stages the cohort it is meant to prove --
 assets, materialized config, the package, the binaries -- into the workspace.
-A local `just test-full` cannot tell the two apart, because there the checkout *is*
+A local `just test` cannot tell the two apart, because there the checkout *is*
 the workspace: every path resolves, so a lane that silently read the wrong root
 passed here and failed there.
 
@@ -41,9 +41,9 @@ def _release_plan():
     qualification = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "target/candidate-profile-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
-            settings.release_bin_dir: str(STAGED / "target/debug"),
+            settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
         },
     )
     command = built_command(
@@ -62,9 +62,9 @@ def _profile_release_plan(*, activation_ready: str):
     qualification = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "target/profile-release-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/profile-release-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
-            settings.release_bin_dir: str(STAGED / "target/debug"),
+            settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
             settings.release_profile: "code",
         },
     )
@@ -72,7 +72,7 @@ def _profile_release_plan(*, activation_ready: str):
         ROOT,
         "qualify-assets",
         (
-            ("input_dir", STAGED / "target/profile-release-inputs"),
+            ("input_dir", STAGED / "cache/target/profile-release-inputs"),
             ("profile", "code"),
             ("workspace_root", STAGED),
             ("activation_ready", activation_ready),
@@ -90,7 +90,7 @@ def test_every_release_qualification_owns_one_source_boundary() -> None:
 
     The binary lane once reached broad pytest without ``source.record``. Five
     plan-contract tests asked for the parent's frozen snapshot and failed on a
-    missing ``target/gate-source-state.json`` after every package had already
+    missing ``cache/state/gate-source.json`` after every package had already
     been built and installed. The profile lane uses the same prefix machinery,
     so both of its branches carry the same invariant before either can regress.
     """
@@ -111,7 +111,7 @@ def test_no_step_reads_a_staged_input_from_the_checkout() -> None:
     """The cohort lives where the lane staged it, never where the source is.
 
     Named per input rather than as one blanket ban on the checkout path: the
-    run legitimately writes its own scratch under `target/`, and a guard that
+    run legitimately writes its own scratch under `cache/target/`, and a guard that
     could not tell those apart would have to be switched off.
     """
     config, plan = _release_plan()

@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    coalesced_terminal_inputs, key_to_terminal_bytes, push_coalesced_event, run_terminal_manager,
-    TerminalColor, TerminalCommand, TerminalEvent, TerminalInput, TerminalSurface,
+    coalesced_terminal_inputs, key_to_terminal_bytes, push_coalesced_event, run_terminal_manager, TerminalColor,
+    TerminalCommand, TerminalEvent, TerminalInput, TerminalSurface,
 };
 
 #[test]
@@ -27,10 +27,7 @@ fn terminal_surface_strips_basic_ansi_sequences() {
     });
 
     assert!(
-        surface
-            .lines_for("vm-1", 3)
-            .iter()
-            .any(|line| line.contains("fresh")),
+        surface.lines_for("vm-1", 3).iter().any(|line| line.contains("fresh")),
         "clear-screen output should leave fresh text on the parsed screen"
     );
 }
@@ -98,14 +95,8 @@ fn terminal_surface_renders_agy_style_control_screen() {
     let rendered = surface.lines_for("vm-1", 12).join("\n");
     assert!(rendered.trim().len() > 80, "{rendered}");
     assert!(rendered.contains("Antigravity CLI 1.0.8"), "{rendered}");
-    assert!(
-        rendered.contains("write me a poem in poem.md"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("Thought for 2s, 542 tokens"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("write me a poem in poem.md"), "{rendered}");
+    assert!(rendered.contains("Thought for 2s, 542 tokens"), "{rendered}");
     assert!(rendered.contains("Create(/root/poem.md)"), "{rendered}");
 }
 
@@ -143,11 +134,8 @@ fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() 
         .expect("queue adjacent bytes");
     tx.send(TerminalInput::Bytes(b"c".to_vec()))
         .expect("queue adjacent bytes");
-    tx.send(TerminalInput::Resize {
-        cols: 100,
-        rows: 24,
-    })
-    .expect("queue resize boundary");
+    tx.send(TerminalInput::Resize { cols: 100, rows: 24 })
+        .expect("queue resize boundary");
     tx.send(TerminalInput::Bytes(b"d".to_vec()))
         .expect("queue bytes after resize");
     tx.send(TerminalInput::Bytes(b"e".to_vec()))
@@ -159,10 +147,7 @@ fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() 
         inputs,
         vec![
             TerminalInput::Bytes(b"abc".to_vec()),
-            TerminalInput::Resize {
-                cols: 100,
-                rows: 24
-            },
+            TerminalInput::Resize { cols: 100, rows: 24 },
             TerminalInput::Bytes(b"de".to_vec()),
         ]
     );
@@ -172,8 +157,7 @@ fn terminal_inputs_coalesce_adjacent_bytes_without_crossing_resize_boundaries() 
 fn terminal_input_coalescing_is_bounded_even_for_all_byte_floods() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     for _ in 1..=(super::MAX_TERMINAL_INPUTS_PER_SEND + 10) {
-        tx.send(TerminalInput::Bytes(b"x".to_vec()))
-            .expect("queue byte flood");
+        tx.send(TerminalInput::Bytes(b"x".to_vec())).expect("queue byte flood");
     }
     drop(tx);
 
@@ -250,15 +234,11 @@ async fn terminal_manager_reconnects_same_session_after_connection_task_exits() 
     let second = recv_status(event_rx.clone()).await;
     assert!(second.contains("token failed"), "{second}");
 
-    command_tx
-        .send(TerminalCommand::Shutdown)
-        .expect("send shutdown");
+    command_tx.send(TerminalCommand::Shutdown).expect("send shutdown");
     manager.await.expect("terminal manager exits cleanly");
 }
 
-async fn recv_status(
-    rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<TerminalEvent>>>,
-) -> String {
+async fn recv_status(rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<TerminalEvent>>>) -> String {
     let event = tokio::task::spawn_blocking(move || {
         rx.lock()
             .expect("lock terminal event receiver")

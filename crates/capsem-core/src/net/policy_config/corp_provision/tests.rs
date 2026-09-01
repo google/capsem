@@ -9,9 +9,7 @@ fn test_validate_valid_corp_toml() {
     let result = validate_corp_toml(content);
     assert!(result.is_ok());
     let file = result.unwrap();
-    assert!(file
-        .settings
-        .contains_key("repository.providers.github.allow"));
+    assert!(file.settings.contains_key("repository.providers.github.allow"));
 }
 
 #[test]
@@ -35,10 +33,7 @@ fn test_validate_empty_corp_toml() {
 fn test_validate_invalid_toml_syntax() {
     let result = validate_corp_toml("this is not [ valid toml {{{");
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("invalid corp TOML"));
+    assert!(result.unwrap_err().to_string().contains("invalid corp TOML"));
 }
 
 #[test]
@@ -62,22 +57,13 @@ fn test_validate_toml_wrong_types() {
 
 #[test]
 fn test_refresh_interval_parsing() {
-    assert_eq!(
-        parse_refresh_interval("refresh_policy = \"12h\"\n\n[settings]\n"),
-        12
-    );
-    assert_eq!(
-        parse_refresh_interval("[settings]\n"),
-        DEFAULT_REFRESH_INTERVAL_HOURS
-    );
+    assert_eq!(parse_refresh_interval("refresh_policy = \"12h\"\n\n[settings]\n"), 12);
+    assert_eq!(parse_refresh_interval("[settings]\n"), DEFAULT_REFRESH_INTERVAL_HOURS);
 }
 
 #[test]
 fn test_refresh_interval_zero_means_no_refresh() {
-    assert_eq!(
-        parse_refresh_interval("refresh_policy = \"0h\"\n\n[settings]\n"),
-        0
-    );
+    assert_eq!(parse_refresh_interval("refresh_policy = \"0h\"\n\n[settings]\n"), 0);
 }
 
 #[test]
@@ -135,9 +121,7 @@ async fn fetch_corp_config_rejects_bare_file_path_source() {
 async fn fetch_corp_config_rejects_file_url_shorthand_path_source() {
     let client = reqwest::Client::new();
 
-    let error = fetch_corp_config(&client, "file:corp.toml")
-        .await
-        .unwrap_err();
+    let error = fetch_corp_config(&client, "file:corp.toml").await.unwrap_err();
 
     assert!(
         format!("{error:#}").contains("corp config file URL must start with file://"),
@@ -165,27 +149,18 @@ async fn fetch_corp_config_accepts_file_url_source() {
 fn parse_refresh_interval_rejects_negative() {
     // Negative values must fall back to the default rather than wrap.
     let content = "refresh_policy = \"-5h\"\n";
-    assert_eq!(
-        parse_refresh_interval(content),
-        DEFAULT_REFRESH_INTERVAL_HOURS
-    );
+    assert_eq!(parse_refresh_interval(content), DEFAULT_REFRESH_INTERVAL_HOURS);
 }
 
 #[test]
 fn parse_refresh_interval_ignores_wrong_type() {
     let content = "refresh_policy = \"twelve\"\n";
-    assert_eq!(
-        parse_refresh_interval(content),
-        DEFAULT_REFRESH_INTERVAL_HOURS
-    );
+    assert_eq!(parse_refresh_interval(content), DEFAULT_REFRESH_INTERVAL_HOURS);
 }
 
 #[test]
 fn parse_refresh_interval_on_invalid_toml_returns_default() {
-    assert_eq!(
-        parse_refresh_interval("{{ not toml"),
-        DEFAULT_REFRESH_INTERVAL_HOURS
-    );
+    assert_eq!(parse_refresh_interval("{{ not toml"), DEFAULT_REFRESH_INTERVAL_HOURS);
 }
 
 #[test]
@@ -201,10 +176,8 @@ fn install_corp_config_writes_both_files_and_creates_dir() {
     let corp = std::fs::read_to_string(nested.join("corp.toml")).unwrap();
     assert!(corp.contains("refresh_policy = \"6h\""));
 
-    let roundtrip: CorpSource = serde_json::from_str(
-        &std::fs::read_to_string(nested.join("corp-source.json")).unwrap(),
-    )
-    .unwrap();
+    let roundtrip: CorpSource =
+        serde_json::from_str(&std::fs::read_to_string(nested.join("corp-source.json")).unwrap()).unwrap();
     assert_eq!(roundtrip.refresh_interval_hours, 6);
 }
 

@@ -91,8 +91,12 @@ def test_gate_lock_marker_alone_never_claims_kernel_enforcement(monkeypatch) -> 
 
 
 def test_bootstrap_and_doctor_keep_lock_ownership_separate_from_sandbox_policy() -> None:
-    linux = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-linux.sh").read_text(encoding="utf-8")
-    common = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-common.sh").read_text(encoding="utf-8")
+    linux = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-linux.sh").read_text(
+        encoding="utf-8"
+    )
+    common = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-common.sh").read_text(
+        encoding="utf-8"
+    )
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text(encoding="utf-8")
     variable = CONFIG.environment.command_sandbox_mode
 
@@ -104,7 +108,9 @@ def test_bootstrap_and_doctor_keep_lock_ownership_separate_from_sandbox_policy()
 
 
 def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
-    macos = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-macos.sh").read_text(encoding="utf-8")
+    macos = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-macos.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert CONFIG.environment.command_sandbox_mode not in macos
     assert "CAPSEM_SKIP_TART_CHECK" in macos
@@ -113,9 +119,7 @@ def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
 
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
-    (tmp_path / "justfile").write_text(
-        (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-    )
+    (tmp_path / "justfile").write_text((PROJECT_ROOT / "justfile").read_text(encoding="utf-8"))
     (tmp_path / "build_system").mkdir(exist_ok=True)
     (tmp_path / "build_system/pyproject.toml").write_text(
         (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
@@ -124,8 +128,8 @@ def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         gate_toml or (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
-    (tmp_path / "config" / "storage-policy.toml").write_text(
-        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
     )
     return tmp_path
 
@@ -135,21 +139,17 @@ def test_this_checkout_is_ready() -> None:
     assert doctor.check(RecordingRunner(PROJECT_ROOT)) == []
 
 
-def test_a_storage_phase_naming_an_unknown_rail_is_reported(tmp_path: Path) -> None:
-    """It would release nothing, and the next build would fail on ENOSPC
-    somewhere with no connection to the cause."""
-    original = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    root = _checkout(
-        tmp_path,
-        gate_toml=original.replace(
-            'after-install = { boundary = "after-install", rail = "install" }',
-            'after-install = { boundary = "after-install", rail = "imaginary" }',
-        ),
+def test_an_invalid_cache_control_is_reported(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    policy = root / "config/cache.toml"
+    policy.write_text(
+        policy.read_text(encoding="utf-8").replace('rail = "install"', 'rail = "imaginary"'),
+        encoding="utf-8",
     )
 
     findings = doctor.check(RecordingRunner(root))
 
-    assert [finding.check for finding in findings] == ["storage phase after-install"]
+    assert [finding.check for finding in findings] == ["cache policy"]
     assert "imaginary" in findings[0].detail
 
 
@@ -172,15 +172,15 @@ def test_a_recipe_dispatching_to_an_unknown_subcommand_is_reported(
     assert any("not a subcommand" in finding.detail for finding in findings)
 
 
-def test_a_missing_storage_policy_is_reported_rather_than_raised(
+def test_a_missing_cache_policy_is_reported_rather_than_raised(
     tmp_path: Path,
 ) -> None:
     root = _checkout(tmp_path)
-    (root / "config" / "storage-policy.toml").unlink()
+    (root / "config" / "cache.toml").unlink()
 
     findings = doctor.check(RecordingRunner(root))
 
-    assert [finding.check for finding in findings] == ["storage policy"]
+    assert [finding.check for finding in findings] == ["cache policy"]
 
 
 def test_the_command_names_every_problem_at_once(
@@ -224,29 +224,25 @@ def test_every_declared_console_script_is_runnable() -> None:
     declared = tomllib.loads(
         (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
     )["project"]["scripts"]
-    assert set(declared) == {"capsem-builder", "capsem-gate"}
+    assert set(declared) == {"capsem-builder", "capsem-cache", "capsem-gate"}
 
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--project",
-            "build_system",
-            "--frozen",
-            "capsem-gate",
-            "--help",
-        ],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
+    results = {
+        executable: subprocess.run(
+            ["uv", "run", "--project", "build_system", "--frozen", executable, "--help"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        for executable in declared
+    }
 
-    assert result.returncode == 0, result.stderr
-    assert "capsem-gate" in result.stdout
+    for executable, result in results.items():
+        assert result.returncode == 0, result.stderr
+        assert executable in result.stdout
     # It got past the launcher: the subcommands only exist once `capsem_builder.gate`
     # has been imported, which happens on the far side of the re-exec.
-    assert "candidate" in result.stdout
+    assert "candidate" in results["capsem-gate"].stdout
 
 
 def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> None:

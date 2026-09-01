@@ -70,8 +70,7 @@ fn error_png_is_grey() {
 fn tint_to_orange_preserves_alpha_and_remaps_channels() {
     // Two opaque grey pixels (RGBA), one transparent, one semi-transparent.
     let mut rgba = vec![
-        128, 128, 128, 255, 64, 64, 64, 128, 0, 0, 0,
-        0, // fully transparent -- must be untouched
+        128, 128, 128, 255, 64, 64, 64, 128, 0, 0, 0, 0, // fully transparent -- must be untouched
         200, 200, 200, 200,
     ];
     tint_to_orange(&mut rgba);
@@ -105,8 +104,5 @@ fn debug_build_tray_icon_is_orange() {
             }
         }
     }
-    assert!(
-        saw_orange,
-        "expected at least one orange opaque pixel after tinting"
-    );
+    assert!(saw_orange, "expected at least one orange opaque pixel after tinting");
 }

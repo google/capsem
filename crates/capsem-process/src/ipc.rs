@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,11 +14,10 @@ use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
-type SharedSnapshotScheduler =
-    Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
+type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
+type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
-/// Per-attempt timeout the host watchdog waits before re-sending a quick
-/// request/response HostToGuest payload.
+/// Timeout before the host watchdog re-sends a quick HostToGuest payload.
 ///
 /// With the control bridge's pending-ack map (see
 /// `JobStore::pending_acks` and `vsock.rs::setup_vsock`), silent
@@ -37,13 +36,37 @@ type SharedSnapshotScheduler =
 /// for 3s of dead time.
 const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
-/// replay layer takes care of forward-path losses regardless of this
-/// number; the watchdog's job is just to cover return-path losses.
+/// replay layer handles forward-path losses; this covers return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
 
+/// Negotiate the synchronous Hello side-channel away from Tokio's worker
+/// threads, then hand the verified socket to the typed async IPC transport.
+/// A peer mismatch is a refused connection, not a process-fatal error.
+async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<ProcessIpcChannel>> {
+    let std_stream = stream.into_std()?;
+    let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
+    let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
+        let mut std_stream = std_stream;
+        let handshake =
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process", traceparent);
+        (std_stream, handshake)
+    })
+    .await
+    .context("join IPC handshake task")?;
+
+    match handshake {
+        Ok(peer) => info!(target: "ipc", peer = %peer.peer, "IPC handshake ok"),
+        Err(error) => {
+            error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(channel_from_std(std_stream)?))
+}
+
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
-    j_rx.await
-        .map_err(|_| "Exec result channel closed".to_string())
+    j_rx.await.map_err(|_| "Exec result channel closed".to_string())
 }
 
 fn guest_write_ledger_path(path: &str) -> String {
@@ -60,13 +83,10 @@ fn emit_guest_write_file_event(
     size: usize,
 ) {
     let Ok(runtime) = runtime_source.load() else {
-        warn!(
-            path,
-            "failed to load runtime profile for guest write file ledger"
-        );
+        warn!(path, "failed to load runtime profile for guest write file ledger");
         return;
     };
-    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
+    let trace_id = capsem_foundation::telemetry::ambient_capsem_trace_id();
     let event = capsem_logger::FileEvent {
         event_id: None,
         timestamp: std::time::SystemTime::now(),
@@ -98,29 +118,12 @@ pub(crate) async fn handle_ipc_connection(
     snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut std_stream = stream.into_std()?;
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    match capsem_core::ipc_handshake::negotiate_responder(
-        &mut std_stream,
-        "capsem-process",
-        capsem_core::telemetry::current_parent_traceparent(),
-    ) {
-        Ok(peer) => {
-            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
-        }
-        Err(e) => {
-            error!(
-                target: "ipc",
-                error = %e,
-                "IPC handshake failed; refusing connection"
-            );
-            return Ok(());
-        }
-    }
-    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
-        channel_from_std(std_stream)?;
+    let Some((tx, rx)) = open_ipc_channel(stream).await? else {
+        return Ok(());
+    };
 
     // Serialize all IPC writes through a single channel to prevent concurrent
     // sendmsg() interleaving that corrupts the data stream. tokio_unix_ipc's
@@ -195,8 +198,7 @@ pub(crate) async fn handle_ipc_connection(
                     // which buffer prefix, and how often.
                     let warn_if_ipc_shaped = |buf: &[u8]| {
                         if capsem_proto::looks_like_ipc_frame(buf) {
-                            let preview: Vec<String> =
-                                buf.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+                            let preview: Vec<String> = buf.iter().take(16).map(|b| format!("{:02x}", b)).collect();
                             warn!(
                                     bytes = preview.join(" "),
                                     len = buf.len(),
@@ -216,11 +218,7 @@ pub(crate) async fn handle_ipc_connection(
                     }
                     while let Ok(data) = term_rx.recv().await {
                         warn_if_ipc_shaped(&data);
-                        if out_tx
-                            .send(ProcessToService::TerminalOutput { data })
-                            .await
-                            .is_err()
-                        {
+                        if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
                             break;
                         }
                     }
@@ -235,10 +233,7 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::Ping => {
                 if vm_ready.load(Ordering::Acquire) {
-                    capsem_core::try_send!(
-                        "ipc_pong",
-                        ipc_tx_out.send(ProcessToService::Pong).await
-                    );
+                    capsem_core::try_send!("ipc_pong", ipc_tx_out.send(ProcessToService::Pong).await);
                 } else {
                     debug!("Ping received but VM not ready, closing connection");
                     return Ok(());
@@ -253,9 +248,7 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::TerminalResize { cols, rows } => {
                 capsem_core::try_send!(
                     "ctrl_terminal_resize",
-                    ctrl_tx
-                        .send(ServiceToProcess::TerminalResize { cols, rows })
-                        .await
+                    ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await
                 );
             }
             ServiceToProcess::Exec { id, command } => {
@@ -313,8 +306,7 @@ pub(crate) async fn handle_ipc_connection(
                             // session.db immediately after a command returns,
                             // without blocking the control bridge's ExecDone
                             // path on large benchmark flushes.
-                            db.flush_after_quiescence(std::time::Duration::from_millis(50))
-                                .await;
+                            db.flush_after_quiescence(std::time::Duration::from_millis(50)).await;
                             info!(id, exit_code, "Sending ExecResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_exec_result",
@@ -330,8 +322,7 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                         Ok(JobResult::Error { message }) => {
-                            db.flush_after_quiescence(std::time::Duration::from_millis(50))
-                                .await;
+                            db.flush_after_quiescence(std::time::Duration::from_millis(50)).await;
                             error!(id, message, "Sending Exec error back via IPC");
                             capsem_core::try_send!(
                                 "ipc_exec_result_err",
@@ -379,12 +370,7 @@ pub(crate) async fn handle_ipc_connection(
                 let net_state = net_state.clone();
                 let runtime_source = runtime_source.clone();
                 tokio::spawn(async move {
-                    info!(
-                        id,
-                        path,
-                        len = data.len(),
-                        "Received WriteFile command via IPC"
-                    );
+                    info!(id, path, len = data.len(), "Received WriteFile command via IPC");
                     let (j_tx, mut j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -432,12 +418,7 @@ pub(crate) async fn handle_ipc_connection(
                     match result {
                         Ok(Ok(JobResult::WriteFile { success, error })) => {
                             if success {
-                                emit_guest_write_file_event(
-                                    &net_state,
-                                    &runtime_source,
-                                    &path,
-                                    data.len(),
-                                );
+                                emit_guest_write_file_event(&net_state, &runtime_source, &path, data.len());
                                 // Acceptance into the DB-owned producer buffer
                                 // is the route boundary. Waiting for the whole
                                 // session ledger to flush here withholds the
@@ -503,10 +484,7 @@ pub(crate) async fn handle_ipc_connection(
                     capsem_core::try_send!(
                         "ctrl_read_file",
                         ctrl_tx
-                            .send(ServiceToProcess::ReadFile {
-                                id,
-                                path: path.clone()
-                            })
+                            .send(ServiceToProcess::ReadFile { id, path: path.clone() })
                             .await
                     );
                     let mut retries: u16 = 0;
@@ -526,10 +504,7 @@ pub(crate) async fn handle_ipc_connection(
                                 capsem_core::try_send!(
                                     "ctrl_read_file_retry",
                                     ctrl_tx
-                                        .send(ServiceToProcess::ReadFile {
-                                            id,
-                                            path: path.clone()
-                                        })
+                                        .send(ServiceToProcess::ReadFile { id, path: path.clone() })
                                         .await
                                 );
                             }
@@ -537,11 +512,7 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::ReadFile { data, error })) => {
-                            info!(
-                                id,
-                                success = data.is_some(),
-                                "Sending ReadFileResult back via IPC"
-                            );
+                            info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_read_file_result",
                                 ipc_tx_out
@@ -599,13 +570,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ipc_tx_out = ipc_tx_out.clone();
                 let db = Arc::clone(&net_state.db);
                 tokio::spawn(async move {
-                    info!(
-                        id,
-                        ?action,
-                        path,
-                        size,
-                        "Received LogFileBoundary command via IPC"
-                    );
+                    info!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
                     let (j_tx, j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -622,11 +587,7 @@ pub(crate) async fn handle_ipc_connection(
                             .await
                     );
                     match tokio::time::timeout(Duration::from_secs(5), j_rx).await {
-                        Ok(Ok(JobResult::LogFileBoundary {
-                            success,
-                            data,
-                            error,
-                        })) => {
+                        Ok(Ok(JobResult::LogFileBoundary { success, data, error })) => {
                             db.flush().await;
                             capsem_core::try_send!(
                                 "ipc_log_file_boundary_result",
@@ -676,9 +637,7 @@ pub(crate) async fn handle_ipc_connection(
                                         id,
                                         success: false,
                                         data: None,
-                                        error: Some(
-                                            "log file boundary result channel closed".into()
-                                        ),
+                                        error: Some("log file boundary result channel closed".into()),
                                     })
                                     .await
                             );
@@ -727,16 +686,10 @@ pub(crate) async fn handle_ipc_connection(
                     "Reloaded profile runtime config"
                 );
 
-                capsem_core::try_send!(
-                    "ipc_pong_reload",
-                    ipc_tx_out.send(ProcessToService::Pong).await
-                );
+                capsem_core::try_send!("ipc_pong_reload", ipc_tx_out.send(ProcessToService::Pong).await);
             }
             ServiceToProcess::Shutdown => {
-                capsem_core::try_send!(
-                    "ctrl_shutdown",
-                    ctrl_tx.send(ServiceToProcess::Shutdown).await
-                );
+                capsem_core::try_send!("ctrl_shutdown", ctrl_tx.send(ServiceToProcess::Shutdown).await);
                 info!("Received Shutdown command, exiting IPC loop gracefully");
                 break;
             }
@@ -744,9 +697,7 @@ pub(crate) async fn handle_ipc_connection(
                 info!("Received Suspend command, forwarding to ctrl channel");
                 capsem_core::try_send!(
                     "ctrl_suspend",
-                    ctrl_tx
-                        .send(ServiceToProcess::Suspend { checkpoint_path })
-                        .await
+                    ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await
                 );
             }
             ServiceToProcess::McpListServers { id } => {
@@ -778,10 +729,7 @@ pub(crate) async fn handle_ipc_connection(
                             capsem_core::try_send!(
                                 "ipc_mcp_servers_err",
                                 ipc_tx_out
-                                    .send(ProcessToService::McpServersResult {
-                                        id,
-                                        servers: vec![]
-                                    })
+                                    .send(ProcessToService::McpServersResult { id, servers: vec![] })
                                     .await
                             );
                             warn!(error = %e, "failed to list MCP servers");
@@ -807,9 +755,7 @@ pub(crate) async fn handle_ipc_connection(
                                 .collect();
                             capsem_core::try_send!(
                                 "ipc_mcp_tools",
-                                ipc_tx_out
-                                    .send(ProcessToService::McpToolsResult { id, tools })
-                                    .await
+                                ipc_tx_out.send(ProcessToService::McpToolsResult { id, tools }).await
                             );
                         }
                         Err(e) => {
@@ -847,8 +793,7 @@ pub(crate) async fn handle_ipc_connection(
                             return;
                         }
                     };
-                    let servers =
-                        runtime_config.mcp_servers(mcp_builtin_binary.as_deref(), mcp_builtin_env);
+                    let servers = runtime_config.mcp_servers(mcp_builtin_binary.as_deref(), mcp_builtin_env);
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(
@@ -907,7 +852,7 @@ pub(crate) async fn handle_ipc_connection(
                     // deserialize_any. See crates/capsem-proto/src/ipc.rs.
                     let arguments: serde_json::Value =
                         serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
-                    let request = capsem_core::mcp::types::JsonRpcRequest {
+                    let request = capsem_proto::mcp_contracts::JsonRpcRequest {
                         jsonrpc: "2.0".to_string(),
                         id: Some(serde_json::json!(id)),
                         method: "tools/call".to_string(),
@@ -951,9 +896,7 @@ pub(crate) async fn handle_ipc_connection(
                     );
                 });
             }
-            ServiceToProcess::PrepareSnapshot
-            | ServiceToProcess::Unfreeze
-            | ServiceToProcess::Resume => {
+            ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
                 // These are sent directly by process internals (quiescence helper),
                 // not expected over IPC from service.
                 warn!("unexpected lifecycle IPC command received");
@@ -988,9 +931,9 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::ReloadConfig => IpcAction::Reload,
         ServiceToProcess::Shutdown => IpcAction::Lifecycle,
         ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
-        ServiceToProcess::PrepareSnapshot
-        | ServiceToProcess::Unfreeze
-        | ServiceToProcess::Resume => IpcAction::Unexpected,
+        ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
+            IpcAction::Unexpected
+        }
         ServiceToProcess::McpListServers { .. }
         | ServiceToProcess::McpListTools { .. }
         | ServiceToProcess::McpRefreshTools { .. }

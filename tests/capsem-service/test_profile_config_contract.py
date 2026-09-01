@@ -148,7 +148,7 @@ def test_profiles_own_assets_rules_mcp_packages_plugins_and_visible_identity() -
 
 
 def test_generated_target_profiles_are_the_only_checked_materialized_profiles() -> None:
-    target_profiles = PROJECT_ROOT / "target" / "config" / "profiles"
+    target_profiles = PROJECT_ROOT / "cache" / "target" / "config" / "profiles"
     assert target_profiles.is_dir(), "runtime profiles must be materialized before service tests"
 
     source_ids = {path.name for path in _profile_dirs()}

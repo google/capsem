@@ -36,3 +36,16 @@ fn command_name_multiple_slashes() {
     assert_eq!(command_name("///shutdown"), "shutdown");
     assert_eq!(command_name("/a/b/c/d/halt"), "halt");
 }
+
+#[test]
+fn help_covers_each_command_family() {
+    for command in ["shutdown", "halt", "poweroff", "suspend", "reboot", "capsem-sysutil"] {
+        print_help(command);
+    }
+}
+
+#[test]
+fn lifecycle_send_fails_cleanly_without_a_host_vsock() {
+    let error = send_lifecycle_msg(&GuestToHost::ShutdownRequest).unwrap_err();
+    assert_ne!(error.kind(), io::ErrorKind::InvalidData);
+}

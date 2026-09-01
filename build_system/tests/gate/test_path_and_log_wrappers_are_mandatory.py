@@ -6,7 +6,7 @@ a caller instead of a function:
 **Environment.** `CAPSEM_RUN_DIR` and `CAPSEM_ASSETS_DIR` each take precedence
 over the value derived from `CAPSEM_HOME`. A fixture that sets the home alone
 leaves production code reading whichever directories the caller exported, and
-`just test-full` exports them. That passes in a bare shell and fails only inside the
+`just test` exports them. That passes in a bare shell and fails only inside the
 gate. `paths::CapsemPathsGuard::redirect(root)` sets all three together, so
 setting one and forgetting the others is not expressible.
 

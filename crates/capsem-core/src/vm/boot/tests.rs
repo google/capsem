@@ -48,7 +48,7 @@ fn write_read_control_msg_exec_roundtrip() {
     assert!(len < MAX_FRAME_SIZE as usize);
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload).unwrap();
-    let decoded = crate::decode_host_msg(&payload).unwrap();
+    let decoded = capsem_proto::decode_host_msg(&payload).unwrap();
     match decoded {
         HostToGuest::Exec { id, command } => {
             assert_eq!(id, 42);
@@ -106,8 +106,7 @@ fn erofs_rootfs_override_appends_cmdline_flag() {
     let base = "console=hvc0 ro loglevel=1";
     let shares: Vec<VirtioFsShare> = vec![];
     let rootfs = Path::new("/tmp/rootfs.erofs");
-    let effective =
-        effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
+    let effective = effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
     assert!(effective.contains("capsem.rootfs=erofs"));
 }
 

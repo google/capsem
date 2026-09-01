@@ -58,12 +58,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FAILED_RUN_ID: ${{ inputs.failed_run_id }}
         run: |
-          mkdir -p target/release-recovery
+          mkdir -p cache/target/release/staging/recovery
           gh run view "$FAILED_RUN_ID" \
             --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
-            > target/release-recovery/source-run.json
+            > cache/target/release/staging/recovery/source-run.json
           python3 build_system/scripts/release/verify-release-recovery-run.py \
-            --run target/release-recovery/source-run.json \
+            --run cache/target/release/staging/recovery/source-run.json \
             --run-id "$FAILED_RUN_ID" \
             --source-commit "$SOURCE_COMMIT" \
             --failed-job assemble-release-channel
@@ -92,45 +92,45 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
-          path: target/binary-channel/
+          path: cache/target/binary-channel/
           github-token: ${{ github.token }}
           run-id: ${{ inputs.failed_run_id }}
 
       - name: Require exact qualified candidate manifests
         run: |
-          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
-          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+          test -s "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
 
       - name: Build complete release channel from qualified candidate
         run: |
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
-            --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --channel-source "$RELEASE_CHANNEL=file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir target/distribution
+            --out-dir cache/target/release/distribution
 
       - name: Verify public package storage from recovered candidate
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/release-package-contract.py verify-storage \
-            --manifest "target/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
+            --manifest "cache/target/release/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
             --work-dir /tmp/candidate-packages
 
       - name: Prove install.sh selects recovered candidate Linux package
         run: >
-          build_system/scripts/release/prove-candidate-installer.sh target/distribution
+          build_system/scripts/release/prove-candidate-installer.sh cache/target/release/distribution
           "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist recovered source manifest on immutable release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-          owned="target/binary-source-publication"
+          source="cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          owned="cache/target/binary-source-publication"
           mkdir -p "$owned"
           cp "$source" "$owned/channel-source-$RELEASE_CHANNEL.json"
           build_system/scripts/release/publish-immutable-release-assets.sh "$RELEASE_TAG" "$owned"
@@ -138,11 +138,11 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: target/distribution/
+          path: cache/target/release/distribution/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before
-          path: target/binary-channel/*/manifest.before.json
+          path: cache/target/binary-channel/*/manifest.before.json
 
   deploy-release-channel:
     needs: [recover-release-channel]

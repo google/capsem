@@ -27,7 +27,7 @@ from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import PROFILES_DIR, ServiceInstance, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
+CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
 
 pytestmark = pytest.mark.e2e
 

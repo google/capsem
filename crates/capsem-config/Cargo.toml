@@ -1,0 +1,22 @@
+[package]
+name = "capsem-config"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description = "Pure configuration contracts and provider identity for Capsem."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-proto = { path = "../capsem-proto" }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

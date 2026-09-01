@@ -75,7 +75,7 @@ fn fake_capsem_home() -> TempDir {
     // Held for the rest of the process on purpose: every test serializes on
     // lock_test_env and re-redirects, so restoring between fixtures would only
     // reintroduce the ambient values this exists to shut out.
-    std::mem::forget(capsem_core::paths::CapsemPathsGuard::redirect(dir.path()));
+    std::mem::forget(capsem_foundation::paths::CapsemPathsGuard::redirect(dir.path()));
     let home = dir.path();
     fs::create_dir_all(home.join("run")).unwrap();
     fs::create_dir_all(home.join("logs")).unwrap();
@@ -97,10 +97,7 @@ api_key = "sk-ant-real-secret-here-very-long-string"
 endpoint = "https://api.anthropic.com"
 "#,
     );
-    write(
-        &home.join("logs/20260502-180000.jsonl"),
-        b"{\"level\":\"info\"}\n",
-    );
+    write(&home.join("logs/20260502-180000.jsonl"), b"{\"level\":\"info\"}\n");
     dir
 }
 
@@ -136,10 +133,7 @@ fn bundle_redacts_secrets_in_settings_toml() {
         !text.contains("sk-ant-real-secret-here-very-long-string"),
         "secret leaked: {text}"
     );
-    assert!(
-        text.contains("<redacted>"),
-        "redaction marker missing: {text}"
-    );
+    assert!(text.contains("<redacted>"), "redaction marker missing: {text}");
     // Non-secret value preserved:
     assert!(text.contains("https://api.anthropic.com"));
 }
@@ -168,10 +162,7 @@ fn bundle_excludes_gateway_token_even_when_present() {
     let dir = fake_capsem_home();
     let home = dir.path();
     // Plant a gateway.token to make sure it's NOT in the bundle.
-    write(
-        &home.join("run/gateway.token"),
-        b"tok-this-must-not-leak-abcd1234",
-    );
+    write(&home.join("run/gateway.token"), b"tok-this-must-not-leak-abcd1234");
 
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
@@ -193,14 +184,8 @@ fn bundle_marks_missing_files_in_manifest() {
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
 
-    let manifest_text = std::str::from_utf8(
-        &entries
-            .iter()
-            .find(|(p, _)| p.ends_with("manifest.json"))
-            .unwrap()
-            .1,
-    )
-    .unwrap();
+    let manifest_text =
+        std::str::from_utf8(&entries.iter().find(|(p, _)| p.ends_with("manifest.json")).unwrap().1).unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest_text).unwrap();
     let sections = manifest["sections"].as_array().unwrap();
     let gateway_section = sections
@@ -272,9 +257,7 @@ fn bundle_includes_runtime_boundary_debug_contract() {
     let boundary: serde_json::Value = serde_json::from_slice(&boundary_entry.1).unwrap();
     let services = boundary["host_vsock_services"].as_array().unwrap();
     assert!(
-        services
-            .iter()
-            .any(|s| s["service"] == "audit" && s["port"] == 5006),
+        services.iter().any(|s| s["service"] == "audit" && s["port"] == 5006),
         "audit VSOCK service must be first-party in debug output: {boundary}"
     );
     assert!(
@@ -330,15 +313,9 @@ fn bundle_includes_supply_chain_debug_references() {
         .expect("support bundle should include supply-chain debug references");
     let supply_chain: serde_json::Value = serde_json::from_slice(&supply_chain_entry.1).unwrap();
     assert_eq!(supply_chain["host_sbom"]["format"], "spdx_json_2_3");
-    assert_eq!(
-        supply_chain["host_sbom"]["release_artifact"],
-        "capsem-sbom.spdx.json"
-    );
+    assert_eq!(supply_chain["host_sbom"]["release_artifact"], "capsem-sbom.spdx.json");
     assert_eq!(supply_chain["host_sbom"]["scope"], "host_binaries");
-    assert_eq!(
-        supply_chain["host_sbom"]["attestation"],
-        "github_attestations"
-    );
+    assert_eq!(supply_chain["host_sbom"]["attestation"], "github_attestations");
     assert_eq!(
         supply_chain["profile_obom"]["runtime_routes"][0],
         "/profiles/{profile_id}/info"
@@ -348,14 +325,8 @@ fn bundle_includes_supply_chain_debug_references() {
         "/profiles/{profile_id}/obom"
     );
     assert_eq!(supply_chain["profile_obom"]["scope"], "base_image");
-    assert_eq!(
-        supply_chain["manifest"]["runtime_update_status"],
-        "/update/status"
-    );
-    assert_eq!(
-        supply_chain["manifest"]["runtime_update_status_field"],
-        "supply_chain"
-    );
+    assert_eq!(supply_chain["manifest"]["runtime_update_status"], "/update/status");
+    assert_eq!(supply_chain["manifest"]["runtime_update_status_field"], "supply_chain");
 }
 
 #[test]
@@ -415,7 +386,6 @@ generator_version = "11.0.0"
     assert_eq!(profile["obom"]["scope"], "base_image");
     assert_eq!(profile["obom"]["route"], "/profiles/code/obom");
 }
-
 
 // ── Redaction over guest-influenced log bytes ──────────────────────
 //
@@ -495,10 +465,7 @@ fn a_file_under_the_limit_is_returned_whole() {
     let path = dir.path().join("small.log");
     fs::write(&path, b"line one\nline two\n").unwrap();
 
-    assert_eq!(
-        super::read_tail(&path, 1024).unwrap(),
-        b"line one\nline two\n"
-    );
+    assert_eq!(super::read_tail(&path, 1024).unwrap(), b"line one\nline two\n");
 }
 
 #[test]
@@ -528,11 +495,7 @@ fn read_tail_reports_nothing_for_missing_paths_and_directories() {
     let dir = tempfile::tempdir().unwrap();
 
     assert_eq!(super::read_tail(&dir.path().join("absent.log"), 1024), None);
-    assert_eq!(
-        super::read_tail(dir.path(), 1024),
-        None,
-        "a directory is not a log"
-    );
+    assert_eq!(super::read_tail(dir.path(), 1024), None, "a directory is not a log");
 }
 
 #[test]

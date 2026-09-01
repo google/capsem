@@ -62,15 +62,16 @@ impl AuthFailureTracker {
     /// Record a failure. Returns true if the caller should be throttled (429).
     pub async fn record_failure(&self) -> bool {
         let mut guard = self.inner.lock().await;
-        let (ref mut window_start, ref mut count) = *guard;
-        if window_start.elapsed() > AUTH_FAILURE_WINDOW {
-            *window_start = Instant::now();
-            *count = 1;
+        let throttled = if guard.0.elapsed() > AUTH_FAILURE_WINDOW {
+            guard.0 = Instant::now();
+            guard.1 = 1;
             false
         } else {
-            *count += 1;
-            *count > MAX_AUTH_FAILURES
-        }
+            guard.1 += 1;
+            guard.1 > MAX_AUTH_FAILURES
+        };
+        drop(guard);
+        throttled
     }
 }
 
@@ -85,15 +86,13 @@ pub struct AuthState {
 impl AuthState {
     /// Generate runtime files: token (600), port, pid.
     pub fn new(run_dir: &Path, token: &str, port: u16) -> Result<Self> {
-        std::fs::create_dir_all(run_dir)
-            .with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
+        std::fs::create_dir_all(run_dir).with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
 
         let token_path = run_dir.join("gateway.token");
         let port_path = run_dir.join("gateway.port");
         let pid_path = run_dir.join("gateway.pid");
 
-        std::fs::write(&token_path, token)
-            .with_context(|| format!("failed to write {}", token_path.display()))?;
+        std::fs::write(&token_path, token).with_context(|| format!("failed to write {}", token_path.display()))?;
 
         // chmod 600 on token file
         #[cfg(unix)]

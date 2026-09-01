@@ -135,3 +135,15 @@ def test_every_tracked_dockerfile_yields_run_bodies() -> None:
     bodies = run_bodies()
     assert len(bodies) > 20, f"only {len(bodies)} RUN bodies extracted; the extractor regressed"
     assert all(body.strip() for body in bodies.values()), "an empty RUN body means a bad parse"
+
+
+def test_buildkit_mount_options_are_not_read_as_shell_commands() -> None:
+    """Docker consumes RUN flags before handing the remaining body to sh."""
+    dockerfile = """\
+RUN --mount=type=cache,id=apt-lists,target=/var/lib/apt/lists,sharing=locked \\
+    --mount=type=cache,id=apt-archives,target=/var/cache/apt,sharing=locked \\
+    apt-get update -qq && apt-get install -y package
+"""
+    assert shellsurfaces.run_instructions(dockerfile) == [
+        "apt-get update -qq && apt-get install -y package"
+    ]

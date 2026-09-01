@@ -27,22 +27,10 @@ fn sequential_ids() {
     std::fs::write(dir.join("b"), b"").unwrap();
     let mut fht = FileHandleTable::new();
     let fh1 = fht
-        .alloc_file(
-            std::fs::File::open(dir.join("a")).unwrap(),
-            1,
-            true,
-            false,
-            false,
-        )
+        .alloc_file(std::fs::File::open(dir.join("a")).unwrap(), 1, true, false, false)
         .unwrap();
     let fh2 = fht
-        .alloc_file(
-            std::fs::File::open(dir.join("b")).unwrap(),
-            1,
-            true,
-            false,
-            false,
-        )
+        .alloc_file(std::fs::File::open(dir.join("b")).unwrap(), 1, true, false, false)
         .unwrap();
     assert_eq!(fh2, fh1 + 1);
 }
@@ -53,15 +41,9 @@ fn alloc_respects_limit() {
     let metadata = std::fs::metadata(&dir).unwrap();
     use std::os::unix::fs::MetadataExt;
     let mut fht = FileHandleTable::with_limit(2);
-    assert!(fht
-        .alloc_dir(1, metadata.dev(), metadata.ino(), vec![])
-        .is_some());
-    assert!(fht
-        .alloc_dir(1, metadata.dev(), metadata.ino(), vec![])
-        .is_some());
-    assert!(fht
-        .alloc_dir(1, metadata.dev(), metadata.ino(), vec![])
-        .is_none());
+    assert!(fht.alloc_dir(1, metadata.dev(), metadata.ino(), vec![]).is_some());
+    assert!(fht.alloc_dir(1, metadata.dev(), metadata.ino(), vec![]).is_some());
+    assert!(fht.alloc_dir(1, metadata.dev(), metadata.ino(), vec![]).is_none());
 }
 
 #[test]
@@ -70,11 +52,7 @@ fn alloc_after_remove_under_limit() {
     let metadata = std::fs::metadata(&dir).unwrap();
     use std::os::unix::fs::MetadataExt;
     let mut fht = FileHandleTable::with_limit(1);
-    let fh = fht
-        .alloc_dir(1, metadata.dev(), metadata.ino(), vec![])
-        .unwrap();
+    let fh = fht.alloc_dir(1, metadata.dev(), metadata.ino(), vec![]).unwrap();
     fht.remove(fh);
-    assert!(fht
-        .alloc_dir(1, metadata.dev(), metadata.ino(), vec![])
-        .is_some());
+    assert!(fht.alloc_dir(1, metadata.dev(), metadata.ino(), vec![]).is_some());
 }

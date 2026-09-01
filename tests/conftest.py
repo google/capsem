@@ -59,7 +59,7 @@ os.environ["CAPSEM_TRAY_HEADLESS"] = "1"
 # that archive their tmp_dir when this worker session saw any failure.
 FAILED_NODEIDS: list[str] = []
 
-# target/test-artifacts/ is the preserve-on-failure destination.
+# cache/target/tests/evidence/ is the preserve-on-failure destination.
 # Gitignored. Fixtures copy their tmp_dir here so service.log /
 # sessions/<vm>/process.log / sessions/<vm>/serial.log / session.db all
 # survive the normal shutil.rmtree teardown.
@@ -169,7 +169,7 @@ threading.excepthook = _thread_exception_hook
 # CI pre-flight. Tests that depend on built artifacts (manifest.json,
 # initrd.img, cross-compiled agent binaries) use pytest.skip() when the
 # artifact is absent so local dev runs don't fail on a fresh checkout.
-# In CI those artifacts are expected to be built by earlier `just test-full`
+# In CI those artifacts are expected to be built by earlier `just test`
 # stages, so a skip there means the suite shipped a silently-weaker
 # signal than the author intended. Gate with `CAPSEM_REQUIRE_ARTIFACTS=1`
 # (CI sets this explicitly) rather than the ambient `CI` env, which is
@@ -192,12 +192,17 @@ _REQUIRED_ARTIFACTS = {
     # production reader -- capsem-service boot, capsem setup, gen_manifest,
     # release workflow -- and the builder's generate_checksums writer agree
     # on this path. A per-arch entry here never resolved on a real build.
-    "target/assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
-    "target/assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
+    "cache/target/assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
+    "cache/target/assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
     "build_system/packaging/macos/entitlements.plist": (
         _PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
     ),
-    "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
+    "cache/target/build/linux-agent/<arch>": _PROJECT_ROOT
+    / "cache"
+    / "target"
+    / "build"
+    / "linux-agent"
+    / _ARCH,
     # Seven checked-in tests read this directly rather than through
     # `CAPSEM_PROFILES_DIR`, and they are not wrong to: a test should not have
     # to know whether this run materialized its profiles or was handed them.
@@ -205,7 +210,7 @@ _REQUIRED_ARTIFACTS = {
     # on `assert {'co-work', 'code'} <= set()`, which names neither the missing
     # directory nor the lane that owed it. Declared here it is a collection
     # error naming the path, before anything boots.
-    "target/config/profiles": _PROJECT_ROOT / "target" / "config" / "profiles",
+    "cache/target/config/profiles": _PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
 }
 
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
@@ -238,8 +243,8 @@ def _required_artifacts_for_run(
 ) -> dict[str, Path]:
     """Return the artifacts that this exact test composition must prove.
 
-    Local ``just test-full`` owns source-build intermediates such as
-    ``target/linux-agent``. A release functional lane instead consumes an
+    Local ``just test`` owns source-build intermediates such as
+    ``cache/target/build/linux-agent``. A release functional lane instead consumes an
     already-verified package and profile input cohort. Requiring the source
     intermediate there would force an unrelated rebuild and would not prove
     the pulled package. Keep the manifest-derived release inputs and exact
@@ -250,13 +255,13 @@ def _required_artifacts_for_run(
     if not release_inputs:
         return selected
 
-    selected.pop("target/linux-agent/<arch>", None)
+    selected.pop("cache/target/build/linux-agent/<arch>", None)
 
     def release_path(variable: str) -> Path:
         value = env.get(variable, "").strip()
         if value:
             return Path(value)
-        return _PROJECT_ROOT / "target" / "missing-release-environment" / variable
+        return _PROJECT_ROOT / "cache" / "target" / "missing-release-environment" / variable
 
     selected["verified release input report"] = Path(release_inputs) / "release-inputs.json"
     selected["manifest-selected release package"] = release_path("CAPSEM_RELEASE_PACKAGE")
@@ -345,7 +350,7 @@ def pytest_sessionstart(session):
             guidance = (
                 "Run `just build-assets code` (for assets/) and "
                 "`uv run --project build_system --frozen capsem-builder agent` "
-                "(for target/linux-agent/) "
+                "(for cache/target/build/linux-agent/) "
                 "before invoking pytest. Locally, unset the env var to let "
                 "tests skip on missing artifacts."
             )
@@ -629,14 +634,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 #: What a run records about *what it is qualifying*. The selected release
 #: commit now lives in the immutable prefix and structured run-start event;
 #: this is the only mutable on-disk source-state record a nested test can hit.
-_RUN_IDENTITY = (_ROOT / "target/gate-source-state.json",)
+_RUN_IDENTITY = (_ROOT / "cache/state/gate-source.json",)
 
 
 @pytest.fixture(autouse=True)
 def _the_running_gate_keeps_its_own_source_state(request):
     """Fail the test that writes it, by name, in seconds.
 
-    A suite runs inside `just test-full`, and several read a real plan by *running*
+    A suite runs inside `just test`, and several read a real plan by *running*
     it against a recording runner. A plan that runs does what its actions say,
     so one of them wrote the recorder's empty output over the state file
     naming the HEAD the gate was qualifying. The gate then failed in

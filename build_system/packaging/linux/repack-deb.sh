@@ -6,7 +6,7 @@
 # Arguments:
 #   input.deb   Path to the Tauri-built .deb package
 #   bin_dir     Directory containing companion binaries (capsem, capsem-service, etc.)
-#   config_root Materialized runtime config root (usually target/config)
+#   config_root Materialized runtime config root (usually cache/target/config)
 #   assets_dir  Optional assets dir containing manifest.json when --manifest is omitted.
 #   output.deb  Optional output path (defaults to overwriting input)
 #   --manifest  Optional manifest URL to record for postinstall hydration.

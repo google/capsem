@@ -10,6 +10,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -67,7 +69,7 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
         test_job, "tests/citadel/test_agent_skill_index.py"
     )
     appended = python_pytest_command_containing(
-        test_job, "--cov-report=xml:target/coverage/python/codecov.xml"
+        test_job, "--cov-report=xml:cache/target/coverage/python/codecov.xml"
     )
 
     assert "--cov=build_system/builder" in selected
@@ -77,7 +79,7 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
 
     assert "--cov=build_system/builder" in appended
     assert "--cov-append" in appended
-    assert "--cov-report=xml:target/coverage/python/codecov.xml" in appended
+    assert "--cov-report=xml:cache/target/coverage/python/codecov.xml" in appended
     assert "--cov-fail-under=0" in appended
     assert test_job.index(
         "- name: Cross-system Python schema tests with coverage"
@@ -95,7 +97,7 @@ def test_complete_gate_broad_suite_inherits_the_authoritative_coverage_floor() -
     argv = pytestsuite.broad(config, profile="code").argv(config)
 
     assert "--cov=build_system/builder" in argv
-    assert "--cov-report=xml:target/coverage/python/codecov.xml" in argv
+    assert "--cov-report=xml:cache/target/coverage/python/codecov.xml" in argv
     assert not any(argument.startswith("--cov-fail-under") for argument in argv)
 
 
@@ -235,16 +237,6 @@ def test_low_coverage_components_visible() -> None:
         f"coverage cannot be hidden inside broad buckets; got {wrong_paths}"
     )
 
-    weak_targets = {
-        component_id: components[component_id].targets
-        for component_id in required
-        if "80%" not in components[component_id].targets
-    }
-    assert not weak_targets, (
-        "low-coverage release-critical crates need explicit 80% project "
-        f"targets; missing on {weak_targets}"
-    )
-
     duplicated_paths = {
         path: sorted(
             component.component_id for component in components.values() if path in component.paths
@@ -257,6 +249,90 @@ def test_low_coverage_components_visible() -> None:
     assert not duplicated_paths, (
         "low-coverage crate paths must not also appear in broad components; "
         f"duplicates {duplicated_paths}"
+    )
+
+
+def test_every_production_rust_source_has_exactly_one_component_owner() -> None:
+    components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
+    ownership = rust_component_ownership(rust_production_sources(), components)
+
+    missing = sorted(source for source, owners in ownership.items() if not owners)
+    duplicated = {
+        source: owners for source, owners in ownership.items() if len(owners) > 1
+    }
+    assert not missing, f"production Rust sources missing a Codecov component: {missing}"
+    assert not duplicated, (
+        "production Rust sources must contribute to exactly one Codecov component; "
+        f"duplicate owners: {duplicated}"
+    )
+
+
+def test_component_ownership_guard_detects_missing_and_duplicate_paths() -> None:
+    source = "crates/capsem-core/src/auditfs.rs"
+    components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
+
+    without_auditfs = {
+        component_id: CodecovComponent(
+            component_id=component.component_id,
+            paths=tuple(path for path in component.paths if path != source),
+            targets=component.targets,
+        )
+        for component_id, component in components.items()
+    }
+    assert rust_component_ownership({source}, without_auditfs)[source] == ()
+
+    duplicated = dict(components)
+    core = duplicated["core"]
+    duplicated["core"] = CodecovComponent(
+        component_id=core.component_id,
+        paths=(*core.paths, source),
+        targets=core.targets,
+    )
+    assert rust_component_ownership({source}, duplicated)[source] == (
+        "core",
+        "tooling",
+    )
+
+
+def test_test_only_rust_sources_are_ignored_by_codecov() -> None:
+    document = yaml.safe_load((PROJECT_ROOT / "codecov.yml").read_text())
+    ignores = tuple(document["ignore"])
+    missing = sorted(
+        source
+        for source in rust_test_sources()
+        if not any(codecov_glob_matches(source, pattern) for pattern in ignores)
+    )
+    assert not missing, f"test-only Rust sources are counted as product coverage: {missing}"
+
+
+def test_codecov_uses_regression_targets_without_duplicate_component_floors() -> None:
+    document = yaml.safe_load((PROJECT_ROOT / "codecov.yml").read_text())
+    coverage = document["coverage"]["status"]
+    defaults = document["component_management"]["default_rules"]["statuses"]
+    components = document["component_management"]["individual_components"]
+
+    assert coverage["project"]["default"]["target"] == "auto"
+    assert coverage["project"]["unit"]["target"] == "auto"
+    assert coverage["patch"]["default"]["target"] == "90%"
+    assert defaults == [
+        {"type": "project", "target": "auto", "threshold": "2%"},
+        {"type": "patch", "target": "90%"},
+    ]
+    assert not {
+        component["component_id"]: component["statuses"]
+        for component in components
+        if "statuses" in component
+    }, "individual components must not restate absolute coverage authority"
+
+
+def test_codecov_publication_remains_explicitly_best_effort() -> None:
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    action_steps = codecov_action_steps(ci)
+
+    assert action_steps, "CI publishes neither Codecov coverage nor test results"
+    assert all("fail_ci_if_error: false" in step for step in action_steps.values()), (
+        "Codecov remains best-effort until the reliability-soak issue's acceptance "
+        f"criteria are met; blocking steps: {[name for name, step in action_steps.items() if 'fail_ci_if_error: false' not in step]}"
     )
 
 
@@ -312,12 +388,12 @@ def test_release_critical_crates_are_reported() -> None:
     )
 
     required_uploads = {
-        "target/coverage/linux/codecov.json",
-        "target/coverage/rust/unit.json",
-        "target/coverage/rust/integration.json",
-        "target/coverage/python/codecov.xml",
-        "target/coverage/web-app/coverage-final.json",
-        "target/coverage/distribution-site/lcov.info",
+        "cache/target/coverage/linux/codecov.json",
+        "cache/target/coverage/rust/unit.json",
+        "cache/target/coverage/rust/integration.json",
+        "cache/target/coverage/python/codecov.xml",
+        "cache/target/coverage/web-app/coverage-final.json",
+        "cache/target/coverage/distribution-site/lcov.info",
     }
     uploaded_files = codecov_upload_files(ci)
     missing_uploads = sorted(required_uploads - uploaded_files)
@@ -378,12 +454,12 @@ def test_release_binaries_and_package_rails_covered() -> None:
 
     release_integration_command = python_pytest_command_containing(
         test_job,
-        "--cov-report=xml:target/coverage/python/codecov.xml",
+        "--cov-report=xml:cache/target/coverage/python/codecov.xml",
     )
     for coverage_arg in (
         "--cov=build_system/builder",
         "--cov-append",
-        "--cov-report=xml:target/coverage/python/codecov.xml",
+        "--cov-report=xml:cache/target/coverage/python/codecov.xml",
     ):
         assert coverage_arg in release_integration_command, (
             "release/package integration tests must append to the uploaded "
@@ -508,6 +584,70 @@ def codecov_components(codecov: str) -> dict[str, CodecovComponent]:
     return components
 
 
+def rust_source_files() -> set[str]:
+    return {
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in (PROJECT_ROOT / "crates").glob("*/src/**/*.rs")
+    }
+
+
+def is_test_only_rust_source(source: str) -> bool:
+    path = Path(source)
+    return (
+        path.name in {"tests.rs", "proptests.rs", "test_support.rs"}
+        or path.name.endswith("_tests.rs")
+        or "tests" in path.parts
+        or "test_support" in path.parts
+    )
+
+
+def rust_production_sources() -> set[str]:
+    return {source for source in rust_source_files() if not is_test_only_rust_source(source)}
+
+
+def rust_test_sources() -> set[str]:
+    return {source for source in rust_source_files() if is_test_only_rust_source(source)}
+
+
+def rust_component_ownership(
+    sources: set[str],
+    components: dict[str, CodecovComponent],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        source: tuple(
+            sorted(
+                component.component_id
+                for component in components.values()
+                if any(codecov_glob_matches(source, pattern) for pattern in component.paths)
+            )
+        )
+        for source in sources
+    }
+
+
+def codecov_glob_matches(path: str, pattern: str) -> bool:
+    """Match Codecov-style globs where `**/` may span zero directories."""
+    pieces: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            pieces.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            pieces.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            pieces.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            pieces.append("[^/]")
+            index += 1
+        else:
+            pieces.append(re.escape(pattern[index]))
+            index += 1
+    return re.fullmatch("".join(pieces), path) is not None
+
+
 def missing_workspace_crates_in_codecov(
     packages: dict[str, WorkspacePackage],
     components: dict[str, CodecovComponent],
@@ -548,6 +688,27 @@ def codecov_upload_files(workflow: str) -> set[str]:
         for file in line.strip().split(":", 1)[1].split(",")
         if file.strip()
     }
+
+
+def codecov_action_steps(workflow: str) -> dict[str, str]:
+    lines = workflow.splitlines()
+    steps: dict[str, str] = {}
+    for index, line in enumerate(lines):
+        if not line.startswith("      - name: "):
+            continue
+        name = line.split(": ", 1)[1]
+        end = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if lines[candidate].startswith("      - name: ")
+            ),
+            len(lines),
+        )
+        block = "\n".join(lines[index:end])
+        if "codecov/codecov-action@" in block or "codecov/test-results-action@" in block:
+            steps[name] = block
+    return steps
 
 
 def python_pytest_command_containing(shell: str, needle: str) -> str:

@@ -37,9 +37,7 @@ fn make_config(assets: &std::path::Path) -> VmConfig {
         builder = builder.disk_path(assets.join("rootfs.erofs"));
     }
 
-    builder
-        .build()
-        .expect("VmConfig should be valid with real assets")
+    builder.build().expect("VmConfig should be valid with real assets")
 }
 
 // -----------------------------------------------------------------------
@@ -97,10 +95,7 @@ fn hypervisor_boot_fails_with_fake_kernel() {
     let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
 
     let h = capsem_core::AppleVzHypervisor;
-    let ports = [
-        capsem_core::VSOCK_PORT_CONTROL,
-        capsem_core::VSOCK_PORT_TERMINAL,
-    ];
+    let ports = [capsem_proto::VSOCK_PORT_CONTROL, capsem_proto::VSOCK_PORT_TERMINAL];
     let result = h.boot(&config, &ports);
     // Fails gracefully (no entitlement or invalid kernel), does not panic
     assert!(result.is_err(), "boot with fake kernel should fail");
@@ -138,11 +133,7 @@ fn vsock_connection_can_be_sent_to_thread() {
 fn vsock_connection_can_be_stored_in_vec() {
     let mut conns = Vec::new();
     for i in 0..10 {
-        conns.push(capsem_core::VsockConnection::new(
-            i,
-            5000 + i as u32,
-            Box::new(()),
-        ));
+        conns.push(capsem_core::VsockConnection::new(i, 5000 + i as u32, Box::new(())));
     }
     assert_eq!(conns.len(), 10);
     assert_eq!(conns[5].fd, 5);
@@ -162,10 +153,10 @@ fn hypervisor_boot_requires_entitlement() {
 
     let config = make_config(&assets);
     let vsock_ports = [
-        capsem_core::VSOCK_PORT_CONTROL,
-        capsem_core::VSOCK_PORT_TERMINAL,
-        capsem_core::VSOCK_PORT_SNI_PROXY,
-        capsem_core::VSOCK_PORT_LIFECYCLE,
+        capsem_proto::VSOCK_PORT_CONTROL,
+        capsem_proto::VSOCK_PORT_TERMINAL,
+        capsem_proto::VSOCK_PORT_SNI_PROXY,
+        capsem_proto::VSOCK_PORT_LIFECYCLE,
     ];
 
     let result = capsem_core::AppleVzHypervisor.boot(&config, &vsock_ports);
@@ -190,10 +181,7 @@ fn hypervisor_boot_returns_vsock_receiver() {
     };
 
     let config = make_config(&assets);
-    let ports = [
-        capsem_core::VSOCK_PORT_CONTROL,
-        capsem_core::VSOCK_PORT_TERMINAL,
-    ];
+    let ports = [capsem_proto::VSOCK_PORT_CONTROL, capsem_proto::VSOCK_PORT_TERMINAL];
 
     match capsem_core::AppleVzHypervisor.boot(&config, &ports) {
         Ok((_vm, mut rx)) => {

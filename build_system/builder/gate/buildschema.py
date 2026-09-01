@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import PositiveInt, StringConstraints, model_validator
+from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_validator
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import Strict
@@ -22,8 +22,15 @@ class ModulesConfig(Strict):
     build_chain_artifact_tests: tuple[str, ...]
     release_suites: tuple[str, ...]
     contract_globs: tuple[str, ...]
+    rust_format: tuple[str, ...]
     rust_coverage: tuple[str, ...]
-    rust_coverage_floor: str
+    rust_coverage_floors: tuple[str, ...]
+    rust_coverage_report: str
+    rust_coverage_ratchet: str
+    rust_coverage_crate_root: str
+    rust_coverage_crate_minimum: PositiveFloat
+    rust_coverage_ratchet_headroom: PositiveFloat
+    rust_coverage_crate_floors: dict[str, float]
     rust_test_profile_variable: str
     rust_test_profile: str
     rust_doctests: tuple[str, ...]
@@ -212,8 +219,12 @@ class PytestConfig(Strict):
     collection_flags: tuple[str, ...]
     base_flags: tuple[str, ...]
     stop_at_first: str
-    parallel_flags: tuple[str, ...]
+    parallel_workers: PositiveInt
+    parallel_distribution: Literal["loadfile"]
     coverage_flags: tuple[str, ...]
+    coverage_seed_flags: tuple[str, ...]
+    coverage_append_flags: tuple[str, ...]
+    coverage_finish_flags: tuple[str, ...]
     broad_ignores: tuple[str, ...]
     host_snapshot_serial: tuple[str, ...]
     serial_paths: tuple[str, ...]
@@ -289,6 +300,7 @@ class DevLoopConfig(Strict):
     frontend_dir: str
     tui: tuple[str, ...]
     surfaces: tuple[str, ...]
+    rust_affected: str
     generate_settings: str
     generated_settings_scratch: str
     check_settings: str

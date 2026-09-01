@@ -14,11 +14,10 @@ plan could repeat an expensive action indefinitely and stay green. It did: a
 twenty-one minute "fast" gate, of which several minutes were the same script
 run again.
 
-Deliberate repetition exists and is fine -- `pnpm install --frozen-lockfile` is
-idempotent, cheap against a warm tree, and cheaper than a module whose
-independence depends on having been run after another one. So this is a ledger
-rather than a ban: a repeated action is declared with its reason, and anything
-undeclared is work nobody decided to pay for twice.
+Deliberate repetition can exist, so this is a ledger rather than a ban: a
+repeated action is declared with its reason, and anything undeclared is work
+nobody decided to pay for twice. Once composition can hand a prerequisite over,
+the corresponding ledger entry must disappear with the repetition.
 """
 
 from __future__ import annotations

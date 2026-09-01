@@ -77,59 +77,39 @@ fn a_sample_too_large_to_represent_is_refused() {
 
 #[test]
 fn a_sidecar_is_carried_when_present() {
-    let document =
-        r#"{"metrics":{"a":{"unit":"count","samples":[1.0]}},"sidecar":"stdout.txt"}"#;
+    let document = r#"{"metrics":{"a":{"unit":"count","samples":[1.0]}},"sidecar":"stdout.txt"}"#;
     assert_eq!(parse(document).expect("parses").sidecar.as_deref(), Some("stdout.txt"));
 }
 
 #[test]
 fn a_collector_that_fails_is_reported_with_its_status() {
-    let error = run(Path::new("false"), &[], Duration::from_secs(5))
-        .expect_err("must refuse");
+    let error = run(Path::new("false"), &[], Duration::from_secs(5)).expect_err("must refuse");
     assert!(error.to_string().contains("exited with"), "{error}");
 }
 
 #[test]
 fn a_collector_that_prints_nothing_is_refused() {
-    let error = run(Path::new("true"), &[], Duration::from_secs(5))
-        .expect_err("must refuse");
-    assert!(
-        format!("{error:#}").contains("no JSON document"),
-        "{error:#}"
-    );
+    let error = run(Path::new("true"), &[], Duration::from_secs(5)).expect_err("must refuse");
+    assert!(format!("{error:#}").contains("no JSON document"), "{error:#}");
 }
 
 #[test]
 fn a_collector_that_hangs_is_killed() {
     // A collector that never exits would otherwise hold the machine lock the
     // whole gate runs under.
-    let error = run(
-        Path::new("sleep"),
-        &["30".to_string()],
-        Duration::from_millis(200),
-    )
-    .expect_err("must time out");
+    let error = run(Path::new("sleep"), &["30".to_string()], Duration::from_millis(200)).expect_err("must time out");
     assert!(error.to_string().contains("did not finish"), "{error}");
 }
 
 #[test]
 fn a_missing_collector_is_reported_by_name() {
-    let error = run(
-        Path::new("/nonexistent/collector"),
-        &[],
-        Duration::from_secs(5),
-    )
-    .expect_err("must refuse");
+    let error = run(Path::new("/nonexistent/collector"), &[], Duration::from_secs(5)).expect_err("must refuse");
     assert!(error.to_string().contains("/nonexistent/collector"), "{error}");
 }
 
 #[test]
 fn a_real_collector_round_trips() {
-    let error = run(
-        Path::new("echo"),
-        &[SAMPLE.to_string()],
-        Duration::from_secs(5),
-    );
+    let error = run(Path::new("echo"), &[SAMPLE.to_string()], Duration::from_secs(5));
     let collected = error.expect("echo is a valid collector");
     assert_eq!(collected.metrics["cpu_s"].samples.len(), 3);
 }

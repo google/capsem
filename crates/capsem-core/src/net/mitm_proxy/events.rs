@@ -73,9 +73,7 @@ pub mod payloads {
     }
 }
 
-pub use payloads::{
-    AiRequestSummary, AiStreamDelta, DnsAnswer, DnsQuery, JsonRpcMessage, McpCallSummary,
-};
+pub use payloads::{AiRequestSummary, AiStreamDelta, DnsAnswer, DnsQuery, JsonRpcMessage, McpCallSummary};
 
 /// View of an L2-classified HTTP request (method, path, headers, body
 /// preview). Built from a fully-buffered request. Hooks that need
@@ -179,14 +177,10 @@ impl EventKind {
             | Self::RawResponseHead
             | Self::RawResponseChunk
             | Self::RawResponseEnd => EventLayer::L1,
-            Self::HttpRequest
-            | Self::SseEvent
-            | Self::JsonRpcMessage
-            | Self::DnsQuery
-            | Self::DnsAnswer => EventLayer::L2,
-            Self::AiRequestStart | Self::AiResponseChunk | Self::AiCallEnd | Self::McpCall => {
-                EventLayer::L3
+            Self::HttpRequest | Self::SseEvent | Self::JsonRpcMessage | Self::DnsQuery | Self::DnsAnswer => {
+                EventLayer::L2
             }
+            Self::AiRequestStart | Self::AiResponseChunk | Self::AiCallEnd | Self::McpCall => EventLayer::L3,
         }
     }
 }

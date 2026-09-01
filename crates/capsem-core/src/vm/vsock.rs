@@ -1,11 +1,4 @@
-//! Platform-agnostic vsock utilities: output coalescing and port constants.
-
-// Re-export protocol types and port constants from capsem-proto.
-pub use capsem_proto::{
-    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, max_frame_size,
-    GuestToHost, HostToGuest, MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC,
-    VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-};
+//! Platform-agnostic vsock output coalescing.
 
 // ---------------------------------------------------------------------------
 // Output coalescing buffer

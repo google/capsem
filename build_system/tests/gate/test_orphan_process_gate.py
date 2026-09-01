@@ -326,7 +326,7 @@ def test_the_check_still_reaches_the_justfile() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _facts(pid: int, created: float, exe: str = "/repo/target/debug/capsem-service") -> dict:
+def _facts(pid: int, created: float, exe: str = "/repo/cache/target/cargo/debug/capsem-service") -> dict:
     return {
         "pid": pid,
         "name": Path(exe).name,
@@ -366,7 +366,7 @@ def test_a_process_outside_the_checkout_is_never_ours(tmp_path: Path) -> None:
 
 
 def test_a_process_from_this_checkout_is_ours() -> None:
-    ours = _facts(13, 100.0, exe=str(ROOT / "target/debug/capsem-service"))
+    ours = _facts(13, 100.0, exe=str(ROOT / "cache/target/cargo/debug/capsem-service"))
 
     assert ORPHANS._from_this_tree(ours, ROOT)
 
@@ -408,8 +408,8 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
     SIGKILL a sibling xdist worker's live service.
     """
     fake_root = tmp_path / "checkout"
-    (fake_root / "target" / "debug").mkdir(parents=True)
-    binary = fake_root / "target" / "debug" / "capsem-fake-leak"
+    (fake_root / "cache" / "target" / "cargo" / "debug").mkdir(parents=True)
+    binary = fake_root / "cache" / "target" / "cargo" / "debug" / "capsem-fake-leak"
 
     baseline_file = tmp_path / "baseline.json"
     assert (
@@ -449,8 +449,8 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
     them permanently invisible -- which is how they reach five hours old.
     """
     fake_root = tmp_path / "checkout"
-    (fake_root / "target" / "debug").mkdir(parents=True)
-    binary = fake_root / "target" / "debug" / "capsem-fake-leftover"
+    (fake_root / "cache" / "target" / "cargo" / "debug").mkdir(parents=True)
+    binary = fake_root / "cache" / "target" / "cargo" / "debug" / "capsem-fake-leftover"
 
     leftover = _start_long_lived_capsem_fixture(binary)
     try:

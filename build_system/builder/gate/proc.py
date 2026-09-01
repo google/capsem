@@ -45,6 +45,7 @@ class Runner:
     Subclass and override `execute` to observe or simulate them instead.
     """
 
+    observing = False
     def __init__(
         self,
         root: Path,
@@ -55,7 +56,6 @@ class Runner:
         self.root = Path(root)
         self._stream: TextIO = stream if stream is not None else sys.stderr
         self._configured_stop_policy = stop_policy
-
     @property
     def run_id(self) -> str | None:
         return None

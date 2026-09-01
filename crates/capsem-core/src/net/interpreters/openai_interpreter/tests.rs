@@ -329,10 +329,7 @@ fn responses_api_output_item_done_text_ignored() {
     };
     let events = parser.parse_event(&sse);
     // Should NOT emit ToolCallEnd for a message item
-    assert!(
-        events.is_empty(),
-        "text output_item.done should not emit ToolCallEnd"
-    );
+    assert!(events.is_empty(), "text output_item.done should not emit ToolCallEnd");
 }
 
 #[test]

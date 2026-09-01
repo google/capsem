@@ -189,7 +189,7 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     assert "environment.benchmark_root" in _read("build_system/builder/gate/workspace.py") or (
         "names.benchmark_root" in _read("build_system/builder/gate/workspace.py")
     )
-    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    assert config.workspace.benchmark_root == "cache/target/tests/benchmarks"
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
@@ -235,12 +235,12 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     labels = list(_gate_plan().labels)
     workspace = (root / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
 
-    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    assert config.workspace.benchmark_root == "cache/target/tests/benchmarks"
     # The workspace deliberately does not clear it on acquire: one gate runs
     # several modules through one workspace.
     assert "Deliberately not the benchmark root" in workspace
 
-    cleared = _step_at(labels, "prepare.storage-budget")
+    cleared = _step_at(labels, "prepare.cache-budget")
     assert cleared < _step_at(labels, "functional.")
     assert cleared < _step_at(labels, "glowup.")
 
@@ -303,7 +303,7 @@ def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
     """A storage budget measured before the daemon exists measures nothing."""
     labels = list(_gate_plan().labels)
 
-    assert _step_at(labels, "prepare.bootstrap") < _step_at(labels, "prepare.storage-budget")
+    assert _step_at(labels, "prepare.bootstrap") < _step_at(labels, "prepare.cache-budget")
 
 
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
@@ -446,8 +446,8 @@ def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
     assert config.hostimage.mount == "/src"
 
 
-def test_remote_storage_images_are_immutable() -> None:
-    policy = tomllib.loads(_read("config/storage-policy.toml"))
+def test_remote_cache_images_are_immutable() -> None:
+    policy = tomllib.loads(_read("config/cache.toml"))
     floating: list[str] = []
 
     def visit(value: object) -> None:
@@ -465,7 +465,9 @@ def test_remote_storage_images_are_immutable() -> None:
     visit(policy)
     assert floating == []
 
-    tart_image = policy["tart"]["base_image"]
+    tart_images = policy["runtimes"]["tart"]["base_images"]
+    assert len(tart_images) == 1
+    tart_image = tart_images[0]
     assert re.fullmatch(
         r"ghcr\.io/cirruslabs/macos-sequoia-base@sha256:[0-9a-f]{64}",
         tart_image,

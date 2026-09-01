@@ -11,10 +11,11 @@
 #   run-service            idempotent local daemon
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
+#   cache                  cache inventory, verification, and retention
 #   fast-test              incomplete source feedback; never qualification
 #   focus-test             one named functional group, optionally cold
 #   install                build and install the complete local macOS product
-#   test-full             exceptional cold complete diagnostic
+#   test                   reusable complete local verification
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
 #
@@ -22,6 +23,12 @@
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
+
+# Inventory and control the repository cache. The variadic is deliberately one
+# quoted command string; capsem-cache parses it as data and never as shell.
+cache *command:
+    uv run --project build_system --frozen capsem-cache dispatch {{quote(command)}}
+
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
     @uv run --project build_system --frozen capsem-gate stamp-version
@@ -93,8 +100,8 @@ _dev-frontend: _pnpm-install _generate-settings
 # IMPORTANT: the Tauri binary embeds web/app/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect
 # on the running binary. This recipe keeps the two in lockstep.
-#   just build          # debug binary at ./target/debug/capsem-app
-#   just build release  # release binary at ./target/release/capsem-app
+#   just build          # debug binary at ./cache/target/cargo/debug/capsem-app
+#   just build release  # release binary at ./cache/target/cargo/release/capsem-app
 _build-ui profile="debug": _pnpm-install _generate-settings
     uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
@@ -157,13 +164,13 @@ _build-assets profile="" arch="":
 # performed by release-assets.yaml: every checked-in profile, both published
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
-# Outputs stay under target/ so the gate never mutates a source-owned directory.
+# Outputs stay under cache/target/ so the gate never mutates a source-owned directory.
 _gate-assets: _bootstrap _install-tools _generate-settings _sign
     @uv run --project build_system --frozen capsem-gate assets
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 #
-# Runs against an isolated CAPSEM_HOME under target/test-home/ so the suite
+# Runs against an isolated CAPSEM_HOME under cache/target/tests/home/ so the suite
 # never kills or mutates the user's locally installed capsem. The flock is
 # still honored for multi-agent coordination but now lives inside the test
 # home, not the shared ~/.capsem/run.
@@ -171,12 +178,14 @@ _bootstrap:
     sh {{quote(justfile_directory() / "bootstrap.sh")}} -y
 
 # Build output is reused between runs by default, which is what makes a second
-# commit cost minutes rather than an hour; `buildcache` explains how. This is
-# the escape hatch, for when a local pass has to mean a pass on a cold runner:
-# diagnose with nothing reused, compiling every artifact from nothing. Release
-# qualification belongs to the release rails; agents must not run this by habit.
-test-full source_commit="":
-    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} --clean-build
+# commit cost minutes rather than an hour; `buildcache` explains how. With no
+# argument, verify the current source state. With a full commit on local main,
+# reuse its complete journal, structurally resume its retained prefix, or
+# verify it once. This is optional before release: each release command owns
+# its hosted qualification. Cold reproduction remains an explicit gate CLI
+# diagnostic, never the public complete-test default.
+test source_commit="" mode="normal" reason="":
+    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} {{quote(mode)}} {{quote(reason)}}
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.
@@ -193,7 +202,7 @@ _test-source-checks:
     just _test-release-contracts
 
 _test-compiled-checks: _clean-stale _check-generated-settings
-    just _bound-docker-test-storage
+    just cache ensure-space default --reason "compiled test preflight"
     uv run --project build_system --frozen capsem-gate test-static
 
 _test-artifacts:
@@ -244,21 +253,7 @@ _gate-host-package-sbom:
     uv run --project build_system --frozen capsem-gate host-sbom
 
 
-# Remove cross-compilation image and cached volumes.
-_clean-host-image:
-    @uv run --project build_system --frozen capsem-gate storage clean --scope all
-
-_release-completed-docker-rails:
-    @uv run --project build_system --frozen capsem-gate storage release completed-docker-rails
-
-_release-completed-package-rails:
-    @uv run --project build_system --frozen capsem-gate storage release completed-package-arm64
-    @uv run --project build_system --frozen capsem-gate storage release completed-package-x86_64
-
-_release-deferred-install-target:
-    @uv run --project build_system --frozen capsem-gate storage release deferred-install-target
-
-# repack-deb.sh below reads the materialized profile catalog from target/config,
+# repack-deb.sh below reads the materialized profile catalog from cache/target/config,
 # so this recipe owns filling it rather than leaving each call site to remember.
 # Release CI never enters here: it consumes an already-built package with its
 # staged profile cohort, so nothing it pulled can be clobbered.
@@ -269,7 +264,7 @@ _release-deferred-install-target:
 # The image runs natively on the host arch and cross-compiles via
 # Rust --target + multiarch system libs. Named volumes cache cargo
 # registry and build artifacts between runs. CARGO_TARGET_DIR=/cargo-target
-# inside the container isolates from host macOS target/ directory.
+# inside the container isolates from host macOS cache/target/ directory.
 #
 # CI vs local divergences (keep in sync when changing either):
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
@@ -355,21 +350,6 @@ logs target="":
 # See build_system/scripts/build/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
     @uv run --project build_system --frozen python3 build_system/scripts/build/clean_stale.py
-
-# Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
-# Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
-_docker-gc:
-    @uv run --project build_system --frozen capsem-gate storage gc
-
-# Enforce release-rail headroom while preserving content-addressed Cargo,
-# registry, rustup, and recent BuildKit caches that make forward fixes fast.
-_bound-docker-test-storage:
-    @uv run --project build_system --frozen capsem-gate storage ensure-space default candidate-boundary
-
-# Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
-# deliberately does not call this recipe.
-_clean-docker-test-targets:
-    @uv run --project build_system --frozen capsem-gate storage clean --scope working --rail default
 
 # --- Internal helpers (hidden from `just --list`) ---
 

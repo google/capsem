@@ -110,7 +110,7 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     """Each owns one artifact family, and neither rebuilds the other's.
 
     The recipes dispatch, so this asks the plans. That is the stronger
-    question: a recipe body could stop *containing* `just test-full` while still
+    question: a recipe body could stop *containing* `just test` while still
     running it, and could contain it while running it too late.
     """
     justfile = "\n" + _read("justfile")
@@ -302,7 +302,7 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert "just release-" not in release
 
     # It qualifies nothing, and it builds nothing: it dispatches and waits.
-    assert "just test-full" not in workflow
+    assert "just test" not in workflow
     assert "/dev/kvm" not in workflow
     assert "musl" not in workflow
 
@@ -397,7 +397,7 @@ def test_nightly_scheduler_rejects_ambiguous_or_mutable_inputs(
 def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> None:
     """The runner builds nothing, but it is not therefore setup-free.
 
-    Its sibling above pins what this job must *not* do -- no `just test-full`, no
+    Its sibling above pins what this job must *not* do -- no `just test`, no
     KVM, no musl -- because it dispatches rather than builds. Nothing pinned
     what it must still provide, and a refactor that stripped it down to a
     dispatcher removed a fourth step along with those three. It looked like
@@ -412,7 +412,7 @@ def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> 
       - `actions/checkout` leaves a detached HEAD, so there is no local `main`
         for `require_local_main` to read
       - publishing the immutable source ref is a `git push` over HTTPS from a
-        detached prefix under ~/.cg that never saw the checkout's credential
+        detached prefix under cache/worktrees that never saw the checkout's credential
         header, and a token in the environment is not a git credential
 
     Both must precede the first release command, since the first one to run
@@ -513,7 +513,7 @@ def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -
 
     assert "build_system/scripts/release/fetch-release-artifacts.py" in action
     assert '--manifest-url "${{ inputs.manifest-url }}"' in action
-    assert "--cache-dir target/release-input-cache" in action
+    assert "--cache-dir cache/target/release/staging/input-cache" in action
     assert "--prune-cache" not in action
     assert "actions/cache/restore@" in action
     assert "actions/cache/save@" in action
@@ -536,16 +536,16 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "Fetch latest selected channel source manifest" in workflow
     assert "binary-channel-source" in workflow
     assert "Resolve exact candidate-after profiles" in workflow
-    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
+    assert "file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
     assert "just qualify-binaries" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-    assert "--config-root target/release-config" in workflow
+    assert "--config-root cache/target/release/staging/config" in workflow
     assert "--shared-config-root config" in workflow
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config"' in workflow
     assert '--package-file "$package"' in workflow
     assert 'build_system/packaging/linux/install-deb-runtime-dependencies.py "$package"' in workflow
-    assert "cp target/release-package-root/usr/bin/capsem*" not in workflow
-    assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
+    assert "cp cache/target/release/staging/package-root/usr/bin/capsem*" not in workflow
+    assert "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem" in workflow
 
     for forbidden in (
         "just _build-kernel",
@@ -594,7 +594,7 @@ def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
     assert "author-binary-candidate" in pairing.splitlines()[1]
     assert "binary-channel-candidate" in pairing
     assert (
-        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "manifest-url: file://${{ github.workspace }}/cache/target/binary-channel/"
         "${{ inputs.channel }}/manifest.json"
     ) in pairing
     assert "assets channel record-binary" not in pairing
@@ -624,11 +624,11 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     assert "binary-public-before-packages" in pairing
     assert "binary-public-before-profiles" in pairing
     assert (
-        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "manifest-url: file://${{ github.workspace }}/cache/target/binary-channel/"
         "${{ inputs.channel }}/manifest.json"
     ) in pairing
     assert "kind: profiles" in pairing
-    assert "target/candidate-profile-inputs" in pairing
+    assert "cache/target/candidate-profile-inputs" in pairing
     activation = workflow_step(
         WORKFLOWS / "release.yaml",
         "test-binary-pairing",
@@ -672,16 +672,16 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
-    assert "--public-manifest target/profile-public-before/profiles/manifest.json" in workflow
+    assert "--public-manifest cache/target/profile-public-before/profiles/manifest.json" in workflow
     assert "steps.profile-delta.outputs.release_needed == 'true'" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "check-asset-release-delta.py" not in workflow
     assert "just qualify-assets" in workflow
     assert "--shared-config-root config" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-    assert "--input-dir target/profile-public-before/packages" in workflow
-    assert "--binary-dir target/debug" in workflow
-    assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
+    assert "--input-dir cache/target/profile-public-before/packages" in workflow
+    assert "--binary-dir cache/target/cargo/debug" in workflow
+    assert "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem" in workflow
 
     for forbidden in (
         "just _cross-compile",
@@ -697,7 +697,7 @@ def test_profile_selection_creates_clean_runner_output_parent() -> None:
 
     create_parent = resolve.index("mkdir -p target")
     validate = resolve.index("cargo run -p capsem-admin -- validate")
-    redirect = resolve.index("> target/profile-release-selection.json")
+    redirect = resolve.index("> cache/target/profile-release-selection.json")
 
     assert create_parent < validate < redirect
 
@@ -732,7 +732,7 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
         assert artifact in pairing
     assert "--local-publication-base" in pairing
     assert "--local-publication-dir" in pairing
-    assert "target/candidate-profile-inputs" in pairing
+    assert "cache/target/candidate-profile-inputs" in pairing
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
         "CAPSEM_RELEASE_BASELINE_CHANNEL",

@@ -15,11 +15,7 @@ fn build_answer(qname: &str, ttl: u32, ip: [u8; 4]) -> Vec<u8> {
     msg.metadata.response_code = ResponseCode::NoError;
     let n = Name::from_ascii(qname).unwrap();
     msg.add_query(Query::query(n.clone(), RecordType::A));
-    msg.add_answer(Record::from_rdata(
-        n,
-        ttl,
-        RData::A(rdata::A(Ipv4Addr::from(ip))),
-    ));
+    msg.add_answer(Record::from_rdata(n, ttl, RData::A(rdata::A(Ipv4Addr::from(ip)))));
     msg.to_vec().unwrap()
 }
 
@@ -82,9 +78,7 @@ fn invalidated_when_policy_now_redirects() {
     ));
     // Cache hit must not bypass an admin's later redirect rule --
     // the next lookup must miss + invalidate.
-    assert!(cache
-        .get("anthropic.com", 1, 1, 0, &redirect_policy)
-        .is_none());
+    assert!(cache.get("anthropic.com", 1, 1, 0, &redirect_policy).is_none());
 }
 
 #[test]
@@ -102,9 +96,7 @@ fn cache_hit_patches_query_id_into_response() {
 
     // Hit with a different query id -- response bytes 0-1 must
     // reflect THAT id, not 0x1234.
-    let got = cache
-        .get("example.com", 1, 1, 0xCAFE, &policy)
-        .expect("cache hit");
+    let got = cache.get("example.com", 1, 1, 0xCAFE, &policy).expect("cache hit");
     assert_eq!(got[0], 0xCA, "bytes[0] not patched: {:#04x}", got[0]);
     assert_eq!(got[1], 0xFE, "bytes[1] not patched: {:#04x}", got[1]);
     // Sanity: rest of the response is untouched (next 2 bytes are
@@ -112,9 +104,7 @@ fn cache_hit_patches_query_id_into_response() {
     assert_eq!(&got[2..], &bytes[2..]);
 
     // Different id again, same key -- another patch.
-    let got2 = cache
-        .get("example.com", 1, 1, 0xBABE, &policy)
-        .expect("cache hit 2");
+    let got2 = cache.get("example.com", 1, 1, 0xBABE, &policy).expect("cache hit 2");
     assert_eq!(got2[0], 0xBA);
     assert_eq!(got2[1], 0xBE);
 }
@@ -264,12 +254,7 @@ fn default_capacity_and_max_ttl_match_constants() {
     let policy = allow_all();
     for i in 0..=DEFAULT_CAPACITY {
         let name = format!("h{i}.example.com");
-        cache.insert(
-            &name,
-            1,
-            1,
-            &build_answer(&format!("{name}."), 60, [1, 2, 3, 4]),
-        );
+        cache.insert(&name, 1, 1, &build_answer(&format!("{name}."), 60, [1, 2, 3, 4]));
     }
     assert_eq!(cache.len(), DEFAULT_CAPACITY);
     // First one should now be evicted.

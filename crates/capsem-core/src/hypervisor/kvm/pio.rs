@@ -44,17 +44,21 @@ impl PioBus {
             }
         }
         devices.push(PioEntry { base, size, device });
+        drop(devices);
         Ok(())
     }
 
     /// Read from a port. If no device is registered, data is zeroed.
     pub fn read(&self, port: u16, data: &mut [u8]) {
         let devices = self.devices.read().unwrap();
-        for entry in devices.iter() {
-            if port >= entry.base && port < entry.base + entry.size {
-                entry.device.read(port - entry.base, data);
-                return;
-            }
+        let target = devices
+            .iter()
+            .find(|entry| port >= entry.base && port < entry.base + entry.size)
+            .map(|entry| (Arc::clone(&entry.device), port - entry.base));
+        drop(devices);
+        if let Some((device, offset)) = target {
+            device.read(offset, data);
+            return;
         }
         data.fill(0xFF); // default: all bits high (no device)
     }
@@ -62,11 +66,13 @@ impl PioBus {
     /// Write to a port. If no device is registered, the write is silently ignored.
     pub fn write(&self, port: u16, data: &[u8]) {
         let devices = self.devices.read().unwrap();
-        for entry in devices.iter() {
-            if port >= entry.base && port < entry.base + entry.size {
-                entry.device.write(port - entry.base, data);
-                return;
-            }
+        let target = devices
+            .iter()
+            .find(|entry| port >= entry.base && port < entry.base + entry.size)
+            .map(|entry| (Arc::clone(&entry.device), port - entry.base));
+        drop(devices);
+        if let Some((device, offset)) = target {
+            device.write(offset, data);
         }
     }
 }

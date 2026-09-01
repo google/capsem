@@ -79,9 +79,19 @@ def _tracked_line_counts(
         if not raw:
             continue
         relative = Path(raw.decode())
-        source = (root / relative).read_text(encoding="utf-8")
-        if relative.suffix in suffixes or source.startswith("#!"):
-            counts[relative.as_posix()] = len(source.splitlines())
+        path = root / relative
+        if not path.is_file():
+            continue
+        if relative.suffix in suffixes:
+            source = path.read_text(encoding="utf-8")
+        elif relative.suffix:
+            continue
+        else:
+            raw_source = path.read_bytes()
+            if not raw_source.startswith(b"#!"):
+                continue
+            source = raw_source.decode("utf-8")
+        counts[relative.as_posix()] = len(source.splitlines())
     return dict(sorted(counts.items()))
 
 
@@ -105,9 +115,17 @@ def test_oversized_sources_match_the_exact_debt_ratchet(family: str) -> None:
     if actual == expected:
         return
 
-    grew = {p: (expected[p], n) for p, n in actual.items() if p in expected and n > expected[p]}
+    grew = {
+        p: (expected[p], n)
+        for p, n in actual.items()
+        if p in expected and n > expected[p]
+    }
     added = sorted(set(actual) - set(expected))
-    shrank = {p: (expected[p], n) for p, n in actual.items() if p in expected and n < expected[p]}
+    shrank = {
+        p: (expected[p], n)
+        for p, n in actual.items()
+        if p in expected and n < expected[p]
+    }
     gone = sorted(set(expected) - set(actual))
 
     detail = [f"{family}: ceiling {rule.max_lines}"]
@@ -129,6 +147,23 @@ def test_oversized_sources_match_the_exact_debt_ratchet(family: str) -> None:
 
 
 @pytest.mark.parametrize("family", FAMILIES)
+def test_sources_stay_below_the_family_hard_limit(family: str) -> None:
+    """A completed cleanup milestone cannot return as inventoried debt."""
+    rule = getattr(BOUNDARY, family)
+    if rule.must_stay_below_lines is None:
+        return
+    violations = {
+        path: lines
+        for path, lines in _tracked_line_counts(rule.roots, rule.suffixes).items()
+        if lines >= rule.must_stay_below_lines
+    }
+    assert not violations, (
+        SHAPE_RATIONALE
+        + f"\n{family}: sources must stay below {rule.must_stay_below_lines} lines: {violations}"
+    )
+
+
+@pytest.mark.parametrize("family", FAMILIES)
 def test_only_tracked_first_party_files_enter_the_inventory(family: str) -> None:
     """Every inventory entry names a file `git ls-files` actually reports.
 
@@ -138,7 +173,9 @@ def test_only_tracked_first_party_files_enter_the_inventory(family: str) -> None
     rule = getattr(BOUNDARY, family)
     tracked = _tracked_line_counts(rule.roots, rule.suffixes)
     unknown = sorted(set(rule.oversized_line_counts) - set(tracked))
-    assert not unknown, SHAPE_RATIONALE + f"\n{family}: inventory names untracked files: {unknown}"
+    assert not unknown, (
+        SHAPE_RATIONALE + f"\n{family}: inventory names untracked files: {unknown}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,24 +197,40 @@ def test_only_tracked_first_party_programs_are_measured(tmp_path: Path) -> None:
     (tmp_path / "scripts").mkdir()
     (tmp_path / "vendor").mkdir()
     (tmp_path / "scripts" / "module.py").write_text("one\ntwo\n", encoding="utf-8")
-    (tmp_path / "scripts" / "installer").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (tmp_path / "scripts" / "installer").write_text(
+        "#!/bin/sh\nexit 0\n", encoding="utf-8"
+    )
     (tmp_path / "scripts" / "data.xml").write_text("<data />\n", encoding="utf-8")
+    (tmp_path / "scripts" / "fixture.bin").write_bytes(b"\xff\x00\xfe")
+    (tmp_path / "scripts" / "deleted.py").write_text("gone\n", encoding="utf-8")
     (tmp_path / "scripts" / "generated.py").write_text("generated\n", encoding="utf-8")
     (tmp_path / "vendor" / "tool.py").write_text("vendored\n", encoding="utf-8")
 
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "add", "scripts/module.py", "scripts/installer", "scripts/data.xml", "vendor"],
+        [
+            "git",
+            "add",
+            "scripts/module.py",
+            "scripts/installer",
+            "scripts/data.xml",
+            "scripts/fixture.bin",
+            "scripts/deleted.py",
+            "vendor",
+        ],
         cwd=tmp_path,
         check=True,
     )
+    (tmp_path / "scripts" / "deleted.py").unlink()
 
     measured = _tracked_line_counts((("scripts",)), (".py", ".sh"), root=tmp_path)
     assert measured == {"scripts/installer": 2, "scripts/module.py": 2}
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-def test_the_ratchet_notices_a_file_growing(family: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_ratchet_notices_a_file_growing(
+    family: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Break it once: an inventoried file gaining a line must fail.
 
     Asserted by substituting the measurement rather than by editing a real
@@ -225,6 +278,38 @@ def test_the_ratchet_notices_a_new_file_over_the_ceiling(family: str) -> None:
 
 #: Captured before the negative tests swap it out.
 _REAL_TRACKED_LINE_COUNTS = _tracked_line_counts
+
+
+def test_the_hard_limit_notices_a_rust_file_regression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break it once: even an inventoried Rust file cannot return to 3,000 lines."""
+    rule = BOUNDARY.rust
+    assert rule.must_stay_below_lines is not None
+    inflated = dict(_tracked_line_counts(rule.roots, rule.suffixes))
+    target = next(iter(rule.oversized_line_counts))
+    inflated[target] = rule.must_stay_below_lines
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_tracked_line_counts",
+        lambda *_args, **_kwargs: inflated,
+    )
+    with pytest.raises(AssertionError, match="sources must stay below"):
+        test_sources_stay_below_the_family_hard_limit("rust")
+
+
+def test_the_hard_limit_cannot_be_bypassed_with_a_debt_entry() -> None:
+    """Break it once: raising exact debt cannot admit a file at the hard limit."""
+    from capsem_builder.gate.sourcecontractschema import ScriptSizeConfig
+
+    with pytest.raises(ValueError, match="must stay below the 3000-line hard limit"):
+        ScriptSizeConfig(
+            roots=("crates",),
+            suffixes=(".rs",),
+            max_lines=1000,
+            must_stay_below_lines=3000,
+            oversized_line_counts={"crates/invented.rs": 3000},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +374,16 @@ def test_oversized_shell_bodies_match_the_exact_debt_ratchet() -> None:
         return
 
     added = sorted(set(actual) - set(expected))
-    grew = {n: (expected[n], v) for n, v in actual.items() if n in expected and v > expected[n]}
-    shrank = {n: (expected[n], v) for n, v in actual.items() if n in expected and v < expected[n]}
+    grew = {
+        n: (expected[n], v)
+        for n, v in actual.items()
+        if n in expected and v > expected[n]
+    }
+    shrank = {
+        n: (expected[n], v)
+        for n, v in actual.items()
+        if n in expected and v < expected[n]
+    }
     gone = sorted(set(expected) - set(actual))
 
     detail = [f"ceiling {rule.max_lines} executable lines"]

@@ -61,10 +61,7 @@ pub fn validate_vm_name(name: &str) -> Result<()> {
     if !name.chars().next().unwrap().is_ascii_alphanumeric() {
         return Err(anyhow!("VM name must start with a letter or digit"));
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err(anyhow!(
             "VM name must contain only letters, digits, hyphens, and underscores"
         ));

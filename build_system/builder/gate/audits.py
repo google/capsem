@@ -252,6 +252,16 @@ def clippy(config: GateConfig) -> Step:
     )
 
 
+def rust_format(config: GateConfig) -> Step:
+    """Reject Rust formatting drift before any workspace compilation."""
+    return step(
+        "rust-format",
+        Run(list(config.modules.rust_format)),
+        kind=Kind.LINT,
+        speed=Speed.FAST,
+    )
+
+
 def release_channel(config: GateConfig) -> Step:
     """Build a release channel twice and prove the two agree.
 

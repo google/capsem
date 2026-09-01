@@ -53,13 +53,15 @@ impl CertAuthority {
         // Slow path: mint and cache under write lock.
         let mut cache = self.cache.write().unwrap();
         // Double-check after acquiring write lock (another thread may have raced).
-        if let Some(key) = cache.get(domain) {
-            return Ok(Arc::clone(key));
+        if let Some(key) = cache.get(domain).map(Arc::clone) {
+            drop(cache);
+            return Ok(key);
         }
 
         let certified_key = self.mint_leaf(domain)?;
         let arc = Arc::new(certified_key);
         cache.insert(domain.to_string(), Arc::clone(&arc));
+        drop(cache);
         Ok(arc)
     }
 
@@ -73,9 +75,7 @@ impl CertAuthority {
         let leaf_key = KeyPair::generate()?;
 
         let mut params = CertificateParams::new(vec![domain.to_string()])?;
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, domain);
+        params.distinguished_name.push(rcgen::DnType::CommonName, domain);
         params.subject_alt_names = vec![SanType::DnsName(domain.try_into()?)];
         params.not_before = time::Date::from_calendar_date(2026, time::Month::January, 1)
             .unwrap()

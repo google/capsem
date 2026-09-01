@@ -85,11 +85,7 @@ impl TraceState {
     /// Register workspace file paths found in model-emitted tool-call
     /// arguments. The fs monitor later uses this to attribute ordinary
     /// workspace writes to the model/tool trace that caused them.
-    pub fn register_tool_file_hints<'a>(
-        &mut self,
-        trace_id: &str,
-        arguments: impl IntoIterator<Item = &'a str>,
-    ) {
+    pub fn register_tool_file_hints<'a>(&mut self, trace_id: &str, arguments: impl IntoIterator<Item = &'a str>) {
         for arguments in arguments {
             for path in extract_workspace_file_hints(arguments) {
                 self.file_hints.insert(path.clone(), trace_id.to_string());
@@ -127,9 +123,7 @@ fn extract_workspace_file_hints(arguments: &str) -> Vec<String> {
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(arguments) {
         collect_json_file_hints(&json, &mut paths);
     }
-    for token in arguments
-        .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | ',' | ')' | '('))
-    {
+    for token in arguments.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | ',' | ')' | '(')) {
         if let Some(path) = normalize_workspace_path_hint(token) {
             paths.push(path);
         }
@@ -145,9 +139,9 @@ fn collect_json_file_hints(value: &serde_json::Value, paths: &mut Vec<String>) {
             if let Some(path) = normalize_workspace_path_hint(value) {
                 paths.push(path);
             }
-            for token in value.split(|c: char| {
-                c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | ',' | ')' | '(')
-            }) {
+            for token in
+                value.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | ',' | ')' | '('))
+            {
                 if let Some(path) = normalize_workspace_path_hint(token) {
                     paths.push(path);
                 }

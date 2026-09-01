@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::policy::NetworkMechanics;
 use capsem_core::net::policy_config::{
     ActiveProfileFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
 };
+use capsem_proto::mcp_contracts::McpServerDef;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -39,8 +39,8 @@ impl RuntimeProfileSource {
     pub(crate) fn load(&self) -> Result<RuntimeProfileConfig> {
         let content = std::fs::read_to_string(&self.active_profile_path)
             .with_context(|| format!("read {}", self.active_profile_path.display()))?;
-        let active: ActiveProfileFile = toml::from_str(&content)
-            .with_context(|| format!("parse {}", self.active_profile_path.display()))?;
+        let active: ActiveProfileFile =
+            toml::from_str(&content).with_context(|| format!("parse {}", self.active_profile_path.display()))?;
         RuntimeProfileConfig::from_active(active, self.active_profile_path.clone())
     }
 }
@@ -54,7 +54,7 @@ impl RuntimeProfileConfig {
         let (profile_settings, corp_settings) = active.merged_policy_inputs();
         let merged = MergedPolicies::from_files(&profile_settings, &corp_settings);
         let mut network = merged.network;
-        active.network.apply_to_policy(&mut network);
+        capsem_core::net::policy_config::apply_network_config(&active.network, &mut network);
         let security_rules = active
             .compile_security_rule_set()
             .map_err(anyhow::Error::msg)
@@ -69,12 +69,9 @@ impl RuntimeProfileConfig {
             .upstreams
             .iter()
             .map(|upstream| {
-                upstream.parse::<SocketAddr>().with_context(|| {
-                    format!(
-                        "parse DNS upstream {upstream:?} from {}",
-                        active_profile_path.display()
-                    )
-                })
+                upstream
+                    .parse::<SocketAddr>()
+                    .with_context(|| format!("parse DNS upstream {upstream:?} from {}", active_profile_path.display()))
             })
             .collect::<Result<Vec<_>>>()?;
 

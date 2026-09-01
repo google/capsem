@@ -18,7 +18,7 @@ config/profiles/<id>/profile.toml
   -> capsem-admin image build
   -> generated backend image spec
   -> capsem-builder
-  -> target/assets/{arch}/
+  -> cache/target/assets/{arch}/
 ```
 
 Two build templates exist:
@@ -33,7 +33,7 @@ The build process also cross-compiles guest agent binaries (`capsem-pty-agent`, 
 ### Output layout
 
 ```
-target/assets/
+cache/target/assets/
   arm64/
     vmlinuz
     initrd.img
@@ -52,19 +52,19 @@ target/assets/
 |---------|-------------|
 | `just build-assets code [arch]` | Full profile-derived build: kernel + rootfs + checksums |
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
-| `capsem-admin manifest generate target/assets` | Generate `target/assets/manifest.json` from the repository asset directory |
-| `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `target/assets/manifest.json` |
-| `capsem-admin assets channel build` | Generate `target/distribution` with `assets/<channel>/manifest.json` for release.capsem.org |
+| `capsem-admin manifest generate cache/target/assets` | Generate `cache/target/assets/manifest.json` from the repository asset directory |
+| `capsem-admin profile materialize` | Generate `cache/target/config` from source `config/` plus `cache/target/assets/manifest.json` |
+| `capsem-admin assets channel build` | Generate `cache/target/release/distribution` with `assets/<channel>/manifest.json` for release.capsem.org |
 | `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
 
 `config/` is checked-in source material: profile, corp, settings, rule files,
 and support templates. The current build's runtime config is generated under
-`target/config/`. Local dev, smoke tests, CI, and release packaging all use the
+`cache/target/config/`. Local dev, smoke tests, CI, and release packaging all use the
 same profile-derived build rail; there is no dev-only profile patcher.
 
 ## Manifest Format
 
-The manifest (`target/assets/manifest.json`, format 2) is a single top-level file covering every arch. Asset versions and binary versions are tracked independently with compatibility ranges (`min_binary`, `min_assets`):
+The manifest (`cache/target/assets/manifest.json`, format 2) is a single top-level file covering every arch. Asset versions and binary versions are tracked independently with compatibility ranges (`min_binary`, `min_assets`):
 
 ```json
 {
@@ -102,8 +102,8 @@ The manifest (`target/assets/manifest.json`, format 2) is a single top-level fil
 ```
 
 The public asset channel is a deployed view of that same manifest. The generated
-Cloudflare Pages root is `target/distribution/`, with the machine manifest at
-`target/distribution/assets/stable/manifest.json`. After deployment the URL
+Cloudflare Pages root is `cache/target/release/distribution/`, with the machine manifest at
+`cache/target/release/distribution/assets/stable/manifest.json`. After deployment the URL
 is `https://release.capsem.org/assets/stable/manifest.json`.
 The release-channel deploy smoke verifies public `Cache-Control` headers after
 Cloudflare publishes the generated site: mutable pointers (`/`, `/health.json`,
@@ -163,7 +163,7 @@ After `_pack-initrd` updates the manifest, `_materialize-config` runs
 `capsem-admin profile materialize` and writes:
 
 ```
-target/config/
+cache/target/config/
   settings.toml
   corp.toml
   profiles/code/profile.toml # selected arch assets rewritten from manifest
@@ -184,10 +184,10 @@ capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
 capsem-admin manifest check /path/to/assets/manifest.json --json
 bash build_system/packaging/macos/build-pkg.sh \
   --manifest file:///path/to/assets/manifest.json \
-  target/release/bundle/macos/Capsem.app \
-  target/release \
+  cache/target/cargo/release/bundle/macos/Capsem.app \
+  cache/target/release \
   /path/to/assets \
-  target/config \
+  cache/target/config \
   1.3.corp.1
 ```
 
@@ -204,7 +204,7 @@ channels use `capsem update --assets --manifest <URL>`.
 
 Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic. Profile/corp configuration selects asset URLs, and BLAKE3 hashes verify the bytes before boot.
 
-At boot, the service loads profiles from `target/config/profiles` in dev/test
+At boot, the service loads profiles from `cache/target/config/profiles` in dev/test
 and from the installed profile directory in packaged runs. The selected
 profile's asset descriptors are the runtime contract:
 
@@ -290,8 +290,8 @@ Assets are verified at multiple points:
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
 Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes are
-copied from `target/assets/manifest.json` into
-`target/config/profiles/code/profile.toml` by the shared
+copied from `cache/target/assets/manifest.json` into
+`cache/target/config/profiles/code/profile.toml` by the shared
 `capsem-admin profile materialize` rail. Runtime then reads the generated
 profile, not the source profile.
 
@@ -306,7 +306,7 @@ flowchart LR
     subgraph Build
         PROFILE["config/profiles/<id>/profile.toml"] --> Admin["capsem-admin image build"]
         Admin --> Builder[capsem-builder]
-        Builder --> Assets[target/assets/arm64/]
+        Builder --> Assets[cache/target/assets/arm64/]
         Builder --> Checksums[manifest.json]
     end
 

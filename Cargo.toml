@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-assets",
+    "crates/capsem-config",
+    "crates/capsem-credentials",
+    "crates/capsem-foundation",
     "crates/capsem-proto",
     "crates/capsem-core",
     "crates/capsem-app",
@@ -73,6 +77,7 @@ strip = "symbols"
 
 [workspace.lints.rust]
 warnings = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 # clippy 1.95 introduced three lints that flag patterns we use throughout
 # the codebase intentionally. Allow them workspace-wide rather than
@@ -133,6 +138,16 @@ zero_sized_map_values = "deny"
 format_collect = "deny"
 option_option = "deny"
 range_plus_one = "deny"
+# Keep lock lifetimes visible and bounded. This catches guards that silently
+# span logging, filesystem work, another lock, or an await point.
+significant_drop_tightening = "deny"
+# Ownership mistakes that compile but hide unnecessary allocation or retain
+# data longer than its intended handoff boundary.
+redundant_clone = "deny"
+needless_collect = "deny"
+# Async state machines run beside VM workloads; an accidentally captured large
+# value must be reviewed instead of becoming permanent stack pressure.
+large_futures = "deny"
 
 [workspace.dependencies]
 anyhow = "1"

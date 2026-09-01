@@ -3,9 +3,9 @@
 use super::*;
 use serde_json::json;
 
-// -----------------------------------------------------------------------
+mod service_boundary;
+
 // Param serde roundtrips
-// -----------------------------------------------------------------------
 
 #[test]
 fn create_params_camel_case() {
@@ -66,18 +66,9 @@ fn profile_scoped_mcp_params_carry_requested_profile() {
     }))
     .unwrap();
 
-    assert_eq!(
-        requested_profile(servers.profile.as_deref()).unwrap(),
-        "co-work"
-    );
-    assert_eq!(
-        requested_profile(tools.profile.as_deref()).unwrap(),
-        "co-work"
-    );
-    assert_eq!(
-        requested_profile(call.profile.as_deref()).unwrap(),
-        "co-work"
-    );
+    assert_eq!(requested_profile(servers.profile.as_deref()).unwrap(), "co-work");
+    assert_eq!(requested_profile(tools.profile.as_deref()).unwrap(), "co-work");
+    assert_eq!(requested_profile(call.profile.as_deref()).unwrap(), "co-work");
 }
 
 #[test]
@@ -344,10 +335,7 @@ fn grep_lines_brackets_literal() {
 #[test]
 fn grep_lines_unicode() {
     let text = "normal line\nline with \u{00e9}m\u{00f8}ji\nanother";
-    assert_eq!(
-        grep_lines(text, "\u{00e9}m\u{00f8}"),
-        "line with \u{00e9}m\u{00f8}ji"
-    );
+    assert_eq!(grep_lines(text, "\u{00e9}m\u{00f8}"), "line with \u{00e9}m\u{00f8}ji");
 }
 
 #[test]
@@ -487,11 +475,7 @@ fn uds_path_override_logic() {
 #[test]
 fn tool_router_registers_all_tools() {
     let tools = CapsemHandler::tool_router();
-    let names: Vec<String> = tools
-        .list_all()
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
+    let names: Vec<String> = tools.list_all().iter().map(|t| t.name.to_string()).collect();
     let expected = [
         "capsem_list",
         "capsem_create",
@@ -522,11 +506,7 @@ fn tool_router_registers_all_tools() {
     for name in &expected {
         assert!(names.contains(&name.to_string()), "Missing tool: {name}");
     }
-    assert_eq!(
-        names.len(),
-        expected.len(),
-        "Extra tools registered: {names:?}"
-    );
+    assert_eq!(names.len(), expected.len(), "Extra tools registered: {names:?}");
 }
 
 #[test]
@@ -540,12 +520,7 @@ fn tool_descriptions_do_not_expose_old_lifecycle_semantics() {
         concat!("un", "named"),
     ];
     for tool in tools.list_all() {
-        let haystack = format!(
-            "{} {}",
-            tool.name,
-            tool.description.as_deref().unwrap_or_default()
-        )
-        .to_lowercase();
+        let haystack = format!("{} {}", tool.name, tool.description.as_deref().unwrap_or_default()).to_lowercase();
         for needle in banned {
             assert!(
                 !haystack.contains(needle),
@@ -594,10 +569,7 @@ fn path_construction_with_empty_id() {
 fn path_construction_with_slashes() {
     let id = "vm/../../secret";
     let path = format!("/vms/{}/info", id);
-    assert!(
-        path.contains("../"),
-        "Path traversal attempt preserved in URL"
-    );
+    assert!(path.contains("../"), "Path traversal attempt preserved in URL");
 }
 
 // -----------------------------------------------------------------------
@@ -959,10 +931,7 @@ fn resolve_uds_path_falls_back_to_run_dir() {
 
 #[test]
 fn resolve_run_dir_prefers_override() {
-    assert_eq!(
-        resolve_run_dir("/home/u", Some("/tmp/run")),
-        PathBuf::from("/tmp/run"),
-    );
+    assert_eq!(resolve_run_dir("/home/u", Some("/tmp/run")), PathBuf::from("/tmp/run"),);
 }
 
 #[test]
@@ -972,7 +941,7 @@ fn resolve_run_dir_default_delegates_to_capsem_core() {
     // assertion is that it matches what capsem-core returns.
     assert_eq!(
         resolve_run_dir("/ignored", None),
-        capsem_core::paths::capsem_run_dir(),
+        capsem_foundation::paths::capsem_run_dir(),
     );
 }
 
@@ -1000,10 +969,7 @@ fn query_string_single_param_no_trailing_amp() {
 
 #[test]
 fn query_string_multiple_params_separated_by_amp() {
-    let q = vec![
-        ("since", Some("5m".to_string())),
-        ("limit", Some("3".to_string())),
-    ];
+    let q = vec![("since", Some("5m".to_string())), ("limit", Some("3".to_string()))];
     assert_eq!(query_string(&q), "?since=5m&limit=3");
 }
 
@@ -1011,11 +977,7 @@ fn query_string_multiple_params_separated_by_amp() {
 fn query_string_skips_none_values() {
     // Only the middle is set -- pre-fix code emitted "?since=&limit=10&"
     // with a trailing "&" plus an empty since= token. Helper drops Nones.
-    let q: Vec<(&str, Option<String>)> = vec![
-        ("since", None),
-        ("limit", Some("10".to_string())),
-        ("id", None),
-    ];
+    let q: Vec<(&str, Option<String>)> = vec![("since", None), ("limit", Some("10".to_string())), ("id", None)];
     assert_eq!(query_string(&q), "?limit=10");
 }
 

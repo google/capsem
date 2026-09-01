@@ -4,11 +4,9 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 
-use crate::mcp::aggregator::{
-    AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult,
-};
-use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
 use crate::net::policy_config::SecurityRuleSet;
+use capsem_proto::mcp_aggregator::{AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult};
+use capsem_proto::mcp_contracts::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
 
 use super::*;
 
@@ -30,7 +28,7 @@ where
     F: FnMut(AggregatorRequest) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = AggregatorResult> + Send + 'static,
 {
-    let (aggregator, mut rx) = crate::mcp::aggregator::AggregatorClient::channel(16);
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(16);
     let calls = Arc::new(Mutex::new(Vec::new()));
     let calls_h = Arc::clone(&calls);
     tokio::spawn(async move {
@@ -56,13 +54,9 @@ where
     (
         Arc::new(McpEndpointState::new(
             aggregator,
-            Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-                Vec::new(),
-            )))),
+            Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
             Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
-            Arc::new(tokio::sync::Semaphore::new(
-                crate::mcp::default_inflight_cap(),
-            )),
+            Arc::new(tokio::sync::Semaphore::new(crate::mcp::default_inflight_cap())),
             timeouts,
         )),
         calls,
@@ -131,10 +125,7 @@ async fn endpoint_dispatches_every_supported_method_family() {
         .handle_request(&json_request("tools/list", serde_json::json!({})))
         .await
         .unwrap();
-    assert_eq!(
-        tools.result.as_ref().unwrap()["tools"][0]["name"],
-        "local__echo"
-    );
+    assert_eq!(tools.result.as_ref().unwrap()["tools"][0]["name"], "local__echo");
 
     let call = endpoint
         .handle_request(&json_request(
@@ -161,19 +152,13 @@ async fn endpoint_dispatches_every_supported_method_family() {
         ))
         .await
         .unwrap();
-    assert_eq!(
-        resource.result.as_ref().unwrap()["uri"],
-        "capsem://local/readme"
-    );
+    assert_eq!(resource.result.as_ref().unwrap()["uri"], "capsem://local/readme");
 
     let prompts = endpoint
         .handle_request(&json_request("prompts/list", serde_json::json!({})))
         .await
         .unwrap();
-    assert_eq!(
-        prompts.result.as_ref().unwrap()["prompts"][0]["name"],
-        "local__review"
-    );
+    assert_eq!(prompts.result.as_ref().unwrap()["prompts"][0]["name"], "local__review");
 
     let prompt = endpoint
         .handle_request(&json_request(
@@ -206,11 +191,7 @@ async fn endpoint_maps_aggregator_errors_for_each_method_family() {
             serde_json::json!({"name": "local__echo", "arguments": {}}),
             "tool call failed",
         ),
-        (
-            "resources/list",
-            serde_json::json!({}),
-            "resources list failed",
-        ),
+        ("resources/list", serde_json::json!({}), "resources list failed"),
         (
             "resources/read",
             serde_json::json!({"uri": "capsem://local/readme"}),
@@ -231,16 +212,10 @@ async fn endpoint_maps_aggregator_errors_for_each_method_family() {
             }
         });
 
-        let response = endpoint
-            .handle_request(&json_request(method, params))
-            .await
-            .unwrap();
+        let response = endpoint.handle_request(&json_request(method, params)).await.unwrap();
 
         let message = &response.error.as_ref().unwrap().message;
-        assert!(
-            message.contains(expected),
-            "expected {expected:?} in {message:?}"
-        );
+        assert!(message.contains(expected), "expected {expected:?} in {message:?}");
         assert!(message.contains("boom"));
     }
 }
@@ -255,17 +230,10 @@ async fn endpoint_rejects_missing_required_params_before_dispatch() {
 
     for (method, params, expected) in [
         ("tools/call", serde_json::json!({}), "missing tool name"),
-        (
-            "resources/read",
-            serde_json::json!({}),
-            "missing resource URI",
-        ),
+        ("resources/read", serde_json::json!({}), "missing resource URI"),
         ("prompts/get", serde_json::json!({}), "missing prompt name"),
     ] {
-        let response = endpoint
-            .handle_request(&json_request(method, params))
-            .await
-            .unwrap();
+        let response = endpoint.handle_request(&json_request(method, params)).await.unwrap();
         let error = response.error.as_ref().unwrap();
         assert_eq!(error.code, -32602);
         assert!(error.message.contains(expected));
@@ -305,9 +273,7 @@ async fn endpoint_times_out_tool_calls_and_records_catalog_ceiling() {
         .await;
 
     assert_eq!(
-        endpoint
-            .timeout_for_request("tools/call", Some("local__slow"))
-            .await,
+        endpoint.timeout_for_request("tools/call", Some("local__slow")).await,
         Duration::from_millis(25)
     );
 

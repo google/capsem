@@ -3,7 +3,7 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 23
+count = 24
 approved = [
   # Measuring is a public verb now. It had no entry point at all: nine
   # Criterion targets existed and nothing ran them, and a release failed on a
@@ -15,6 +15,7 @@ approved = [
   "build-all",
   "build-assets",
   "build-docs",
+  "cache",
   "dev",
   "doctor",
   "exec",
@@ -31,7 +32,7 @@ approved = [
   "replay-release-lane",
   "run-service",
   "shell",
-  "test-full",
+  "test",
   "test-linux-rust",
 ]
 

@@ -116,9 +116,7 @@ impl FuseProcessor {
         };
 
         if attr_in.valid & FATTR_MODE != 0 {
-            if let Err(e) =
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode))
-            {
+            if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode)) {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }

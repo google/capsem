@@ -10,7 +10,7 @@ Exercises:
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
-    uv run --project build_system --frozen python build_system/scripts/test/integration_test.py              # uses target/debug/capsem
+    uv run --project build_system --frozen python build_system/scripts/test/integration_test.py              # uses cache/target/cargo/debug/capsem
     uv run --project build_system --frozen python build_system/scripts/test/integration_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this is black-box product proof. Do not close a release gate
@@ -51,7 +51,7 @@ def _integration_home() -> Path:
     """
     if env := os.environ.get("CAPSEM_INTEGRATION_HOME"):
         return Path(env)
-    return PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
+    return PROJECT_ROOT / "cache" / "target" / f"integration-capsem-home-{os.getpid()}"
 
 
 INTEGRATION_HOME = _integration_home()
@@ -93,7 +93,7 @@ def default_materialized_profiles_dir() -> str:
     """Return the generated profile catalog used by packages, CI, and install."""
     return os.environ.get(
         "CAPSEM_PROFILES_DIR",
-        str(PROJECT_ROOT / "target" / "config" / "profiles"),
+        str(PROJECT_ROOT / "cache" / "target" / "config" / "profiles"),
     )
 
 
@@ -104,7 +104,7 @@ def _profile_env() -> dict[str, str]:
 def _service_assets_dir(assets_dir: str) -> str:
     """Use the gate-owned host architecture selector when given an asset tree.
 
-    The asset gate points ``target/assets/current`` at ``config.host_arch()`` after
+    The asset gate points ``cache/target/assets/current`` at ``config.host_arch()`` after
     merging both architecture lanes. A release input may instead already be
     an architecture-specific directory, so retain that direct-root shape.
     """
@@ -312,8 +312,8 @@ def _start_service_with_test_config(
     `tests/fixtures/config/integration/settings.toml`.
     """
     project_root = PROJECT_ROOT
-    service_bin = project_root / "target/debug/capsem-service"
-    process_bin = project_root / "target/debug/capsem-process"
+    service_bin = project_root / "cache/target/cargo/debug/capsem-service"
+    process_bin = project_root / "cache/target/cargo/debug/capsem-process"
     test_home = INTEGRATION_HOME
     test_home.mkdir(parents=True, exist_ok=True)
     SERVICE_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
@@ -331,7 +331,7 @@ def _start_service_with_test_config(
         "RUST_LOG": "info",
     }
 
-    log_path = project_root / "target/integration-test-service.log"
+    log_path = project_root / "cache/containers/logs/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
@@ -1147,13 +1147,13 @@ def main():
     )
     parser.add_argument(
         "--binary",
-        default="target/debug/capsem",
-        help="Path to the capsem binary (default: target/debug/capsem)",
+        default="cache/target/cargo/debug/capsem",
+        help="Path to the capsem binary (default: cache/target/cargo/debug/capsem)",
     )
     parser.add_argument(
         "--assets",
-        default="target/assets",
-        help="Path to VM assets directory (default: target/assets)",
+        default="cache/target/assets",
+        help="Path to VM assets directory (default: cache/target/assets)",
     )
     parser.add_argument(
         "--profile",

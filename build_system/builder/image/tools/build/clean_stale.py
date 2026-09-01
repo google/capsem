@@ -27,12 +27,16 @@ TMP_DIR_MAX_AGE_S = 60 * 60  # 1 hour
 TEST_TMP_BUDGET_GB = 24.0
 CARGO_AGGRESSIVE_DAYS = 2
 CARGO_MODERATE_DAYS = 3
-CARGO_PROFILES = ("target/debug", "target/release", "target/llvm-cov-target/debug")
+CARGO_PROFILES = (
+    "cache/target/cargo/debug",
+    "cache/target/cargo/release",
+    "cache/target/cargo/coverage/debug",
+)
 CARGO_DEPS_EXTS = (".o", ".rlib", ".rmeta", ".d", ".dylib", ".so", ".a")
 CARGO_KIND_DIRS = ("build", ".fingerprint", "incremental")
 # Per-kind size caps enforced AFTER the mtime-based prune. The age prune
 # alone is insufficient: an active dev session touches every dep/incremental
-# dir on every build, so the 2-3 day age threshold never fires and target/
+# dir on every build, so the 2-3 day age threshold never fires and cache/target/
 # grows unbounded (72 GB observed; 23 GB alone in incremental/). Budgets
 # picked empirically to retain a useful warm cache without letting the
 # footprint run away.
@@ -100,9 +104,9 @@ def _rm(path: Path, dry_run: bool) -> bool:
 
 
 def clean_rootfs_scratch(root: Path, dry_run: bool, verbose: bool) -> StageResult:
-    """Stage A: remove `*/debug/rootfs.*`, `*/release/rootfs.*`, and `_up_` dirs under target/."""
+    """Stage A: remove `*/debug/rootfs.*`, `*/release/rootfs.*`, and `_up_` dirs under cache/target/."""
     start = time.monotonic()
-    target = root / "target"
+    target = root / "cache" / "target" / "cargo"
     if not target.is_dir():
         return StageResult("rootfs", 0, time.monotonic() - start)
 
@@ -399,7 +403,7 @@ def _prune_to_size_budget(
 
 
 def _target_release_has_old_content(target: Path, older_than_days: int = 1) -> bool:
-    """Cheap heuristic: does target/release/ hold any file older than N days at depth <=2?"""
+    """Cheap heuristic: does cache/target/cargo/release/ hold any file older than N days at depth <=2?"""
     release = target / "release"
     if not release.is_dir():
         return False
@@ -440,9 +444,9 @@ def _target_release_has_old_content(target: Path, older_than_days: int = 1) -> b
 def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResult:
     """Stage D: age-based prune of cargo deps/, build/, .fingerprint/, incremental/."""
     start = time.monotonic()
-    target = root / "target"
+    target = root / "cache" / "target" / "cargo"
     if not target.is_dir():
-        return StageResult("cargo", 0, time.monotonic() - start, "target/ absent")
+        return StageResult("cargo", 0, time.monotonic() - start, "cache/target/ absent")
     bytes_before = target_size_bytes(root) or 0
 
     aggressive = _target_release_has_old_content(target, older_than_days=1)
@@ -500,7 +504,7 @@ def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResu
             except OSError:
                 pass
 
-    # Aggressive: drop target/doc if nothing recent in it.
+    # Aggressive: drop cache/target/doc if nothing recent in it.
     if aggressive:
         doc = target / "doc"
         if doc.is_dir() and _dir_has_no_recent(doc, cutoff):
@@ -572,9 +576,9 @@ def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResu
 def clean_target_transients(root: Path, dry_run: bool, verbose: bool) -> StageResult:
     """Remove old reproducible proof/debug staging without touching hot caches."""
     start = time.monotonic()
-    target = root / "target"
+    target = root / "cache" / "target"
     if not target.is_dir():
-        return StageResult("target-tmp", 0, time.monotonic() - start, "target/ absent")
+        return StageResult("target-tmp", 0, time.monotonic() - start, "cache/target/ absent")
 
     cutoff = time.time() - TARGET_TRANSIENT_MAX_AGE_S
     candidates: list[Path] = []
@@ -647,7 +651,7 @@ def _dir_has_no_recent(root: Path, cutoff: float) -> bool:
 
 
 def target_size_bytes(root: Path) -> int | None:
-    target = root / "target"
+    target = root / "cache" / "target"
     if not target.is_dir():
         return None
     try:
@@ -694,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-tmp", action="store_true")
     parser.add_argument(
         "--report",
-        help="JSONL cleanup ledger (default: <root>/target/storage/host-cleanup.jsonl)",
+        help="JSONL cleanup ledger (default: <root>/cache/target/storage/host-cleanup.jsonl)",
     )
     args = parser.parse_args(argv)
 
@@ -736,12 +740,12 @@ def main(argv: list[str] | None = None) -> int:
     target_after = target_size_bytes(root) or 0
     if target_before or target_after:
         print(
-            f"  target/: {_human_bytes(target_before)} -> {_human_bytes(target_after)} "
+            f"  cache/target/: {_human_bytes(target_before)} -> {_human_bytes(target_after)} "
             f"(reclaimed {_human_bytes(max(0, target_before - target_after))})"
         )
 
     total = time.monotonic() - total_start
-    ledger = Path(args.report) if args.report else root / "target/storage/host-cleanup.jsonl"
+    ledger = Path(args.report) if args.report else root / "cache/target/storage/host-cleanup.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": "capsem.host_cleanup.v1",

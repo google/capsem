@@ -8,9 +8,8 @@
 
 use super::provider::ModelProtocol;
 
-static MODEL_FIELD_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#""model"\s*:\s*"([^"]+)""#).expect("model field regex is valid")
-});
+static MODEL_FIELD_REGEX: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r#""model"\s*:\s*"([^"]+)""#).expect("model field regex is valid"));
 
 /// Fallback for truncated JSON: search for "model":"..." with a shared matcher.
 fn extract_model_field(body: &[u8]) -> Option<String> {
@@ -164,8 +163,7 @@ fn parse_anthropic(body: &[u8]) -> RequestMeta {
                             Some(anthropic_wire::ToolResultContent::Text(t)) => t.clone(),
                             Some(anthropic_wire::ToolResultContent::Blocks(bs)) => {
                                 // Prefer text blocks; fall back to block type summaries
-                                let texts: Vec<&str> =
-                                    bs.iter().filter_map(|b| b.text.as_deref()).collect();
+                                let texts: Vec<&str> = bs.iter().filter_map(|b| b.text.as_deref()).collect();
                                 if !texts.is_empty() {
                                     texts.join("\n")
                                 } else {
@@ -268,11 +266,7 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
     };
 
     // Messages can come from `messages` (Chat Completions) or `input` (Responses API)
-    let messages: &[openai_wire::Message] = req
-        .messages
-        .as_deref()
-        .or(req.input.as_deref())
-        .unwrap_or(&[]);
+    let messages: &[openai_wire::Message] = req.messages.as_deref().or(req.input.as_deref()).unwrap_or(&[]);
 
     // System prompt: from `instructions` field or first system message
     let system_prompt_preview = req
@@ -434,11 +428,7 @@ fn parse_google(body: &[u8]) -> RequestMeta {
             for part in parts {
                 if let Some(fr) = &part.function_response {
                     let name = fr.name.clone().unwrap_or_default();
-                    let content_text = fr
-                        .response
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                    let content_text = fr.response.as_ref().map(|v| v.get().to_string()).unwrap_or_default();
                     let call_id = fr
                         .id
                         .clone()

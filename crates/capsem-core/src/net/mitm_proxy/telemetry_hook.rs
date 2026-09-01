@@ -21,13 +21,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use bytes::Bytes;
-use capsem_logger::{
-    DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
-};
+use capsem_logger::{DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp};
 use tracing::{info, warn};
 
 use super::body::BodyStats;
-use super::hooks::{ChunkCtx, ChunkHook};
+use super::hooks::{ChunkCtx, ChunkEndFuture, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::metrics as m;
 use super::util::is_llm_api_path;
@@ -36,19 +34,16 @@ use crate::credential_broker::{
     redact_observed_credentials_in_bytes, CredentialInjection, CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
-    collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls,
-    parse_non_streaming_usage, StopReason,
+    collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage,
+    StopReason,
 };
 use crate::net::ai_traffic::pricing::PricingTable;
-use crate::net::ai_traffic::provider::{
-    extract_model_from_path, tool_origin, ModelProtocol, ProviderKind,
-};
+use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ModelProtocol, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::policy_config::{snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write_try,
-    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
-    SecurityEvent, TcpSecurityEvent,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, HttpSecurityEvent, IpSecurityEvent,
+    ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -124,6 +119,67 @@ pub struct TelemetryHook {
     deps: Arc<TelemetryDeps>,
 }
 
+struct PendingTelemetryCompletion {
+    db: Arc<DbWriter>,
+    rules: Arc<SecurityRuleSet>,
+    plugin_policy: PluginPolicySnapshot,
+    net_event: NetEvent,
+    net_security_event: SecurityEvent,
+    model_call: Option<ModelCall>,
+    credential_observations: Vec<CredentialObservation>,
+    credential_injections: Vec<CredentialInjection>,
+}
+
+impl PendingTelemetryCompletion {
+    async fn run(self) {
+        let Self {
+            db,
+            rules,
+            plugin_policy,
+            net_event,
+            net_security_event,
+            model_call,
+            credential_observations,
+            credential_injections,
+        } = self;
+
+        if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
+            delegate_matching_security_rules_for_evaluated_event(
+                Arc::clone(&db),
+                event_id,
+                RuntimeSecurityEventType::HttpRequest,
+                Arc::clone(&rules),
+                Arc::clone(&plugin_policy),
+                net_security_event,
+                current_unix_ms(),
+                "http",
+            );
+        }
+        if let Some(model_call) = model_call {
+            let model_security_event = security_event_from_model_call(&model_call);
+            if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(model_call)).await {
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&db),
+                    event_id,
+                    RuntimeSecurityEventType::ModelCall,
+                    Arc::clone(&rules),
+                    plugin_policy,
+                    model_security_event,
+                    current_unix_ms(),
+                    "model",
+                );
+            }
+        }
+
+        if !credential_observations.is_empty() || !credential_injections.is_empty() {
+            tokio::spawn(async move {
+                log_brokered_injections(&db, &rules, credential_injections).await;
+                broker_and_log_observations(&db, &rules, credential_observations).await;
+            });
+        }
+    }
+}
+
 impl TelemetryHook {
     pub fn new(deps: Arc<TelemetryDeps>) -> Self {
         Self { deps }
@@ -140,10 +196,7 @@ impl ChunkHook for TelemetryHook {
         // request context (if any). We touch the response stats slot
         // only if the request context has been seeded -- shadow mode
         // skips the slot allocation entirely.
-        let max_body_capture = match ctx
-            .state::<Option<TelemetryRequestContext>>(|| None)
-            .as_ref()
-        {
+        let max_body_capture = match ctx.state::<Option<TelemetryRequestContext>>(|| None).as_ref() {
             Some(req_ctx) => req_ctx.max_response_body_capture,
             None => return,
         };
@@ -171,13 +224,9 @@ impl ChunkHook for TelemetryHook {
             None => return, // shadow mode: no seed, nothing to emit
         };
 
-        let mut resp_stats =
-            std::mem::take(ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default));
+        let mut resp_stats = std::mem::take(ctx.state::<TelemetryResponseStats>(TelemetryResponseStats::default));
         let stage_started = Instant::now();
-        let llm_events = ctx
-            .state::<LlmEventStream>(LlmEventStream::default)
-            .events
-            .clone();
+        let llm_events = ctx.state::<LlmEventStream>(LlmEventStream::default).events.clone();
         record_telemetry_stage(stage_started, "llm_event_clone");
 
         let stage_started = Instant::now();
@@ -213,22 +262,14 @@ impl ChunkHook for TelemetryHook {
                 .map(CredentialObservation::credential_ref);
         }
         if credential_observations.len() > header_observations_len {
-            let request_observations =
-                &credential_observations[header_observations_len..response_observation_start];
+            let request_observations = &credential_observations[header_observations_len..response_observation_start];
             if !request_observations.is_empty() {
-                let mut stats = req_ctx
-                    .request_body_stats
-                    .lock()
-                    .expect("req body stats lock");
-                stats.preview =
-                    redact_observed_credentials_in_bytes(&stats.preview, request_observations);
+                let mut stats = req_ctx.request_body_stats.lock().expect("req body stats lock");
+                stats.preview = redact_observed_credentials_in_bytes(&stats.preview, request_observations);
             }
             let response_observations = &credential_observations[response_observation_start..];
             if !response_observations.is_empty() {
-                resp_stats.preview = redact_observed_credentials_in_bytes(
-                    &resp_stats.preview,
-                    response_observations,
-                );
+                resp_stats.preview = redact_observed_credentials_in_bytes(&resp_stats.preview, response_observations);
             }
         }
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
@@ -259,9 +300,9 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
-        let rules = self.deps.security_rules.read().unwrap().clone();
+        let rules = Arc::clone(&self.deps.security_rules.read().unwrap());
         let plugin_policy = snapshot_plugin_policy(&self.deps.plugin_policy);
-        let credential_injections = req_ctx.credential_injections.clone();
+        let credential_injections = req_ctx.credential_injections;
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 
         let stage_started = Instant::now();
@@ -272,46 +313,23 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let has_model_call = model_call.is_some();
-        if let Some(event_id) = emit_security_write_try(&db, WriteOp::NetEvent(net_event)) {
-            delegate_matching_security_rules_for_evaluated_event(
-                Arc::clone(&db),
-                event_id,
-                RuntimeSecurityEventType::HttpRequest,
-                Arc::clone(&rules),
-                plugin_policy.clone(),
-                net_security_event,
-                current_unix_ms(),
-                "http",
-            );
-        }
-        if let Some(mc) = model_call {
-            let model_security_event = security_event_from_model_call(&mc);
-            if let Some(event_id) = emit_security_write_try(&db, WriteOp::ModelCall(mc)) {
-                delegate_matching_security_rules_for_evaluated_event(
-                    Arc::clone(&db),
-                    event_id,
-                    RuntimeSecurityEventType::ModelCall,
-                    Arc::clone(&rules),
-                    plugin_policy,
-                    model_security_event,
-                    current_unix_ms(),
-                    "model",
-                );
-            }
-        }
-        record_telemetry_stage(stage_started, "ledger_enqueue");
-
-        let stage_started = Instant::now();
-        let broker_db = Arc::clone(&db);
-        let broker_rules = rules.clone();
-        let broker_observations = credential_observations;
-        let broker_injections = credential_injections;
-        tokio::spawn(async move {
-            log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
-            broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
+        *ctx.state::<Option<PendingTelemetryCompletion>>(|| None) = Some(PendingTelemetryCompletion {
+            db,
+            rules,
+            plugin_policy,
+            net_event,
+            net_security_event,
+            model_call,
+            credential_observations,
+            credential_injections,
         });
-        record_telemetry_stage(stage_started, "broker_task_spawn");
+        record_telemetry_stage(stage_started, "ledger_handoff");
         record_telemetry_response_end(response_end_started, has_model_call);
+    }
+
+    fn take_response_end_future(&self, ctx: &mut ChunkCtx<'_>) -> Option<ChunkEndFuture> {
+        let completion = ctx.state::<Option<PendingTelemetryCompletion>>(|| None).take()?;
+        Some(ChunkEndFuture::new(completion.run()))
     }
 }
 
@@ -343,16 +361,10 @@ fn record_telemetry_response_end(started: Instant, has_model_call: bool) {
 
 /// Pure builder: assembles a `NetEvent` from the context and stats.
 /// Trace ID is sampled from the ambient OTel context.
-pub fn build_net_event(
-    req_ctx: &TelemetryRequestContext,
-    resp_stats: &TelemetryResponseStats,
-) -> NetEvent {
+pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &TelemetryResponseStats) -> NetEvent {
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
     let (bytes_sent, req_preview) = {
-        let st = req_ctx
-            .request_body_stats
-            .lock()
-            .expect("req body stats lock");
+        let st = req_ctx.request_body_stats.lock().expect("req body stats lock");
         let preview = if st.preview.is_empty() {
             None
         } else {
@@ -395,21 +407,20 @@ pub fn build_net_event(
         policy_action: req_ctx.policy_action.clone(),
         policy_rule: req_ctx.policy_rule.clone(),
         policy_reason: req_ctx.policy_reason.clone(),
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: req_ctx.credential_ref.clone(),
     }
 }
 
 fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
-    let mut security_event =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some(event.domain.clone()),
-            method: event.method.clone(),
-            path: event.path.clone(),
-            query: event.query.clone(),
-            status: event.status_code.map(|status| status.to_string()),
-            body: event.request_body_preview.clone(),
-        });
+    let mut security_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some(event.domain.clone()),
+        method: event.method.clone(),
+        path: event.path.clone(),
+        query: event.query.clone(),
+        status: event.status_code.map(|status| status.to_string()),
+        body: event.request_body_preview.clone(),
+    });
     security_event = security_event.with_tcp(TcpSecurityEvent {
         port: Some(event.port.to_string()),
     });
@@ -426,18 +437,17 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
 }
 
 fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
-            provider: Some(call.provider.clone()),
-            name: call.model.clone(),
-            request_body: call.request_body_preview.clone(),
-            response_body: call.text_content.clone(),
-            tool_calls: if call.tool_calls.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
-            },
-        });
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+        provider: Some(call.provider.clone()),
+        name: call.model.clone(),
+        request_body: call.request_body_preview.clone(),
+        response_body: call.text_content.clone(),
+        tool_calls: if call.tool_calls.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
+        },
+    });
     apply_security_event_trace(security_event, call.trace_id.clone())
 }
 
@@ -468,17 +478,12 @@ pub fn maybe_build_model_call(
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
     let protocol = req_ctx.ai_protocol?;
-    if req_ctx.method == "HEAD"
-        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
-    {
+    if req_ctx.method == "HEAD" || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path)) {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
     let (bytes_sent, req_body_bytes) = {
-        let st = req_ctx
-            .request_body_stats
-            .lock()
-            .expect("req body stats lock");
+        let st = req_ctx.request_body_stats.lock().expect("req body stats lock");
         (st.bytes, st.preview.clone())
     };
 
@@ -490,14 +495,8 @@ pub fn maybe_build_model_call(
     } else {
         Some(collect_summary(llm_events))
     };
-    let response_summary = if summary.is_none()
-        && !resp_stats.preview.is_empty()
-        && req_ctx.status_code == Some(200)
-    {
-        Some(parse_non_streaming_response_summary(
-            protocol,
-            &resp_stats.preview,
-        ))
+    let response_summary = if summary.is_none() && !resp_stats.preview.is_empty() && req_ctx.status_code == Some(200) {
+        Some(parse_non_streaming_response_summary(protocol, &resp_stats.preview))
     } else {
         None
     };
@@ -508,11 +507,7 @@ pub fn maybe_build_model_call(
     let stop_reason_str = summary
         .as_ref()
         .and_then(|s| s.stop_reason.as_ref())
-        .or_else(|| {
-            response_summary
-                .as_ref()
-                .and_then(|s| s.stop_reason.as_ref())
-        })
+        .or_else(|| response_summary.as_ref().and_then(|s| s.stop_reason.as_ref()))
         .map(|sr| match sr {
             StopReason::EndTurn => "end_turn".to_string(),
             StopReason::ToolUse => "tool_use".to_string(),
@@ -569,19 +564,16 @@ pub fn maybe_build_model_call(
 
     // Non-streaming usage fallback: when SSE stream produced no
     // input_tokens, parse the JSON response body.
-    let (resp_model, resp_input, resp_output, resp_details) = if summary
-        .as_ref()
-        .map(|s| s.input_tokens.is_none())
-        .unwrap_or(true)
-    {
-        if !resp_stats.preview.is_empty() && req_ctx.status_code == Some(200) {
-            parse_non_streaming_usage(protocol, &resp_stats.preview)
+    let (resp_model, resp_input, resp_output, resp_details) =
+        if summary.as_ref().map(|s| s.input_tokens.is_none()).unwrap_or(true) {
+            if !resp_stats.preview.is_empty() && req_ctx.status_code == Some(200) {
+                parse_non_streaming_usage(protocol, &resp_stats.preview)
+            } else {
+                (None, None, None, BTreeMap::new())
+            }
         } else {
             (None, None, None, BTreeMap::new())
-        }
-    } else {
-        (None, None, None, BTreeMap::new())
-    };
+        };
 
     // Resolve model: request body > SSE stream > response JSON > URL path.
     let effective_model = req_meta
@@ -592,14 +584,8 @@ pub fn maybe_build_model_call(
         .or_else(|| extract_model_from_path(&req_ctx.path));
 
     let input_tokens = summary.as_ref().and_then(|s| s.input_tokens).or(resp_input);
-    let output_tokens = summary
-        .as_ref()
-        .and_then(|s| s.output_tokens)
-        .or(resp_output);
-    let mut usage_details = summary
-        .as_ref()
-        .map(|s| s.usage_details.clone())
-        .unwrap_or_default();
+    let output_tokens = summary.as_ref().and_then(|s| s.output_tokens).or(resp_output);
+    let mut usage_details = summary.as_ref().map(|s| s.usage_details.clone()).unwrap_or_default();
     if usage_details.is_empty() {
         usage_details = resp_details;
     }
@@ -615,17 +601,13 @@ pub fn maybe_build_model_call(
     // Trace correlation: tool_response IDs index into the live
     // trace map; tool_call IDs register new pending entries; a
     // non-tool-use stop completes the trace.
-    let tool_response_ids: Vec<String> = req_meta
-        .tool_results
-        .iter()
-        .map(|tr| tr.call_id.clone())
-        .collect();
+    let tool_response_ids: Vec<String> = req_meta.tool_results.iter().map(|tr| tr.call_id.clone()).collect();
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
     let trace_id = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
         let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
             if tool_call_ids.is_empty() {
-                crate::telemetry::ambient_capsem_trace_id()
+                capsem_foundation::telemetry::ambient_capsem_trace_id()
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
             } else {
                 uuid::Uuid::new_v4().to_string()
@@ -640,9 +622,7 @@ pub fn maybe_build_model_call(
             state.register_tool_calls(&tid, &tool_call_ids);
             state.register_tool_file_hints(
                 &tid,
-                tool_calls
-                    .iter()
-                    .filter_map(|tool_call| tool_call.arguments.as_deref()),
+                tool_calls.iter().filter_map(|tool_call| tool_call.arguments.as_deref()),
             );
         } else if !is_tool_use {
             state.complete_trace(&tid);
@@ -747,11 +727,7 @@ fn log_outcome(req_ctx: &TelemetryRequestContext) {
             path = req_ctx.path,
             "MITM proxy: denied"
         ),
-        Decision::Error => warn!(
-            domain = req_ctx.domain,
-            method = req_ctx.method,
-            "MITM proxy: error"
-        ),
+        Decision::Error => warn!(domain = req_ctx.domain, method = req_ctx.method, "MITM proxy: error"),
         // T3.d added Decision::Redirected for the DNS path. The MITM
         // proxy doesn't produce it today (no HTTP-level redirect rule
         // exists), but the variant is in scope here, so treat it as

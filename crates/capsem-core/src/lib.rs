@@ -1,48 +1,31 @@
-pub mod asset_manager;
 pub mod auditfs;
 pub mod auto_snapshot;
 pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_state;
 pub mod hypervisor;
-pub mod ipc_handshake;
-pub mod log_layer;
-pub mod poll;
+pub mod proctable;
 #[macro_use]
 pub mod macros;
-pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
-pub mod paths;
 pub mod security_engine;
 pub mod session;
-pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_support;
-pub mod uds;
 pub mod vm;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-pub use capsem_proto;
-pub use capsem_proto::{
-    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest,
-    MAX_FRAME_SIZE,
-};
-pub use host_state::{
-    validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition,
-};
+pub use host_state::{validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition};
 pub use vm::boot::{
-    boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config,
-    write_control_msg, BootOptions,
+    boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config, write_control_msg,
+    BootOptions,
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};
 pub use vm::terminal::TerminalOutputQueue;
-pub use vm::vsock::{
-    self, CoalesceBuffer, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE,
-    VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
-};
+pub use vm::vsock::{self, CoalesceBuffer};
 pub use vm::VmState;
 
 // Hypervisor abstraction layer
@@ -128,9 +111,7 @@ pub fn system_overlay_has_ext4_magic(path: &Path) -> std::io::Result<bool> {
 #[cfg(target_os = "linux")]
 fn system_overlay_matches(path: &Path, size_gb: u32) -> std::io::Result<bool> {
     match std::fs::metadata(path) {
-        Ok(metadata) if metadata.len() == system_overlay_image_len(size_gb) => {
-            system_overlay_has_ext4_magic(path)
-        }
+        Ok(metadata) if metadata.len() == system_overlay_image_len(size_gb) => system_overlay_has_ext4_magic(path),
         Ok(_) => Ok(false),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
@@ -211,10 +192,7 @@ pub fn system_overlay_template_path_for_session(session_dir: &Path, size_gb: u32
 
 /// Ensure a reusable preformatted system overlay template exists.
 #[cfg(target_os = "linux")]
-pub fn ensure_preformatted_system_overlay_template(
-    template_path: &Path,
-    size_gb: u32,
-) -> std::io::Result<bool> {
+pub fn ensure_preformatted_system_overlay_template(template_path: &Path, size_gb: u32) -> std::io::Result<bool> {
     if system_overlay_matches(template_path, size_gb)? {
         return Ok(false);
     }
@@ -245,10 +223,7 @@ pub fn ensure_preformatted_system_overlay_template(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn ensure_preformatted_system_overlay_template(
-    _template_path: &Path,
-    _size_gb: u32,
-) -> std::io::Result<bool> {
+pub fn ensure_preformatted_system_overlay_template(_template_path: &Path, _size_gb: u32) -> std::io::Result<bool> {
     Ok(false)
 }
 
@@ -277,8 +252,7 @@ pub fn preformat_system_overlay_image_from_template_if_needed(
             .unwrap_or(0)
     ));
     let _ = std::fs::remove_file(&tmp_path);
-    auto_snapshot::clone_file(template_path, &tmp_path)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    auto_snapshot::clone_file(template_path, &tmp_path).map_err(|error| std::io::Error::other(error.to_string()))?;
     std::fs::rename(&tmp_path, path)?;
 
     if !system_overlay_matches(path, size_gb)? {

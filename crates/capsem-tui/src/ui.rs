@@ -8,8 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{
-    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, CreateDraft,
-    ForkDraft,
+    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, CreateDraft, ForkDraft,
 };
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::model::{UpdateNotice, UpdateNoticeKind};
@@ -38,11 +37,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_with_terminal(frame, state, None);
 }
 
-pub fn render_with_terminal(
-    frame: &mut Frame<'_>,
-    state: &AppState,
-    terminal: Option<&TerminalSurface>,
-) {
+pub fn render_with_terminal(frame: &mut Frame<'_>, state: &AppState, terminal: Option<&TerminalSurface>) {
     render_layout(
         frame,
         RenderLayoutCtx {
@@ -168,10 +163,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
     }
     if let Some(message) = &service.control_message {
-        left.push(Span::styled(
-            format!(" {}", truncate(message, 28)),
-            muted_style(),
-        ));
+        left.push(Span::styled(format!(" {}", truncate(message, 28)), muted_style()));
     }
     if let Some(notice) = &state.update_notice {
         left.push(Span::styled(
@@ -207,9 +199,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         );
     }
 
-    let right_x = area
-        .x
-        .saturating_add(area.width.saturating_sub(right_width));
+    let right_x = area.x.saturating_add(area.width.saturating_sub(right_width));
     frame.render_widget(
         Paragraph::new(Line::from(right)).style(base),
         Rect::new(right_x, area.y, right_width, area.height),
@@ -220,11 +210,7 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
     match &notice.kind {
         UpdateNoticeKind::Current => "updates: current".to_string(),
         UpdateNoticeKind::Available(tracks) => {
-            let labels = tracks
-                .iter()
-                .map(|track| track.label())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let labels = tracks.iter().map(|track| track.label()).collect::<Vec<_>>().join(", ");
             format!("updates: {labels}")
         }
         UpdateNoticeKind::AvailableWithBlocked { available, blocked } => {
@@ -233,19 +219,11 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
                 .map(|track| track.label())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let blocked = blocked
-                .iter()
-                .map(|track| track.label())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let blocked = blocked.iter().map(|track| track.label()).collect::<Vec<_>>().join(", ");
             format!("updates: {available}; blocked: {blocked}")
         }
         UpdateNoticeKind::Blocked(tracks) => {
-            let labels = tracks
-                .iter()
-                .map(|track| track.label())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let labels = tracks.iter().map(|track| track.label()).collect::<Vec<_>>().join(", ");
             format!("updates blocked: {labels}")
         }
         UpdateNoticeKind::Stale => "updates: stale".to_string(),
@@ -256,9 +234,7 @@ fn update_notice_label(notice: &UpdateNotice) -> String {
 fn update_notice_style(notice: &UpdateNotice) -> Style {
     match notice.kind {
         UpdateNoticeKind::Current => status_base_style().fg(MUTED),
-        UpdateNoticeKind::Available(_) | UpdateNoticeKind::Stale => {
-            status_base_style().fg(ATTENTION)
-        }
+        UpdateNoticeKind::Available(_) | UpdateNoticeKind::Stale => status_base_style().fg(ATTENTION),
         UpdateNoticeKind::AvailableWithBlocked { .. }
         | UpdateNoticeKind::Blocked(_)
         | UpdateNoticeKind::Unavailable => status_base_style().fg(BAD),
@@ -277,12 +253,7 @@ fn render_control_progress_surface(frame: &mut Frame<'_>, area: Rect, label: &st
     );
 }
 
-fn render_terminal_surface(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &AppState,
-    terminal: Option<&TerminalSurface>,
-) {
+fn render_terminal_surface(frame: &mut Frame<'_>, area: Rect, state: &AppState, terminal: Option<&TerminalSurface>) {
     if service_needs_start(state.service.status) {
         render_service_offline_surface(frame, area, state.service.status);
         return;
@@ -317,13 +288,8 @@ fn render_terminal_surface(
         .map(terminal_line_to_ratatui)
         .collect::<Vec<_>>();
     if lines.is_empty() {
-        let status = terminal
-            .status_for(active_id)
-            .unwrap_or("waiting for terminal");
-        lines.push(Line::from(Span::styled(
-            format!(" {status}"),
-            muted_style(),
-        )));
+        let status = terminal.status_for(active_id).unwrap_or("waiting for terminal");
+        lines.push(Line::from(Span::styled(format!(" {status}"), muted_style())));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -331,10 +297,7 @@ fn render_terminal_surface(
 fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
     let lines = vec![Line::from(vec![
         Span::styled("connecting terminal ", muted_style()),
-        Span::styled(
-            session.title.clone(),
-            muted_style().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(session.title.clone(), muted_style().add_modifier(Modifier::BOLD)),
     ])];
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
@@ -345,10 +308,7 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
             session.title.clone(),
             muted_style().add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            inactive_session_label(session.lifecycle),
-            muted_style(),
-        )),
+        Line::from(Span::styled(inactive_session_label(session.lifecycle), muted_style())),
     ];
     if let Some(reason) = resume_blocked_reason(session) {
         lines.push(Line::from(Span::styled(
@@ -424,10 +384,7 @@ fn terminal_style_to_ratatui(style: TerminalStyle) -> Style {
 }
 
 fn session_accepts_terminal(lifecycle: SessionLifecycle) -> bool {
-    matches!(
-        lifecycle,
-        SessionLifecycle::Working | SessionLifecycle::WaitingForInput
-    )
+    matches!(lifecycle, SessionLifecycle::Working | SessionLifecycle::WaitingForInput)
 }
 
 fn inactive_session_label(lifecycle: SessionLifecycle) -> &'static str {
@@ -451,9 +408,7 @@ fn service_unavailable_title(status: ServiceStatus) -> &'static str {
         ServiceStatus::Offline => "service offline",
         ServiceStatus::Degraded => "service unavailable",
         ServiceStatus::Failed => "service failed",
-        ServiceStatus::Online | ServiceStatus::Reconnecting | ServiceStatus::Stale => {
-            "service unavailable"
-        }
+        ServiceStatus::Online | ServiceStatus::Reconnecting | ServiceStatus::Stale => "service unavailable",
     }
 }
 
@@ -518,8 +473,7 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
     let height = height.min(area.height);
     Rect::new(
         area.x.saturating_add(area.width.saturating_sub(width) / 2),
-        area.y
-            .saturating_add(area.height.saturating_sub(height) / 2),
+        area.y.saturating_add(area.height.saturating_sub(height) / 2),
         width,
         height,
     )
@@ -530,9 +484,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
-        AppOverlay::Create => (state.profiles.len() as u16)
-            .saturating_add(10)
-            .clamp(12, 18),
+        AppOverlay::Create => (state.profiles.len() as u16).saturating_add(10).clamp(12, 18),
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -556,18 +508,8 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+r", "resume", "session", "resume inactive session"),
         help_row("Alt+t", "stop", "session", "stop active session"),
         help_row("Alt+d", "delete", "session", "delete active session"),
-        help_row(
-            "Alt+p",
-            "purge",
-            "global",
-            "purge temporary/broken sessions",
-        ),
-        help_row(
-            "Alt+u",
-            "update",
-            "global",
-            "apply complete verified release",
-        ),
+        help_row("Alt+p", "purge", "global", "purge temporary/broken sessions"),
+        help_row("Alt+u", "update", "global", "apply complete verified release"),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }
@@ -591,9 +533,7 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         .filter(|name| !name.is_empty())
         .unwrap_or(" ");
     lines.push(focus_pair("name", name));
-    lines.push(overlay_line(
-        "active input: name; type to edit; Backspace deletes",
-    ));
+    lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
     let create_hint = if state.profiles.is_empty() {
         "profile list unavailable; Enter disabled; Esc cancels"
     } else {
@@ -631,10 +571,7 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
 
 fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>> {
     let Some(session) = state.active_session() else {
-        return vec![
-            overlay_title("fork session"),
-            overlay_line("no active session"),
-        ];
+        return vec![overlay_title("fork session"), overlay_line("no active session")];
     };
     let name = draft
         .map(|draft| draft.name.as_str())
@@ -651,25 +588,14 @@ fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>>
 
 fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
     let Some(session) = state.active_session() else {
-        return vec![
-            overlay_title("session info"),
-            overlay_line("no active session"),
-        ];
+        return vec![overlay_title("session info"), overlay_line("no active session")];
     };
     vec![
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
         info_row("session", &session.title, &session.id),
-        info_row(
-            "profile",
-            &session.profile,
-            session.branch.as_deref().unwrap_or(""),
-        ),
-        info_row(
-            "state",
-            session.lifecycle.label(),
-            attention_summary(session),
-        ),
+        info_row("profile", &session.profile, session.branch.as_deref().unwrap_or("")),
+        info_row("state", session.lifecycle.label(), attention_summary(session)),
         info_row("duration", &format_duration(session.stats.duration), ""),
         info_row("tokens", &format_tokens(session.stats.tokens), ""),
         info_row(
@@ -729,10 +655,7 @@ fn profile_inventory_label(session: &SessionSummary) -> String {
 fn overlay_title(title: &'static str) -> Line<'static> {
     Line::from(Span::styled(
         format!(" {title}"),
-        Style::default()
-            .fg(ACTIVE)
-            .bg(BAR_BG)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(ACTIVE).bg(BAR_BG).add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -779,10 +702,7 @@ fn table_header(columns: &[&'static str]) -> Line<'static> {
         .enumerate()
         .map(|(index, column)| {
             Span::styled(
-                format!(
-                    "{column:<width$}",
-                    width = widths[index.min(widths.len() - 1)]
-                ),
+                format!("{column:<width$}", width = widths[index.min(widths.len() - 1)]),
                 muted_style().add_modifier(Modifier::BOLD),
             )
         })
@@ -790,17 +710,9 @@ fn table_header(columns: &[&'static str]) -> Line<'static> {
     Line::from(spans)
 }
 
-fn help_row(
-    key: &'static str,
-    action: &'static str,
-    scope: &'static str,
-    note: &'static str,
-) -> Line<'static> {
+fn help_row(key: &'static str, action: &'static str, scope: &'static str, note: &'static str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            format!("{key} "),
-            status_base_style().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("{key} "), status_base_style().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{action:<14}"), status_base_style()),
         Span::styled(format!("{scope:<12}"), muted_style()),
         Span::styled(note.to_string(), status_base_style()),
@@ -833,20 +745,8 @@ fn tab_spans(state: &AppState, active_index: usize, max_width: usize) -> Vec<Spa
     }
     for (offset, (session_index, session)) in tab_sessions[visible.clone()].iter().enumerate() {
         let tab_index = visible.start + offset;
-        let separator = if offset == 0 && visible.start == 0 {
-            ""
-        } else {
-            " | "
-        };
-        if !separator.is_empty()
-            && !push_budgeted(
-                &mut spans,
-                separator,
-                status_base_style(),
-                max_width,
-                &mut used,
-            )
-        {
+        let separator = if offset == 0 && visible.start == 0 { "" } else { " | " };
+        if !separator.is_empty() && !push_budgeted(&mut spans, separator, status_base_style(), max_width, &mut used) {
             break;
         }
 
@@ -880,11 +780,7 @@ fn push_tab(
 ) -> bool {
     let tone = TabTone::from_session(session, active);
     let number = format!(" {} ", index + 1);
-    let label = format!(
-        " {}{} ",
-        truncate(&session.title, 14),
-        attention_marker(session)
-    );
+    let label = format!(" {}{} ", truncate(&session.title, 14), attention_marker(session));
     let width = number.chars().count() + label.chars().count();
     if *used + width > max_width {
         return false;
@@ -909,13 +805,7 @@ fn push_tab(
     true
 }
 
-fn push_budgeted(
-    spans: &mut Vec<Span<'static>>,
-    text: &str,
-    style: Style,
-    max_width: usize,
-    used: &mut usize,
-) -> bool {
+fn push_budgeted(spans: &mut Vec<Span<'static>>, text: &str, style: Style, max_width: usize, used: &mut usize) -> bool {
     let width = text.chars().count();
     if *used + width <= max_width {
         spans.push(Span::styled(text.to_string(), style));
@@ -940,10 +830,7 @@ fn service_style(status: ServiceStatus, latency_ms: u128) -> Style {
         ServiceStatus::Degraded => ATTENTION,
         ServiceStatus::Offline | ServiceStatus::Failed => BAD,
     };
-    Style::default()
-        .fg(bg)
-        .bg(BAR_BG)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(bg).bg(BAR_BG).add_modifier(Modifier::BOLD)
 }
 
 fn status_base_style() -> Style {
@@ -1005,9 +892,7 @@ fn visible_tab_range(len: usize, active_index: usize) -> std::ops::Range<usize> 
         return 0..len;
     }
     let half = MAX_VISIBLE_TABS / 2;
-    let start = active_index
-        .saturating_sub(half)
-        .min(len - MAX_VISIBLE_TABS);
+    let start = active_index.saturating_sub(half).min(len - MAX_VISIBLE_TABS);
     start..start + MAX_VISIBLE_TABS
 }
 
@@ -1108,16 +993,14 @@ fn buffer_to_svg(buffer: &Buffer) -> String {
         "<rect width=\"100%\" height=\"100%\" fill=\"{}\"/>\n",
         color_hex(PREVIEW_BG)
     ));
-    svg.push_str("<style>text{font-family:Menlo,Monaco,Consolas,monospace;dominant-baseline:text-before-edge;}</style>\n");
+    svg.push_str(
+        "<style>text{font-family:Menlo,Monaco,Consolas,monospace;dominant-baseline:text-before-edge;}</style>\n",
+    );
 
     for y in 0..height {
         for x in 0..width {
             let cell = &buffer.content()[y * width + x];
-            let bg = if cell.bg == Color::Reset {
-                PREVIEW_BG
-            } else {
-                cell.bg
-            };
+            let bg = if cell.bg == Color::Reset { PREVIEW_BG } else { cell.bg };
             let rect_x = PAD + x * CHAR_WIDTH;
             let rect_y = PAD + y * LINE_HEIGHT;
             svg.push_str(&format!(
@@ -1129,11 +1012,7 @@ fn buffer_to_svg(buffer: &Buffer) -> String {
             if symbol == " " {
                 continue;
             }
-            let fg = if cell.fg == Color::Reset {
-                TEXT
-            } else {
-                cell.fg
-            };
+            let fg = if cell.fg == Color::Reset { TEXT } else { cell.fg };
             let weight = if cell.modifier.contains(Modifier::BOLD) {
                 "700"
             } else {

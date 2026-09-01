@@ -44,7 +44,7 @@ jobs:
         run: git branch -f main origin/main
 
       # Publishing the immutable source ref is a `git push` over HTTPS, from a
-      # detached private prefix under ~/.cg that never saw the checkout's
+      # detached private prefix under cache/worktrees that never saw the checkout's
       # credential header. A token in the environment is not a git credential:
       # git asks for a username, finds no terminal, and the release fails
       # having built nothing. Rewrite the origin URL once, globally, so the

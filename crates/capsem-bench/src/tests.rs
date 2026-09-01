@@ -1,10 +1,10 @@
 use super::*;
 use std::collections::BTreeMap;
-use std::time::Duration;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -12,10 +12,7 @@ use tokio::net::TcpListener;
 fn selected_scenarios_are_strict() {
     let selected = select_scenarios(Some("tiny_http,model_json_response")).unwrap();
     assert_eq!(
-        selected
-            .iter()
-            .map(|scenario| scenario.name)
-            .collect::<Vec<_>>(),
+        selected.iter().map(|scenario| scenario.name).collect::<Vec<_>>(),
         vec!["tiny_http", "model_json_response"]
     );
     assert!(select_scenarios(Some("bogus")).is_err());
@@ -80,9 +77,7 @@ fn result_ok_checks_status_size_and_required_text() {
 fn dns_query_builder_and_rcode_parser_are_strict() {
     let query = build_dns_query("load-test.capsem-bogus", 1, 0xCAFE).unwrap();
     assert_eq!(&query[..2], b"\xCA\xFE");
-    assert!(query
-        .windows("capsem-bogus".len())
-        .any(|w| w == b"capsem-bogus"));
+    assert!(query.windows("capsem-bogus".len()).any(|w| w == b"capsem-bogus"));
     let mut response = vec![0xCA, 0xFE, 0x81, 0x83];
     response.extend_from_slice(&query[4..]);
     assert_eq!(parse_dns_rcode(&response), Some(3));
@@ -135,14 +130,8 @@ fn delta_computes_abstraction_cost() {
     let guest_rows = rows_by_name(&guest_values);
     let host_row = host_rows["tiny_http"];
     let guest_row = guest_rows["tiny_http"];
-    assert_eq!(
-        ratio(guest_row.requests_per_sec, host_row.requests_per_sec),
-        0.25
-    );
-    assert_eq!(
-        round1(guest_row.latency_ms.p95 - host_row.latency_ms.p95),
-        4.0
-    );
+    assert_eq!(ratio(guest_row.requests_per_sec, host_row.requests_per_sec), 0.25);
+    assert_eq!(round1(guest_row.latency_ms.p95 - host_row.latency_ms.p95), 4.0);
     assert_eq!(guest_row.failed as isize - host_row.failed as isize, 0);
 }
 
@@ -196,8 +185,7 @@ async fn http_transport_retries_reconnect_until_bounded_budget_is_exhausted() {
             }
             let mut buf = [0_u8; 1024];
             let _ = stream.read(&mut buf).await.unwrap();
-            let body =
-                br#"{"output":[{"content":[{"type":"output_text","text":"tool_calls"}]}]}"#;
+            let body = br#"{"output":[{"content":[{"type":"output_text","text":"tool_calls"}]}]}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -240,18 +228,14 @@ fn guest_protocol_command_uses_one_capsem_bench_invocation() {
         30_000,
         "tiny_http,mcp_tool_call,dns_local_nxdomain",
     );
-    assert!(
-        command.starts_with("capsem-bench-rs protocol "),
-        "{command}"
-    );
+    assert!(command.starts_with("capsem-bench-rs protocol "), "{command}");
     assert!(command.contains("--base-url http://127.0.0.1:3713"));
     assert!(command.contains("--dns-udp-addr 127.0.0.1:3713"));
     assert!(command.contains("--requests 50000"));
     assert!(command.contains("--concurrency 64"));
     assert!(command.contains("--timeout-ms 30000"));
     assert!(command.contains("--scenarios tiny_http,mcp_tool_call,dns_local_nxdomain"));
-    assert!(command
-        .ends_with("--json-out /tmp/capsem-benchmark.json && cat /tmp/capsem-benchmark.json"));
+    assert!(command.ends_with("--json-out /tmp/capsem-benchmark.json && cat /tmp/capsem-benchmark.json"));
 }
 
 #[test]
@@ -309,14 +293,8 @@ JSON results saved to /tmp/capsem-benchmark.json
 
 #[test]
 fn shell_quote_preserves_single_argument_boundaries() {
-    assert_eq!(
-        shell_quote("http://127.0.0.1:3713"),
-        "http://127.0.0.1:3713"
-    );
-    assert_eq!(
-        shell_quote("tiny_http,mcp_tool_call"),
-        "tiny_http,mcp_tool_call"
-    );
+    assert_eq!(shell_quote("http://127.0.0.1:3713"), "http://127.0.0.1:3713");
+    assert_eq!(shell_quote("tiny_http,mcp_tool_call"), "tiny_http,mcp_tool_call");
     assert_eq!(shell_quote("weird value"), "'weird value'");
     assert_eq!(shell_quote("can't"), "'can'\"'\"'t'");
 }
@@ -385,13 +363,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
         ..host.clone()
     };
     guest.hostname = "guest".to_string();
-    let delta = build_delta_report(
-        "host:inline".to_string(),
-        "guest:inline".to_string(),
-        &host,
-        &guest,
-    )
-    .unwrap();
+    let delta = build_delta_report("host:inline".to_string(), "guest:inline".to_string(), &host, &guest).unwrap();
     assert_eq!(delta.host_artifact, "host:inline");
     assert_eq!(delta.guest_artifact, "guest:inline");
     assert_eq!(delta.host_lane, "host_direct");
@@ -449,17 +421,8 @@ fn nested_objects_are_returned_whole() {
 
 #[test]
 fn output_without_a_parseable_object_yields_none() {
-    for output in [
-        "",
-        "no braces here",
-        "{ unterminated",
-        "{not: valid json}",
-    ] {
-        assert_eq!(
-            extract_first_json_value(output),
-            None,
-            "{output:?} should not parse"
-        );
+    for output in ["", "no braces here", "{ unterminated", "{not: valid json}"] {
+        assert_eq!(extract_first_json_value(output), None, "{output:?} should not parse");
     }
 }
 

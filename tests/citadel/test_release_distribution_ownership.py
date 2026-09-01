@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import stat
 import subprocess
 import tomllib
 from pathlib import Path
@@ -14,6 +13,7 @@ UNIT_TEST = ROOT / "build_system" / "tests" / "release_site" / "release-data.tes
 SHARED_DIST = Path("build_system", "release_site", "dist").as_posix()
 EXPECTED = {
     ".gitignore",
+    ".npmrc",
     "astro.config.mjs",
     "package.json",
     "pnpm-lock.yaml",
@@ -36,18 +36,18 @@ EXPECTED = {
     "vitest.config.ts",
 }
 LEGACY = re.compile(
-    r"(?<![A-Za-z0-9_./-])release-site/|target/release-channel(?=$|[/\'\"\s])"
+    r"(?<![A-Za-z0-9_./-])release-site/|cache/target/release-channel(?=$|[/\'\"\s])"
 )
 LEGACY_LOCAL_OUTPUT = re.compile(
-    r"target/(?:install-test-channel|release-rehearsal/dist)(?=$|[/\'\"\s])"
+    r"cache/target/(?:install-test-channel|release-rehearsal/dist)(?=$|[/\'\"\s])"
 )
 RATIONALE = """\
 The Astro release site is a build-time distribution generator, not an
 independent product website. Its source and unit tests belong to build_system,
 while cross-system deployment acceptance stays under root tests. Generated
-distribution bytes have one repository output root, target/distribution. Old
+distribution bytes have one repository output root, cache/target/release/distribution. Old
 source or output literals can make local, CI, package, and deployment lanes
-build different trees. See T3 and target/ in the repository cleanup proposal.
+build different trees. See T3 and cache/target/ in the repository cleanup proposal.
 """
 
 
@@ -92,12 +92,28 @@ def _legacy_local_outputs(sources: dict[str, str]) -> list[str]:
     )
 
 
+def _release_source_modes() -> dict[str, str]:
+    modes: dict[str, str] = {}
+    output = subprocess.run(
+        ("git", "ls-files", "--stage", "build_system/release_site"),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    for line in output.splitlines():
+        mode, _object, _stage, path = line.split(maxsplit=3)
+        relative = Path(path).relative_to("build_system/release_site").as_posix()
+        modes[relative] = mode
+    return modes
+
+
 def test_legacy_literal_detector_observes_both_old_owners() -> None:
     found = _legacy_literals(
         {
             "source": "release-site/package.json",
-            "output": "--out-dir target/release-channel",
-            "valid": "build_system/release_site and target/distribution",
+            "output": "--out-dir cache/target/release-channel",
+            "valid": "build_system/release_site and cache/target/release/distribution",
         }
     )
     assert found == ["output", "source"], RATIONALE
@@ -106,32 +122,24 @@ def test_legacy_literal_detector_observes_both_old_owners() -> None:
 def test_local_output_detector_observes_pre_convergence_paths() -> None:
     found = _legacy_local_outputs(
         {
-            "install": 'channel = "target/install-test-channel"',
-            "rehearsal": "target/release-rehearsal/dist/assets/stable/manifest.json",
-            "valid": "target/distribution/rehearsal/dist/assets/stable/manifest.json",
-            "crates/capsem/src/tests.rs": "target/install-test-channel",
+            "install": 'channel = "cache/target/install-test-channel"',
+            "rehearsal": "cache/target/release-rehearsal/dist/assets/stable/manifest.json",
+            "valid": "cache/target/release/distribution/rehearsal/dist/assets/stable/manifest.json",
+            "crates/capsem/src/tests.rs": "cache/target/install-test-channel",
         }
     )
     assert found == ["crates/capsem/src/tests.rs", "install", "rehearsal"], RATIONALE
 
 
 def test_release_generator_and_unit_test_have_exact_build_system_owners() -> None:
-    found = {
-        Path(path).relative_to("build_system/release_site").as_posix()
-        for path in subprocess.run(
-            ("git", "ls-files", "build_system/release_site"),
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-    }
-    assert found == EXPECTED, RATIONALE
+    modes = _release_source_modes()
+    assert set(modes) == EXPECTED, RATIONALE
     assert not (ROOT / "release-site").exists(), RATIONALE
     assert UNIT_TEST.is_file(), RATIONALE
-    for relative in EXPECTED:
-        mode = stat.S_IMODE((OWNER / relative).stat().st_mode)
-        assert mode == 0o644, f"{RATIONALE}\n{relative}: mode is {mode:o}"
+    for relative, mode in modes.items():
+        assert mode == "100644", (
+            f"{RATIONALE}\n{relative}: tracked mode is {mode}, expected 100644"
+        )
         ignored = subprocess.run(
             (
                 "git",
@@ -173,8 +181,8 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
     disk = config["disk"]
     assert isinstance(disk, dict)
     reclaimable = disk["reclaimable"]
-    assert "target/distribution" in reclaimable, RATIONALE
-    assert "target/release-channel" not in reclaimable, RATIONALE
+    assert "cache/target/release/distribution" in reclaimable, RATIONALE
+    assert "cache/target/release-channel" not in reclaimable, RATIONALE
 
 
 def test_no_old_release_source_or_distribution_output_literal_remains() -> None:

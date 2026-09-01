@@ -145,8 +145,7 @@ fn dns_redirect_empty_answers_is_legal() {
     // Empty `answers` is the "name exists, no record of that
     // type" signal -- still a valid policy entry.
     let mut p = NetworkMechanics::new();
-    p.dns_redirects
-        .push(redirect("nodata.example.com", None, vec![]));
+    p.dns_redirects.push(redirect("nodata.example.com", None, vec![]));
     let r = p.find_dns_redirect("nodata.example.com", 1).unwrap();
     assert!(r.answers.is_empty());
 }

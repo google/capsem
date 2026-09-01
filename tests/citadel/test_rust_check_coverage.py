@@ -9,10 +9,11 @@ a checker at. Nothing fails, because nothing runs.
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import audits
+from capsem_builder.gate import audits, rustchecks
 from capsem_builder.gate import config as gate_config
 from helpers.gate import gate_plan
 
@@ -27,6 +28,7 @@ MODULES = CONFIG.modules
 RUST = next(surface for surface in CONFIG.lint_surfaces if surface.name == "rust")
 CHECKERS = (*RUST.enforced_by, *RUST.checked_by)
 CLIPPY_STEP = RUST.enforced_by[0]
+FORMAT_STEP = "fast.rust-format"
 
 RUST_COVERAGE_RATIONALE = """\
 Every Rust target must be linted, and every Rust test must be run by something.
@@ -58,6 +60,13 @@ being provable.
 
 See config/gate.toml [modules] and build_system/builder/gate/rustinventory.py.
 """
+
+WORKSPACE_COVERAGE_RATCHETS = {
+    "--fail-under-lines": 67.0,
+    "--fail-under-functions": 66.0,
+    "--fail-under-regions": 65.0,
+}
+MINIMUM_CRATE_COVERAGE = 40.0
 
 
 def _doc_code_blocks() -> list[str]:
@@ -132,6 +141,86 @@ def test_clippy_covers_every_target() -> None:
     for flag in ("--workspace", "--all-targets"):
         assert flag in rendered, (
             RUST_COVERAGE_RATIONALE + f"\nclippy runs without {flag}: {rendered}"
+        )
+
+
+def test_rust_format_covers_the_workspace() -> None:
+    rendered = " ".join(CONFIG.modules.rust_format)
+    assert FORMAT_STEP in RUST.enforced_by, (
+        RUST_COVERAGE_RATIONALE + f"\n{FORMAT_STEP} does not enforce the Rust surface"
+    )
+    assert rendered == "cargo fmt --all -- --check", (
+        RUST_COVERAGE_RATIONALE + f"\nRust format command drifted: {rendered}"
+    )
+
+
+def test_per_crate_coverage_ratchets_match_the_workspace() -> None:
+    expected = {
+        tomllib.loads(manifest.read_text())["package"]["name"]
+        for manifest in (PROJECT_ROOT / MODULES.rust_coverage_crate_root).glob("*/Cargo.toml")
+    }
+    configured = set(MODULES.rust_coverage_crate_floors)
+    assert configured == expected, (
+        RUST_COVERAGE_RATIONALE
+        + "\nper-crate coverage floor inventory drifted: "
+        + f"missing={sorted(expected - configured)}, stale={sorted(configured - expected)}"
+    )
+    assert MODULES.rust_coverage_crate_minimum >= MINIMUM_CRATE_COVERAGE, (
+        RUST_COVERAGE_RATIONALE
+        + f"\nper-crate minimum fell below {MINIMUM_CRATE_COVERAGE:.0f}%: "
+        + f"{MODULES.rust_coverage_crate_minimum:.2f}%"
+    )
+    below_minimum = {
+        crate: floor
+        for crate, floor in MODULES.rust_coverage_crate_floors.items()
+        if floor < MODULES.rust_coverage_crate_minimum
+    }
+    assert not below_minimum, (
+        RUST_COVERAGE_RATIONALE
+        + "\ncrate floors below the configured workspace minimum: "
+        + repr(below_minimum)
+    )
+
+
+def test_workspace_coverage_ratchets_every_llvm_dimension() -> None:
+    configured = {}
+    for floor in MODULES.rust_coverage_floors:
+        name, separator, value = floor.partition("=")
+        assert separator and value, (
+            RUST_COVERAGE_RATIONALE + f"\nmalformed Rust coverage floor: {floor}"
+        )
+        configured[name] = float(value)
+
+    assert configured.keys() == WORKSPACE_COVERAGE_RATCHETS.keys(), (
+        RUST_COVERAGE_RATIONALE
+        + "\nworkspace coverage must independently ratchet lines, functions, and regions: "
+        + repr(configured)
+    )
+    regressions = {
+        metric: (configured[metric], minimum)
+        for metric, minimum in WORKSPACE_COVERAGE_RATCHETS.items()
+        if configured[metric] < minimum
+    }
+    assert not regressions, (
+        RUST_COVERAGE_RATIONALE
+        + "\nworkspace coverage ratchets moved backwards: "
+        + repr(regressions)
+    )
+
+
+def test_coverage_run_emits_and_checks_one_owned_report() -> None:
+    rendered = "\n".join(action.render() for action in rustchecks.coverage(CONFIG).actions)
+    assert "--lcov" in MODULES.rust_coverage, RUST_COVERAGE_RATIONALE
+    assert MODULES.rust_coverage_report in MODULES.rust_coverage, (
+        RUST_COVERAGE_RATIONALE + "\ncoverage reports to a path the ratchet does not read"
+    )
+    assert MODULES.rust_coverage_report in rendered, RUST_COVERAGE_RATIONALE
+    assert MODULES.rust_coverage_ratchet in rendered, (
+        RUST_COVERAGE_RATIONALE + "\nthe per-crate ratchet is configured but never executed"
+    )
+    for floor in MODULES.rust_coverage_floors:
+        assert floor in rendered, (
+            RUST_COVERAGE_RATIONALE + f"\nconfigured floor is not executed: {floor}"
         )
 
 

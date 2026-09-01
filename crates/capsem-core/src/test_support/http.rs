@@ -20,9 +20,7 @@ pub(crate) struct RecordedHttpRequest {
 
 impl RecordedHttpRequest {
     pub(crate) fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(&name.to_ascii_lowercase())
-            .map(String::as_str)
+        self.headers.get(&name.to_ascii_lowercase()).map(String::as_str)
     }
 }
 
@@ -63,10 +61,7 @@ pub(crate) struct RecordedHttpResponse {
 impl RecordedHttpResponse {
     pub(crate) fn text(body: impl Into<String>) -> Self {
         let mut headers = HashMap::new();
-        headers.insert(
-            "content-type".to_string(),
-            "text/plain; charset=utf-8".to_string(),
-        );
+        headers.insert("content-type".to_string(), "text/plain; charset=utf-8".to_string());
         Self {
             status: StatusCode::OK,
             headers,
@@ -76,10 +71,7 @@ impl RecordedHttpResponse {
 
     pub(crate) fn html(body: impl Into<String>) -> Self {
         let mut headers = HashMap::new();
-        headers.insert(
-            "content-type".to_string(),
-            "text/html; charset=utf-8".to_string(),
-        );
+        headers.insert("content-type".to_string(), "text/html; charset=utf-8".to_string());
         Self {
             status: StatusCode::OK,
             headers,
@@ -88,8 +80,7 @@ impl RecordedHttpResponse {
     }
 
     pub(crate) fn with_header(mut self, key: &str, value: &str) -> Self {
-        self.headers
-            .insert(key.to_ascii_lowercase(), value.to_string());
+        self.headers.insert(key.to_ascii_lowercase(), value.to_string());
         self
     }
 }
@@ -126,9 +117,7 @@ where
         ),
         ..state
     };
-    let router = Router::new()
-        .fallback(any(record_request))
-        .with_state(state.clone());
+    let router = Router::new().fallback(any(record_request)).with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -171,10 +160,7 @@ async fn record_request(
 
     let mut out = (response.status, Body::from(response.body)).into_response();
     for (key, value) in response.headers {
-        if let (Ok(name), Ok(value)) = (
-            HeaderName::from_bytes(key.as_bytes()),
-            HeaderValue::from_str(&value),
-        ) {
+        if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(key.as_bytes()), HeaderValue::from_str(&value)) {
             out.headers_mut().insert(name, value);
         }
     }

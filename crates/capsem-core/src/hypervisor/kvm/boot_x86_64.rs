@@ -9,8 +9,8 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use super::memory::{
-    self, GuestMemory, BOOT_PARAMS_ADDR, CMDLINE_ADDR, CMDLINE_MAX_SIZE, GDT_ADDR,
-    KERNEL_LOAD_ADDR, PDPT_ADDR, PD_ADDR, PML4_ADDR, RAM_BASE,
+    self, GuestMemory, BOOT_PARAMS_ADDR, CMDLINE_ADDR, CMDLINE_MAX_SIZE, GDT_ADDR, KERNEL_LOAD_ADDR, PDPT_ADDR,
+    PD_ADDR, PML4_ADDR, RAM_BASE,
 };
 use super::sys;
 
@@ -47,8 +47,8 @@ pub(super) struct InitrdLoadInfo {
 
 /// Load a bzImage kernel into guest memory.
 pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<KernelLoadInfo> {
-    let kernel_data = std::fs::read(kernel_path)
-        .with_context(|| format!("reading kernel: {}", kernel_path.display()))?;
+    let kernel_data =
+        std::fs::read(kernel_path).with_context(|| format!("reading kernel: {}", kernel_path.display()))?;
 
     if kernel_data.len() < SETUP_HEADER_OFFSET + 15 {
         bail!("kernel image too small for bzImage header");
@@ -117,13 +117,9 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
 }
 
 /// Load initrd into guest memory at the end of RAM (page-aligned).
-pub(super) fn load_initrd(
-    mem: &GuestMemory,
-    initrd_path: &Path,
-    kernel_end: u64,
-) -> Result<InitrdLoadInfo> {
-    let initrd_data = std::fs::read(initrd_path)
-        .with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
+pub(super) fn load_initrd(mem: &GuestMemory, initrd_path: &Path, kernel_end: u64) -> Result<InitrdLoadInfo> {
+    let initrd_data =
+        std::fs::read(initrd_path).with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
 
     let initrd_size = initrd_data.len() as u64;
     // Keep the initrd below the 32-bit boot protocol limit and below the
@@ -377,11 +373,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 // ---------------------------------------------------------------------------
 
 /// Configure vCPU registers for the Linux bzImage 64-bit boot protocol.
-pub(super) fn setup_boot_regs(
-    vcpu: &sys::VcpuFd,
-    entry_addr: u64,
-    boot_params_addr: u64,
-) -> Result<()> {
+pub(super) fn setup_boot_regs(vcpu: &sys::VcpuFd, entry_addr: u64, boot_params_addr: u64) -> Result<()> {
     // Linux x86 boot protocol uses __BOOT_CS=0x10 and __BOOT_DS=0x18.
     let code_seg = sys::KvmSegment {
         base: 0,
@@ -461,12 +453,7 @@ pub(super) fn setup_application_processor(vcpu: &sys::VcpuFd) -> Result<()> {
 }
 
 /// Set up CPUID for a vCPU.
-pub(super) fn setup_cpuid(
-    kvm: &sys::KvmFd,
-    vcpu: &sys::VcpuFd,
-    vcpu_id: u32,
-    cpu_count: u32,
-) -> Result<()> {
+pub(super) fn setup_cpuid(kvm: &sys::KvmFd, vcpu: &sys::VcpuFd, vcpu_id: u32, cpu_count: u32) -> Result<()> {
     let mut entries = kvm.get_supported_cpuid()?;
     configure_cpuid_topology(&mut entries, vcpu_id, cpu_count);
     vcpu.set_cpuid2(&entries)?;

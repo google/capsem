@@ -94,6 +94,16 @@ sha256 = "5d747a43369f61e38f20b5a39fcc5c90647e562cdc61e2e56034f1c5b113d540"
 dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
+source_roots = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/capsem-agent",
+    "crates/capsem-bench",
+    "crates/capsem-proto",
+    "build_system/builder/image/docker.py",
+    "build_system/builder/image/guestbinarycache.py",
+]
 # The cross helper is allowed one network-open APK materialization edge. Pin
 # every direct package so the input-keyed tag cannot silently select a newer C
 # compiler on a cold machine while a warm machine reuses older bytes.

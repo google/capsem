@@ -15,20 +15,19 @@ use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
-use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
-    emit_matching_security_rules_for_evaluated_event, emit_security_write,
-    evaluate_security_boundary, McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
-    SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent,
+    emit_matching_security_rules_for_evaluated_event, emit_security_write, evaluate_security_boundary,
+    McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
+    SecurityEnforcementDecision, SecurityEvent,
 };
+use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
 use super::metrics;
 use super::McpEndpointState;
 
-const MCP_JSON_RPC_MAX_BYTES: usize =
-    capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
+const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
 const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
 
 pub(super) async fn serve(
@@ -222,12 +221,7 @@ where
             record_method_metric(&summary);
             let request_decision = evaluate_mcp_security_event(
                 &endpoint,
-                mcp_security_event_from_summary(
-                    runtime_event_type,
-                    &summary,
-                    &process_name,
-                    None,
-                ),
+                mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
             );
 
             ::metrics::counter!(
@@ -388,10 +382,7 @@ where
 enum FrameRead {
     Eof,
     Frame(capsem_proto::McpFrame),
-    InvalidFrame {
-        stream_id: Option<u32>,
-        error: String,
-    },
+    InvalidFrame { stream_id: Option<u32>, error: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -626,7 +617,7 @@ async fn log_mcp_call_with_policy(
         policy_action: policy_fields.policy_action,
         policy_rule: policy_fields.policy_rule,
         policy_reason: policy_fields.policy_reason,
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: None,
     };
     let security_event = security_event_from_mcp_call(&call);
@@ -712,10 +703,7 @@ fn mcp_security_event_from_summary(
     };
     let mut mcp = McpSecurityEvent {
         method: Some(summary.method.clone()),
-        server_name: summary
-            .server_name
-            .clone()
-            .or_else(|| Some(process_name.to_string())),
+        server_name: summary.server_name.clone().or_else(|| Some(process_name.to_string())),
         tool_call_name: summary.tool_name.clone(),
         tool_list,
         ..Default::default()
@@ -723,28 +711,20 @@ fn mcp_security_event_from_summary(
     .with_request_preview(summary.request_preview.as_deref())
     .with_response_preview(response_preview.as_deref())
     .with_error_message(error_message);
-    ensure_mcp_request_identity(
-        &mut mcp,
-        summary.request_id.clone(),
-        Some(summary.method.clone()),
-    );
+    ensure_mcp_request_identity(&mut mcp, summary.request_id.clone(), Some(summary.method.clone()));
     let event = SecurityEvent::new(event_type)
         .with_mcp(mcp)
         .with_process(ProcessSecurityEvent {
             name: Some(process_name.to_string()),
             ..Default::default()
         });
-    match crate::telemetry::ambient_capsem_trace_id() {
+    match capsem_foundation::telemetry::ambient_capsem_trace_id() {
         Some(trace_id) => event.with_trace_id(trace_id),
         None => event,
     }
 }
 
-fn ensure_mcp_request_identity(
-    mcp: &mut McpSecurityEvent,
-    request_id: Option<String>,
-    method: Option<String>,
-) {
+fn ensure_mcp_request_identity(mcp: &mut McpSecurityEvent, request_id: Option<String>, method: Option<String>) {
     if request_id.is_none() && method.is_none() {
         return;
     }
@@ -757,10 +737,7 @@ fn ensure_mcp_request_identity(
     }
 }
 
-fn evaluate_mcp_security_event(
-    endpoint: &McpEndpointState,
-    event: SecurityEvent,
-) -> SecurityEnforcementDecision {
+fn evaluate_mcp_security_event(endpoint: &McpEndpointState, event: SecurityEvent) -> SecurityEnforcementDecision {
     let rules = endpoint.security_rules.read().unwrap().clone();
     let plugin_policy = snapshot_plugin_policy(&endpoint.plugin_policy);
     match evaluate_security_boundary(&rules, plugin_policy, event) {
@@ -784,11 +761,7 @@ fn policy_blocked_response(
     decision: &SecurityEnforcementDecision,
 ) -> JsonRpcResponse {
     let rule = decision.rule_id.as_deref().unwrap_or("unknown");
-    JsonRpcResponse::err(
-        id,
-        -32600,
-        format!("MCP {subject} blocked by security rule: {rule}"),
-    )
+    JsonRpcResponse::err(id, -32600, format!("MCP {subject} blocked by security rule: {rule}"))
 }
 
 fn json_rpc_id_to_log_string(value: &serde_json::Value) -> Option<String> {
@@ -846,17 +819,12 @@ async fn read_next_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<FrameRe
     }
 
     let total_len = u32::from_be_bytes(len_buf) as usize;
-    if !(capsem_proto::MCP_FRAME_HEADER_LEN as usize..=capsem_proto::MCP_FRAME_MAX_SIZE)
-        .contains(&total_len)
-    {
+    if !(capsem_proto::MCP_FRAME_HEADER_LEN as usize..=capsem_proto::MCP_FRAME_MAX_SIZE).contains(&total_len) {
         bail!("invalid MCP frame length: {total_len}");
     }
 
     let mut body = vec![0u8; total_len];
-    reader
-        .read_exact(&mut body)
-        .await
-        .context("read MCP frame body")?;
+    reader.read_exact(&mut body).await.context("read MCP frame body")?;
     match capsem_proto::decode_mcp_frame_body(&body) {
         Ok(frame) => Ok(FrameRead::Frame(frame)),
         Err(e) => Ok(FrameRead::InvalidFrame {
@@ -873,9 +841,7 @@ fn recover_stream_id(body: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes([body[4], body[5], body[6], body[7]]))
 }
 
-fn parse_json_rpc_payload(
-    payload: &[u8],
-) -> std::result::Result<JsonRpcRequest, JsonRpcPayloadError> {
+fn parse_json_rpc_payload(payload: &[u8]) -> std::result::Result<JsonRpcRequest, JsonRpcPayloadError> {
     if payload.len() > MCP_JSON_RPC_MAX_BYTES {
         return Err(JsonRpcPayloadError {
             code: -32600,
@@ -884,12 +850,11 @@ fn parse_json_rpc_payload(
         });
     }
 
-    let value =
-        serde_json::from_slice::<serde_json::Value>(payload).map_err(|e| JsonRpcPayloadError {
-            code: -32700,
-            message: format!("parse error: {e}"),
-            id: None,
-        })?;
+    let value = serde_json::from_slice::<serde_json::Value>(payload).map_err(|e| JsonRpcPayloadError {
+        code: -32700,
+        message: format!("parse error: {e}"),
+        id: None,
+    })?;
 
     let id = value.get("id").cloned();
     if value.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") {

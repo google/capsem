@@ -55,20 +55,8 @@ class Arch(Strict):
         return self
 
 
-class StoragePhase(Strict):
-    boundary: str
-    rail: str
-
-
-class StorageConfig(Strict):
-    policy_file: str
-    policy_script: str
-    ensure_space_script: str
-    phases: dict[str, StoragePhase]
-
-
 class OutputRootsConfig(Strict):
-    """Canonical repository-generated output owners inside ``target/``."""
+    """Canonical repository-generated output owners inside ``cache/target/``."""
 
     assets: str
     benchmarks: str
@@ -83,8 +71,8 @@ class OutputRootsConfig(Strict):
     @classmethod
     def _is_target_owned(cls, value: str) -> str:
         path = PurePosixPath(value)
-        if path.is_absolute() or ".." in path.parts or path.parts[:1] != ("target",):
-            raise ValueError(f"generated output root {value!r} must stay under target/")
+        if path.is_absolute() or ".." in path.parts or path.parts[:2] != ("cache", "target"):
+            raise ValueError(f"generated output root {value!r} must stay under cache/target/")
         return value
 
     @model_validator(mode="after")
@@ -178,6 +166,8 @@ class EnvironmentConfig(Strict):
     coverage_file: str
     source_checkout: str
     cargo_target: str
+    uv_cache: str
+    pnpm_store: str
     source_commit: str
     qualified_source_commit: str
     command_sandbox_mode: str

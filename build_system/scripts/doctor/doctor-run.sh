@@ -131,7 +131,7 @@ fi
 section "Guest Binaries"
 if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
     arch=$(uname -m | sed 's/aarch64/arm64/')
-    release_dir="target/linux-agent/$arch"
+    release_dir="cache/target/build/linux-agent/$arch"
     for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
         if [[ -f "$release_dir/$b" ]]; then
             if file "$release_dir/$b" 2>/dev/null | grep -E -q "ELF 64-bit"; then

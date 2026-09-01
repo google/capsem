@@ -5,8 +5,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::{fixture_state, offline_state};
 use crate::gateway_provider::{
-    start_service_with_binary, state_from_status_and_update_json_for_test,
-    state_from_status_json_for_test, update_with_binary, GatewayProvider,
+    start_service_with_binary, state_from_status_and_update_json_for_test, state_from_status_json_for_test,
+    update_with_binary, GatewayProvider,
 };
 use crate::model::{Attention, ServiceStatus, SessionLifecycle, UpdateNoticeKind, UpdateTrack};
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
@@ -39,10 +39,7 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
         !snapshot.contains("github.com/google/capsem"),
         "repo metadata belongs in a popup or future status segment, not the empty terminal surface"
     );
-    assert!(
-        !snapshot.contains("┌"),
-        "minimal UI should not render boxes"
-    );
+    assert!(!snapshot.contains("┌"), "minimal UI should not render boxes");
     assert!(
         !snapshot.contains("? help"),
         "help belongs in a popup, not persistent chrome"
@@ -133,10 +130,7 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     let app = App::new(state);
 
     assert_eq!(app.overlay(), AppOverlay::Create);
-    assert_eq!(
-        app.create_draft().expect("create draft").name,
-        "corp-default-1"
-    );
+    assert_eq!(app.create_draft().expect("create draft").name, "corp-default-1");
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
     assert!(snapshot.contains("CAPSEM"));
     assert!(snapshot.contains("new session"));
@@ -160,9 +154,7 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
     } else {
         std::path::Path::new("/usr/bin/true")
     };
-    let outcome = start_service_with_binary(binary)
-        .await
-        .expect("start service command");
+    let outcome = start_service_with_binary(binary).await.expect("start service command");
 
     assert_eq!(outcome.message, "service start requested");
     assert_eq!(outcome.focus_session, None);
@@ -172,16 +164,11 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
 async fn update_action_runs_complete_update_with_yes() {
     let (script, log) = fake_capsem_script("binary-profile");
 
-    let outcome = update_with_binary(&script)
-        .await
-        .expect("run capsem update");
+    let outcome = update_with_binary(&script).await.expect("run capsem update");
 
     assert_eq!(outcome.message, "Capsem update finished");
     assert_eq!(outcome.focus_session, None);
-    assert_eq!(
-        std::fs::read_to_string(log).expect("read args"),
-        "update --yes\n"
-    );
+    assert_eq!(std::fs::read_to_string(log).expect("read args"), "update --yes\n");
 }
 
 #[test]
@@ -225,9 +212,7 @@ fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
     assert_eq!(buffer_cell(&buffer, other_number, row).bg, blue());
     assert_eq!(buffer_cell(&buffer, other_label, row).fg, blue());
     assert!(
-        !buffer_cell(&buffer, other_label, row)
-            .modifier
-            .contains(Modifier::BOLD),
+        !buffer_cell(&buffer, other_label, row).modifier.contains(Modifier::BOLD),
         "only the selected tab label should be bold"
     );
 }
@@ -494,10 +479,7 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     let (name_x, name_y) = find_cell(&focused, "linux-builder-1");
     assert_eq!(buffer_cell(&focused, name_x, name_y).bg, selected_bg());
     let (profile_x, profile_y) = find_cell(&focused, "linux-builder");
-    assert_eq!(
-        buffer_cell(&focused, profile_x, profile_y).bg,
-        selected_bg()
-    );
+    assert_eq!(buffer_cell(&focused, profile_x, profile_y).bg, selected_bg());
     assert!(
         buffer_cell(&focused, profile_x, profile_y)
             .modifier
@@ -628,14 +610,7 @@ fn refresh_preserves_active_session_when_it_still_exists() {
     app.replace_state(refreshed);
 
     assert_eq!(app.state().active_session_id, "linux-os");
-    assert_eq!(
-        app.state()
-            .active_session()
-            .expect("active session")
-            .stats
-            .tokens,
-        42
-    );
+    assert_eq!(app.state().active_session().expect("active session").stats.tokens, 42);
 }
 
 #[test]
@@ -779,10 +754,7 @@ fn purge_action_is_alt_p_and_requires_confirmation() {
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Confirm);
-    assert_eq!(
-        app.pending_action(),
-        Some(&ControlAction::Purge { all: false })
-    );
+    assert_eq!(app.pending_action(), Some(&ControlAction::Purge { all: false }));
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render purge confirmation");
     assert!(snapshot.contains("purge"));
@@ -903,11 +875,8 @@ fn stats_overlay_renders_on_demand_without_persistent_help() {
 
 #[test]
 fn gateway_status_json_maps_to_tui_state() {
-    let state = state_from_status_json_for_test(
-        gateway_status_body(),
-        std::time::Duration::from_millis(24),
-    )
-    .expect("parse service list");
+    let state = state_from_status_json_for_test(gateway_status_body(), std::time::Duration::from_millis(24))
+        .expect("parse service list");
 
     assert_eq!(state.service.status, ServiceStatus::Online);
     assert_eq!(state.service.latency, std::time::Duration::from_millis(24));
@@ -938,21 +907,15 @@ fn gateway_status_json_maps_to_tui_state() {
 
 #[test]
 fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_labels() {
-    let mut state = state_from_status_json_for_test(
-        gateway_status_body(),
-        std::time::Duration::from_millis(24),
-    )
-    .expect("parse gateway status for TUI story");
+    let mut state = state_from_status_json_for_test(gateway_status_body(), std::time::Duration::from_millis(24))
+        .expect("parse gateway status for TUI story");
     state.profiles = fixture_state().profiles;
     state.sessions[1].can_resume = true;
     state.sessions[1].profile_status = Some("current".to_string());
     let mut app = App::new(state);
 
     let initial = render_app_snapshot(&app, 100, 24).expect("render initial TUI story");
-    assert!(
-        initial.contains("24ms"),
-        "measured gateway latency is visible"
-    );
+    assert!(initial.contains("24ms"), "measured gateway latency is visible");
     assert!(initial.contains("profile-main"), "named session is visible");
     assert!(
         !initial.contains("vm-1"),
@@ -988,10 +951,7 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
     );
     let stop = render_app_snapshot(&app, 100, 24).expect("render TUI story stop");
     assert!(stop.contains("profile-main"));
-    assert!(
-        !stop.contains("vm-1"),
-        "confirmation target is the human name"
-    );
+    assert!(!stop.contains("vm-1"), "confirmation target is the human name");
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Stop {
@@ -1007,10 +967,7 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
     app.replace_state(stopped);
     let stopped = render_app_snapshot(&app, 100, 24).expect("render stopped TUI story");
     assert!(stopped.contains("profile-main"));
-    assert!(
-        !stopped.contains("vm-1"),
-        "resume prompt uses the human name"
-    );
+    assert!(!stopped.contains("vm-1"), "resume prompt uses the human name");
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Resume {
@@ -1088,10 +1045,7 @@ fn gateway_blocked_update_status_maps_to_tui_notice() {
     .expect("parse blocked update status");
 
     let notice = state.update_notice.as_ref().expect("blocked update notice");
-    assert_eq!(
-        notice.kind,
-        UpdateNoticeKind::Blocked(vec![UpdateTrack::Profiles])
-    );
+    assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::Profiles]));
     let snapshot = render_snapshot(&state, 120, 24).expect("render blocked update notice");
     assert!(snapshot.contains("updates blocked: profiles"));
 }
@@ -1105,14 +1059,8 @@ fn gateway_blocked_asset_update_status_maps_to_tui_notice() {
     )
     .expect("parse blocked asset update status");
 
-    let notice = state
-        .update_notice
-        .as_ref()
-        .expect("blocked asset update notice");
-    assert_eq!(
-        notice.kind,
-        UpdateNoticeKind::Blocked(vec![UpdateTrack::VmAssets])
-    );
+    let notice = state.update_notice.as_ref().expect("blocked asset update notice");
+    assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::VmAssets]));
     let snapshot = render_snapshot(&state, 120, 24).expect("render blocked asset update notice");
     assert!(snapshot.contains("updates blocked: assets"));
 }
@@ -1233,11 +1181,9 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
 
 #[test]
 fn malformed_gateway_status_fails_state_mapping() {
-    let error = state_from_status_json_for_test(
-        r#"{"service":"running","vms":"not a list"}"#,
-        std::time::Duration::ZERO,
-    )
-    .expect_err("malformed gateway status should fail");
+    let error =
+        state_from_status_json_for_test(r#"{"service":"running","vms":"not a list"}"#, std::time::Duration::ZERO)
+            .expect_err("malformed gateway status should fail");
 
     assert!(error.to_string().contains("invalid type"));
 }
@@ -1256,10 +1202,7 @@ async fn gateway_provider_loads_status_over_http_gateway() {
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
-                assert!(
-                    request.contains("GET /status "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 assert!(
                     request.contains("authorization: Bearer test-token")
                         || request.contains("Authorization: Bearer test-token"),
@@ -1437,10 +1380,7 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
                 write_json_response(&mut stream, gateway_update_current_status_body()).await;
             } else {
                 status_requests += 1;
-                assert!(
-                    request.contains("GET /status "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 assert!(
                     request.contains("authorization: Bearer test-token")
                         || request.contains("Authorization: Bearer test-token"),
@@ -1451,10 +1391,7 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         }
         assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
-        assert_eq!(
-            profile_requests, 2,
-            "profile list should stay live across refreshes"
-        );
+        assert_eq!(profile_requests, 2, "profile list should stay live across refreshes");
         assert_eq!(
             update_requests, 2,
             "update status should use the cached token across refreshes"
@@ -1489,10 +1426,7 @@ async fn gateway_provider_only_offers_tui_launchable_profiles() {
             } else if request.contains("GET /profiles/list ") {
                 write_json_response(&mut stream, gateway_profiles_with_unlaunchable_body()).await;
             } else {
-                assert!(
-                    request.contains("GET /status "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 write_json_response(&mut stream, &body).await;
             }
         }
@@ -1561,10 +1495,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
-                assert!(
-                    request.contains("POST /vms/create "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
                 assert!(request.contains(r#""name":"code-1-proof""#));
                 assert!(request.contains(r#""persistent":true"#));
                 assert!(request.contains(r#""profile_id":"co-work""#));
@@ -1599,10 +1530,7 @@ async fn gateway_provider_omits_generated_create_name_for_service_owned_counter(
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
-                assert!(
-                    request.contains("POST /vms/create "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
                 assert!(!request.contains(r#""name":"#), "{request}");
                 assert!(request.contains(r#""persistent":true"#));
                 assert!(request.contains(r#""profile_id":"code""#));
@@ -1642,11 +1570,7 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
                     "unexpected request: {request:?}"
                 );
                 assert!(request.contains(r#""name":"profile-v2-fork-copy""#));
-                write_json_response(
-                    &mut stream,
-                    r#"{"name":"profile-v2-fork-copy","size_bytes":1024}"#,
-                )
-                .await;
+                write_json_response(&mut stream, r#"{"name":"profile-v2-fork-copy","size_bytes":1024}"#).await;
             }
         }
     });
@@ -1660,10 +1584,7 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
         .expect("invoke fork");
 
     assert_eq!(outcome.message, "forked profile-v2-fork-copy");
-    assert_eq!(
-        outcome.focus_session.as_deref(),
-        Some("profile-v2-fork-copy")
-    );
+    assert_eq!(outcome.focus_session.as_deref(), Some("profile-v2-fork-copy"));
     server.await.expect("server task");
 }
 
@@ -1714,10 +1635,7 @@ async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
-                assert!(
-                    request.contains("POST /purge "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
                 assert!(
                     request.contains("authorization: Bearer test-token")
                         || request.contains("Authorization: Bearer test-token"),
@@ -1756,10 +1674,7 @@ async fn gateway_provider_reports_defunct_persistent_purge() {
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
-                assert!(
-                    request.contains("POST /purge "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
                 assert!(request.contains(r#""all":false"#));
                 write_json_response(
                     &mut stream,
@@ -1775,10 +1690,7 @@ async fn gateway_provider_reports_defunct_persistent_purge() {
         .await
         .expect("invoke purge");
 
-    assert_eq!(
-        outcome.message,
-        "purged 2 sessions (1 broken persistent, 1 temporary)"
-    );
+    assert_eq!(outcome.message, "purged 2 sessions (1 broken persistent, 1 temporary)");
     server.await.expect("server task");
 }
 
@@ -1799,12 +1711,7 @@ async fn gateway_provider_surfaces_action_error_body() {
                     request.contains("DELETE /vms/vm-1/delete "),
                     "unexpected request: {request:?}"
                 );
-                write_response(
-                    &mut stream,
-                    "500 Internal Server Error",
-                    r#"{"error":"boom"}"#,
-                )
-                .await;
+                write_response(&mut stream, "500 Internal Server Error", r#"{"error":"boom"}"#).await;
             }
         }
     });
@@ -1878,8 +1785,7 @@ fn fake_capsem_script(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time")
         .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("capsem-tui-{label}-{}-{nonce}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("capsem-tui-{label}-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create fake capsem dir");
     let script = dir.join("capsem");
     let log = dir.join("args.txt");
@@ -1894,8 +1800,7 @@ fn fake_capsem_script(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod fake capsem");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod fake capsem");
     }
     (script, log)
 }
@@ -1922,11 +1827,7 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
     let content_length = headers
         .lines()
         .find_map(|line| line.strip_prefix("content-length:"))
-        .or_else(|| {
-            headers
-                .lines()
-                .find_map(|line| line.strip_prefix("Content-Length:"))
-        })
+        .or_else(|| headers.lines().find_map(|line| line.strip_prefix("Content-Length:")))
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or_default();
     while request.len().saturating_sub(header_end) < content_length {
@@ -1949,10 +1850,7 @@ async fn write_response(stream: &mut tokio::net::TcpStream, status: &str, body: 
         body.len(),
         body
     );
-    stream
-        .write_all(response.as_bytes())
-        .await
-        .expect("write response");
+    stream.write_all(response.as_bytes()).await.expect("write response");
 }
 
 fn gateway_status_body() -> &'static str {

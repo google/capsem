@@ -37,7 +37,7 @@ PROFILE = SETTINGS.release_profile
 
 #: A value for each variable, so a case is written as the set of names present.
 VALUES = {
-    INPUT_DIR: "target/candidate-profile-inputs",
+    INPUT_DIR: "cache/target/candidate-profile-inputs",
     PACKAGE: "dist/capsem_0.6.0_arm64.deb",
     PROFILE: "code",
 }
@@ -383,7 +383,7 @@ def test_a_local_state_cannot_carry_release_inputs() -> None:
     # Through a named mapping, so the type checker does not report the very
     # error this asserts happens at *runtime*. It would be right -- that is
     # the point -- and a literal splat is what ruff objects to instead.
-    local_with_release_input = {"bin_dir": "target/debug", "input_dir": VALUES[INPUT_DIR]}
+    local_with_release_input = {"bin_dir": "cache/target/cargo/debug", "input_dir": VALUES[INPUT_DIR]}
 
     with pytest.raises((pydantic.ValidationError, TypeError)):
         LocalQualification(**local_with_release_input)
@@ -393,7 +393,7 @@ def test_a_binary_release_cannot_be_built_without_its_package() -> None:
     import pydantic
     from capsem_builder.gate.qualification import BinaryQualification
 
-    without_package = {"input_dir": VALUES[INPUT_DIR], "bin_dir": "target/debug"}
+    without_package = {"input_dir": VALUES[INPUT_DIR], "bin_dir": "cache/target/cargo/debug"}
 
     with pytest.raises(pydantic.ValidationError):
         BinaryQualification(**without_package)
@@ -409,7 +409,7 @@ def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
     from capsem_builder.gate.qualification import BinaryQualification
 
     with pytest.raises(pydantic.ValidationError):
-        BinaryQualification(input_dir="   ", package=VALUES[PACKAGE], bin_dir="target/debug")
+        BinaryQualification(input_dir="   ", package=VALUES[PACKAGE], bin_dir="cache/target/cargo/debug")
 
 
 def test_a_profile_name_follows_the_configured_grammar() -> None:
@@ -420,6 +420,6 @@ def test_a_profile_name_follows_the_configured_grammar() -> None:
         ProfileQualification(
             input_dir=VALUES[INPUT_DIR],
             package=VALUES[PACKAGE],
-            bin_dir="target/debug",
+            bin_dir="cache/target/cargo/debug",
             profile="not a profile name",
         )

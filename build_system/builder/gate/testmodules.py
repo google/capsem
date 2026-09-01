@@ -1,4 +1,4 @@
-"""The modules `just test-full` is made of, and the ones provable from source.
+"""The modules `just test` is made of, and the ones provable from source.
 
 `_test-candidate-run` was 366 lines because six modules each re-solved the same
 problems inside one `bash` body, selected by a `CAPSEM_TEST_MODULE` environment
@@ -119,6 +119,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
 
     # Nothing is worth starting against a file that will not parse.
     syntax = phase.add(audits.source_syntax(config), after=(python,))
+    formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
     audited = tuple(phase.add(check, after=(syntax,)) for check in audits.all_of(config))
     # The same fragment the `lint` command composes: Ruff and both Ty passes as
@@ -130,9 +131,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # that cannot be collected is a suite the gate would otherwise discover it
     # was not running an hour later.
     collected = phase.add(pytestsuite.collection(config), after=(syntax,))
-    build_system_collected = phase.add(
-        pytestsuite.build_system_collection(config), after=(syntax,)
-    )
     # The Citadel belongs here and not in the broad suite. Source-level guards
     # answering in seconds have no business waiting on an asset build, and the
     # point of recording a mistake is to catch it before the expensive work
@@ -177,8 +175,8 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *audited,
         *checked,
         collected,
-        build_system_collected,
         guarded,
+        formatted,
         digest,
         *(surface for surface in surfaces if surface is not blocking),
         channel,

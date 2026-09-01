@@ -172,7 +172,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
     _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
 
-    output_pkg = REPO_ROOT / "target" / "packages" / f"Capsem-{version}.pkg"
+    output_pkg = REPO_ROOT / "cache" / "target" / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
         res = subprocess.run(
@@ -278,7 +278,7 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
     (bin_dir / "capsem-service").chmod(0o755)
 
     version = "9.9.11-keychain-test"
-    output_pkg = REPO_ROOT / "target" / "packages" / f"Capsem-{version}.pkg"
+    output_pkg = REPO_ROOT / "cache" / "target" / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
         res = subprocess.run(
@@ -402,7 +402,7 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
     )
     assets_dir.mkdir()
 
-    output_pkg = REPO_ROOT / "target" / "packages" / f"Capsem-{version}.pkg"
+    output_pkg = REPO_ROOT / "cache" / "target" / "packages" / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
         with _serve_directory_requiring_release_user_agent(manifest_root) as (

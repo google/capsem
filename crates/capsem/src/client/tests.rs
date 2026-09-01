@@ -156,12 +156,7 @@ fn api_response_ok_variant() {
     assert!(!result.can_resume);
     assert_eq!(
         result.available_actions,
-        vec![
-            VmAction::Pause,
-            VmAction::Stop,
-            VmAction::Fork,
-            VmAction::Delete
-        ]
+        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
     );
 }
 
@@ -288,32 +283,17 @@ fn update_status_response_parses_service_contract() {
     assert_eq!(status.validation_error, None);
     assert!(!status.stale);
     assert_eq!(status.binary.state, UpdateTrackState::UpdateAvailable);
-    assert_eq!(
-        status.binary.compatibility,
-        UpdateCompatibilityState::Compatible
-    );
+    assert_eq!(status.binary.compatibility, UpdateCompatibilityState::Compatible);
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
-    assert_eq!(
-        status.profiles.current.as_deref(),
-        Some("profiles-2030.0101.0")
-    );
-    assert_eq!(
-        status.profiles.latest.as_deref(),
-        Some("profiles-2030.0101.1")
-    );
+    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
+    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
     assert_eq!(
         status.profiles.blocked_reason.as_deref(),
         Some("requires binary 1.4.0 or newer")
     );
     assert_eq!(status.profiles.state, UpdateTrackState::Unknown);
-    assert_eq!(
-        status.images.compatibility,
-        UpdateCompatibilityState::NotApplicable
-    );
-    assert_eq!(
-        status.supply_chain.manifest.origin.as_deref(),
-        Some("update")
-    );
+    assert_eq!(status.images.compatibility, UpdateCompatibilityState::NotApplicable);
+    assert_eq!(status.supply_chain.manifest.origin.as_deref(), Some("update"));
     assert_eq!(
         status.supply_chain.channel_index.sha256.as_deref(),
         status.channel_hash.as_deref()
@@ -710,10 +690,7 @@ async fn connect_fail_fast_errors_immediately_on_missing_socket() {
     let client = UdsClient::new(sock.clone(), false);
 
     let start = std::time::Instant::now();
-    let err = client
-        .connect_with_timeout(ConnectMode::FailFast)
-        .await
-        .unwrap_err();
+    let err = client.connect_with_timeout(ConnectMode::FailFast).await.unwrap_err();
     let elapsed = start.elapsed();
 
     assert!(
@@ -765,10 +742,7 @@ async fn connect_await_startup_eventually_times_out() {
 
     let start = std::time::Instant::now();
     let err = client
-        .connect_with_timeout_for_test(
-            ConnectMode::AwaitStartup,
-            std::time::Duration::from_millis(300),
-        )
+        .connect_with_timeout_for_test(ConnectMode::AwaitStartup, std::time::Duration::from_millis(300))
         .await
         .unwrap_err();
     let elapsed = start.elapsed();
@@ -865,11 +839,7 @@ async fn bounded_direct_request_reaps_its_owned_service_and_socket_on_error() {
     let child = command.spawn().unwrap();
     let child_pid = child.id().unwrap();
 
-    let client = UdsClient::with_direct_service_lifetime(
-        socket.clone(),
-        true,
-        DirectServiceLifetime::BoundToCommand,
-    );
+    let client = UdsClient::with_direct_service_lifetime(socket.clone(), true, DirectServiceLifetime::BoundToCommand);
     *client.owned_direct_service.lock().await = Some(child);
 
     let error = client
@@ -943,8 +913,7 @@ fn a_capped_result_warns_that_output_is_a_prefix() {
 fn an_older_service_response_decodes_as_complete() {
     // A service built before the field existed must read as complete, never
     // as truncated -- defaulting the other way would warn on every exec.
-    let resp: ExecResponse =
-        serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
+    let resp: ExecResponse = serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
 
     assert!(!resp.truncated);
     assert_eq!(resp.truncation_notice(), None);

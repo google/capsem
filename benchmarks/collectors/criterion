@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CRITERION = ROOT / "target" / "criterion"
+CRITERION = ROOT / "cache" / "target" / "cargo" / "criterion"
 
 
 def declared_targets() -> list[tuple[str, str]]:

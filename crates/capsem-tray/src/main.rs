@@ -44,11 +44,11 @@ enum PollResult {
 }
 
 fn main() -> Result<()> {
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let run_dir = capsem_foundation::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-tray",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("tray.log"),
         },
         default_filter: "capsem_tray=info",
@@ -408,9 +408,7 @@ fn find_capsem_cli_binary() -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-fn build_start_service_invocation(
-    binary: Option<&std::path::Path>,
-) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+fn build_start_service_invocation(binary: Option<&std::path::Path>) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
     match binary {
         Some(path) => (path.as_os_str().to_owned(), vec!["start".into()]),
         None => ("capsem".into(), vec!["start".into()]),
@@ -426,10 +424,7 @@ fn find_capsem_app_binary() -> Option<std::path::PathBuf> {
     let candidates: [std::path::PathBuf; 2] = [
         std::path::PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
         std::env::var("HOME")
-            .map(|h| {
-                std::path::PathBuf::from(h)
-                    .join("Applications/Capsem.app/Contents/MacOS/capsem-app")
-            })
+            .map(|h| std::path::PathBuf::from(h).join("Applications/Capsem.app/Contents/MacOS/capsem-app"))
             .unwrap_or_default(),
     ];
     #[cfg(target_os = "linux")]
@@ -508,12 +503,9 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
     std::thread::spawn(move || {
         let binary = find_capsem_app_binary();
         if binary.is_none() {
-            warn!(
-                "capsem-app binary not found in install locations; falling back to `open -a Capsem`"
-            );
+            warn!("capsem-app binary not found in install locations; falling back to `open -a Capsem`");
         }
-        let (program, args) =
-            build_launch_invocation(binary.as_deref(), vm_id.as_deref(), action.as_deref());
+        let (program, args) = build_launch_invocation(binary.as_deref(), vm_id.as_deref(), action.as_deref());
 
         let mut cmd = std::process::Command::new(&program);
         cmd.args(&args);
@@ -538,7 +530,7 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
 /// tray can acquire. Tests that need strict isolation override with
 /// `--lock-path`.
 fn tray_lock_path() -> std::path::PathBuf {
-    capsem_core::paths::capsem_run_dir().join("tray.lock")
+    capsem_foundation::paths::capsem_run_dir().join("tray.lock")
 }
 
 #[cfg(test)]

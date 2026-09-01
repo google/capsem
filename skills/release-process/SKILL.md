@@ -54,11 +54,13 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-Do not dispatch downstream workflows or author source manifests by hand. Use
-`just test-full <source-commit>` only as the exceptional cold diagnostic; use
-focused tests during ordinary development. The release commands and complete
-diagnostic own their sandbox, egress, machine lock, journal, and teardown, so
-do not nest or wrap them.
+Do not dispatch downstream workflows or author source manifests by hand. Each
+release command is sufficient on its own because its hosted lane performs
+release qualification; `just test <source-commit>` is optional reusable local
+whole-system verification, not a release prerequisite. Use focused tests
+during ordinary development. The release commands and complete local test own
+their sandbox, egress, machine lock, journal, and teardown, so do not nest or
+wrap them.
 
 For failures, select the reference matching the affected boundary above.
 Diagnostic continuation, CI-only `--force`, graph retirement, signing,
@@ -73,7 +75,7 @@ Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
 install/glow-up must derive both paths from that one value and validate it
 before Docker or Colima. Release CI stages raw manifest inputs into the paired
 root on the host; the sealed proof never rematerializes them or falls back to
-checkout `assets`/`target/config` selectors.
+checkout `assets`/`cache/target/config` selectors.
 
 Linux package replacement embeds `deb-preinst.sh` as `DEBIAN/preinst`.
 Ordinary replacement uses `systemctl --user stop capsem.service` and retires

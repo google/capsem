@@ -107,6 +107,7 @@ class LinuxWorkspaceConfig(Strict):
 
 class ToolchainConfig(Strict):
     sync: tuple[str, ...]
+    uv_identity_inputs: tuple[str, ...]
     node_workspaces: tuple[str, ...]
     node_install: tuple[str, ...]
     node_env: dict[str, str]

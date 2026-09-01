@@ -150,11 +150,7 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
     let mut parts = Vec::with_capacity(params.len());
     for (key, value) in params {
         if let Some(v) = value {
-            parts.push(format!(
-                "{}={}",
-                key,
-                utf8_percent_encode(v.as_ref(), QUERY_VALUE),
-            ));
+            parts.push(format!("{}={}", key, utf8_percent_encode(v.as_ref(), QUERY_VALUE),));
         }
     }
     if parts.is_empty() {
@@ -234,11 +230,11 @@ fn resolve_uds_path(override_val: Option<&str>, run_dir: &std::path::Path) -> Pa
 ///
 /// `home` is accepted for backward compatibility with existing call sites and
 /// unit tests; the actual resolution goes through
-/// [`capsem_core::paths::capsem_run_dir`] so that `CAPSEM_HOME` is honored.
+/// [`capsem_foundation::paths::capsem_run_dir`] so that `CAPSEM_HOME` is honored.
 fn resolve_run_dir(_home: &str, override_val: Option<&str>) -> PathBuf {
     override_val
         .map(PathBuf::from)
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir)
+        .unwrap_or_else(capsem_foundation::paths::capsem_run_dir)
 }
 
 struct UdsClient {
@@ -264,14 +260,11 @@ impl UdsClient {
 
         if !service_bin.exists() {
             error!(path = %service_bin.display(), "capsem-service binary not found near mcp binary");
-            return Err(anyhow::anyhow!(
-                "capsem-service not found at {}",
-                service_bin.display()
-            ));
+            return Err(anyhow::anyhow!("capsem-service not found at {}", service_bin.display()));
         }
 
         // Assets: always <capsem_home>/assets/ (use `just install` or symlink for dev)
-        let assets_dir = capsem_core::paths::capsem_assets_dir();
+        let assets_dir = capsem_foundation::paths::capsem_assets_dir();
         let process_bin = bin_dir.join("capsem-process");
 
         info!(service = %service_bin.display(), assets = %assets_dir.display(), "spawning service");
@@ -286,8 +279,8 @@ impl UdsClient {
 
         // Wait up to 5s for socket with exponential backoff
         let uds = self.uds_path.clone();
-        capsem_core::poll::poll_until(
-            capsem_core::poll::PollOpts::new("service-socket", std::time::Duration::from_secs(5)),
+        capsem_foundation::poll::poll_until(
+            capsem_foundation::poll::PollOpts::new("service-socket", std::time::Duration::from_secs(5)),
             || {
                 let uds = uds.clone();
                 async move { UnixStream::connect(&uds).await.ok() }
@@ -626,10 +619,7 @@ impl CapsemHandler {
         description = "List sessions with ID, name, profile, status, resources, uptime, and telemetry"
     )]
     async fn list(&self) -> Result<String, String> {
-        let resp = self
-            .client
-            .request::<Value, Value>("GET", "/vms/list", None)
-            .await;
+        let resp = self.client.request::<Value, Value>("GET", "/vms/list", None).await;
         format_service_response(resp)
     }
 
@@ -664,10 +654,7 @@ impl CapsemHandler {
         name = "capsem_service_logs",
         description = "Get the latest capsem-service logs (last ~100KB). Use grep to filter lines, tail to limit to last N lines"
     )]
-    async fn service_logs(
-        &self,
-        Parameters(params): Parameters<ServiceLogsParams>,
-    ) -> Result<String, String> {
+    async fn service_logs(&self, Parameters(params): Parameters<ServiceLogsParams>) -> Result<String, String> {
         let mut buf = self
             .client
             .request_text("GET", "/service-logs")
@@ -686,10 +673,7 @@ impl CapsemHandler {
         name = "capsem_panics",
         description = "Extract structured Rust panics + backtraces from all host log files (service.log, mcp.log, gateway.log, tray.log, capsem-app's latest <ts>.jsonl). Returns one record per panic with binary, location, message, and the first 16 stack frames. Run this FIRST when investigating an unexplained failure -- a single panic ranks higher than a hundred warns."
     )]
-    async fn panics(
-        &self,
-        Parameters(params): Parameters<TriageMcpParams>,
-    ) -> Result<String, String> {
+    async fn panics(&self, Parameters(params): Parameters<TriageMcpParams>) -> Result<String, String> {
         let path = format!(
             "/panics{}",
             query_string(&[
@@ -697,10 +681,7 @@ impl CapsemHandler {
                 ("limit", params.limit.map(|n| n.to_string())),
             ]),
         );
-        let resp = self
-            .client
-            .request::<Value, Value>("GET", &path, None)
-            .await;
+        let resp = self.client.request::<Value, Value>("GET", &path, None).await;
         format_service_response(resp)
     }
 
@@ -708,10 +689,7 @@ impl CapsemHandler {
         name = "capsem_triage",
         description = "Opinionated host triage summary: ranked list of recent panics, dropped IPC frames (target=ipc warns), 4xx/5xx server errors (target=service), and slow operations (target=fs op=fsync etc., >500ms). Reads ~/.capsem/run/{service,mcp,gateway,tray}.log and capsem-app's latest jsonl. Use this after capsem_panics to widen the search. Optional `id` parameter is reserved for the future session.db cross-reference (T3)."
     )]
-    async fn triage(
-        &self,
-        Parameters(params): Parameters<TriageMcpParams>,
-    ) -> Result<String, String> {
+    async fn triage(&self, Parameters(params): Parameters<TriageMcpParams>) -> Result<String, String> {
         let path = format!(
             "/triage{}",
             query_string(&[
@@ -720,10 +698,7 @@ impl CapsemHandler {
                 ("id", params.id.clone()),
             ]),
         );
-        let resp = self
-            .client
-            .request::<Value, Value>("GET", &path, None)
-            .await;
+        let resp = self.client.request::<Value, Value>("GET", &path, None).await;
         format_service_response(resp)
     }
 
@@ -731,10 +706,7 @@ impl CapsemHandler {
         name = "capsem_host_logs",
         description = "Read a host-side log file by symbolic name. Names: service, mcp, gateway, tray, app (latest jsonl in ~/.capsem/logs/). Use grep + tail to filter. Hard-coded allowlist; no path traversal."
     )]
-    async fn host_logs(
-        &self,
-        Parameters(params): Parameters<HostLogsMcpParams>,
-    ) -> Result<String, String> {
+    async fn host_logs(&self, Parameters(params): Parameters<HostLogsMcpParams>) -> Result<String, String> {
         let path = format!(
             "/host-logs/{}{}",
             params.name,
@@ -744,20 +716,14 @@ impl CapsemHandler {
                 ("max_bytes", params.max_bytes.map(|n| n.to_string())),
             ]),
         );
-        self.client
-            .request_text("GET", &path)
-            .await
-            .map_err(|e| e.to_string())
+        self.client.request_text("GET", &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(
         name = "capsem_timeline",
         description = "Render a unified time-ordered timeline for a session, joining exec/tool/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,tool` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
     )]
-    async fn timeline(
-        &self,
-        Parameters(params): Parameters<TimelineMcpParams>,
-    ) -> Result<String, String> {
+    async fn timeline(&self, Parameters(params): Parameters<TimelineMcpParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let path = format!(
             "/vms/{}/timeline{}",
@@ -769,10 +735,7 @@ impl CapsemHandler {
                 ("layers", params.layers.clone()),
             ]),
         );
-        self.client
-            .request_text("GET", &path)
-            .await
-            .map_err(|e| e.to_string())
+        self.client.request_text("GET", &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(
@@ -823,10 +786,7 @@ impl CapsemHandler {
         name = "capsem_read_file",
         description = "Read a file from a session's guest filesystem. Returns file content as text"
     )]
-    async fn read_file(
-        &self,
-        Parameters(params): Parameters<FileReadParams>,
-    ) -> Result<String, String> {
+    async fn read_file(&self, Parameters(params): Parameters<FileReadParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_read_file_body(&params);
         let resp = self
@@ -840,10 +800,7 @@ impl CapsemHandler {
         name = "capsem_write_file",
         description = "Write a file to a session's guest filesystem"
     )]
-    async fn write_file(
-        &self,
-        Parameters(params): Parameters<FileWriteParams>,
-    ) -> Result<String, String> {
+    async fn write_file(&self, Parameters(params): Parameters<FileWriteParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let path = format!("/vms/{}/files/write", id);
         let resp = self
@@ -853,10 +810,7 @@ impl CapsemHandler {
         format_service_response(resp)
     }
 
-    #[tool(
-        name = "capsem_delete",
-        description = "Delete a session and destroy its state"
-    )]
+    #[tool(name = "capsem_delete", description = "Delete a session and destroy its state")]
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
@@ -876,10 +830,7 @@ impl CapsemHandler {
         format_service_response(resp)
     }
 
-    #[tool(
-        name = "capsem_suspend",
-        description = "Pause a session by saving RAM and CPU state"
-    )]
+    #[tool(name = "capsem_suspend", description = "Pause a session by saving RAM and CPU state")]
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let resp = self
@@ -902,14 +853,8 @@ impl CapsemHandler {
         format_service_response(resp)
     }
 
-    #[tool(
-        name = "capsem_persist",
-        description = "Save a running session under a stable name"
-    )]
-    async fn persist(
-        &self,
-        Parameters(params): Parameters<PersistParams>,
-    ) -> Result<String, String> {
+    #[tool(name = "capsem_persist", description = "Save a running session under a stable name")]
+    async fn persist(&self, Parameters(params): Parameters<PersistParams>) -> Result<String, String> {
         let id = resolve_session_route_id(&self.client, &params.id).await?;
         let body = build_persist_body(&params);
         let resp = self
@@ -925,10 +870,7 @@ impl CapsemHandler {
     )]
     async fn purge(&self, Parameters(params): Parameters<PurgeParams>) -> Result<String, String> {
         let body = build_purge_body(&params);
-        let resp = self
-            .client
-            .request::<Value, Value>("POST", "/purge", Some(body))
-            .await;
+        let resp = self.client.request::<Value, Value>("POST", "/purge", Some(body)).await;
         format_service_response(resp)
     }
 
@@ -938,10 +880,7 @@ impl CapsemHandler {
     )]
     async fn run(&self, Parameters(params): Parameters<RunParams>) -> Result<String, String> {
         let body = build_run_body(&params);
-        let resp = self
-            .client
-            .request::<Value, Value>("POST", "/run", Some(body))
-            .await;
+        let resp = self.client.request::<Value, Value>("POST", "/run", Some(body)).await;
         format_service_response(resp)
     }
 
@@ -966,11 +905,7 @@ impl CapsemHandler {
     )]
     async fn version(&self) -> Result<String, String> {
         let mcp_version = env!("CARGO_PKG_VERSION");
-        let service_status = match self
-            .client
-            .request::<Value, Value>("GET", "/vms/list", None)
-            .await
-        {
+        let service_status = match self.client.request::<Value, Value>("GET", "/vms/list", None).await {
             Ok(_) => "connected".to_string(),
             Err(e) => format!("unreachable: {}", e),
         };
@@ -985,18 +920,11 @@ impl CapsemHandler {
         name = "capsem_mcp_servers",
         description = "List configured MCP servers with connection status and tool counts"
     )]
-    async fn mcp_servers(
-        &self,
-        Parameters(params): Parameters<McpProfileParams>,
-    ) -> Result<String, String> {
+    async fn mcp_servers(&self, Parameters(params): Parameters<McpProfileParams>) -> Result<String, String> {
         let profile = requested_profile(params.profile.as_deref())?;
         let resp: Vec<Value> = self
             .client
-            .request(
-                "GET",
-                &format!("/profiles/{}/mcp/servers/list", profile),
-                None::<&()>,
-            )
+            .request("GET", &format!("/profiles/{}/mcp/servers/list", profile), None::<&()>)
             .await
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
@@ -1006,21 +934,14 @@ impl CapsemHandler {
         name = "capsem_mcp_tools",
         description = "List discovered MCP tools across all connected servers. Filter by server name."
     )]
-    async fn mcp_tools(
-        &self,
-        Parameters(params): Parameters<McpToolsParams>,
-    ) -> Result<String, String> {
+    async fn mcp_tools(&self, Parameters(params): Parameters<McpToolsParams>) -> Result<String, String> {
         let profile = requested_profile(params.profile.as_deref())?;
         let server_names = if let Some(ref filter) = params.server {
             vec![filter.clone()]
         } else {
             let servers: Vec<Value> = self
                 .client
-                .request(
-                    "GET",
-                    &format!("/profiles/{}/mcp/servers/list", profile),
-                    None::<&()>,
-                )
+                .request("GET", &format!("/profiles/{}/mcp/servers/list", profile), None::<&()>)
                 .await
                 .map_err(|e| e.to_string())?;
             servers
@@ -1034,10 +955,7 @@ impl CapsemHandler {
                 .client
                 .request(
                     "GET",
-                    &format!(
-                        "/profiles/{}/mcp/servers/{}/tools/list",
-                        profile, server_name
-                    ),
+                    &format!("/profiles/{}/mcp/servers/{}/tools/list", profile, server_name),
                     None::<&()>,
                 )
                 .await
@@ -1051,14 +969,12 @@ impl CapsemHandler {
         name = "capsem_mcp_call",
         description = "Call an MCP tool by namespaced name (e.g. github__search_repos) with JSON arguments"
     )]
-    async fn mcp_call(
-        &self,
-        Parameters(params): Parameters<McpCallParams>,
-    ) -> Result<String, String> {
+    async fn mcp_call(&self, Parameters(params): Parameters<McpCallParams>) -> Result<String, String> {
         let profile = requested_profile(params.profile.as_deref())?;
-        let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
-            "MCP tool calls must use namespaced names like server__tool".to_string()
-        })?;
+        let (server_name, tool_name) = params
+            .name
+            .split_once("__")
+            .ok_or_else(|| "MCP tool calls must use namespaced names like server__tool".to_string())?;
         let args = params.arguments.unwrap_or(json!({}));
         let resp: Value = self
             .client
@@ -1078,10 +994,7 @@ impl CapsemHandler {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::args()
-        .skip(1)
-        .any(|arg| arg == "--version" || arg == "-V")
-    {
+    if std::env::args().skip(1).any(|arg| arg == "--version" || arg == "-V") {
         println!("capsem-mcp {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -1091,9 +1004,9 @@ async fn main() -> Result<()> {
 
     let _ = std::fs::create_dir_all(&run_dir);
 
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-mcp",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("mcp.log"),
         },
         default_filter: "info",

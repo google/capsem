@@ -83,8 +83,9 @@ fn write_then_read_binary_data() {
 
     let file = unsafe { std::fs::File::from_raw_fd(reader.into_raw_fd()) };
     let buf = io::BufReader::new(file);
-    let lines: Vec<String> = buf.lines().map(|l| l.unwrap()).collect();
-    assert_eq!(lines.len(), 1);
+    let mut lines = buf.lines();
+    assert!(lines.next().unwrap().is_ok());
+    assert!(lines.next().is_none());
 }
 
 #[test]
@@ -113,20 +114,14 @@ fn large_json_line_preserved() {
 fn extracts_snapshot_revert_path_from_tool_call() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshots_revert","arguments":{"path":"/root/poem.md","checkpoint":"cp-0"}}}"#;
 
-    assert_eq!(
-        extract_snapshot_revert_path(line).as_deref(),
-        Some("/root/poem.md")
-    );
+    assert_eq!(extract_snapshot_revert_path(line).as_deref(), Some("/root/poem.md"));
 }
 
 #[test]
 fn extracts_namespaced_snapshot_revert_path_from_tool_call() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__snapshots_revert","arguments":{"path":"poem.md","checkpoint":"cp-0"}}}"#;
 
-    assert_eq!(
-        extract_snapshot_revert_path(line).as_deref(),
-        Some("poem.md")
-    );
+    assert_eq!(extract_snapshot_revert_path(line).as_deref(), Some("poem.md"));
 }
 
 #[test]
@@ -160,4 +155,98 @@ fn normalizes_guest_snapshot_paths_under_root_only() {
     assert!(normalize_guest_snapshot_path("../escape").is_none());
     assert!(normalize_guest_snapshot_path("/etc/passwd").is_none());
     assert!(normalize_guest_snapshot_path("bad\0path").is_none());
+}
+
+fn run_framed_reader(input: &[u8], pending: PendingRequests) -> bool {
+    let (mut host, guest) = UnixStream::pair().unwrap();
+    host.write_all(input).unwrap();
+    drop(host);
+
+    let guest_fd = guest.into_raw_fd();
+    let alive = Arc::new(AtomicBool::new(true));
+    framed_vsock_to_stdout(
+        guest_fd,
+        pending,
+        Arc::new(Mutex::new(io::stdout())),
+        Arc::clone(&alive),
+    );
+    unsafe {
+        nix::libc::close(guest_fd);
+    }
+    alive.load(Ordering::SeqCst)
+}
+
+#[test]
+fn framed_reader_rejects_invalid_and_truncated_host_frames() {
+    assert!(!run_framed_reader(&[], PendingRequests::new()));
+
+    let too_short = u32::from(MCP_FRAME_HEADER_LEN - 1).to_be_bytes();
+    assert!(!run_framed_reader(&too_short, PendingRequests::new()));
+
+    let too_large = ((MCP_FRAME_MAX_SIZE + 1) as u32).to_be_bytes();
+    assert!(!run_framed_reader(&too_large, PendingRequests::new()));
+
+    let mut truncated = u32::from(MCP_FRAME_HEADER_LEN).to_be_bytes().to_vec();
+    truncated.extend_from_slice(&[0; 3]);
+    assert!(!run_framed_reader(&truncated, PendingRequests::new()));
+
+    let mut invalid = u32::from(MCP_FRAME_HEADER_LEN).to_be_bytes().to_vec();
+    invalid.extend_from_slice(&vec![0; MCP_FRAME_HEADER_LEN as usize]);
+    assert!(!run_framed_reader(&invalid, PendingRequests::new()));
+}
+
+#[test]
+fn framed_reader_consumes_empty_responses_and_pending_ids() {
+    let pending = PendingRequests::new();
+    pending.insert(
+        9,
+        PendingRequest {
+            json_id: Value::from(9),
+            method: Some("tools/list".to_string()),
+            snapshot_revert_path: None,
+        },
+    );
+    let frame = capsem_proto::encode_mcp_frame(9, 0, "host", &[]).unwrap();
+
+    assert!(!run_framed_reader(&frame, pending.clone()));
+    assert!(pending.remove(9).is_none());
+}
+
+#[test]
+fn jsonrpc_and_snapshot_helpers_fail_closed_on_malformed_shapes() {
+    assert_eq!(
+        classify_jsonrpc_line("[]"),
+        JsonRpcLineKind::Request {
+            json_id: None,
+            method: None,
+        }
+    );
+    assert_eq!(
+        classify_jsonrpc_line(r#"{"id":1,"method":7}"#),
+        JsonRpcLineKind::Request {
+            json_id: Some(Value::from(1)),
+            method: None,
+        }
+    );
+
+    for line in [
+        "not json",
+        "[]",
+        r#"{"method":"tools/list"}"#,
+        r#"{"method":"tools/call","params":[]}"#,
+        r#"{"method":"tools/call","params":{"name":7}}"#,
+        r#"{"method":"tools/call","params":{"name":"snapshots_revert"}}"#,
+        r#"{"method":"tools/call","params":{"name":"snapshots_revert","arguments":[]}}"#,
+    ] {
+        assert!(extract_snapshot_revert_path(line).is_none(), "accepted {line}");
+    }
+
+    for payload in [
+        &b"not json"[..],
+        &br#"{"result":{}}"#[..],
+        &br#"{"result":{"content":{}}}"#[..],
+        &br#"{"result":{"content":[{"text":"not json"}]}}"#[..],
+    ] {
+        assert!(!response_reports_snapshot_delete(payload));
+    }
 }

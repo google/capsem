@@ -29,8 +29,8 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
     for recipe in (variables.FAST_TEST, variables.FOCUS_TEST):
         assert recipe in public_just, f"{recipe} is not a public recipe"
         assert recipe in policy["approved"], f"{recipe} is not approved"
-    assert "test" not in public_just
-    assert "test-full" in public_just
+    assert "test" in public_just
+    assert "test-full" not in public_just
     assert "vm-smoke" not in public_just
     assert "smoke" not in public_just, (
         "the old bundled recipe is back; it named neither of the two jobs it ran"

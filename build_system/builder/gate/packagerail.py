@@ -25,8 +25,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import cachetooling, debproof, host, packagebuilder
 from . import config as gate_config
-from . import debproof, host, packagebuilder
+from .cachecontrol import CacheControl
 from .config import Arch
 from .content import ProfileContent
 from .docker import Docker
@@ -38,7 +39,6 @@ from .packageinputs import package_environment, pinned_toolchain, resolve_channe
 from .packagesigning import signing_key
 from .proc import Runner
 from .sourcecommit import source_commit_for_checkout
-from .storage import Storage
 
 
 class PackageRail:
@@ -57,7 +57,7 @@ class PackageRail:
         self._runner = runner
         self._config = gate_config.for_root(runner.root)
         self._package = self._config.package
-        self._storage = Storage(runner)
+        self._cache = CacheControl(runner)
         self.root = runner.root
         self.target = target
         self.content = content
@@ -79,15 +79,6 @@ class PackageRail:
     # recorded, so `prove` asks again rather than holding an object an earlier
     # step mutated. See `fragment` for why they are separate at all.
 
-    def release_rails(self) -> None:
-        self._storage.release("completed-docker-rails")
-        # `deferred-install-target` is not released here: the package phase
-        # owns it as a step, between the two architectures, which is the only
-        # arrangement that can be ordered against the second build.
-        # One named policy owns this rail: the Rust base image and the BuildKit
-        # cohort stay warm across candidates, and a capacity failure reports an
-        # explicit disk recommendation instead of silently building cold.
-
     def reserve(self) -> None:
         """Once the builder image exists, because that image fills this rail.
 
@@ -95,7 +86,7 @@ class PackageRail:
         spends it. These were adjacent lines, so both measured the same moment
         and the pair proved nothing.
         """
-        self._storage.ensure_space("package")
+        self._cache.ensure_space("package")
 
     def sync_clock(self) -> None:
         """Colima's VM clock drifts, and apt rejects a repository signed in
@@ -120,7 +111,7 @@ class PackageRail:
         # Again, here: the builder image and the asset sync have landed since
         # the first reservation, and this is the point where being wrong about
         # capacity costs an hour of compilation.
-        self._storage.ensure_space("package")
+        self._cache.ensure_space("package")
         make_dir(self._packages)
         remove(self._record)
 
@@ -216,7 +207,7 @@ class PackageRail:
             docker.remove(container)
 
     def resolve(self) -> Path:
-        """The exact package this run produced, not whatever `target/packages/` holds.
+        """The exact package this run produced, not whatever `cache/target/packages/` holds.
 
         The builder writes the basename it just created. Globbing the package
         output root instead would happily prove and publish a package left by
@@ -236,6 +227,7 @@ class PackageRail:
         package = self._packages / name
         if not package.is_file():
             raise GateError(f"recorded Debian package is missing: {package}")
+        cachetooling.canonicalize_package(self._config, package)
         return package
 
     # -- after the build ---------------------------------------------------
@@ -294,4 +286,4 @@ class PackageRail:
         self._runner.step("Artifacts")
         self._runner.run(["ls", "-lh", str(self._packages)])
         remove(self._record)
-        self._storage.gc()
+        self._cache.prune()

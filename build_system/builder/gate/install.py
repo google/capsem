@@ -22,6 +22,7 @@ from pathlib import Path
 from . import config as gate_config
 from . import installplan, platformproof
 from .actions import Call
+from .cachecontrol import CacheControl
 from .command import GateCommand
 from .content import InstallContent, LocalInstallContent, ProfileContent, SelectedInstallContent
 from .docker import Docker
@@ -36,7 +37,6 @@ from .plan import Plan
 from .proc import Runner
 from .releasegraph import ReleaseGraph
 from .sourcecommit import SourceCommit, source_commit_for_checkout
-from .storage import Storage
 from .versions import workspace_version
 
 
@@ -55,7 +55,7 @@ class InstallGate:
         self._config = gate_config.for_root(runner.root)
         self._settings = self._config.install
         self._layout = self._settings.layout
-        self._storage = Storage(runner)
+        self._cache = CacheControl(runner)
         self._content = content
         self._container = InstallContainer(runner, content=content)
         self._proof = InstallProof(
@@ -105,7 +105,7 @@ class InstallGate:
 
         try:
             self._container.require_rosetta()
-            self._storage.ensure_space("install")
+            self._cache.ensure_space("install")
             self._container.start(options=options)
             self._prove(package)
         finally:
@@ -115,8 +115,8 @@ class InstallGate:
             self._graph.clear_handoff()
             self._container.return_paths()
             self._container.stop()
-            self._storage.release("after-install", best_effort=True)
-            self._storage.gc(rail="install", best_effort=True)
+            self._cache.release("after-install", best_effort=True)
+            self._cache.prune(best_effort=True)
 
         self._container.verify_rosetta_survived()
 
@@ -180,7 +180,7 @@ class InstallGate:
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside
         # a fixture after hours of otherwise-green release work.
-        self._storage.ensure_space("install")
+        self._cache.ensure_space("install")
 
         self._proof.run_install_suite()
         if not self._container.boots_a_guest:

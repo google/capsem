@@ -28,7 +28,7 @@ from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_e
 from log_streams import read_log_stream
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MCP_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
+MCP_BINARY = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-mcp"
 
 pytestmark = pytest.mark.integration
 

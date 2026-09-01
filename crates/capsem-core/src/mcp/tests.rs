@@ -58,8 +58,7 @@ fn compute_tool_hash_changes_on_description() {
 fn compute_tool_hash_changes_on_schema() {
     let mut tool = make_tool("github__search", "search", "github", Some("Search"));
     let h1 = compute_tool_hash(&tool);
-    tool.input_schema =
-        serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
+    tool.input_schema = serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
     let h2 = compute_tool_hash(&tool);
     assert_ne!(h1, h2);
 }
@@ -103,12 +102,7 @@ fn detect_pin_changes_no_change() {
 
 #[test]
 fn detect_pin_changes_description_changed() {
-    let tool = make_tool(
-        "github__search",
-        "search",
-        "github",
-        Some("New description"),
-    );
+    let tool = make_tool("github__search", "search", "github", Some("New description"));
     let cache = vec![ToolCacheEntry {
         namespaced_name: "github__search".into(),
         original_name: "search".into(),
@@ -161,12 +155,7 @@ fn rug_pull_subtle_description_change() {
         description: Some("Search repos".into()),
         server_name: "github".into(),
         annotations: None,
-        pin_hash: compute_tool_hash(&make_tool(
-            "github__search",
-            "search",
-            "github",
-            Some("Search repos"),
-        )),
+        pin_hash: compute_tool_hash(&make_tool("github__search", "search", "github", Some("Search repos"))),
         first_seen: "2025-01-01".into(),
         last_seen: "2025-01-01".into(),
         approved: true,
@@ -180,7 +169,8 @@ fn rug_pull_subtle_description_change() {
 fn rug_pull_schema_injection() {
     let mut tool = make_tool("github__search", "search", "github", Some("Search"));
     // Add a hidden parameter
-    tool.input_schema = serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}, "hidden": {"type": "string"}}});
+    tool.input_schema =
+        serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}, "hidden": {"type": "string"}}});
     let original = make_tool("github__search", "search", "github", Some("Search"));
     let cache = vec![ToolCacheEntry {
         namespaced_name: "github__search".into(),
@@ -315,11 +305,10 @@ credential_ref = "credential:blake3:{}"
         "a".repeat(64)
     ))
     .unwrap();
-    cfg.validate("profile")
-        .expect("brokered OAuth auth must validate");
+    cfg.validate("profile").expect("brokered OAuth auth must validate");
     assert_eq!(
         cfg.servers[0].auth.as_ref().unwrap().kind,
-        crate::mcp::types::McpAuthKind::OAuth
+        capsem_proto::mcp_contracts::McpAuthKind::OAuth
     );
 }
 
@@ -327,10 +316,7 @@ credential_ref = "credential:blake3:{}"
 fn credential_broker_resolves_mcp_oauth_material_by_reference() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _store_guard = EnvVarGuard::set(
-        crate::credential_broker::STORE_PATH_ENV,
-        dir.path().join("store.json"),
-    );
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::STORE_PATH_ENV, dir.path().join("store.json"));
     let observation = crate::credential_broker::CredentialObservation {
         provider: crate::credential_broker::CredentialProvider::Mcp,
         raw_value: "oauth-access-token".to_string(),
@@ -439,10 +425,8 @@ fn build_profile_server_list_rejects_names_with_separator() {
 
 /// Parse [[bin]] name entries from a Cargo.toml file.
 fn parse_cargo_bin_names(path: &std::path::Path) -> Vec<String> {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let doc: toml::Value =
-        toml::from_str(&text).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let doc: toml::Value = toml::from_str(&text).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
     doc.get("bin")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -486,8 +470,8 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
 
     // Also verify that prepare_build_context includes all agent binaries
     // by checking the Python build context function lists them.
-    let docker_py = std::fs::read_to_string(root.join("build_system/builder/image/docker.py"))
-        .expect("cannot read docker.py");
+    let docker_py =
+        std::fs::read_to_string(root.join("build_system/builder/image/docker.py")).expect("cannot read docker.py");
     for bin in &bins {
         assert!(
             docker_py.contains(bin),
@@ -510,20 +494,15 @@ fn all_guest_binaries_in_pack_initrd() {
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
     let path = root.join("config/gate.toml");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let doc: toml::Value = toml::from_str(&text)
-        .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let doc: toml::Value = toml::from_str(&text).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
     let carried: Vec<&str> = doc
         .get("initrd")
         .and_then(|section| section.get("binaries"))
         .and_then(|value| value.as_array())
         .map(|entries| entries.iter().filter_map(|e| e.as_str()).collect())
         .unwrap_or_default();
-    assert!(
-        !carried.is_empty(),
-        "config/gate.toml has no [initrd] binaries list"
-    );
+    assert!(!carried.is_empty(), "config/gate.toml has no [initrd] binaries list");
 
     for bin in &bins {
         assert!(

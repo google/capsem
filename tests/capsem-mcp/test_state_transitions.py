@@ -81,12 +81,12 @@ def test_suspend_and_resume_persistent(fresh_vm, mcp_session):
 def test_suspend_and_resume_persistent_repeat(fresh_vm, mcp_session, run):
     """Mirror of test_suspend_and_resume_persistent across 5 fresh VMs.
 
-    Default `just test-full` runs only the single-cycle variant, which means
+    Default `just test` runs only the single-cycle variant, which means
     intermittent post-resume races (e.g., the EXEC-port `ECONNRESET`
     transient that motivated `vsock_connect_with_econnreset_retry` in
     capsem-agent) need ~tens of cycles to surface and would slip past
     CI. The 50-cycle stress in `test_stress_suspend_resume.py` is gated
-    behind `CAPSEM_STRESS=1` so it doesn't dominate `just test-full`.
+    behind `CAPSEM_STRESS=1` so it doesn't dominate `just test`.
 
     This 5-cycle version is the in-between: cheap enough to run by
     default (~25s on top of pytest), broad enough to hit a race that

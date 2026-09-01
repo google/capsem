@@ -37,11 +37,7 @@ async fn poll_stops_coalescing_at_batch_boundary() {
     q.push(big.clone());
     q.push(tail.clone());
     let first = q.poll().await.unwrap();
-    assert_eq!(
-        first.len(),
-        big.len(),
-        "should not have coalesced the second chunk"
-    );
+    assert_eq!(first.len(), big.len(), "should not have coalesced the second chunk");
     let second = q.poll().await.unwrap();
     assert_eq!(second, tail);
 }
@@ -116,8 +112,5 @@ async fn queue_drops_oldest_at_capacity() {
             break;
         }
     }
-    assert!(
-        seen_latest,
-        "new chunk should still be present after backpressure drop"
-    );
+    assert!(seen_latest, "new chunk should still be present after backpressure drop");
 }

@@ -469,14 +469,18 @@ to compatible official binaries.
 
 ### 8.1 Purpose
 
-Local `just test-full` is the exceptional comprehensive construction and
-integration diagnostic. It exists to catch incompatibilities throughout the
-complete pipeline when focused proof is insufficient; it is not the routine
-edit loop or a journal prerequisite for publication.
+Local `just test` is the reusable comprehensive construction and integration
+proof. It exists to catch incompatibilities throughout the complete pipeline
+when focused proof is insufficient; it is not the routine edit loop.
+
+Running `just test` before a release is optional. Each public release command
+is sufficient on its own because its hosted lane performs the required release
+qualification. Release dispatch MUST NOT require or consume a developer-machine
+`just test` journal.
 
 ### 8.2 Required scope
 
-Local `just test-full` MUST exercise 100% of the configured release pipeline,
+Local `just test` MUST exercise 100% of the configured release pipeline,
 including:
 
 - Building Capsem binaries.
@@ -495,10 +499,21 @@ including:
 - Running all other correctness, security, integration, and regression gates
   included in the complete local diagnostic command.
 
-The exact internal steps may evolve, but the public meaning of `just test-full`
+The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
 
-`just test-full <source-commit>` selects one canonical full lowercase commit that is
+Within one complete source run, an identical behavioral cohort MUST execute
+once. A later phase MAY consume its fresh result only when the graph makes that
+result an ancestor and an intervening content-addressed verifier proves the
+consumer sees the same bytes. Source-contract coverage MAY likewise seed one
+coverage ledger that the later functional cohort finishes, provided already
+proved files are excluded from that later collection. This is intra-run proof
+composition, never cross-source behavioral caching: VM, runtime, install,
+security, benchmark, and update behavior still execute fresh for changed
+source. Hosted release qualification cannot consume local proof and MUST run
+its own complete artifact-family pairing.
+
+`just test <source-commit>` selects one canonical full lowercase commit that is
 already prepared, committed, and reachable from local `main`. It MUST
 materialize and diagnose an independent detached repository at a prefix named
 by that full commit. The mutable outer checkout and branch are not
@@ -513,7 +528,7 @@ channel resolution, immutable source publication, and dispatch MUST run fresh
 on every release attempt.
 
 The runner MUST archive each exact-source attempt journal independently of
-ordinary run rotation. A repeated `just test-full <source-commit>` MUST return
+ordinary run rotation. A repeated `just test <source-commit>` MUST return
 ordinary success immediately when a complete journal still validates, naming
 the original run ID, path, and content digest. A failed attempt MAY resume only
 from its retained full-SHA prefix and the deepest frontier whose graph-derived
@@ -522,8 +537,22 @@ content-addressed parent and every carried step. Recursive coverage of every
 declared step is required before the chain becomes complete. A reuse-only run,
 manual marker, skill, or guessed continuation MUST NOT become evidence.
 
+When no complete exact-source journal exists, admission MUST compare the
+requested source with the newest valid complete local proof. Unknown or
+high-impact paths MUST fail closed into allowing complete verification.
+Explicitly low-impact paths are declared with their existing `focus-test`
+owners in `config/cache.toml`; before ten commits have accumulated, `just test`
+MUST refuse and print those exact owners instead of spending the complete
+runtime. At ten commits the complete proof is eligible again.
+
+The exceptional spelling is
+`just test <source-commit> force "<reason>"`. Its non-empty reason MUST be
+recorded before work starts, and a second consecutive forced attempt MUST be
+refused. Only a successful non-forced complete run resets that rail. Admission
+state is cache control evidence, never a cross-source behavioral verdict.
+
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
-`just test-full` MUST run one checked-in private `_test-fast` module. That same
+`just test` MUST run one checked-in private `_test-fast` module. That same
 module MUST be called independently by ordinary CI, both release workflows,
 and `just fast-test`. It MUST own all cheap deterministic failures, including YAML
 and workflow parsing, Python/shell/JSON/TOML syntax, generated-file drift,
@@ -1617,13 +1646,13 @@ No additional evidence ledger or result document is introduced.
 
 An implementation conforming to this specification MUST demonstrate:
 
-- [ ] Local `just test-full` constructs and validates the complete pipeline.
+- [ ] Local `just test` constructs and validates the complete pipeline.
 - [ ] Nightly binary and selected profile/asset rebuilds are scheduled daily
       through separate public commands rather than per push.
 - [ ] Existing nightly identities are rebuilt and tested without overwriting
       immutable publications.
 - [ ] Stable binary and profile publication is manual.
-- [ ] `just test-full <source-commit>` requires one canonical full commit already
+- [ ] `just test <source-commit>` requires one canonical full commit already
       on local `main`, diagnoses its detached full-SHA prefix once, reuses or
       structurally resumes its journal, and remains valid while the outer
       checkout advances.
@@ -1687,7 +1716,9 @@ binary policy, and the profiles belonging to that channel. Profiles contain
 their assets. The same profile name may exist independently in multiple
 channels, and a profile need not exist in every channel.
 
-Local `just test-full` rebuilds and verifies the complete world. CI is selective:
+Local `just test` verifies the complete world and reuses exact validated build
+products. It is optional before publication. CI release lanes self-qualify and
+are selective:
 the binary lane builds binaries and packages and tests them against existing
 profiles; the profile lane rebuilds exactly one channel/profile and tests it
 against the channel's existing selected binary. When both must move, CI builds

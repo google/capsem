@@ -123,11 +123,8 @@ fn update_session_rollup_from_session_db_copies_counts_by_id() {
     let main_path = dir.path().join("main.db");
     let session_path = dir.path().join("session.db");
     let idx = SessionIndex::open(&main_path).unwrap();
-    idx.create_session(&sample_record(
-        "5134d89f-090d-4f88-8d62-7bc5e9231ed8",
-        "running",
-    ))
-    .unwrap();
+    idx.create_session(&sample_record("5134d89f-090d-4f88-8d62-7bc5e9231ed8", "running"))
+        .unwrap();
 
     let session_conn = Connection::open(&session_path).unwrap();
     session_conn
@@ -214,12 +211,8 @@ fn update_session_rollup_from_session_db_fails_when_id_is_missing() {
         .unwrap();
     drop(session_conn);
 
-    let result = idx.update_session_rollup_from_session_db(
-        "co-work1",
-        "stopped",
-        Some("2026-06-26T12:00:00Z"),
-        &session_path,
-    );
+    let result =
+        idx.update_session_rollup_from_session_db("co-work1", "stopped", Some("2026-06-26T12:00:00Z"), &session_path);
 
     assert!(matches!(result, Err(rusqlite::Error::QueryReturnedNoRows)));
 }
@@ -227,13 +220,9 @@ fn update_session_rollup_from_session_db_fails_when_id_is_missing() {
 #[test]
 fn recent_newest_first() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    for (i, ts) in [
-        "2026-02-25T10:00:00Z",
-        "2026-02-25T12:00:00Z",
-        "2026-02-25T11:00:00Z",
-    ]
-    .iter()
-    .enumerate()
+    for (i, ts) in ["2026-02-25T10:00:00Z", "2026-02-25T12:00:00Z", "2026-02-25T11:00:00Z"]
+        .iter()
+        .enumerate()
     {
         let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
         rec.created_at = ts.to_string();
@@ -267,18 +256,11 @@ fn update_status_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
         .unwrap();
-    idx.update_status(
-        "20260225-143052-a7f3",
-        "stopped",
-        Some("2026-02-25T15:00:00Z"),
-    )
-    .unwrap();
+    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
+        .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "stopped");
-    assert_eq!(
-        records[0].stopped_at.as_deref(),
-        Some("2026-02-25T15:00:00Z")
-    );
+    assert_eq!(records[0].stopped_at.as_deref(), Some("2026-02-25T15:00:00Z"));
 }
 
 #[test]
@@ -293,8 +275,7 @@ fn update_request_counts_works() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
         .unwrap();
-    idx.update_request_counts("20260225-143052-a7f3", 10, 7, 3)
-        .unwrap();
+    idx.update_request_counts("20260225-143052-a7f3", 10, 7, 3).unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].total_requests, 10);
     assert_eq!(records[0].allowed_requests, 7);
@@ -377,10 +358,7 @@ fn terminate_older_than_days() {
     // Row still exists, just status changed.
     assert_eq!(idx.count().unwrap(), 2);
     let records = idx.recent(10).unwrap();
-    let old_rec = records
-        .iter()
-        .find(|r| r.id == "20200101-120000-0000")
-        .unwrap();
+    let old_rec = records.iter().find(|r| r.id == "20200101-120000-0000").unwrap();
     assert_eq!(old_rec.status, "terminated");
 }
 
@@ -520,9 +498,7 @@ fn schema_upgrade_from_v0() {
         .unwrap();
     // Now ensure_schema should drop and recreate (v0 < v2 path).
     SessionIndex::ensure_schema(&conn).unwrap();
-    let version: u32 = conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
     assert_eq!(version, SCHEMA_VERSION);
     // Old data is gone (clean slate).
     let count: i64 = conn
@@ -539,9 +515,7 @@ fn schema_upgrade_from_v1() {
     conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
         .unwrap();
     SessionIndex::ensure_schema(&conn).unwrap();
-    let version: u32 = conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 }
 
@@ -666,8 +640,7 @@ fn replace_ai_usage_and_top_providers() {
             total_duration_ms: 1500,
         },
     ];
-    idx.replace_ai_usage("20260225-143052-a7f3", &usage)
-        .unwrap();
+    idx.replace_ai_usage("20260225-143052-a7f3", &usage).unwrap();
 
     let providers = idx.top_providers(10).unwrap();
     assert_eq!(providers.len(), 2);
@@ -730,8 +703,7 @@ fn replace_tool_usage_and_top_tools() {
             total_duration_ms: 1500,
         },
     ];
-    idx.replace_tool_usage("20260225-143052-a7f3", &usage)
-        .unwrap();
+    idx.replace_tool_usage("20260225-143052-a7f3", &usage).unwrap();
 
     let tools = idx.top_tools(10).unwrap();
     assert_eq!(tools.len(), 2);
@@ -763,8 +735,7 @@ fn replace_mcp_usage_and_top_mcp_tools() {
             total_duration_ms: 800,
         },
     ];
-    idx.replace_mcp_usage("20260225-143052-a7f3", &usage)
-        .unwrap();
+    idx.replace_mcp_usage("20260225-143052-a7f3", &usage).unwrap();
 
     let tools = idx.top_mcp_tools(10).unwrap();
     assert_eq!(tools.len(), 2);
@@ -855,27 +826,21 @@ fn schema_upgrade_from_v4_preserves_data() {
     SessionIndex::ensure_schema(&conn).unwrap();
 
     // Check version bumped.
-    let version: u32 = conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 
     // New columns exist with NULL/default defaults.
     let forked_from: Option<String> = conn
-        .query_row(
-            "SELECT forked_from FROM sessions WHERE id = 'test-v4'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT forked_from FROM sessions WHERE id = 'test-v4'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert!(forked_from.is_none());
 
     let persistent: bool = conn
-        .query_row(
-            "SELECT persistent FROM sessions WHERE id = 'test-v4'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT persistent FROM sessions WHERE id = 'test-v4'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert!(!persistent);
 }
@@ -913,9 +878,7 @@ fn schema_upgrade_from_v2_preserves_data() {
     SessionIndex::ensure_schema(&conn).unwrap();
 
     // Check version bumped.
-    let version: u32 = conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
     assert_eq!(version, SCHEMA_VERSION);
 
     // Old data preserved.
@@ -935,11 +898,9 @@ fn schema_upgrade_from_v2_preserves_data() {
     assert!(compressed.is_none());
 
     let vacuumed: Option<String> = conn
-        .query_row(
-            "SELECT vacuumed_at FROM sessions WHERE id = 'test-id'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT vacuumed_at FROM sessions WHERE id = 'test-id'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert!(vacuumed.is_none());
 }
@@ -957,10 +918,7 @@ fn mark_vacuumed_sets_fields() {
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "vacuumed");
     assert_eq!(records[0].compressed_size_bytes, Some(12345));
-    assert_eq!(
-        records[0].vacuumed_at.as_deref(),
-        Some("2026-02-25T15:00:00Z")
-    );
+    assert_eq!(records[0].vacuumed_at.as_deref(), Some("2026-02-25T15:00:00Z"));
 }
 
 #[test]
@@ -1056,12 +1014,8 @@ fn full_lifecycle_running_to_terminated() {
         .unwrap();
 
     // running -> stopped
-    idx.update_status(
-        "20260225-143052-a7f3",
-        "stopped",
-        Some("2026-02-25T15:00:00Z"),
-    )
-    .unwrap();
+    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
+        .unwrap();
     assert_eq!(idx.recent(1).unwrap()[0].status, "stopped");
 
     // stopped -> vacuumed
@@ -1126,14 +1080,9 @@ fn query_raw_returns_columnar_json() {
     idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
         .unwrap();
 
-    let json_str = idx
-        .query_raw("SELECT id, mode, status FROM sessions", &[])
-        .unwrap();
+    let json_str = idx.query_raw("SELECT id, mode, status FROM sessions", &[]).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-    assert_eq!(
-        parsed["columns"],
-        serde_json::json!(["id", "mode", "status"])
-    );
+    assert_eq!(parsed["columns"], serde_json::json!(["id", "mode", "status"]));
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
     assert_eq!(parsed["rows"][0][0], "20260225-143052-a7f3");
 }
@@ -1175,9 +1124,7 @@ fn query_raw_with_limit_param() {
     }
 
     let params = vec![serde_json::json!(2)];
-    let json_str = idx
-        .query_raw("SELECT id FROM sessions LIMIT ?", &params)
-        .unwrap();
+    let json_str = idx.query_raw("SELECT id FROM sessions LIMIT ?", &params).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
 }
@@ -1194,10 +1141,7 @@ fn query_raw_rejects_insert() {
         "INSERT INTO sessions (id, mode, status, created_at) VALUES ('evil', 'gui', 'running', '2026-01-01T00:00:00Z')",
         &[],
     );
-    assert!(
-        result.is_err(),
-        "INSERT must be rejected by PRAGMA query_only"
-    );
+    assert!(result.is_err(), "INSERT must be rejected by PRAGMA query_only");
 }
 
 #[test]
@@ -1239,12 +1183,8 @@ fn query_raw_other_methods_still_write() {
 
     // Internal write methods must still work after query_raw restored
     // the connection to read-write mode.
-    idx.update_status(
-        "20260225-143052-a7f3",
-        "stopped",
-        Some("2026-02-25T15:00:00Z"),
-    )
-    .unwrap();
+    idx.update_status("20260225-143052-a7f3", "stopped", Some("2026-02-25T15:00:00Z"))
+        .unwrap();
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "stopped");
 }

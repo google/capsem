@@ -62,6 +62,8 @@ def functional(
     phase_name: str = "functional",
     axis: tuple[str, ...] | None = None,
     benchmark: bool = True,
+    signed: Step | None = None,
+    source_contracts_proved: bool = False,
 ) -> Step:
     """Every VM-owned suite, for every profile the channel selects.
 
@@ -164,7 +166,11 @@ def functional(
     # replace the bytes the manifest selected with locally built ones.
     first: tuple = settled
     if not qualification.pulled:
-        first = (phase.add(hostpackage.sign_step(config), after=settled),)
+        first = (
+            (signed, *settled)
+            if signed is not None
+            else (phase.add(hostpackage.sign_step(config), after=settled),)
+        )
 
     previous = _profile_lane(
         phase,
@@ -175,6 +181,7 @@ def functional(
         isolated_assets=isolated_assets,
         staged=staged,
         benchmark=benchmark,
+        source_contracts_proved=source_contracts_proved,
     )
     for profile in rest:
         previous = _profile_lane(
@@ -208,6 +215,7 @@ def _profile_lane(
     isolated_assets: bool,
     staged: ProfileContent | None = None,
     benchmark: bool = True,
+    source_contracts_proved: bool = False,
 ):
     """One profile's VM-owned suites, in the order they depend on.
 
@@ -216,7 +224,11 @@ def _profile_lane(
     suites instead: that is the compatibility axis, not a reduced substitute.
     """
     head = (
-        pytestsuite.broad(config, profile=profile)
+        pytestsuite.broad(
+            config,
+            profile=profile,
+            source_contracts_proved=source_contracts_proved,
+        )
         if broad
         else pytestsuite.compatibility(config, profile=profile)
     )

@@ -97,10 +97,7 @@ impl FuseProcessor {
         };
         let mut written = 0usize;
         while written < to_write {
-            match file.write_at(
-                &write_data[written..to_write],
-                write_in.offset + written as u64,
-            ) {
+            match file.write_at(&write_data[written..to_write], write_in.offset + written as u64) {
                 Ok(0) => return fuse::error_response(header.unique, -libc::EIO),
                 Ok(n) => written += n,
                 Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
@@ -148,33 +145,25 @@ impl FuseProcessor {
                     .open(&child_path)
                 {
                     Ok(f) => f,
-                    Err(e) => {
-                        return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e))
-                    }
+                    Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
                 let mode = create_in.mode & !create_in.umask;
-                let _ =
-                    std::fs::set_permissions(&child_path, std::fs::Permissions::from_mode(mode));
+                let _ = std::fs::set_permissions(&child_path, std::fs::Permissions::from_mode(mode));
 
                 let ino = match self.inodes.lookup(header.nodeid, name) {
                     Some(i) => i,
                     None => return fuse::error_response(header.unique, -libc::EIO),
                 };
-                let fh = match self.file_handles.alloc_file(
-                    file,
-                    ino,
-                    readable,
-                    true,
-                    flags & libc::O_APPEND != 0,
-                ) {
+                let fh = match self
+                    .file_handles
+                    .alloc_file(file, ino, readable, true, flags & libc::O_APPEND != 0)
+                {
                     Some(fh) => fh,
                     None => return fuse::error_response(header.unique, -libc::EMFILE),
                 };
                 let meta = match std::fs::symlink_metadata(&child_path) {
                     Ok(m) => m,
-                    Err(e) => {
-                        return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e))
-                    }
+                    Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
                 return self.entry_and_open_response(header.unique, ino, &meta, fh);
             }
@@ -198,13 +187,10 @@ impl FuseProcessor {
             Ok(f) => f,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
-        let fh = match self.file_handles.alloc_file(
-            file,
-            ino,
-            readable,
-            true,
-            flags & libc::O_APPEND != 0,
-        ) {
+        let fh = match self
+            .file_handles
+            .alloc_file(file, ino, readable, true, flags & libc::O_APPEND != 0)
+        {
             Some(fh) => fh,
             None => return fuse::error_response(header.unique, -libc::EMFILE),
         };
@@ -215,13 +201,7 @@ impl FuseProcessor {
         self.entry_and_open_response(header.unique, ino, &meta, fh)
     }
 
-    pub(super) fn entry_and_open_response(
-        &self,
-        unique: u64,
-        ino: u64,
-        meta: &std::fs::Metadata,
-        fh: u64,
-    ) -> Vec<u8> {
+    pub(super) fn entry_and_open_response(&self, unique: u64, ino: u64, meta: &std::fs::Metadata, fh: u64) -> Vec<u8> {
         let entry = FuseEntryOut {
             nodeid: ino,
             generation: 0,
@@ -305,9 +285,7 @@ impl FuseProcessor {
             _ => return fuse::error_response(header.unique, -libc::EINVAL),
         };
         match file.seek(whence) {
-            Ok(offset) => {
-                fuse::success_response(header.unique, fuse::as_bytes(&FuseLseekOut { offset }))
-            }
+            Ok(offset) => fuse::success_response(header.unique, fuse::as_bytes(&FuseLseekOut { offset })),
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
     }

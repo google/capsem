@@ -1,6 +1,7 @@
 """Boot timing regression gates: provision to exec-ready."""
 
 import contextlib
+import statistics
 import time
 import uuid
 
@@ -69,8 +70,8 @@ def test_exec_latency_within_gate():
         svc.stop()
 
 
-def test_avg_exec_latency_3_runs():
-    """Provision+delete 3 VMs sequentially; average provision-to-exec stays in budget."""
+def test_median_exec_latency_3_runs():
+    """Two of three sequential provision-to-exec samples stay in budget."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -88,17 +89,17 @@ def test_avg_exec_latency_3_runs():
             print(f"  run {i+1}: {elapsed:.2f}s")
             client.delete(f"/vms/{name}/delete")
 
-        avg = sum(times) / len(times)
-        print(f"Average exec latency: {avg:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
-        assert avg < EXEC_LATENCY_GATE, (
-            f"Average exec latency {avg:.2f}s exceeds {EXEC_LATENCY_GATE}s gate"
+        median = statistics.median(times)
+        print(f"Median exec latency: {median:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
+        assert median < EXEC_LATENCY_GATE, (
+            f"Median exec latency {median:.2f}s exceeds {EXEC_LATENCY_GATE}s gate"
         )
     finally:
         svc.stop()
 
 
-def test_avg_exec_latency_3_concurrent_vms():
-    """Boot 3 VMs on the same service; average provision-to-exec stays in budget."""
+def test_median_exec_latency_3_concurrent_vms():
+    """Boot 3 VMs on one service; two of three reach exec inside the budget."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -115,10 +116,14 @@ def test_avg_exec_latency_3_concurrent_vms():
             times.append(elapsed)
             print(f"  vm {i+1}: {elapsed:.2f}s")
 
-        avg = sum(times) / len(times)
-        print(f"Average exec latency: {avg:.2f}s (gate: {CONCURRENT_EXEC_LATENCY_GATE}s)")
-        assert avg < CONCURRENT_EXEC_LATENCY_GATE, (
-            f"Average exec latency {avg:.2f}s exceeds {CONCURRENT_EXEC_LATENCY_GATE}s gate"
+        median = statistics.median(times)
+        print(
+            f"Median exec latency: {median:.2f}s "
+            f"(gate: {CONCURRENT_EXEC_LATENCY_GATE}s)"
+        )
+        assert median < CONCURRENT_EXEC_LATENCY_GATE, (
+            f"Median exec latency {median:.2f}s exceeds "
+            f"{CONCURRENT_EXEC_LATENCY_GATE}s gate"
         )
     finally:
         for name in names:

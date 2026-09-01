@@ -17,7 +17,7 @@ no leaked Capsem process.
 
 ```bash
 git pull --ff-only origin main
-just test-full 15723845316e23107d4110210b04fb319057567e
+just test 15723845316e23107d4110210b04fb319057567e
 ```
 
 If the Linux gate exposes the suspend/resume defect, fix the behavior and keep

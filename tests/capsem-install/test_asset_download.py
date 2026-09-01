@@ -32,8 +32,8 @@ from .conftest import INSTALL_DIR, fresh_capsem_binary
 
 # The installed layout mounts a proper Linux ELF at INSTALL_DIR/capsem via
 # dpkg (in the Docker install harness) or simulate-install.sh (local dev).
-# Hardcoding `target/debug/capsem` crashed the Docker test harness with
-# `Exec format error` because $PWD/target/debug/capsem is the macOS host
+# Hardcoding `cache/target/cargo/debug/capsem` crashed the Docker test harness with
+# `Exec format error` because $PWD/cache/target/cargo/debug/capsem is the macOS host
 # build, not the Linux binary -- CARGO_TARGET_DIR=/cargo-target inside the
 # container never lands binaries under /src/target.
 CAPSEM_BIN = INSTALL_DIR / "capsem"

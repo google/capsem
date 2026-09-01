@@ -2,8 +2,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::{
-    apply_refresh_event, handle_input_event_batch, terminal_event_closes_connection,
-    ConnectedTerminal, RefreshBridge, RefreshEvent,
+    apply_refresh_event, handle_input_event_batch, terminal_event_closes_connection, ConnectedTerminal, RefreshBridge,
+    RefreshEvent,
 };
 use capsem_tui::app::App;
 use capsem_tui::fixture::offline_state;
@@ -90,9 +90,7 @@ fn failed_refresh_event_marks_service_offline_without_blocking() {
 fn input_event_batch_drains_ready_events_before_redraw() {
     let (queued_tx, queued_rx) = mpsc::channel();
     for ch in ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] {
-        queued_tx
-            .send(Ok(key_event(ch)))
-            .expect("queue ready terminal input");
+        queued_tx.send(Ok(key_event(ch))).expect("queue ready terminal input");
     }
     drop(queued_tx);
 
@@ -115,9 +113,7 @@ fn input_event_batch_drains_ready_events_before_redraw() {
 fn input_event_batch_is_bounded_so_rendering_cannot_starve() {
     let (queued_tx, queued_rx) = mpsc::channel();
     for _ in 1..=(super::MAX_INPUT_EVENTS_PER_TICK + 10) {
-        queued_tx
-            .send(Ok(key_event('x')))
-            .expect("queue terminal input flood");
+        queued_tx.send(Ok(key_event('x'))).expect("queue terminal input flood");
     }
     drop(queued_tx);
 
@@ -139,12 +135,8 @@ fn input_event_batch_is_bounded_so_rendering_cannot_starve() {
 #[test]
 fn input_event_batch_stops_on_exit_without_draining_extra_events() {
     let (queued_tx, queued_rx) = mpsc::channel();
-    queued_tx
-        .send(Ok(key_event('b')))
-        .expect("queue exit event");
-    queued_tx
-        .send(Ok(key_event('c')))
-        .expect("queue event after exit");
+    queued_tx.send(Ok(key_event('b'))).expect("queue exit event");
+    queued_tx.send(Ok(key_event('c'))).expect("queue event after exit");
 
     let mut handled = Vec::new();
     let should_exit = handle_input_event_batch(Ok(key_event('a')), &queued_rx, |event| {
@@ -169,10 +161,7 @@ fn wait_for_refresh_events(bridge: &RefreshBridge) -> Vec<RefreshEvent> {
         if !events.is_empty() {
             return events;
         }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for refresh event"
-        );
+        assert!(Instant::now() < deadline, "timed out waiting for refresh event");
         std::thread::sleep(Duration::from_millis(10));
     }
 }

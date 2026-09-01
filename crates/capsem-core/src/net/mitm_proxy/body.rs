@@ -11,6 +11,8 @@
 //!   `seed::<T>()` so hooks read context (e.g.
 //!   `TelemetryRequestContext`) at end-of-stream.
 
+use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -49,11 +51,7 @@ pin_project_lite::pin_project! {
 
 impl<B> TrackedBody<B> {
     pub fn new(inner: B, stats: Arc<Mutex<BodyStats>>, max_size: u64) -> Self {
-        Self {
-            inner,
-            stats,
-            max_size,
-        }
+        Self { inner, stats, max_size }
     }
 }
 
@@ -77,9 +75,7 @@ where
                     let mut st = this.stats.lock().unwrap();
                     st.bytes += len;
                     if st.bytes > *this.max_size {
-                        return Poll::Ready(Some(Err(anyhow::anyhow!(
-                            "body exceeded maximum size"
-                        ))));
+                        return Poll::Ready(Some(Err(anyhow::anyhow!("body exceeded maximum size"))));
                     }
                     if st.preview.len() < st.max_body_capture {
                         let to_copy = (st.max_body_capture - st.preview.len()).min(len as usize);
@@ -129,16 +125,14 @@ pub struct ChunkDispatchBody<B> {
     conn: ConnMeta,
     trace_id: Option<String>,
     end_dispatched: bool,
+    pending_frame: Option<hyper::body::Frame<Bytes>>,
+    end_tail: Option<Bytes>,
+    pending_end: VecDeque<super::hooks::ChunkEndFuture>,
     preserve_size_hint: bool,
 }
 
 impl<B> ChunkDispatchBody<B> {
-    pub fn new(
-        inner: B,
-        pipeline: Arc<Pipeline>,
-        conn: ConnMeta,
-        trace_id: Option<String>,
-    ) -> Self {
+    pub fn new(inner: B, pipeline: Arc<Pipeline>, conn: ConnMeta, trace_id: Option<String>) -> Self {
         Self {
             inner,
             pipeline,
@@ -146,6 +140,9 @@ impl<B> ChunkDispatchBody<B> {
             conn,
             trace_id,
             end_dispatched: false,
+            pending_frame: None,
+            end_tail: None,
+            pending_end: VecDeque::new(),
             preserve_size_hint: true,
         }
     }
@@ -166,6 +163,28 @@ impl<B> ChunkDispatchBody<B> {
         self.preserve_size_hint = false;
         self
     }
+
+    fn dispatch_response_end(&mut self) {
+        if self.end_dispatched || !self.pipeline.has_chunk_hooks() {
+            return;
+        }
+        let end = self
+            .pipeline
+            .dispatch_response_end(&mut self.state, &self.conn, self.trace_id.as_deref());
+        self.end_dispatched = true;
+        self.end_tail = Some(end.tail);
+        self.pending_end = end.pending.into();
+    }
+
+    fn poll_response_end(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        while let Some(future) = self.pending_end.front_mut() {
+            if Pin::new(future).poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+            self.pending_end.pop_front();
+        }
+        Poll::Ready(())
+    }
 }
 
 impl<B> hyper::body::Body for ChunkDispatchBody<B>
@@ -180,9 +199,15 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
         let this = &mut *self;
+        if this.pending_frame.is_some() {
+            if this.poll_response_end(cx).is_pending() {
+                return Poll::Pending;
+            }
+            return Poll::Ready(Some(Ok(this.pending_frame.take().expect("pending frame checked"))));
+        }
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
-                if this.pipeline.has_chunk_hooks() {
+                let frame = if this.pipeline.has_chunk_hooks() {
                     if let Some(data) = frame.data_ref() {
                         // We have to detach the bytes to mutate them
                         // through ChunkHook, then rebuild a frame.
@@ -196,23 +221,34 @@ where
                             &this.conn,
                             this.trace_id.as_deref(),
                         );
-                        return Poll::Ready(Some(Ok(hyper::body::Frame::data(chunk))));
+                        hyper::body::Frame::data(chunk)
+                    } else {
+                        frame
+                    }
+                } else {
+                    frame
+                };
+                // A fixed-length HTTP consumer can treat the final data frame
+                // as completion without polling the body for a subsequent
+                // `None`. Hold that frame until response-end work is accepted
+                // so command-level DB flush barriers cannot race Drop cleanup.
+                if this.pipeline.has_chunk_hooks() && this.inner.is_end_stream() {
+                    this.dispatch_response_end();
+                    if this.poll_response_end(cx).is_pending() {
+                        this.pending_frame = Some(frame);
+                        return Poll::Pending;
                     }
                 }
                 Poll::Ready(Some(Ok(frame)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(None) => {
-                if !this.end_dispatched && this.pipeline.has_chunk_hooks() {
-                    let tail = this.pipeline.dispatch_response_end(
-                        &mut this.state,
-                        &this.conn,
-                        this.trace_id.as_deref(),
-                    );
-                    this.end_dispatched = true;
-                    if !tail.is_empty() {
-                        return Poll::Ready(Some(Ok(hyper::body::Frame::data(tail))));
-                    }
+                this.dispatch_response_end();
+                if this.poll_response_end(cx).is_pending() {
+                    return Poll::Pending;
+                }
+                if let Some(tail) = this.end_tail.take().filter(|tail| !tail.is_empty()) {
+                    return Poll::Ready(Some(Ok(hyper::body::Frame::data(tail))));
                 }
                 Poll::Ready(None)
             }
@@ -221,7 +257,12 @@ where
     }
 
     fn is_end_stream(&self) -> bool {
-        (!self.pipeline.has_chunk_hooks() || self.end_dispatched) && self.inner.is_end_stream()
+        (!self.pipeline.has_chunk_hooks()
+            || (self.end_dispatched
+                && self.pending_frame.is_none()
+                && self.pending_end.is_empty()
+                && self.end_tail.as_ref().is_none_or(Bytes::is_empty)))
+            && self.inner.is_end_stream()
     }
 
     fn size_hint(&self) -> hyper::body::SizeHint {
@@ -240,12 +281,19 @@ impl<B> Drop for ChunkDispatchBody<B> {
         // accumulator state (SSE parser's trailing event without a
         // terminating blank line, etc.).
         if !self.end_dispatched && self.pipeline.has_chunk_hooks() {
-            let _ = self.pipeline.dispatch_response_end(
-                &mut self.state,
-                &self.conn,
-                self.trace_id.as_deref(),
-            );
-            self.end_dispatched = true;
+            self.dispatch_response_end();
+        }
+        if !self.pending_end.is_empty() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                for future in self.pending_end.drain(..) {
+                    handle.spawn(future);
+                }
+            } else {
+                tracing::warn!(
+                    count = self.pending_end.len(),
+                    "response body dropped outside a Tokio runtime; pending chunk-end work could not run"
+                );
+            }
         }
     }
 }

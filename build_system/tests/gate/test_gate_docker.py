@@ -96,11 +96,11 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
 def test_a_checkout_path_maps_onto_the_bind_mount(tmp_path: Path) -> None:
     mapped = container_path(
         tmp_path,
-        tmp_path / "target" / "packages" / "Capsem_9.9.9_arm64.deb",
+        tmp_path / "cache" / "target" / "packages" / "Capsem_9.9.9_arm64.deb",
         mount=MOUNT,
     )
 
-    assert mapped == f"{MOUNT}/target/packages/Capsem_9.9.9_arm64.deb"
+    assert mapped == f"{MOUNT}/cache/target/packages/Capsem_9.9.9_arm64.deb"
 
 
 def test_a_path_outside_the_checkout_is_refused(tmp_path: Path) -> None:
@@ -135,7 +135,7 @@ def test_exists_answers_without_failing_the_run(tmp_path: Path) -> None:
     runner = RecordingRunner(tmp_path, failures=["absent.json"])
     docker = Docker(runner)
 
-    assert docker.exists("/src/target/manifest.json", "box")
+    assert docker.exists("/src/cache/target/manifest.json", "box")
     assert not docker.exists("/src/absent.json", "box")
 
 

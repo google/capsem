@@ -91,18 +91,12 @@ fn anthropic_pipeline_produces_llm_events_with_provider_tag() {
 
     // Interpreter drained SSE events.
     let sse_stream = state.peek::<SseEventStream>().expect("SseEventStream slot");
-    assert!(
-        sse_stream.events.is_empty(),
-        "interpreter must drain the SSE queue"
-    );
+    assert!(sse_stream.events.is_empty(), "interpreter must drain the SSE queue");
 
     // LlmEventStream populated with provider tag.
     let llm = state.peek::<LlmEventStream>().expect("LlmEventStream slot");
     assert_eq!(llm.provider, Some(ProviderKind::Anthropic));
-    assert!(
-        !llm.events.is_empty(),
-        "interpreter should produce LlmEvents"
-    );
+    assert!(!llm.events.is_empty(), "interpreter should produce LlmEvents");
 
     // Sanity: collect_summary works against the accumulated events.
     let summary = crate::net::ai_traffic::events::collect_summary(&llm.events);
@@ -176,11 +170,7 @@ fn cloud_domain_without_runtime_provider_metadata_is_not_interpreted() {
 
     assert!(state.peek::<LlmEventStream>().is_none());
     assert_eq!(
-        state
-            .peek::<SseEventStream>()
-            .expect("sse queue remains")
-            .events
-            .len(),
+        state.peek::<SseEventStream>().expect("sse queue remains").events.len(),
         1
     );
 }
@@ -271,10 +261,7 @@ fn google_pipeline_produces_llm_events() {
 
     let llm = state.peek::<LlmEventStream>().expect("LlmEventStream slot");
     assert_eq!(llm.provider, Some(ProviderKind::Google));
-    assert!(
-        !llm.events.is_empty(),
-        "expected at least one Google LlmEvent"
-    );
+    assert!(!llm.events.is_empty(), "expected at least one Google LlmEvent");
 }
 
 /// All three interpreter hooks coexisting in one pipeline state map:
@@ -297,11 +284,7 @@ fn three_hooks_only_matching_one_processes() {
         sse.on_response_chunk(&mut chunk, &mut ctx);
     }
     // All three run in registration order; only OpenAI matches.
-    for hook in [
-        &a as &dyn ChunkHook,
-        &o as &dyn ChunkHook,
-        &g as &dyn ChunkHook,
-    ] {
+    for hook in [&a as &dyn ChunkHook, &o as &dyn ChunkHook, &g as &dyn ChunkHook] {
         let mut ctx = ctx_for(&mut state, &conn);
         hook.on_response_chunk(&mut chunk, &mut ctx);
     }
@@ -335,9 +318,7 @@ fn on_response_end_drains_trailing_events() {
         interp.on_response_chunk(&mut chunk, &mut ctx);
     }
     // Nothing processed yet (no blank line).
-    assert!(state
-        .peek::<LlmEventStream>()
-        .is_none_or(|s| s.events.is_empty()));
+    assert!(state.peek::<LlmEventStream>().is_none_or(|s| s.events.is_empty()));
 
     // End-of-stream flushes the SSE parser, then interpreter drains.
     {
@@ -349,8 +330,5 @@ fn on_response_end_drains_trailing_events() {
         interp.on_response_end(&mut ctx);
     }
     let llm = state.peek::<LlmEventStream>().expect("slot");
-    assert!(
-        !llm.events.is_empty(),
-        "trailing event should reach interpreter"
-    );
+    assert!(!llm.events.is_empty(), "trailing event should reach interpreter");
 }

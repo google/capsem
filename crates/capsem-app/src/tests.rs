@@ -44,8 +44,7 @@ fn cleanup_old_logs_removes_expired_files() {
 
     // Backdate old file to 30 days ago.
     let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
-    filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(thirty_days_ago))
-        .unwrap();
+    filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(thirty_days_ago)).unwrap();
 
     cleanup_old_logs(dir.path(), 7);
 
@@ -66,8 +65,7 @@ fn cleanup_old_logs_ignores_subdirectories() {
     fs::create_dir(&sub).unwrap();
     // Subdirs should not be removed even when past the cutoff.
     let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 86400);
-    filetime::set_file_mtime(&sub, filetime::FileTime::from_system_time(thirty_days_ago))
-        .unwrap();
+    filetime::set_file_mtime(&sub, filetime::FileTime::from_system_time(thirty_days_ago)).unwrap();
 
     cleanup_old_logs(dir.path(), 7);
     assert!(sub.exists());
@@ -129,10 +127,7 @@ fn log_filename_produces_reasonable_modern_shape() {
     assert_eq!(name.len(), "YYYY-MM-DDTHH-MM-SS.jsonl".len());
     // Year should be at least 2025 (any CI machine).
     let year: i32 = name[..4].parse().unwrap();
-    assert!(
-        year >= 2025,
-        "expected modern year in log filename, got {name}"
-    );
+    assert!(year >= 2025, "expected modern year in log filename, got {name}");
 }
 
 #[test]
@@ -202,10 +197,7 @@ fn build_deep_link_payload_blocks_injection_input() {
     // executable code.
     let vm_id = "x\\'); alert(1); //";
     let payload = build_deep_link_payload(vm_id, None);
-    assert_eq!(
-        payload["connect"], vm_id,
-        "input must survive verbatim as data"
-    );
+    assert_eq!(payload["connect"], vm_id, "input must survive verbatim as data");
     // Double-check the serialized form: the `\\` and `'` must be
     // contained inside a JSON string (double-quoted), not as bare JS.
     let serialized = payload.to_string();
@@ -228,8 +220,7 @@ fn build_deep_link_payload_round_trips_through_json() {
     let vm_id = "vm\"\\'\n\t\u{1}";
     let action = "op'>?</";
     let serialized = build_deep_link_payload(vm_id, Some(action)).to_string();
-    let parsed: serde_json::Value =
-        serde_json::from_str(&serialized).expect("payload must be valid JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("payload must be valid JSON");
     assert_eq!(parsed["connect"], vm_id);
     assert_eq!(parsed["action"], action);
 }
@@ -299,11 +290,11 @@ fn malformed_inputs_are_refused_without_panicking() {
     for url in [
         "",
         "not a url",
-        "https",           // scheme with no colon
-        "https:",          // colon with nothing after it
+        "https",  // scheme with no colon
+        "https:", // colon with nothing after it
         "mailto:",
         ":",
-        "://capsem.org",   // empty scheme
+        "://capsem.org",       // empty scheme
         " https://capsem.org", // leading whitespace is not a scheme we know
         "http\n://capsem.org",
     ] {

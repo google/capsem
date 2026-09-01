@@ -89,7 +89,9 @@ def tracked_files(root: Path, pattern: str) -> Sources:
         for raw in listed:
             if raw:
                 relative = raw.decode()
-                yield relative, (root / relative).read_text(encoding="utf-8")
+                source = root / relative
+                if source.is_file():
+                    yield relative, source.read_text(encoding="utf-8")
 
     return read
 

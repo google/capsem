@@ -18,7 +18,7 @@
 #   just dev / shell / run / bench / release / ... ->
 #       $HOME/.capsem/run/execution.lock  (shared with the dev service)
 #   just test / smoke ->
-#       <repo>/target/capsem-test-execution.lock  (outside $CAPSEM_HOME so
+#       <repo>/cache/target/capsem-test-execution.lock  (outside $CAPSEM_HOME so
 #       it survives the `rm -rf $CAPSEM_HOME` wipe; same-file path across
 #       invocations, so flock(2) actually collides and blocks concurrent
 #       test runs)

@@ -120,8 +120,7 @@ impl SseParser {
                 self.current_event_type = Some(String::from_utf8_lossy(value).into_owned());
             }
             b"data" => {
-                self.current_data
-                    .push(String::from_utf8_lossy(value).into_owned());
+                self.current_data.push(String::from_utf8_lossy(value).into_owned());
             }
             // id, retry, etc. -- not needed for LLM SSE parsing
             _ => {}

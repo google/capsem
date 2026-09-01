@@ -31,7 +31,7 @@ that name is itself a symlink, the write goes **through** it, into whatever it
 points at.
 
 Both halves were live in the prefix export, and together they destroyed run
-logs. `target/gate-runs/latest` points at the newest run, on the host and
+logs. `cache/target/gate-runs/latest` points at the newest run, on the host and
 inside the private checkout alike. Exporting a run therefore read the private
 tree's `latest` as a directory of files and wrote them through the host's
 `latest` into an unrelated older run, replacing every file in it. `copytree`

@@ -137,19 +137,15 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
     // Leak a &'static str for the label so RetryOpts can use it.
     let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
 
-    match retry_with_backoff(
-        &RetryOpts::new(static_label, Duration::from_secs(30)),
-        || vsock_connect(cid, port).ok(),
-    ) {
+    match retry_with_backoff(&RetryOpts::new(static_label, Duration::from_secs(30)), || {
+        vsock_connect(cid, port).ok()
+    }) {
         Ok(fd) => {
-            let physical_port =
-                physical_vsock_port(port, guest_vsock_port_offset()).unwrap_or(port);
+            let physical_port = physical_vsock_port(port, guest_vsock_port_offset()).unwrap_or(port);
             if physical_port == port {
                 eprintln!("[capsem-agent] {label} connected (port {port})");
             } else {
-                eprintln!(
-                    "[capsem-agent] {label} connected (logical port {port}, physical port {physical_port})"
-                );
+                eprintln!("[capsem-agent] {label} connected (logical port {port}, physical port {physical_port})");
             }
             fd
         }
@@ -208,12 +204,7 @@ pub fn read_exact_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<()> {
     let mut pos = 0;
     while pos < buf.len() {
         match nix::unistd::read(fd, &mut buf[pos..]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected EOF",
-                ))
-            }
+            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected EOF")),
             Ok(n) => pos += n,
             Err(nix::errno::Errno::EINTR) => continue,
             Err(nix::errno::Errno::EAGAIN) => {

@@ -12,12 +12,16 @@ import json
 import shutil
 from pathlib import Path
 
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.views import ReceiptLocation, copy_view
 from capsem_builder.gate import config as gate_config
 
 from . import repository_root
 from .release_channel_author import author_and_fetch, glowup_helpers, run
 
 PROJECT_ROOT = repository_root()
+CACHE_PATHS = CachePaths(repository_root=PROJECT_ROOT, policy=load_policy(PROJECT_ROOT))
 REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
     {
         "capsem",
@@ -120,7 +124,7 @@ def build_cohort(args) -> dict[str, str]:
     version = helpers.deb_version(built)
     exact = work / "artifacts" / f"v{version}" / built.name
     exact.parent.mkdir(parents=True)
-    shutil.copy2(built, exact)
+    copy_view(CACHE_PATHS, built, exact, receipt_location=ReceiptLocation.INVENTORY)
     sbom = exact.parent / "capsem-sbom.spdx.json"
     run(
         [
@@ -183,7 +187,7 @@ def build_cohort(args) -> dict[str, str]:
         },
     )
 
-    shutil.copy2(exact, args.package)
+    copy_view(CACHE_PATHS, exact, args.package, receipt_location=ReceiptLocation.INVENTORY)
     before = unpublished_before(args.channel, args.before_inputs)
     return {
         "before_manifest": str(before),

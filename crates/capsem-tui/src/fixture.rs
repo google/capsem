@@ -3,8 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::model::{
-    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle,
-    SessionStats, SessionSummary,
+    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary,
 };
 use crate::provider::StateProvider;
 

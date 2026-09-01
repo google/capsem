@@ -18,15 +18,15 @@ just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just fast-test     # Incomplete source feedback; prints the next supported rails
 just focus-test functional # Rerun one named functional owner
+source_commit=$(git rev-parse HEAD)
+just test "$source_commit" # Optional complete local proof; exact repeats reuse its journal.
 
 # Optional hands-on local testing; never a release prerequisite
 just install
 
-# Release dispatchers; hosted lanes own exact-package install and qualification
-source_commit=$(git rev-parse HEAD)
+# Release dispatchers are sufficient on their own; hosted lanes self-qualify
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"
-# Exceptional cold full diagnostic only: just test-full "$source_commit"
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.
@@ -34,7 +34,11 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ## Project Layout
 
 ```
-crates/capsem-core/            VM library (config, boot, serial, vsock, machine)
+crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
+crates/capsem-config/          Product config types, parsing, validation, and provider/MCP identity
+crates/capsem-credentials/     Credential provider contracts and durable credential store
+crates/capsem-core/            VM, hypervisor, security engine, and host network runtime
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
 crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
@@ -56,12 +60,12 @@ web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 web/marketing/                     Marketing website (Astro + Svelte 5)
 web/docs/                     Documentation site (Astro Starlight)
 build_system/builder/      capsem-builder backend and gate implementation
-build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
+build_system/release_site/ Release channel site generator (Astro, writes cache/target/release/distribution/)
 build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
-target/assets/            Built VM assets (gitignored, per-arch: target/assets/{arch}/)
+cache/target/assets/            Built VM assets (gitignored, per-arch: cache/target/assets/{arch}/)
 web/graphics/             Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
 tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
@@ -72,7 +76,7 @@ tests/                    Cross-crate suites (ironbank/ black-box gates, citadel
 
 ## Read the Gate Digest First
 
-`target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
+`cache/target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
 the last run did, which steps keep failing, where the time goes, and what to do
 about it. Every gate run regenerates it; `uv run --project build_system --frozen capsem-gate runs digest`
 rebuilds it on demand and `uv run --project build_system --frozen capsem-gate runs trend --step <label>` follows
@@ -189,7 +193,7 @@ python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds <finite
 
 The wrapper closes stdin and owns a process group so timeout or interruption
 cannot leave a Docker client, compiler, test runner, or helper behind. Do not
-use it around `just test-full` or either release command: the gate's config-owned
+use it around `just test` or either release command: the gate's config-owned
 timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
 ## Serialized Orthogonal Releases
@@ -204,10 +208,13 @@ just release-profile <channel> <profile> <source-commit>
 ```
 
 Agents use these entrypoints rather than dispatching release workflows or
-authoring manifests directly. `just test-full <source-commit>` is the
-exceptional local diagnostic and is not publication authority. Direct release
-commands and `just test-full` own their timeouts, journal, teardown, and
-network boundary; do not wrap or nest them.
+authoring manifests directly. Each release command is sufficient on its own:
+its hosted lane performs release qualification, so `just test` is not a
+prerequisite. `just test <source-commit>` is optional reusable complete local
+verification. Low-impact repeats are refused before expensive work and routed
+to focused owners; `just test <source-commit> force "<reason>"` is the audited
+exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
+journal, teardown, and network boundary; do not wrap or nest them.
 
 Implementation-specific invariants belong beside their executable tests and in
 the routed release references. If prose here disagrees with `RELEASE.md`, fix
@@ -250,7 +257,7 @@ only inventories Git-tracked program sources under the configured first-party
 roots, so generated outputs and vendored dependencies are outside its scope by
 rule.
 
-`just test-full` is **one process, one machine lock, one workspace, one plan**.
+`just test` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
 checked-in count depend on machine state. It is diagnostic evidence, not a
 prerequisite consumed by either release dispatcher.
@@ -286,7 +293,7 @@ Two more, which follow from the first:
   coordinate nothing between two `capsem-gate` processes.
 
 One gate runs per machine, enforced by `flock` rather than a pidfile, and every
-run is recorded under `target/gate-runs/` and bounded by `[disk]`. The run log
+run is recorded under `cache/target/gate-runs/` and bounded by `[disk]`. The run log
 is written by the runner rather than by call sites, so nothing can be forgotten
 into invisibility.
 
@@ -294,9 +301,9 @@ Read `/dev-gate` before changing any of it.
 
 ## Vocabulary and gotchas
 
-- **glowup** = installed-package release proof owned by `just test-full`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
+- **glowup** = installed-package release proof owned by `just test`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test-full` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- `just test` writes benchmark recordings under `cache/target/tests/benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

@@ -96,7 +96,7 @@ def docker_tool(ignored: tuple[str, ...]) -> Tool:
 def _generated(root: Path, candidates: set[str]) -> set[str]:
     """Targets git ignores, which are build output rather than promises.
 
-    `target/assets/manifest.json` is produced by the asset build and absent from a
+    `cache/target/assets/manifest.json` is produced by the asset build and absent from a
     clean checkout, so a document naming it is describing a real artifact, not
     pointing at a file someone forgot to write. Asking git rather than listing
     directories means a new generated tree is covered the day it is ignored.

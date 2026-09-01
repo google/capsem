@@ -64,7 +64,7 @@ def _content(root: Path) -> ProfileContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)
     profile = content.profiles(config) / "code/profile.toml"
@@ -116,12 +116,12 @@ def _proof(
 def test_only_a_package_this_checkout_built_is_accepted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Anything outside target/packages/ has no package-build provenance."""
+    """Anything outside cache/target/packages/ has no package-build provenance."""
     root = _checkout(tmp_path)
     elsewhere = tmp_path / "elsewhere.deb"
     elsewhere.write_text("bytes")
 
-    with pytest.raises(GateError, match="only accepts target/packages/"):
+    with pytest.raises(GateError, match="only accepts cache/target/packages/"):
         DebProof(
             RecordingRunner(root),
             package=elsewhere,

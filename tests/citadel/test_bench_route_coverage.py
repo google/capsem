@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[2]
-SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs"
+SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
 GATEWAY = PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs"
 
 
@@ -60,7 +60,9 @@ def _routes(source: Path, function: str) -> set[str]:
     end = text.find("\nfn ", start + len(function))
     body = text[start : end if end != -1 else len(text)]
     found = _route_literals(body)
-    assert found, f"{function} in {source.name} registered no routes; the reader is wrong"
+    assert found, (
+        f"{function} in {source.name} registered no routes; the reader is wrong"
+    )
     return found
 
 

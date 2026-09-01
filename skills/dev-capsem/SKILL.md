@@ -11,10 +11,16 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 
 | Crate | What | Key modules |
 |-------|------|-------------|
-| `capsem-core` | Shared library. All business logic lives here. | `vm/` (machine, profile, vsock, serial), `net/` (network intercept, CA, SSE/model parsing), `security_engine/` (CEL rules, plugins, decisions), `mcp/` (gateway, tools), `hypervisor/` (Apple VZ, KVM), `image.rs` (ImageRegistry, fork/clone) |
+| `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
+| `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
+| `capsem-config` | Product config contracts, parsing, validation, and provider/MCP identity. | `types.rs`, `validation.rs`, `provider_profile.rs`, `mcp.rs`, `resolver.rs` |
+| `capsem-credentials` | Credential provider contracts and durable credential storage. | `provider.rs`, `store.rs`, `durable.rs` |
+| `capsem-core` | VM, hypervisor, security-engine, network-intercept, and session-runtime domain library. | `vm/`, `net/`, `security_engine/`, `mcp/`, `hypervisor/`, `image.rs` |
 | `capsem-service` | Daemon service. Axum HTTP over UDS, VM lifecycle. | `main.rs` (routes, IPC), `api.rs` (request/response types) |
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
+| `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
+| `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
 | `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
 | `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
 | `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and file/snapshot (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator. | `main.rs` (rmcp handler) |
@@ -25,8 +31,13 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
 | `capsem-proto` | Shared protocol types. | `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost) |
 | `capsem-guard` | Companion-process lifecycle primitives: parent-watch + singleton flock. Used by gateway and tray to refuse-standalone, enforce one-instance, and self-exit when the service dies (incl. SIGKILL). | `src/lib.rs` (`install`, `Singleton`, `watch_parent_or_exit`) |
+| `capsem-bench` | Host/guest benchmark harness and result collection. | `main.rs`, collectors and dimensions |
+| `capsem-mock-server` | Hermetic HTTP/TLS/WebSocket upstream for tests and benchmarks. | `main.rs` |
 
-Rule: if logic could be reused or tested without a specific crate, it belongs in `capsem-core`.
+Rule: reusable logic belongs in the lowest-dependency crate that owns its
+domain. Cross-process wire contracts belong in `capsem-proto`; host plumbing in
+`capsem-foundation`; assets, config, and credentials in their named crates; VM,
+hypervisor, security-engine, and host network runtime in `capsem-core`.
 
 ## Directory map
 
@@ -39,7 +50,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | `build_system/builder/` | Python builder and gate package | `/build-images`, `/dev-gate` |
 | `build_system/scripts/` | Thin functional command boundaries | `/dev-gate`, `/release-process` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
-| `target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
+| `cache/target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `web/graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |
@@ -127,7 +138,9 @@ Config naming is strict:
   and UI-facing name/description/icon. Session status must reflect profile
   readiness and compatibility.
 - The binary must be codesigned with `com.apple.security.virtualization`.
-- `capsem-core` owns all business logic. App crate and agent crate are thin shells.
+- Domain libraries own reusable logic; binary crates keep entrypoints focused
+  on parsing, wiring, lifecycle, and presentation. Do not move unrelated logic
+  into `capsem-core` merely because more than one caller needs it.
 - **Fork images are first-class objects.** `capsem fork <session> <image-name>`
   snapshots a session into a reusable template. Forked images depend on the
   base profile asset set and must remain compatible with the profile contract.

@@ -14,10 +14,7 @@ use std::path::Path;
 pub fn vacuum_and_compress_session_db(session_dir: &Path) -> anyhow::Result<u64> {
     let db_path = session_dir.join("session.db");
     if !db_path.exists() {
-        return Err(anyhow::anyhow!(
-            "session.db not found in {}",
-            session_dir.display()
-        ));
+        return Err(anyhow::anyhow!("session.db not found in {}", session_dir.display()));
     }
 
     capsem_logger::checkpoint_and_vacuum_session_db(&db_path)?;

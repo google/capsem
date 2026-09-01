@@ -29,14 +29,11 @@ use tracing::{debug, instrument, warn};
 use crate::net::dns::cache::DnsAnswerCache;
 use crate::net::dns::resolver::DnsResolver;
 use crate::net::mitm_proxy::metrics as m;
-use crate::net::parsers::dns_parser::{
-    build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery,
-};
+use crate::net::parsers::dns_parser::{build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery};
 use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
-    evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType,
-    SecurityEnforcementDecision, SecurityEvent,
+    evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementDecision, SecurityEvent,
 };
 
 const CAPSEM_LOCAL_NXDOMAIN_SUFFIX: &str = ".capsem-bogus";
@@ -157,10 +154,7 @@ impl DnsHandlerResult {
     }
 }
 
-fn apply_security_enforcement_fields(
-    result: &mut DnsHandlerResult,
-    enforcement: &SecurityEnforcementDecision,
-) {
+fn apply_security_enforcement_fields(result: &mut DnsHandlerResult, enforcement: &SecurityEnforcementDecision) {
     if result.matched_rule.is_none() {
         result.matched_rule = enforcement.rule_id.clone();
     }
@@ -307,8 +301,7 @@ impl DnsHandler {
             "decision" => result.decision.as_str(),
         )
         .increment(1);
-        ::metrics::histogram!(m::DNS_HANDLE_DURATION_MS)
-            .record(handle_t0.elapsed().as_secs_f64() * 1000.0);
+        ::metrics::histogram!(m::DNS_HANDLE_DURATION_MS).record(handle_t0.elapsed().as_secs_f64() * 1000.0);
 
         result
     }
@@ -325,18 +318,13 @@ impl DnsHandler {
             }
         };
 
-        let dns_security_event =
-            SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
-                qname: Some(query.qname.clone()),
-                qtype: Some(query.qtype.to_string()),
-            });
+        let dns_security_event = SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+            qname: Some(query.qname.clone()),
+            qtype: Some(query.qtype.to_string()),
+        });
         let rules = self.security_rules.read().unwrap().clone();
         let plugin_policy = snapshot_plugin_policy(&self.plugin_policy);
-        let dns_evaluation = match evaluate_security_boundary(
-            &rules,
-            plugin_policy,
-            dns_security_event,
-        ) {
+        let dns_evaluation = match evaluate_security_boundary(&rules, plugin_policy, dns_security_event) {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 warn!(error = %error, qname = %query.qname, "dns handler: security engine failed");
@@ -391,8 +379,7 @@ impl DnsHandler {
                     return DnsHandlerResult::upstream_failed(sf, query, 0);
                 }
             };
-            let mut result =
-                DnsHandlerResult::denied(nxd, query, CAPSEM_LOCAL_NXDOMAIN_RULE.to_string());
+            let mut result = DnsHandlerResult::denied(nxd, query, CAPSEM_LOCAL_NXDOMAIN_RULE.to_string());
             apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
             return result;
         }
@@ -434,9 +421,7 @@ impl DnsHandler {
         // redirected after we cached its answer must not serve
         // from cache. See `dns/cache.rs` for the full invariant.
         if let Some(cache) = &self.cache {
-            if let Some(cached) =
-                cache.get(&query.qname, query.qtype, query.qclass, query.id, &policy)
-            {
+            if let Some(cached) = cache.get(&query.qname, query.qtype, query.qclass, query.id, &policy) {
                 let rcode = response_rcode(&cached);
                 debug!(
                     qname = %query.qname,
@@ -453,8 +438,7 @@ impl DnsHandler {
         let t0 = Instant::now();
         match self.resolver.resolve(query_bytes).await {
             Ok((resp, elapsed)) => {
-                ::metrics::histogram!(m::DNS_UPSTREAM_DURATION_MS)
-                    .record(elapsed.as_secs_f64() * 1000.0);
+                ::metrics::histogram!(m::DNS_UPSTREAM_DURATION_MS).record(elapsed.as_secs_f64() * 1000.0);
                 let rcode = response_rcode(&resp);
                 // Only cache positive (NoError) responses --
                 // SERVFAIL / NXDOMAIN from upstream may be
@@ -466,8 +450,7 @@ impl DnsHandler {
                         cache.insert(&query.qname, query.qtype, query.qclass, &resp);
                     }
                 }
-                let mut result =
-                    DnsHandlerResult::allowed(resp, query, elapsed.as_millis() as u64, rcode);
+                let mut result = DnsHandlerResult::allowed(resp, query, elapsed.as_millis() as u64, rcode);
                 apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
                 result
             }

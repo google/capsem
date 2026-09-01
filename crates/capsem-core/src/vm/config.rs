@@ -176,12 +176,7 @@ impl VmConfigBuilder {
         self
     }
 
-    pub fn virtio_fs_share(
-        mut self,
-        tag: impl Into<String>,
-        path: impl AsRef<Path>,
-        read_only: bool,
-    ) -> Self {
+    pub fn virtio_fs_share(mut self, tag: impl Into<String>, path: impl AsRef<Path>, read_only: bool) -> Self {
         self.virtio_fs_shares.push(VirtioFsShare {
             tag: tag.into(),
             host_path: path.as_ref().to_path_buf(),
@@ -238,12 +233,7 @@ impl VmConfigBuilder {
         {
             // Reject x86_64 bzImage: "HdrS" magic at offset 0x202
             if n > 0x206 {
-                let magic = u32::from_le_bytes([
-                    header[0x202],
-                    header[0x203],
-                    header[0x204],
-                    header[0x205],
-                ]);
+                let magic = u32::from_le_bytes([header[0x202], header[0x203], header[0x204], header[0x205]]);
                 if magic == 0x5372_6448 {
                     return Err(ConfigError::ArchMismatch(format!(
                         "{} is an x86_64 bzImage but this host is aarch64",
@@ -273,10 +263,7 @@ impl VmConfigBuilder {
     }
 
     fn hash_cache_path(path: &Path) -> PathBuf {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("asset");
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("asset");
         let root = std::env::var_os("CAPSEM_ASSET_HASH_CACHE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("capsem-asset-hash-cache"));
@@ -378,7 +365,7 @@ impl VmConfigBuilder {
             .kernel_path
             .ok_or_else(|| ConfigError::MissingKernel(PathBuf::from("<not set>")))?;
         if !kernel_path.exists() {
-            return Err(ConfigError::MissingKernel(kernel_path.clone()));
+            return Err(ConfigError::MissingKernel(kernel_path));
         }
         Self::validate_kernel_arch(&kernel_path)?;
         if let Some(ref expected) = self.expected_kernel_hash {

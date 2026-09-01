@@ -32,14 +32,14 @@ let five through; the rule is now a whitelist for that reason.
 | Command | What | VM? |
 |---------|------|-----|
 | `just fast-test` | Incomplete source feedback only | No |
-| `just focus-test <group>` | One existing functional owner, with reusable products | Depends on group |
+| `just focus-test <group>` | One existing owner; `rust` selects changed crates and reverse dependents | Depends on group |
 | `just install` | Complete local macOS package build and native install for hands-on testing | Yes |
-| `just test-full` | Exceptional cold complete diagnostic | Yes |
+| `just test` | Reusable complete local verification | Yes |
 
-Release lanes are the publication authority. `just fast-test` is incomplete
-feedback, and `just focus-test <group>` is the normal targeted regression path.
-During TDD run the smallest native pytest, cargo, pnpm, or script command; use
-`just test-full` only for a final cold diagnostic or suspected stale cache.
+Release lanes are the publication authority and self-qualify; `just test` is optional.
+`just fast-test` is incomplete feedback, and `just focus-test <group>` is the normal
+targeted regression path. During TDD use the smallest native test; run `just test`
+when complete local whole-system verification is useful.
 
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
@@ -47,19 +47,19 @@ and batch adjacent parity fixes before paying for the complete gate. Run it
 once when the forward-fix source state is ready; any later production or gate
 change needs one new complete run.
 
-`just test-full` deliberately accepts committed or uncommitted developer work. It
+`just test` deliberately accepts committed or uncommitted developer work. It
 records `HEAD` plus a digest of every tracked and untracked non-ignored source
 byte, then fails if either changes while the gate runs. Generated output stays
 under ignored build directories. The local proof therefore covers the exact
 source state the developer asked to test without forcing commit choreography.
 Automatic gate benchmark output belongs under ignored
-`target/test-benchmarks/`. Historical benchmark publication uses the owning
+`cache/target/tests/benchmarks/`. Historical benchmark publication uses the owning
 pytest/benchmark command and an explicit review; it is not a Just convenience
 recipe.
 
 ## Release CI invariant
 
-Release CI reuses the same checked-in private modules as local `just test-full`:
+Release CI reuses the same checked-in private modules as local `just test`:
 
 - `_test-fast`
 - `_test-static`
@@ -86,7 +86,7 @@ including their real post-install scripts, before publication. Notarization and
 the public stable-to-nightly switch/upgrade glow-up remain mandatory
 end-to-end proof.
 
-On Apple Silicon macOS, `just test-full` owns the pre-publication macOS package
+On Apple Silicon macOS, `just test` owns the pre-publication macOS package
 boundary through `build_system/packaging/macos/macos_release_glowup.py`: it builds the package with the
 production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
@@ -104,7 +104,7 @@ deliberately excludes Tart and therefore cannot be used for release.
 Rust is pinned to `1.97.1` across the workspace file, workflow steps,
 host-builder, and bootstrap. Change all pin surfaces together in a deliberate
 toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking in
-`just fast-test`, local `just test-full`, ordinary CI, and both release lanes,
+`just fast-test`, local `just test`, ordinary CI, and both release lanes,
 as well as the scheduled/manual audit. A new advisory fails the candidate
 until it is remediated or explicitly reviewed in checked-in scanner policy.
 
@@ -116,7 +116,7 @@ does not expose `/dev/kvm`, so it proves exact package/service operation while
 the x86_64 runner additionally owns the guest-shell marker.
 
 Expensive harnesses need a cheap clean-environment bootstrap proof at the
-start of `just test-full`, before Docker/Colima or artifact preparation. The one
+start of `just test`, before Docker/Colima or artifact preparation. The one
 private `_test-fast` module is also called by `just fast-test`, ordinary CI, and
 both release lanes. It owns YAML/workflow and source syntax, source contracts,
 dependency audits, Clippy, Python lint/type checks, and JavaScript/frontend
@@ -132,7 +132,7 @@ must still exercise the installed package and post-install behavior.
 
 Read `references/local-ci-parity.md` before editing any release workflow, gate
 recipe, or CI job. It holds the Ironbank parity rule (every portable release
-gate must be owned by `just test-full`), scanner/tool pinning, Docker platform and
+gate must be owned by `just test`), scanner/tool pinning, Docker platform and
 prune discipline, runtime/disk budgets, and the source-guard contracts.
 
 ## TDD workflow
@@ -239,7 +239,7 @@ the relevant black-box test.
 
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
-`just test-full` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
+`just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
 
 - "Suspend timed out" under load -> service IPC handling is racy, not "bump the timeout"
 - "Session did not become ready" -> Apple VZ resource serialization, VirtioFS lock contention, or service handling concurrent provisions; investigate, don't suppress
@@ -252,7 +252,7 @@ Anti-patterns when a test flakes under `-n 4`:
 - Marking the test `serial` so it runs alone -- defeating the dogfooding signal
 
 The exception is a true timing or benchmark probe whose assertion is the
-measured number. Those tests must already be marked `serial` and `just test-full`
+measured number. Those tests must already be marked `serial` and `just test`
 runs them immediately after the `-n 4` canary. That is not a flake escape
 hatch: it prevents another benchmark file from stealing the same Apple VZ
 launch budget and corrupting the number we are trying to publish.
@@ -261,9 +261,9 @@ The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each
 
 ### Orphan processes across runs are a product bug (not a test bug)
 
-If a previous `just test-full -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
+If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
 
-**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
+**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
 ### Apple VZ lifecycle serialization is part of the product
 
@@ -277,7 +277,7 @@ exclusive/write guards. The rail holds even when pytest-xdist spawns one
 together for the boot-latency gate.
 
 Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
-`-n 1` to sidestep VZ races. `just test-full` at `-n 4` is the contract; if a
+`-n 1` to sidestep VZ races. `just test` at `-n 4` is the contract; if a
 concurrent run sees restore permission errors, loop-device corruption,
 connection-refused startup races, or readiness misses, fix the lifecycle rail.
 Full context and failure signatures live in
@@ -451,7 +451,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
 | Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
-`just test-full` is the only public complete local diagnostic. `just fast-test`
+`just test` is the only public complete local verification. `just fast-test`
 is incomplete feedback, `just focus-test` selects a closed existing owner, and
 `just install` is the complete local product install. Do not add another
 composite; use the owning native test for narrower diagnosis.
@@ -461,29 +461,12 @@ pairs are exact approval-gated surfaces. Any change must pass
 `tests/test_public_surface_contract.py` and requires explicit approval before
 editing `config/public-surface.toml`.
 
-## Test matrix: what runs where
+## Test matrix and coverage
 
-Read `references/test-matrix.md` for the per-crate Rust CI matrix and the
-Python suite map (which suites run versus collect in PR CI, smoke, and the full
-gate).
-
-### Coverage targets
-
-| Component | Floor | Enforced | Where |
-|-----------|------:|:--------:|-------|
-| Rust workspace | 63% | `--fail-under-lines 63` | CI (`cargo llvm-cov`), `just test-full` |
-| Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
-| Python full suite | 85% | `--cov-fail-under=85` | `just test-full` |
-| capsem-service | 80% | Codecov component | `codecov.yml` |
-| capsem-mcp | 80% | Codecov component | `codecov.yml` |
-| capsem-gateway | 80% | Codecov component | `codecov.yml` |
-| capsem (CLI) | 80% | Codecov component | `codecov.yml` |
-
-## Coverage
-
-- Rust: `cargo llvm-cov` via `just test-full` (floor: 63% line coverage)
-- Python: ordinary CI and the full `just test-full` suite both enforce 85%.
-- `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
+Read `references/test-matrix.md` for the per-crate Rust CI matrix, coverage
+enforcement, and Python suite tiers. Rust workspace and per-crate floors are
+owned only by `config/gate.toml`; the per-crate checker rejects stale headroom,
+so meaningful coverage gains raise their ratchets in the same change.
 
 ## Fast debug with capsem MCP tools
 
@@ -512,11 +495,11 @@ Never dismiss a test failure as "pre-existing" or "unrelated." Every failure mus
 **Never take the last line of a multi-part result as the result.** Two shapes of
 one mistake, both of which report success while the thing measured failed:
 
-**`$?` after a pipe is the pipe's status.** `just test-full | tail` reports what
+**`$?` after a pipe is the pipe's status.** `just test | tail` reports what
 `tail` did. Redirect, then read the code separately:
 
 ```bash
-just test-full > /tmp/gate.log 2>&1; echo "EXIT=$?"
+just test > /tmp/gate.log 2>&1; echo "EXIT=$?"
 ```
 
 **`tail -n1` across a multi-part result returns the last part, not the whole.**
@@ -553,13 +536,13 @@ Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_man
 
 ### Verify with the gate's environment, not a bare shell
 
-`just test-full` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
+`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
 `CAPSEM_BENCHMARK_OUTPUT_ROOT`. A test that reads ambient state passes in your
 shell and fails in the gate:
 
 ```bash
-CAPSEM_HOME="$PWD/target/test-home/.capsem" \
-CAPSEM_RUN_DIR="$PWD/target/test-home/.capsem/run" \
+CAPSEM_HOME="$PWD/cache/target/tests/home/.capsem" \
+CAPSEM_RUN_DIR="$PWD/cache/target/tests/home/.capsem/run" \
   cargo test -p <crate>
 ```
 
@@ -571,7 +554,10 @@ the culprit in two runs instead of guessing.
 
 ### Thresholds belong in one place
 
-A number copied next to a rule drifts from it silently. Three separate gate failures in one session traced to this: a coverage floor asserted as `65` after it moved to `63`, a guest kernel check demanding `major >= 7` after the pin moved to `6.18`, and a Docker fixture simulating `30 GiB free` as "plenty" after the floor rose to `40`.
+A number copied next to a rule drifts from it silently. Three separate gate
+failures in one session traced to this: a coverage floor copied into a test, a
+guest kernel major copied beside its pin, and a Docker fixture hardcoding
+"plenty" of free space independently from the configured minimum.
 
 Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
 
@@ -597,4 +583,7 @@ something already listed. `/dev-gate` has why each wrong shape was tried.
 
 ## Testable design
 
-Extract logic into `capsem-core` -- never embed business logic in the app layer where it's coupled to Tauri. If you can't test something without booting a VM or launching the GUI, it belongs in core.
+Extract logic from presentation and process entrypoints into the
+lowest-dependency crate that owns its domain. If logic cannot be tested without
+booting a VM or launching the GUI, first separate the pure decision from its
+runtime adapter; do not default unrelated shared code into `capsem-core`.

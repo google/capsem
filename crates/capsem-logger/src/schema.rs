@@ -14,8 +14,7 @@ const CREDENTIAL_REF_CHECK: &str =
     "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
 const SUBSTITUTION_REF_CHECK: &str =
     "CHECK (substitution_ref IS NULL OR (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'))";
-const SUBSTITUTION_OUTCOME_CHECK: &str =
-    "CHECK (outcome IN ('captured', 'brokered', 'injected', 'error'))";
+const SUBSTITUTION_OUTCOME_CHECK: &str = "CHECK (outcome IN ('captured', 'brokered', 'injected', 'error'))";
 const RULE_ACTION_CHECK: &str =
     "CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'))";
 const DETECTION_LEVEL_CHECK: &str =
@@ -462,15 +461,10 @@ pub fn memory_uri_for_path(path: &Path) -> String {
 
 pub fn memory_uri_for_name(name: &str) -> String {
     let hash = blake3::hash(name.as_bytes()).to_hex();
-    format!(
-        "file:capsem-ledger-mem-{}?mode=memory&cache=shared",
-        &hash[..16]
-    )
+    format!("file:capsem-ledger-mem-{}?mode=memory&cache=shared", &hash[..16])
 }
 
-pub(crate) fn with_memory_schema_lock<T>(
-    operation: impl FnOnce() -> rusqlite::Result<T>,
-) -> rusqlite::Result<T> {
+pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
     let _guard = MEMORY_SCHEMA_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -505,9 +499,7 @@ pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<
          ORDER BY name",
     )?;
     let tables = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
 
     for table in tables {
@@ -523,19 +515,15 @@ pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<
                  DROP TABLE {MEMORY_SCHEMA}.{name};"
             ))?;
         }
-        let mem_sql = memory_table_sql(&name, &sql)
-            .ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
+        let mem_sql =
+            memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
         conn.execute_batch(&mem_sql)?;
     }
 
     Ok(())
 }
 
-fn table_column_names(
-    conn: &Connection,
-    schema: &str,
-    table: &str,
-) -> rusqlite::Result<Vec<String>> {
+fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
@@ -650,11 +638,7 @@ pub fn flush_memory_tables_to_disk<'a>(
     Ok(advanced)
 }
 
-fn non_id_table_columns(
-    conn: &Connection,
-    schema: &str,
-    table: &str,
-) -> rusqlite::Result<Vec<String>> {
+fn non_id_table_columns(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
@@ -733,10 +717,7 @@ fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Resul
     } else {
         format!("SELECT 1 FROM {schema}.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
     };
-    let found = conn
-        .query_row(&query, [table], |_| Ok(()))
-        .optional()?
-        .is_some();
+    let found = conn.query_row(&query, [table], |_| Ok(())).optional()?.is_some();
     Ok(found)
 }
 
@@ -749,9 +730,7 @@ fn attach_memory_schema(conn: &Connection, memory_uri: &str) -> rusqlite::Result
         }
     }
     let escaped_uri = memory_uri.replace('\'', "''");
-    conn.execute_batch(&format!(
-        "ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"
-    ))
+    conn.execute_batch(&format!("ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"))
 }
 
 pub(crate) fn is_disk_only_table(name: &str) -> bool {
@@ -784,9 +763,7 @@ fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
     let create = format!("CREATE TABLE {table}");
     let create_if_not_exists = format!("CREATE TABLE IF NOT EXISTS {table}");
     if let Some(rest) = sql.strip_prefix(&create_if_not_exists) {
-        return Some(format!(
-            "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"
-        ));
+        return Some(format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"));
     }
     sql.strip_prefix(&create)
         .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
@@ -817,15 +794,8 @@ fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 
-pub fn record_sqlite_mmap_telemetry(
-    conn: &Connection,
-    path: &Path,
-    role: &'static str,
-    phase: &'static str,
-) {
-    let effective_mmap: i64 = conn
-        .query_row("PRAGMA mmap_size", [], |row| row.get(0))
-        .unwrap_or(0);
+pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'static str, phase: &'static str) {
+    let effective_mmap: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap_or(0);
     let db_file_size = file_len(path);
     let wal_file_size = file_len(&sqlite_sidecar_path(path, "-wal"));
     let status = if db_file_size == 0 {
@@ -841,16 +811,11 @@ pub fn record_sqlite_mmap_telemetry(
         (effective_mmap.max(0) as u64).min(db_file_size) as f64 / db_file_size as f64
     };
 
-    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase)
-        .set(SQLITE_MMAP_SIZE_BYTES as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase)
-        .set(effective_mmap as f64);
-    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase)
-        .set(db_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase)
-        .set(wal_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase)
-        .set(coverage_ratio);
+    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase).set(SQLITE_MMAP_SIZE_BYTES as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase).set(effective_mmap as f64);
+    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase).set(db_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase).set(wal_file_size as f64);
+    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase).set(coverage_ratio);
     ::metrics::counter!(
         DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL,
         "role" => role,
@@ -1043,10 +1008,7 @@ const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
         "security_ask_events",
         &["event_id", "ask_id", "status", "event_json", "trace_id"],
     ),
-    (
-        "profile_mutation_events",
-        &["mutation_id", "profile_id", "status"],
-    ),
+    ("profile_mutation_events", &["mutation_id", "profile_id", "status"]),
 ];
 
 /// Validate that a session DB is structurally ready for ledger routes.
@@ -1092,9 +1054,7 @@ fn validate_table_columns(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;
     if columns.is_empty() {
-        return Err(format!(
-            "session db missing required table {schema}.{table}"
-        ));
+        return Err(format!("session db missing required table {schema}.{table}"));
     }
     for column in required_columns {
         if !columns.contains(*column) {
@@ -1122,9 +1082,7 @@ fn column_is_not_null(conn: &Connection, table: &str, column: &str) -> bool {
         Ok(stmt) => stmt,
         Err(_) => return false,
     };
-    let rows = match stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
-    }) {
+    let rows = match stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))) {
         Ok(rows) => rows,
         Err(_) => return false,
     };
@@ -1268,9 +1226,7 @@ pub fn migrate(conn: &Connection) {
             [],
         );
         let _ = conn.execute(
-            &format!(
-                "CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"
-            ),
+            &format!("CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"),
             [],
         );
     }
@@ -1311,10 +1267,7 @@ pub fn migrate(conn: &Connection) {
         "ALTER TABLE tool_calls ADD COLUMN credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE tool_calls ADD COLUMN response_preview TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN response_preview TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown'))",
         [],
@@ -1326,20 +1279,11 @@ pub fn migrate(conn: &Connection) {
         "ALTER TABLE tool_calls ADD COLUMN decision TEXT NOT NULL DEFAULT 'allowed'",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER DEFAULT 0",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN error_message TEXT", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN process_name TEXT", []);
-    let _ = conn.execute(
-        "ALTER TABLE tool_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE tool_calls ADD COLUMN bytes_received INTEGER DEFAULT 0",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN bytes_received INTEGER DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_mode TEXT", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN policy_rule TEXT", []);
@@ -1544,9 +1488,7 @@ pub fn migrate(conn: &Connection) {
             [],
         );
         let _ = conn.execute(
-            &format!(
-                "CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"
-            ),
+            &format!("CREATE INDEX IF NOT EXISTS idx_{tbl}_credential_ref ON {tbl}(credential_ref)"),
             [],
         );
     }

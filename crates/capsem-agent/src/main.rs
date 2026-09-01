@@ -16,10 +16,10 @@ use std::process;
 use std::thread;
 
 use capsem_proto::{
-    decode_host_msg, encode_audit_record, encode_guest_msg, validate_env_key, validate_env_value,
-    validate_file_path, validate_file_path_safe, AuditRecord, BootStage, GuestToHost, HostToGuest,
-    MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
-    VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
+    decode_host_msg, encode_audit_record, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path,
+    validate_file_path_safe, AuditRecord, BootStage, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
+    MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC,
+    VSOCK_PORT_TERMINAL,
 };
 use nix::libc;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
@@ -64,10 +64,7 @@ fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
     read_exact_fd(fd, &mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_FRAME_SIZE as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "control frame too large",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "control frame too large"));
     }
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
@@ -247,10 +244,7 @@ fn main() {
             eprintln!("[capsem-agent] received BootConfig (epoch={epoch_secs})");
             blog_line(
                 &mut blog,
-                &format!(
-                    "BootConfig epoch={epoch_secs} traceparent_len={}",
-                    traceparent.len()
-                ),
+                &format!("BootConfig epoch={epoch_secs} traceparent_len={}", traceparent.len()),
             );
             if epoch_secs > 0 {
                 set_system_clock(epoch_secs);
@@ -266,9 +260,7 @@ fn main() {
         }
         Ok(other) => {
             blog_line(&mut blog, &format!("expected BootConfig, got {other:?}"));
-            eprintln!(
-                "[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults"
-            );
+            eprintln!("[capsem-agent] expected BootConfig, got {other:?}, continuing with defaults");
         }
         Err(e) => {
             blog_line(&mut blog, &format!("BootConfig error: {e}"));
@@ -296,9 +288,7 @@ fn main() {
                 }
                 if boot_env.len() >= MAX_BOOT_ENV_VARS {
                     blog_line(&mut blog, &format!("SetEnv {key}: env var cap reached"));
-                    eprintln!(
-                        "[capsem-agent] env var cap reached ({MAX_BOOT_ENV_VARS}), skipping {key}"
-                    );
+                    eprintln!("[capsem-agent] env var cap reached ({MAX_BOOT_ENV_VARS}), skipping {key}");
                     continue;
                 }
 
@@ -325,16 +315,11 @@ fn main() {
                 }
                 if file_count >= MAX_BOOT_FILES {
                     blog_line(&mut blog, &format!("FileWrite {path}: file cap reached"));
-                    eprintln!(
-                        "[capsem-agent] file cap reached ({MAX_BOOT_FILES}), skipping {path}"
-                    );
+                    eprintln!("[capsem-agent] file cap reached ({MAX_BOOT_FILES}), skipping {path}");
                     continue;
                 }
                 if total_file_bytes + data.len() > MAX_BOOT_FILE_BYTES {
-                    blog_line(
-                        &mut blog,
-                        &format!("FileWrite {path}: total bytes cap reached"),
-                    );
+                    blog_line(&mut blog, &format!("FileWrite {path}: total bytes cap reached"));
                     eprintln!("[capsem-agent] file bytes cap reached ({MAX_BOOT_FILE_BYTES}), skipping {path}");
                     continue;
                 }
@@ -342,10 +327,7 @@ fn main() {
                 if let Some(parent) = std::path::Path::new(&path).parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
                         blog_line(&mut blog, &format!("FileWrite {path}: mkdir failed: {e}"));
-                        eprintln!(
-                            "[capsem-agent] failed to create dir {}: {e}",
-                            parent.display()
-                        );
+                        eprintln!("[capsem-agent] failed to create dir {}: {e}", parent.display());
                         continue;
                     }
                 }
@@ -376,11 +358,7 @@ fn main() {
             Ok(HostToGuest::BootConfigDone) => {
                 blog_line(
                     &mut blog,
-                    &format!(
-                        "BootConfigDone: {} env vars, {} files",
-                        boot_env.len(),
-                        file_count,
-                    ),
+                    &format!("BootConfigDone: {} env vars, {} files", boot_env.len(), file_count,),
                 );
                 eprintln!(
                     "[capsem-agent] boot config done ({} env vars, {} files)",
@@ -453,10 +431,7 @@ fn main() {
         } else {
             blog_line(
                 &mut blog,
-                &format!(
-                    "WARNING: sethostname failed: {}",
-                    std::io::Error::last_os_error()
-                ),
+                &format!("WARNING: sethostname failed: {}", std::io::Error::last_os_error()),
             );
         }
     }
@@ -549,9 +524,7 @@ fn main() {
             // File ops are intentionally NOT deduped -- write/read/delete
             // are idempotent, and re-acking lets the host recover from a
             // FileOpDone lost on return.
-            let exec_inflight = std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashSet::<u64>::new(),
-            ));
+            let exec_inflight = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<u64>::new()));
             let exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>> =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
             // Symmetric guest-side replay buffer: every ackable
@@ -564,22 +537,17 @@ fn main() {
             // `HostToGuest::AckReply { id }` on receipt; control_loop
             // removes the entry. Lifted to outer scope so the map
             // survives reconnects (the writer thread is per-run_bridge).
-            let pending_responses: std::sync::Arc<
-                std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
-            > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+            let pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
             loop {
                 if !is_first {
                     use capsem_proto::poll::{retry_with_backoff, RetryOpts};
 
                     let fds = retry_with_backoff(
-                        &RetryOpts::new(
-                            "reconnect",
-                            std::time::Duration::from_secs(RECONNECT_TIMEOUT_SECS),
-                        ),
+                        &RetryOpts::new("reconnect", std::time::Duration::from_secs(RECONNECT_TIMEOUT_SECS)),
                         || {
-                            let t = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL)
-                                .ok()?;
+                            let t = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_TERMINAL).ok()?;
                             match vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_CONTROL) {
                                 Ok(c) => Some((t, c)),
                                 Err(_) => {
@@ -638,18 +606,14 @@ fn main() {
                                 }
                                 if epoch_secs > 0 {
                                     set_system_clock(epoch_secs);
-                                    eprintln!(
-                                        "[capsem-agent] resume: clock resynced to {epoch_secs}"
-                                    );
+                                    eprintln!("[capsem-agent] resume: clock resynced to {epoch_secs}");
                                 }
                             }
                             Ok(HostToGuest::SetEnv { key, value }) => {
                                 std::env::set_var(&key, &value);
                                 eprintln!("[capsem-agent] resume: set {key}");
                             }
-                            Ok(HostToGuest::FileWrite {
-                                path, data, mode, ..
-                            }) => {
+                            Ok(HostToGuest::FileWrite { path, data, mode, .. }) => {
                                 if let Some(parent) = std::path::Path::new(&path).parent() {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
@@ -659,10 +623,7 @@ fn main() {
                                     #[cfg(unix)]
                                     {
                                         use std::os::unix::fs::PermissionsExt;
-                                        let _ = std::fs::set_permissions(
-                                            &path,
-                                            std::fs::Permissions::from_mode(mode),
-                                        );
+                                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
                                     }
                                     eprintln!("[capsem-agent] resume: wrote {path}");
                                 }
@@ -802,9 +763,7 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .filter(|s| {
             s.name.len() <= 64
                 && !s.name.is_empty()
-                && s.name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                 && s.duration_ms <= 600_000
         })
         .take(32)
@@ -820,9 +779,7 @@ fn run_bridge(
     boot_env: &[(String, String)],
     exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
-    >,
+    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
 ) {
     // Serialize all control channel writes through a single channel + writer
     // thread. The exec background thread and control_loop both need to write
@@ -846,12 +803,7 @@ fn run_bridge(
     // response that actually did land twice is harmless.
     let pending_for_writer = std::sync::Arc::clone(&pending_responses);
     std::thread::spawn(move || {
-        let snap: Vec<GuestToHost> = pending_for_writer
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect();
+        let snap: Vec<GuestToHost> = pending_for_writer.lock().unwrap().values().cloned().collect();
         if !snap.is_empty() {
             eprintln!(
                 "[capsem-agent] control writer: replaying {} pending unacked responses",
@@ -972,9 +924,7 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
                             Err(_) => break,
                         }
                     }
-                    if revents
-                        .intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL)
-                    {
+                    if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
                         break;
                     }
                 }
@@ -1007,8 +957,7 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
             }
 
             if let Some(revents) = poll_fds[1].revents() {
-                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL)
-                {
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
                     break;
                 }
             }
@@ -1121,8 +1070,7 @@ fn audit_reader_loop() {
                 builder.ppid = extract_field(line, " ppid=").and_then(|v| v.parse().ok());
                 builder.uid = extract_field(line, " uid=").and_then(|v| v.parse().ok());
                 builder.exe = extract_field(line, " exe=").map(|s| s.trim_matches('"').to_string());
-                builder.comm =
-                    extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
+                builder.comm = extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
                 builder.tty = extract_field(line, " tty=").filter(|s| s != "(none)");
                 builder.timestamp_us = extract_audit_timestamp_us(line);
                 builder.has_syscall = true;
@@ -1328,9 +1276,7 @@ fn run_exec(
 ) -> ExecOutcome {
     // Connect to host exec port. Retry on ECONNRESET only -- post-restore
     // VZ transient (Bug C). Other errors bail immediately.
-    let exec_fd = match vsock_connect_with_econnreset_retry(|| {
-        vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)
-    }) {
+    let exec_fd = match vsock_connect_with_econnreset_retry(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)) {
         Ok(fd) => fd,
         Err(e) => {
             eprintln!("[capsem-agent] exec[{id}] vsock connect failed: {e}");
@@ -1520,9 +1466,7 @@ fn control_loop(
     ctrl_tx: std::sync::mpsc::Sender<GuestToHost>,
     exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>,
-    >,
+    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
 ) {
     loop {
         match recv_host_msg(control_fd) {
@@ -1594,11 +1538,10 @@ fn control_loop(
                     done.get(&id).copied()
                 };
                 if let Some(exit_code) = cached {
-                    eprintln!("[capsem-agent] exec[{id}] duplicate (already done, exit={exit_code}); replaying ExecDone");
-                    if ctrl_tx
-                        .send(GuestToHost::ExecDone { id, exit_code })
-                        .is_err()
-                    {
+                    eprintln!(
+                        "[capsem-agent] exec[{id}] duplicate (already done, exit={exit_code}); replaying ExecDone"
+                    );
+                    if ctrl_tx.send(GuestToHost::ExecDone { id, exit_code }).is_err() {
                         break;
                     }
                     continue;
@@ -1632,12 +1575,7 @@ fn control_loop(
                     inflight.lock().unwrap().remove(&id);
                 });
             }
-            Ok(HostToGuest::FileWrite {
-                id,
-                path,
-                data,
-                mode,
-            }) => {
+            Ok(HostToGuest::FileWrite { id, path, data, mode }) => {
                 // Ack on receipt so the host bridge clears the
                 // pending-ack entry. No dedup: write_nofollow over the
                 // same path with the same bytes is idempotent, and
@@ -1712,9 +1650,7 @@ fn control_loop(
                 } else {
                     match delete_nofollow(&path) {
                         Ok(()) => GuestToHost::FileOpDone { id },
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            GuestToHost::FileOpDone { id }
-                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => GuestToHost::FileOpDone { id },
                         Err(e) => GuestToHost::Error {
                             id,
                             message: format!("failed to delete {path}: {e}"),
@@ -1753,10 +1689,7 @@ fn control_loop(
                             );
                         }
                         if libc::fsync(fd) != 0 {
-                            eprintln!(
-                                "[capsem-agent] fsync failed: {}",
-                                std::io::Error::last_os_error()
-                            );
+                            eprintln!("[capsem-agent] fsync failed: {}", std::io::Error::last_os_error());
                         }
                         libc::close(fd);
                     }
@@ -1768,9 +1701,7 @@ fn control_loop(
                 }
 
                 if let Err(e) = freeze_system_filesystem() {
-                    eprintln!(
-                        "[capsem-agent] PrepareSnapshot: failed to freeze system filesystem: {e}"
-                    );
+                    eprintln!("[capsem-agent] PrepareSnapshot: failed to freeze system filesystem: {e}");
                     // Do not acknowledge an unsafe snapshot. The host timeout
                     // path sends Unfreeze and fails the suspend closed.
                     continue;

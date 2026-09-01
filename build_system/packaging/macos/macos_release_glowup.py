@@ -80,7 +80,7 @@ def prepare_candidate_manifest(
     source_commit: SourceCommit,
 ) -> tuple[Path, Path, Path]:
     """Generate the candidate graph from the exact package release pipeline."""
-    work_dir = ROOT / "target" / "macos-release-glowup"
+    work_dir = ROOT / "cache" / "target" / "macos-release-glowup"
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True)
@@ -93,7 +93,7 @@ def prepare_candidate_manifest(
         source_root=content.assets,
         destination_root=work_dir / "asset-share",
     )
-    admin = ROOT / "target" / "release" / "capsem-admin"
+    admin = ROOT / "cache" / "target" / "cargo" / "release" / "capsem-admin"
     release_base = f"{GUEST_RELEASE_ROOT}/releases/download/{channel}"
     dist = work_dir / "dist"
 
@@ -293,7 +293,7 @@ def main() -> int:
         ]
     )
     package = config.path(config.outputs.packages) / f"Capsem-{args.version}.pkg"
-    sbom = ROOT / "target" / "macos-package-sbom.spdx.json"
+    sbom = ROOT / "cache" / "target" / "macos-package-sbom.spdx.json"
     manifest_path, asset_share, profile_share = prepare_candidate_manifest(
         package=package,
         sbom=sbom,
@@ -347,8 +347,8 @@ def main() -> int:
             str(content.assets),
         ]
     )
-    tart_report_path = ROOT / "target" / "macos-tart-glowup" / "report.json"
-    physical_report_path = ROOT / "target" / "macos-package-boot" / "report.json"
+    tart_report_path = ROOT / "cache" / "target" / "macos-tart-glowup" / "report.json"
+    physical_report_path = ROOT / "cache" / "target" / "macos-package-boot" / "report.json"
     finalize_native_report(
         report_path=tart_report_path,
         physical_report_path=physical_report_path,

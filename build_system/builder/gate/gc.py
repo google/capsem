@@ -1,8 +1,8 @@
 """Give back everything the gate can take.
 
 Scattered across the justfile there were four ways to reclaim something and no
-way to reclaim all of it: `_docker-gc`, `_clean-host-image`,
-`_clean-docker-test-targets`, and whatever `rm -rf` a recipe happened to run on
+way to reclaim all of it: `just cache`, the gate's disk reclaimer, and whatever
+`rm -rf` a recipe happened to run on
 its way in. A developer whose disk was full had to know which one to reach for.
 
 One command, three depths. The default clears the trees the gate creates. The
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from . import assetcache
 from .actions import Action, Call
+from .cachecontrol import CacheControl
 from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
@@ -21,7 +22,6 @@ from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .runhistory import free_gb
-from .storage import Storage
 
 _GB = 1024**3
 
@@ -59,11 +59,15 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
             # description is being built is doing. `render` measures because
             # that *is* the description -- and it is read-only, which is the
             # distinction the seal is about.
-            plan.add(step("survey", _Survey(self._config),
-                kind=Kind.STATIC_TEST,
-                needs=frozenset({Needs.DISK}),
-                speed=Speed.FAST,
-            ))
+            plan.add(
+                step(
+                    "survey",
+                    _Survey(self._config),
+                    kind=Kind.STATIC_TEST,
+                    needs=frozenset({Needs.DISK}),
+                    speed=Speed.FAST,
+                )
+            )
             return plan
 
         trees = plan.add(
@@ -135,7 +139,7 @@ def _measure(config) -> str:
 
 def _trees(context: Context) -> None:
     # Not the run log: this step writes into it. `gc` reclaims
-    # `target/gate-runs` and records there, which were compatible only while
+    # `cache/target/gate-runs` and records there, which were compatible only while
     # `gc` recorded nothing -- and a reclaim that deletes whole trees is
     # exactly the operation whose evidence is worth keeping. Retention bounds
     # the run history; the blunt reclaimer has no business in it while a run
@@ -149,6 +153,5 @@ def _trees(context: Context) -> None:
 
 def _rails(context: Context) -> None:
     assetcache.clean(context.config)
-    storage = Storage(context.runner)
-    storage.clean(scope="all")
+    CacheControl(context.runner).clean()
     context.runner.note(f"{free_gb(context.config.root):.1f} GB free after the rails")

@@ -59,9 +59,10 @@ LEDGER = "[[boundary.discarded_verdicts]] in config/gate.toml"
 
 
 def tracked(*patterns: str) -> list[str]:
-    return subprocess.run(
+    listed = subprocess.run(
         ["git", "ls-files", *patterns], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.split()
+    return [name for name in listed if (ROOT / name).is_file()]
 
 
 def shell_surfaces() -> list[tuple[str, str]]:

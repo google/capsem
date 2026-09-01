@@ -163,11 +163,7 @@ async fn gateway_update_action_routes_are_post_only() {
             )
             .await
             .unwrap();
-        assert_eq!(
-            get_resp.status(),
-            http::StatusCode::METHOD_NOT_ALLOWED,
-            "{uri}"
-        );
+        assert_eq!(get_resp.status(), http::StatusCode::METHOD_NOT_ALLOWED, "{uri}");
     }
 }
 
@@ -250,19 +246,13 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("POST", "/profiles/code/enforcement/evaluate"),
         ("GET", "/profiles/code/enforcement/info"),
         ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
-        (
-            "DELETE",
-            "/profiles/code/enforcement/rules/eicar_block/delete",
-        ),
+        ("DELETE", "/profiles/code/enforcement/rules/eicar_block/delete"),
         ("POST", "/profiles/code/enforcement/reload"),
         ("GET", "/profiles/code/enforcement/rules/list"),
         ("POST", "/profiles/code/detection/evaluate"),
         ("GET", "/profiles/code/detection/info"),
         ("PUT", "/profiles/code/detection/rules/eicar_detect/edit"),
-        (
-            "DELETE",
-            "/profiles/code/detection/rules/eicar_detect/delete",
-        ),
+        ("DELETE", "/profiles/code/detection/rules/eicar_detect/delete"),
         ("POST", "/profiles/code/detection/reload"),
         ("GET", "/profiles/code/detection/rules/list"),
         ("GET", "/profiles/code/assets/status"),
@@ -277,14 +267,8 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/profiles/code/plugins/info"),
         ("GET", "/profiles/code/plugins/dummy_pre_eicar/info"),
         ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
-        (
-            "GET",
-            "/profiles/code/plugins/credential_broker/credentials/info",
-        ),
-        (
-            "POST",
-            "/profiles/code/plugins/credential_broker/credentials/reload",
-        ),
+        ("GET", "/profiles/code/plugins/credential_broker/credentials/info"),
+        ("POST", "/profiles/code/plugins/credential_broker/credentials/reload"),
         ("GET", "/profiles/code/mcp/info"),
         ("GET", "/profiles/code/mcp/servers/list"),
         ("GET", "/profiles/code/mcp/default/info"),
@@ -314,11 +298,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
             )
             .await
             .unwrap();
-        assert_eq!(
-            resp.status(),
-            http::StatusCode::BAD_GATEWAY,
-            "{method} {uri}"
-        );
+        assert_eq!(resp.status(), http::StatusCode::BAD_GATEWAY, "{method} {uri}");
     }
 }
 
@@ -581,18 +561,11 @@ async fn gateway_does_not_forward_retired_mcp_policy_route() {
 async fn health_response_shape() {
     let (app, _) = health_app("/tmp/test.sock");
     let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(http::Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), http::StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["ok"], true);
     assert!(json["version"].is_string());
@@ -603,17 +576,10 @@ async fn health_response_shape() {
 async fn health_version_matches_cargo_pkg() {
     let (app, _) = health_app("/tmp/test.sock");
     let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(http::Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["version"].as_str().unwrap(), env!("CARGO_PKG_VERSION"));
 }
@@ -637,17 +603,12 @@ fn token_app() -> (axum::Router, Arc<AppState>) {
 #[tokio::test]
 async fn token_returns_token_from_loopback() {
     let (app, state) = token_app();
-    let mut req = http::Request::builder()
-        .uri("/token")
-        .body(Body::empty())
-        .unwrap();
+    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), http::StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["token"].as_str().unwrap(), state.token);
 }
@@ -655,17 +616,12 @@ async fn token_returns_token_from_loopback() {
 #[tokio::test]
 async fn token_rejects_non_loopback_ip() {
     let (app, _) = token_app();
-    let mut req = http::Request::builder()
-        .uri("/token")
-        .body(Body::empty())
-        .unwrap();
+    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 100], 12345))));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "forbidden");
 }
@@ -673,14 +629,9 @@ async fn token_rejects_non_loopback_ip() {
 #[tokio::test]
 async fn token_allows_ipv6_loopback() {
     let (app, _) = token_app();
-    let mut req = http::Request::builder()
-        .uri("/token")
-        .body(Body::empty())
-        .unwrap();
-    req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
-        [0, 0, 0, 0, 0, 0, 0, 1],
-        12345,
-    ))));
+    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 12345))));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), http::StatusCode::OK);
 }
@@ -843,10 +794,7 @@ fn explicit_run_dir_decides_runtime_artifacts_even_with_env_override() {
     let _guard = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/capsem-wrong-run");
     let args = Args::parse_from(["capsem-gateway", "--run-dir", "/tmp/capsem-right-run"]);
 
-    assert_eq!(
-        gateway_run_dir(&args),
-        PathBuf::from("/tmp/capsem-right-run")
-    );
+    assert_eq!(gateway_run_dir(&args), PathBuf::from("/tmp/capsem-right-run"));
 }
 
 #[test]
@@ -873,22 +821,12 @@ fn args_rejects_bad_port() {
 async fn health_reports_service_socket_path() {
     let (app, _) = health_app("/tmp/unique-socket-path.sock");
     let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(http::Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        json["service_socket"].as_str().unwrap(),
-        "/tmp/unique-socket-path.sock"
-    );
+    assert_eq!(json["service_socket"].as_str().unwrap(), "/tmp/unique-socket-path.sock");
 }
 
 // --- Token endpoint: loopback matrix ---
@@ -896,10 +834,7 @@ async fn health_reports_service_socket_path() {
 #[tokio::test]
 async fn token_rejects_another_external_ipv4() {
     let (app, _) = token_app();
-    let mut req = http::Request::builder()
-        .uri("/token")
-        .body(Body::empty())
-        .unwrap();
+    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([8, 8, 8, 8], 443))));
     let resp = app.oneshot(req).await.unwrap();
@@ -909,10 +844,7 @@ async fn token_rejects_another_external_ipv4() {
 #[tokio::test]
 async fn token_rejects_external_ipv6() {
     let (app, _) = token_app();
-    let mut req = http::Request::builder()
-        .uri("/token")
-        .body(Body::empty())
-        .unwrap();
+    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
     // 2001:4860:4860::8888 (public Google DNS) -- not loopback.
     req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
         [0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888],
@@ -938,12 +870,7 @@ async fn events_ws_without_upgrade_header_is_rejected() {
         .with_state(state);
     // A plain GET without Upgrade should return 426 Upgrade Required or 400.
     let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/events")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(http::Request::builder().uri("/events").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_ne!(resp.status(), http::StatusCode::OK);

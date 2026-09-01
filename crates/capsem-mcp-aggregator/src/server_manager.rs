@@ -1,0 +1,790 @@
+//! Manages host-side MCP server connections via rmcp.
+//!
+//! Supports two transport types:
+//! - HTTP: Streamable HTTP endpoint via `StreamableHttpClientTransport`
+//! - Stdio: Subprocess via `TokioChildProcess` (for local/builtin servers)
+
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use futures::{stream::BoxStream, StreamExt};
+use http::header::{ACCEPT, WWW_AUTHENTICATE};
+use http::{HeaderName, HeaderValue};
+use rmcp::model::{
+    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage, ReadResourceRequestParams,
+    ServerJsonRpcMessage,
+};
+use rmcp::service::{Peer, RunningService};
+use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::transport::streamable_http_client::{
+    AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient, StreamableHttpClientTransport,
+    StreamableHttpClientTransportConfig, StreamableHttpError, StreamableHttpPostResponse,
+};
+use rmcp::{RoleClient, ServiceExt};
+use sse_stream::{Sse, SseStream};
+use tracing::{debug, info, warn};
+
+use capsem_proto::mcp_contracts::*;
+
+/// One rmcp client connection. For stdio-pool servers, the manager keeps
+/// several of these in a `ServerPool`.
+struct RunningServer {
+    client: RunningService<RoleClient, ()>,
+}
+
+/// A pool of one-or-more rmcp connections to a single MCP server. Stdio
+/// servers may run with `peers.len() > 1` to bypass rmcp's
+/// per-`RunningService` mpsc → driver-task → stdin funnel; HTTP servers
+/// always use a single peer (HTTP/2 multiplexes natively).
+///
+/// `next` round-robins across `peers`, but only for tools whose original
+/// (post-namespace-strip) name appears in `pool_safe_tools`. Tools NOT in
+/// that allowlist pin to `peers[0]` so per-process state (e.g. the
+/// builtin's `Arc<Mutex<AutoSnapshotScheduler>>`) stays consistent.
+struct ServerPool {
+    peers: Vec<RunningServer>,
+    next: AtomicUsize,
+    pool_safe_tools: HashSet<String>,
+}
+
+impl ServerPool {
+    /// Pick a peer for a call to `original_tool_or_uri`. If the name is
+    /// in the safe list, round-robin; otherwise pin to `peers[0]`.
+    fn pick(&self, original: &str) -> &RunningServer {
+        let is_safe = self.pool_safe_tools.contains(original);
+        let idx = next_peer_index(self.peers.len(), is_safe, &self.next);
+        &self.peers[idx]
+    }
+}
+
+/// Round-robin picker, separated for unit-testability without rmcp.
+/// Returns 0 unless the pool has > 1 peer AND the tool is pool-safe.
+fn next_peer_index(peer_count: usize, is_pool_safe: bool, counter: &AtomicUsize) -> usize {
+    if peer_count <= 1 || !is_pool_safe {
+        return 0;
+    }
+    counter.fetch_add(1, Ordering::Relaxed) % peer_count
+}
+
+const MCP_HEADER_SESSION_ID: &str = "Mcp-Session-Id";
+const MCP_HEADER_LAST_EVENT_ID: &str = "Last-Event-Id";
+const MCP_HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
+const JSON_MIME_TYPE: &str = "application/json";
+
+#[derive(Clone)]
+struct CapsemMcpHttpClient {
+    client: reqwest::Client,
+}
+
+impl CapsemMcpHttpClient {
+    fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+fn apply_mcp_custom_headers(
+    mut builder: reqwest::RequestBuilder,
+    custom_headers: HashMap<HeaderName, HeaderValue>,
+) -> Result<reqwest::RequestBuilder, StreamableHttpError<reqwest::Error>> {
+    for (name, value) in custom_headers {
+        validate_mcp_custom_header(&name).map_err(StreamableHttpError::ReservedHeaderConflict)?;
+        builder = builder.header(name, value);
+    }
+    Ok(builder)
+}
+
+fn validate_mcp_custom_header(name: &HeaderName) -> Result<(), String> {
+    let reserved = [
+        "accept",
+        MCP_HEADER_SESSION_ID,
+        MCP_HEADER_PROTOCOL_VERSION,
+        MCP_HEADER_LAST_EVENT_ID,
+    ];
+    if reserved
+        .iter()
+        .any(|reserved| name.as_str().eq_ignore_ascii_case(reserved))
+        && !name.as_str().eq_ignore_ascii_case(MCP_HEADER_PROTOCOL_VERSION)
+    {
+        return Err(name.to_string());
+    }
+    Ok(())
+}
+
+fn extract_mcp_scope_from_header(header: &str) -> Option<String> {
+    let header_lowercase = header.to_ascii_lowercase();
+    let scope_key = "scope=";
+    let pos = header_lowercase.find(scope_key)?;
+    let value_slice = &header[pos + scope_key.len()..];
+    if let Some(stripped) = value_slice.strip_prefix('"') {
+        let end_quote = stripped.find('"')?;
+        return Some(stripped[..end_quote].to_string());
+    }
+    let end = value_slice
+        .find(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .unwrap_or(value_slice.len());
+    (end > 0).then(|| value_slice[..end].to_string())
+}
+
+fn parse_mcp_json_rpc_error(body: &str) -> Option<ServerJsonRpcMessage> {
+    match serde_json::from_str::<ServerJsonRpcMessage>(body) {
+        Ok(message @ JsonRpcMessage::Error(_)) => Some(message),
+        _ => None,
+    }
+}
+
+impl StreamableHttpClient for CapsemMcpHttpClient {
+    type Error = reqwest::Error;
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .get(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "))
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(last_event_id) = last_event_id {
+            request_builder = request_builder.header(MCP_HEADER_LAST_EVENT_ID, last_event_id);
+        }
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Err(StreamableHttpError::ServerDoesNotSupportSse);
+        }
+        let response = response.error_for_status().map_err(StreamableHttpError::Client)?;
+        match response.headers().get(reqwest::header::CONTENT_TYPE) {
+            Some(content_type) => {
+                if !content_type.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
+                    && !content_type.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes())
+                {
+                    return Err(StreamableHttpError::UnexpectedContentType(Some(
+                        String::from_utf8_lossy(content_type.as_bytes()).to_string(),
+                    )));
+                }
+            }
+            None => return Err(StreamableHttpError::UnexpectedContentType(None)),
+        }
+        Ok(SseStream::from_bytes_stream(response.bytes_stream()).boxed())
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let mut request_builder = self
+            .client
+            .delete(uri.as_ref())
+            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        if let Some(auth_header) = auth_header {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
+        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            tracing::debug!("this server doesn't support deleting session");
+            return Ok(());
+        }
+        response.error_for_status().map_err(StreamableHttpError::Client)?;
+        Ok(())
+    }
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let mut request = self
+            .client
+            .post(uri.as_ref())
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
+        if let Some(auth_header) = auth_header {
+            request = request.bearer_auth(auth_header);
+        }
+        request = apply_mcp_custom_headers(request, custom_headers)?;
+        let session_was_attached = session_id.is_some();
+        if let Some(session_id) = session_id {
+            request = request.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        }
+        let response = request
+            .json(&message)
+            .send()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header = header
+                    .to_str()
+                    .map_err(|_| {
+                        StreamableHttpError::UnexpectedServerResponse(Cow::from(
+                            "invalid www-authenticate header value",
+                        ))
+                    })?
+                    .to_string();
+                return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(header)));
+            }
+        }
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            if let Some(header) = response.headers().get(WWW_AUTHENTICATE) {
+                let header_str = header.to_str().map_err(|_| {
+                    StreamableHttpError::UnexpectedServerResponse(Cow::from("invalid www-authenticate header value"))
+                })?;
+                return Err(StreamableHttpError::InsufficientScope(InsufficientScopeError::new(
+                    header_str.to_string(),
+                    extract_mcp_scope_from_header(header_str),
+                )));
+            }
+        }
+
+        let status = response.status();
+        if matches!(status, reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT) {
+            return Ok(StreamableHttpPostResponse::Accepted);
+        }
+        if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {
+            return Err(StreamableHttpError::SessionExpired);
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|ct| String::from_utf8_lossy(ct.as_bytes()).to_string());
+        let session_id = response
+            .headers()
+            .get(MCP_HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+            if content_type
+                .as_deref()
+                .is_some_and(|ct| ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()))
+            {
+                if let Some(message) = parse_mcp_json_rpc_error(&body) {
+                    return Ok(StreamableHttpPostResponse::Json(message, session_id));
+                }
+                tracing::warn!("HTTP {status}: could not parse JSON body as a JSON-RPC error");
+            }
+            return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(format!(
+                "HTTP {status}: {body}"
+            ))));
+        }
+
+        match content_type.as_deref() {
+            Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
+                Ok(StreamableHttpPostResponse::Sse(
+                    SseStream::from_bytes_stream(response.bytes_stream()).boxed(),
+                    session_id,
+                ))
+            }
+            Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
+                match response.json::<ServerJsonRpcMessage>().await {
+                    Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
+                    Err(error) => {
+                        tracing::warn!(
+                            "could not parse JSON response as ServerJsonRpcMessage, treating as accepted: {error}"
+                        );
+                        Ok(StreamableHttpPostResponse::Accepted)
+                    }
+                }
+            }
+            _ => {
+                tracing::error!("unexpected content type: {:?}", content_type);
+                Err(StreamableHttpError::UnexpectedContentType(content_type))
+            }
+        }
+    }
+}
+
+/// Manages host-side MCP server connections and provides a unified tool catalog.
+pub struct McpServerManager {
+    definitions: Vec<McpServerDef>,
+    running: HashMap<String, ServerPool>,
+    http_client: reqwest::Client,
+    // Unified, namespaced catalogs
+    tool_catalog: Vec<McpToolDef>,
+    resource_catalog: Vec<McpResourceDef>,
+    prompt_catalog: Vec<McpPromptDef>,
+    // Routing maps
+    tool_names: HashSet<String>,
+    resource_routing: HashMap<String, String>, // namespaced_uri -> server_name
+    prompt_routing: HashMap<String, String>,   // namespaced_name -> server_name
+}
+
+impl McpServerManager {
+    pub fn new(defs: Vec<McpServerDef>, http_client: reqwest::Client) -> Self {
+        Self {
+            definitions: defs,
+            running: HashMap::new(),
+            http_client,
+            tool_catalog: Vec::new(),
+            resource_catalog: Vec::new(),
+            prompt_catalog: Vec::new(),
+            tool_names: HashSet::new(),
+            resource_routing: HashMap::new(),
+            prompt_routing: HashMap::new(),
+        }
+    }
+
+    /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
+    /// then query each to build the unified catalog.
+    pub async fn initialize_all(&mut self) -> Result<()> {
+        let defs: Vec<McpServerDef> = self.definitions.iter().filter(|d| d.enabled).cloned().collect();
+
+        for def in &defs {
+            match self.connect_and_initialize(def).await {
+                Ok(()) => {
+                    let transport = if def.is_stdio() { "stdio" } else { "http" };
+                    info!(server = %def.name, transport, "MCP server initialized");
+                }
+                Err(e) => {
+                    warn!(server = %def.name, error = %e, "failed to initialize MCP server");
+                }
+            }
+        }
+
+        info!(
+            tools = self.tool_catalog.len(),
+            resources = self.resource_catalog.len(),
+            prompts = self.prompt_catalog.len(),
+            servers = self.running.len(),
+            "MCP aggregator catalog built"
+        );
+        Ok(())
+    }
+
+    /// Connect to a single server, run MCP handshake, populate catalogs.
+    /// Public within the crate for testing (errors propagate, unlike initialize_all
+    /// which warns and continues).
+    ///
+    /// For stdio servers with `pool_size > 1`, spawns N independent
+    /// subprocess clients. Catalog discovery happens against `peers[0]`
+    /// only; subsequent peers are pure dispatch backends so we don't pay
+    /// the `tools/list`/`resources/list`/`prompts/list` cost N times.
+    pub(crate) async fn connect_and_initialize(&mut self, def: &McpServerDef) -> Result<()> {
+        // Stdio servers can be pooled; HTTP transports already multiplex
+        // via HTTP/2 so additional peers buy nothing at the transport
+        // level. Clamp `pool_size` to ≥ 1 (and to 1 for HTTP).
+        let requested_pool = def.pool_size.unwrap_or(1).max(1) as usize;
+        let pool_size = if def.is_stdio() { requested_pool } else { 1 };
+
+        let client = if def.is_stdio() {
+            self.connect_stdio(def, 0).await?
+        } else {
+            self.connect_http(def).await?
+        };
+
+        // Fetch tools with automatic pagination
+        match client.list_all_tools().await {
+            Ok(tools) => {
+                for tool in tools {
+                    let name = tool.name.as_ref();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let ns_name = namespace_name(&def.name, name);
+                    if !self.tool_names.insert(ns_name.clone()) {
+                        warn!(
+                            server = %def.name,
+                            tool = name,
+                            "duplicate MCP tool definition ignored"
+                        );
+                        continue;
+                    }
+
+                    let annotations = tool.annotations.as_ref().map(|a| ToolAnnotations {
+                        title: a.title.clone(),
+                        read_only_hint: a.read_only_hint.unwrap_or(false),
+                        destructive_hint: a.destructive_hint.unwrap_or(true),
+                        idempotent_hint: a.idempotent_hint.unwrap_or(false),
+                        open_world_hint: a.open_world_hint.unwrap_or(true),
+                    });
+
+                    let input_schema = serde_json::to_value(&*tool.input_schema).unwrap_or(serde_json::json!({}));
+
+                    self.tool_catalog.push(McpToolDef {
+                        namespaced_name: ns_name.clone(),
+                        original_name: name.to_string(),
+                        description: tool.description.as_ref().map(|d| d.to_string()),
+                        input_schema,
+                        server_name: def.name.clone(),
+                        annotations,
+                        timeout_secs: None,
+                    });
+                }
+            }
+            Err(e) => {
+                warn!(server = %def.name, error = %e, "failed to list tools");
+            }
+        }
+
+        // Fetch resources (optional)
+        match client.list_all_resources().await {
+            Ok(resources) => {
+                for resource in resources {
+                    let uri = resource.raw.uri.as_str();
+                    if uri.is_empty() {
+                        continue;
+                    }
+                    let ns_uri = namespace_resource_uri(&def.name, uri);
+                    self.resource_catalog.push(McpResourceDef {
+                        namespaced_uri: ns_uri.clone(),
+                        original_uri: uri.to_string(),
+                        name: Some(resource.raw.name.clone()),
+                        description: resource.raw.description.clone(),
+                        mime_type: resource.raw.mime_type.clone(),
+                        server_name: def.name.clone(),
+                    });
+                    self.resource_routing.insert(ns_uri, def.name.clone());
+                }
+            }
+            Err(e) => {
+                debug!(server = %def.name, error = %e, "failed to list resources (may not be supported)");
+            }
+        }
+
+        // Fetch prompts (optional)
+        match client.list_all_prompts().await {
+            Ok(prompts) => {
+                for prompt in prompts {
+                    let name = prompt.name.as_str();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let ns_name = namespace_name(&def.name, name);
+                    let arguments: Vec<serde_json::Value> = prompt
+                        .arguments
+                        .as_ref()
+                        .map(|args| args.iter().filter_map(|a| serde_json::to_value(a).ok()).collect())
+                        .unwrap_or_default();
+                    self.prompt_catalog.push(McpPromptDef {
+                        namespaced_name: ns_name.clone(),
+                        original_name: name.to_string(),
+                        description: prompt.description.clone(),
+                        arguments,
+                        server_name: def.name.clone(),
+                    });
+                    self.prompt_routing.insert(ns_name, def.name.clone());
+                }
+            }
+            Err(e) => {
+                debug!(server = %def.name, error = %e, "failed to list prompts (may not be supported)");
+            }
+        }
+
+        // Catalog discovery is done. Build the pool: peers[0] is the
+        // already-connected `client`; peers[1..pool_size] are spawned now
+        // for stdio servers. We DON'T list-tools again on the additional
+        // peers — they expose the same catalog by construction (same
+        // binary, same env), so re-querying just costs latency.
+        let mut peers = Vec::with_capacity(pool_size);
+        peers.push(RunningServer { client });
+        for i in 1..pool_size {
+            match self.connect_stdio(def, i as u32).await {
+                Ok(extra) => peers.push(RunningServer { client: extra }),
+                Err(e) => {
+                    warn!(
+                        server = %def.name,
+                        peer_index = i,
+                        error = %e,
+                        "failed to spawn additional pool peer; continuing with smaller pool"
+                    );
+                    break;
+                }
+            }
+        }
+
+        if pool_size > 1 {
+            info!(
+                server = %def.name,
+                pool_size = peers.len(),
+                pool_safe_tools = def.pool_safe_tools.len(),
+                "MCP server pool initialized"
+            );
+        }
+
+        let pool = ServerPool {
+            peers,
+            next: AtomicUsize::new(0),
+            pool_safe_tools: def.pool_safe_tools.iter().cloned().collect(),
+        };
+        self.running.insert(def.name.clone(), pool);
+        Ok(())
+    }
+
+    /// Connect to an HTTP MCP server.
+    async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
+        let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
+        if let Some(auth) = &def.auth {
+            let token = capsem_credentials::resolve_broker_reference_for_provider(
+                capsem_credentials::CredentialProvider::Mcp,
+                &auth.credential_ref,
+            )
+            .map_err(|error| anyhow::anyhow!(error))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP auth credential reference could not be resolved for server '{}'",
+                    def.name
+                )
+            })?;
+            config = config.auth_header(token);
+        }
+        if !def.headers.is_empty() {
+            let mut headers = HashMap::new();
+            for (key, val) in &def.headers {
+                let name: http::header::HeaderName =
+                    key.parse().with_context(|| format!("invalid header name: {key}"))?;
+                let value: http::header::HeaderValue =
+                    val.parse().with_context(|| format!("invalid header value for {key}"))?;
+                headers.insert(name, value);
+            }
+            config = config.custom_headers(headers);
+        }
+        let transport =
+            StreamableHttpClientTransport::with_client(CapsemMcpHttpClient::new(self.http_client.clone()), config);
+        ().serve(transport)
+            .await
+            .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
+    }
+
+    /// Spawn and connect to a stdio MCP server subprocess.
+    ///
+    /// `peer_index` distinguishes pool members (0 = primary, 1..N =
+    /// secondaries). Forwarded as `CAPSEM_BUILTIN_PEER_INDEX` so the
+    /// builtin can pick a per-peer lockfile and avoid the singleton
+    /// guard's "another instance holds the lock; exiting 0" path.
+    async fn connect_stdio(&self, def: &McpServerDef, peer_index: u32) -> Result<RunningService<RoleClient, ()>> {
+        let command = def
+            .command
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("stdio server '{}' has no command", def.name))?;
+
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.args(&def.args);
+        for (k, v) in &def.env {
+            cmd.env(k, v);
+        }
+        cmd.env("CAPSEM_PARENT_PID", std::process::id().to_string());
+        cmd.env("CAPSEM_BUILTIN_PEER_INDEX", peer_index.to_string());
+
+        let transport =
+            TokioChildProcess::new(cmd).with_context(|| format!("failed to spawn stdio MCP server '{}'", def.name))?;
+
+        ().serve(transport)
+            .await
+            .with_context(|| format!("failed to initialize stdio MCP server '{}'", def.name))
+    }
+
+    /// Get the aggregated, namespaced tool catalog.
+    pub fn tool_catalog(&self) -> &[McpToolDef] {
+        &self.tool_catalog
+    }
+
+    /// Get the aggregated, namespaced resource catalog.
+    pub fn resource_catalog(&self) -> &[McpResourceDef] {
+        &self.resource_catalog
+    }
+
+    /// Get the aggregated, namespaced prompt catalog.
+    pub fn prompt_catalog(&self) -> &[McpPromptDef] {
+        &self.prompt_catalog
+    }
+
+    /// Get the server definitions.
+    pub fn definitions(&self) -> &[McpServerDef] {
+        &self.definitions
+    }
+
+    /// Count tools provided by a named server.
+    pub fn tool_count_for_server(&self, name: &str) -> usize {
+        self.tool_catalog.iter().filter(|t| t.server_name == name).count()
+    }
+
+    /// Check if a server is currently connected.
+    pub fn is_running(&self, name: &str) -> bool {
+        self.running.contains_key(name)
+    }
+
+    /// Look up a tool's peer and original name. Clone the peer so the caller
+    /// can drop the manager lock before making the (potentially slow) RPC call.
+    ///
+    /// For pooled servers, the peer is round-robin-picked across the pool
+    /// when the original name is in `pool_safe_tools`; otherwise it pins
+    /// to `peers[0]`.
+    pub fn lookup_tool_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
+        let (server_name, original_name) = parse_namespaced(namespaced_name)
+            .ok_or_else(|| anyhow::anyhow!("invalid namespaced tool name: {namespaced_name}"))?;
+        let pool = self
+            .running
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = pool.pick(original_name);
+        Ok((server.client.peer().clone(), original_name.to_string()))
+    }
+
+    /// Look up a resource's peer and original URI. Resource URIs are not
+    /// pool-routed (pool_safe_tools applies to tool names only); they pin
+    /// to `peers[0]`.
+    pub fn lookup_resource_peer(&self, namespaced_uri: &str) -> Result<(Peer<RoleClient>, String)> {
+        let (server_name, original_uri) = parse_resource_uri(namespaced_uri)
+            .ok_or_else(|| anyhow::anyhow!("invalid namespaced resource URI: {namespaced_uri}"))?;
+        let pool = self
+            .running
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = &pool.peers[0];
+        Ok((server.client.peer().clone(), original_uri.to_string()))
+    }
+
+    /// Look up a prompt's peer and original name. Prompts pin to
+    /// `peers[0]` (pool routing applies to tool calls only).
+    pub fn lookup_prompt_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
+        let (server_name, original_name) = parse_namespaced(namespaced_name)
+            .ok_or_else(|| anyhow::anyhow!("invalid namespaced prompt name: {namespaced_name}"))?;
+        let pool = self
+            .running
+            .get(server_name)
+            .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
+        let server = &pool.peers[0];
+        Ok((server.client.peer().clone(), original_name.to_string()))
+    }
+
+    /// Route a tools/call: parse namespace, strip prefix, forward to server.
+    pub async fn call_tool(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
+        self.dispatch_call_tool(namespaced_name, arguments)?.await
+    }
+
+    /// Route a resources/read: parse namespaced URI, forward to server.
+    pub async fn read_resource(&self, namespaced_uri: &str) -> Result<JsonRpcResponse> {
+        self.dispatch_read_resource(namespaced_uri)?.await
+    }
+
+    /// Route a prompts/get: parse namespace, forward to server.
+    pub async fn get_prompt(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
+        self.dispatch_get_prompt(namespaced_name, arguments)?.await
+    }
+
+    /// Resolve a tools/call to an owned future. The lookup runs synchronously
+    /// against `&self`, then returns a `'static + Send` future that owns the
+    /// cloned `Peer`. Lets callers drop a sync RwLock guard before awaiting
+    /// the (potentially slow) RPC, so concurrent dispatches don't serialize
+    /// on the manager.
+    pub fn dispatch_call_tool(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_name) = self.lookup_tool_peer(namespaced_name)?;
+        let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
+            serde_json::Value::Object(map) if !map.is_empty() => Some(map),
+            _ => None,
+        };
+        let mut params = CallToolRequestParams::new(original_name.clone());
+        if let Some(args) = args {
+            params = params.with_arguments(args);
+        }
+        Ok(async move {
+            let result = peer
+                .call_tool(params)
+                .await
+                .with_context(|| format!("tool call '{}' failed", original_name))?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize tool result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
+    }
+
+    /// Resolve a resources/read to an owned future. See `dispatch_call_tool`.
+    pub fn dispatch_read_resource(
+        &self,
+        namespaced_uri: &str,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_uri) = self.lookup_resource_peer(namespaced_uri)?;
+        let params = ReadResourceRequestParams::new(original_uri.clone());
+        Ok(async move {
+            let result = peer
+                .read_resource(params)
+                .await
+                .with_context(|| format!("resource read '{}' failed", original_uri))?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize resource result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
+    }
+
+    /// Resolve a prompts/get to an owned future. See `dispatch_call_tool`.
+    pub fn dispatch_get_prompt(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
+        let (peer, original_name) = self.lookup_prompt_peer(namespaced_name)?;
+        let mut params = GetPromptRequestParams::new(original_name.clone());
+        if let serde_json::Value::Object(map) = arguments {
+            if !map.is_empty() {
+                params = params.with_arguments(map);
+            }
+        }
+        Ok(async move {
+            let result = peer
+                .get_prompt(params)
+                .await
+                .with_context(|| format!("prompt get '{}' failed", original_name))?;
+            let result_json = serde_json::to_value(&result).context("failed to serialize prompt result")?;
+            Ok(JsonRpcResponse::ok(None, result_json))
+        })
+    }
+
+    /// Shut down all server connections.
+    pub async fn shutdown_all(&mut self) {
+        self.drain_running().await
+    }
+
+    /// Take ownership of all running server connections and return a future
+    /// that cancels them. Caller must drop any manager guard before awaiting.
+    /// Drains every peer in every pool.
+    pub fn drain_running(&mut self) -> impl Future<Output = ()> + Send + 'static {
+        let running = std::mem::take(&mut self.running);
+        async move {
+            for (name, pool) in running {
+                let peer_count = pool.peers.len();
+                if peer_count > 1 {
+                    debug!(server = %name, pool_size = peer_count, "disconnecting MCP server pool");
+                } else {
+                    debug!(server = %name, "disconnecting MCP server");
+                }
+                for (i, server) in pool.peers.into_iter().enumerate() {
+                    if let Err(e) = server.client.cancel().await {
+                        warn!(
+                            server = %name,
+                            peer_index = i,
+                            error = %e,
+                            "error cancelling MCP server peer"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

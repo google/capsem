@@ -7,8 +7,7 @@ use futures::future;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::{
-    CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT,
-    SEC_WEBSOCKET_KEY, UPGRADE,
+    CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE,
 };
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -134,23 +133,19 @@ struct ReadyPayload {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "capsem_mock_server=warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "capsem_mock_server=warn".to_string()))
         .with_writer(std::io::stderr)
         .init();
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let args = Args::parse();
     if args.parent_pid.is_some() {
-        capsem_guard::watch_parent_or_exit(args.parent_pid)
-            .context("arm mock-server parent watch")?;
+        capsem_guard::watch_parent_or_exit(args.parent_pid).context("arm mock-server parent watch")?;
     }
     let request_log = match &args.request_log {
         Some(path) => {
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("create {}", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
             }
             Some(Arc::new(Mutex::new(
                 OpenOptions::new()
@@ -166,17 +161,11 @@ async fn main() -> Result<()> {
 
     let http_listener = TcpListener::bind(args.addr).await.context("bind HTTP")?;
     let http_addr = http_listener.local_addr().context("read HTTP addr")?;
-    let https_listener = TcpListener::bind((args.addr.ip(), 0))
-        .await
-        .context("bind HTTPS")?;
+    let https_listener = TcpListener::bind((args.addr.ip(), 0)).await.context("bind HTTPS")?;
     let https_addr = https_listener.local_addr().context("read HTTPS addr")?;
-    let dns_udp_socket = UdpSocket::bind((args.addr.ip(), 0))
-        .await
-        .context("bind DNS UDP")?;
+    let dns_udp_socket = UdpSocket::bind((args.addr.ip(), 0)).await.context("bind DNS UDP")?;
     let dns_udp_addr = dns_udp_socket.local_addr().context("read DNS UDP addr")?;
-    let dns_tcp_listener = TcpListener::bind((args.addr.ip(), 0))
-        .await
-        .context("bind DNS TCP")?;
+    let dns_tcp_listener = TcpListener::bind((args.addr.ip(), 0)).await.context("bind DNS TCP")?;
     let dns_tcp_addr = dns_tcp_listener.local_addr().context("read DNS TCP addr")?;
 
     let tls_acceptor = tls_acceptor()?;
@@ -193,10 +182,7 @@ async fn main() -> Result<()> {
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
         endpoints: ENDPOINTS.to_vec(),
-        request_log: args
-            .request_log
-            .as_ref()
-            .map(|path| path.display().to_string()),
+        request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };
     println!("{}", serde_json::to_string(&ready)?);
 
@@ -270,11 +256,7 @@ fn tls_acceptor() -> Result<TlsAcceptor> {
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-async fn handle_request(
-    mut req: Request<Incoming>,
-    state: State,
-    tls: bool,
-) -> Result<Response<RespBody>, Infallible> {
+async fn handle_request(mut req: Request<Incoming>, state: State, tls: bool) -> Result<Response<RespBody>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     if path.starts_with("/ws/") {
@@ -290,15 +272,7 @@ async fn handle_request(
         .await
         .map(|body| body.to_bytes())
         .unwrap_or_default();
-    let response = route(
-        &method,
-        &path,
-        query.as_deref(),
-        &headers,
-        request_body.clone(),
-        tls,
-    )
-    .await;
+    let response = route(&method, &path, query.as_deref(), &headers, request_body.clone(), tls).await;
     log_request(
         &state,
         &method,
@@ -641,12 +615,7 @@ fn response(status: StatusCode, body: Bytes, content_type: &str) -> Response<Res
     response
 }
 
-fn response_with_len(
-    status: StatusCode,
-    body: Bytes,
-    content_type: &str,
-    content_length: usize,
-) -> Response<RespBody> {
+fn response_with_len(status: StatusCode, body: Bytes, content_type: &str, content_length: usize) -> Response<RespBody> {
     let log_body = body.clone();
     let mut response = response_builder(status, content_length, content_type)
         .body(full(body))
@@ -671,11 +640,7 @@ fn response_with_header(
     response
 }
 
-fn response_builder(
-    status: StatusCode,
-    content_length: usize,
-    content_type: &str,
-) -> hyper::http::response::Builder {
+fn response_builder(status: StatusCode, content_length: usize, content_type: &str) -> hyper::http::response::Builder {
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, content_type)
@@ -703,25 +668,14 @@ fn deterministic_gzip(size: &str) -> Option<Bytes> {
     static ONE_MB: OnceLock<Bytes> = OnceLock::new();
     static TEN_MB: OnceLock<Bytes> = OnceLock::new();
     match size {
-        "10kb" => Some(
-            TEN_KB
-                .get_or_init(|| gzip_bytes(&build_bytes(10 * 1024)))
-                .clone(),
-        ),
-        "1mb" => Some(
-            ONE_MB
-                .get_or_init(|| gzip_bytes(&build_bytes(1024 * 1024)))
-                .clone(),
-        ),
+        "10kb" => Some(TEN_KB.get_or_init(|| gzip_bytes(&build_bytes(10 * 1024))).clone()),
+        "1mb" => Some(ONE_MB.get_or_init(|| gzip_bytes(&build_bytes(1024 * 1024))).clone()),
         "10mb" => Some(
             TEN_MB
                 .get_or_init(|| gzip_bytes(&build_bytes(10 * 1024 * 1024)))
                 .clone(),
         ),
-        _ => size
-            .parse::<usize>()
-            .ok()
-            .map(|len| gzip_bytes(&build_bytes(len))),
+        _ => size.parse::<usize>().ok().map(|len| gzip_bytes(&build_bytes(len))),
     }
 }
 
@@ -739,12 +693,8 @@ fn gzip_bytes(bytes: &[u8]) -> Bytes {
 }
 
 fn openai_chat_response(payload: Value) -> Value {
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("mock-local");
-    let include_tool_call =
-        payload.get("tools").is_some() || is_baked_doctor_openai_smoke(&payload);
+    let model = payload.get("model").and_then(Value::as_str).unwrap_or("mock-local");
+    let include_tool_call = payload.get("tools").is_some() || is_baked_doctor_openai_smoke(&payload);
     let message = if include_tool_call {
         json!({
             "role": "assistant",
@@ -809,10 +759,7 @@ data: [DONE]\n\n",
 }
 
 fn responses_response(payload: Value) -> Value {
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("mock-local");
+    let model = payload.get("model").and_then(Value::as_str).unwrap_or("mock-local");
     let has_tool_output = serde_json::to_string(&payload)
         .map(|raw| raw.contains("function_call_output"))
         .unwrap_or(false);
@@ -862,9 +809,9 @@ fn payload_has_function_call_output(payload: &Value) -> bool {
         .get("input")
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter().any(|item| {
-                item.get("type").and_then(Value::as_str) == Some("function_call_output")
-            })
+            items
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
         })
         .unwrap_or(false)
 }
@@ -1250,8 +1197,7 @@ fn google_model_from_path(path: &str) -> String {
 fn write_target(payload: &Value, default_prefix: &str) -> (String, String) {
     let raw = serde_json::to_string(payload).unwrap_or_default();
     let token = find_hex32(&raw).unwrap_or_else(|| EXPECTED_POEM.to_string());
-    let path =
-        find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
+    let path = find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
     (token, path)
 }
 
@@ -1356,9 +1302,7 @@ fn mcp_response(payload: Value) -> Value {
 
 fn mcp_payload_should_delay(payload: &Value) -> bool {
     match payload.get("method").and_then(Value::as_str) {
-        Some("tools/call") => {
-            payload.pointer("/params/name").and_then(Value::as_str) == Some("slow_sleep")
-        }
+        Some("tools/call") => payload.pointer("/params/name").and_then(Value::as_str) == Some("slow_sleep"),
         Some("resources/read") => payload
             .pointer("/params/uri")
             .and_then(Value::as_str)
@@ -1387,10 +1331,7 @@ fn log_request(
         return;
     };
     let request_body_text = if path == "/log" {
-        format!(
-            "<{} bytes omitted from telemetry log request>",
-            request_body.len()
-        )
+        format!("<{} bytes omitted from telemetry log request>", request_body.len())
     } else {
         String::from_utf8_lossy(request_body).to_string()
     };

@@ -28,14 +28,7 @@ pub async fn probe_running_version(sock: &Path, timeout: Duration) -> io::Result
     let connect = async {
         match UnixStream::connect(sock).await {
             Ok(s) => Ok(Some(s)),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-                ) =>
-            {
-                Ok(None)
-            }
+            Err(e) if matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) => Ok(None),
             Err(e) => Err(e),
         }
     };
@@ -72,9 +65,7 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
     let idx = response.windows(sep.len()).position(|w| w == sep)?;
     let body = &response[idx + sep.len()..];
     let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    json.get("version")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    json.get("version").and_then(|v| v.as_str()).map(str::to_string)
 }
 
 /// Host-wide flock guarding Apple VZ save_state / restore_state so the
@@ -145,11 +136,7 @@ impl VzHostLock {
     }
 
     #[cfg(test)]
-    fn acquire_test_path(
-        path: &Path,
-        mode: VzHostLockMode,
-        timeout: Duration,
-    ) -> Result<Option<Self>> {
+    fn acquire_test_path(path: &Path, mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
         Self::acquire_path(path, mode, timeout)
     }
 }
@@ -167,12 +154,8 @@ impl StartupLock {
     /// holder never released within the deadline.
     pub fn acquire(lock_path: &Path, timeout: Duration) -> Result<Option<Self>> {
         if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create parent of lock file {}",
-                    lock_path.display()
-                )
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create parent of lock file {}", lock_path.display()))?;
         }
 
         let deadline = Instant::now() + timeout;
@@ -194,11 +177,7 @@ impl StartupLock {
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 Err((_file, e)) => {
-                    return Err(anyhow::anyhow!(
-                        "flock failed on {}: {}",
-                        lock_path.display(),
-                        e
-                    ));
+                    return Err(anyhow::anyhow!("flock failed on {}: {}", lock_path.display(), e));
                 }
             }
         }

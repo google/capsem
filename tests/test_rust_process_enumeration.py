@@ -19,9 +19,9 @@ copy; this was the third. Duplicated knowledge diverges, and the copy is
 always the one nobody rechecks -- so the invariant is a test rather than three
 fixed call sites.
 
-`sysctl(KERN_PROC_ALL)` plus `KERN_PROCARGS2` is the replacement, which is
-what psutil uses on macOS and what `build_system/scripts/ci/check-orphan-processes.py` already
-reads full command lines with from inside a sandboxed run.
+The syscall-backed `capsem_core::proctable` is the replacement. It uses
+`libproc` plus `KERN_PROCARGS2` on macOS and `/proc` on Linux, and returns one
+typed process snapshot shared by the service and benchmark harness.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _rust_production_sources() -> list[Path]:
     return sorted(
         path
         for path in (PROJECT_ROOT / "crates").rglob("*.rs")
-        if path.name != "tests.rs" and "/target/" not in str(path)
+        if path.name != "tests.rs" and "/cache/target/" not in str(path)
     )
 
 
@@ -64,6 +64,6 @@ def test_no_rust_source_shells_out_to_ps() -> None:
     assert not offenders, (
         "these spawn setuid `ps`, which macOS refuses to exec from a sandboxed "
         "process, so they silently find nothing under the release gate: "
-        f"{offenders}. Read the process table with sysctl instead -- see "
-        "`running_processes` in capsem-service."
+        f"{offenders}. Read the shared process table instead -- see "
+        "`capsem_core::proctable`."
     )

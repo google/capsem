@@ -38,4 +38,3 @@ esac
 configure-apt-snapshot "$snapshot_base" "$snapshot_id"
 apt-get update -qq
 apt-get install -y --reinstall --allow-downgrades --no-install-recommends "$@"
-rm -rf /var/lib/apt/lists/*

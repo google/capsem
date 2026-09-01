@@ -1,4 +1,4 @@
-"""The modules `just test-full` is made of, as graphs rather than regions of a file.
+"""The modules `just test` is made of, as graphs rather than regions of a file.
 
 `_test-candidate-run` selected between six modules with a `CAPSEM_TEST_MODULE`
 environment variable and a `module_enabled` shell function, so a module was the
@@ -77,6 +77,18 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     assert _wave_of(FastModule, "fast.web.frontend-verify") >= _wave_of(FastModule, "fast.clippy"), (
         "clippy waiting on the verify half is the cost the split removed"
     )
+
+
+def test_rust_format_is_a_fast_source_leaf() -> None:
+    """Formatting needs Rust, but no frontend bundle, ORT, or compilation."""
+    plan = _plan(FastModule)
+    label = "fast.rust-format"
+
+    assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.audit.source-syntax")
+    assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.toolchain.rust")
+    assert _wave_of(FastModule, label) < _wave_of(FastModule, "fast.clippy")
+    assert CONFIG.modules.rust_format == ("cargo", "fmt", "--all", "--", "--check")
+    assert "cargo fmt --all -- --check" in "\n".join(plan.step_named(label).render())
 
 
 def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
@@ -209,7 +221,7 @@ def test_strict_pytest_collection_is_a_fast_leaf() -> None:
     labels = {label for wave in _waves(FastModule) for label in wave}
 
     assert "fast.pytest.collection" in labels
-    assert "fast.pytest.build-system-collection" in labels
+    assert "fast.pytest.build-system-collection" not in labels
 
 
 def test_the_fast_module_works_in_an_isolated_home() -> None:

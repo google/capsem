@@ -88,7 +88,7 @@ class _Probe(GateCommand, name="funnel-probe", help="a command a test builds"):
 
 @pytest.fixture
 def journal(monkeypatch) -> RecordingJournal:
-    """A run log that keeps events in memory instead of under `target/`."""
+    """A run log that keeps events in memory instead of under `cache/target/`."""
     recording = RecordingJournal()
 
     @classmethod
@@ -155,7 +155,7 @@ def test_the_real_lock_fixture_is_isolated_from_the_machine(tmp_path: Path) -> N
 
 
 def test_a_plan_action_may_not_invoke_just(journal) -> None:
-    """`just test-full` from inside a plan is the deadlock, not a style problem.
+    """`just test` from inside a plan is the deadlock, not a style problem.
 
     The child asks for the machine lock its own parent is holding and waits out
     the full timeout. Ten of these existed, and every one of them looked
@@ -362,7 +362,7 @@ def test_inspection_issues_no_command_and_acquires_nothing(flag, capsys) -> None
     """Asking must never become doing.
 
     `execute` consulted `reexec()` before it looked at these flags, so on macOS
-    `capsem-gate candidate --dry-run` re-execed into a real `just test-full`: a
+    `capsem-gate candidate --dry-run` re-execed into a real `just test`: a
     supposedly inert question starting a forty-minute destructive gate.
     """
     log: list[str] = []

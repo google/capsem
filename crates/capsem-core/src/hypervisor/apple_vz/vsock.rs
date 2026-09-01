@@ -84,10 +84,7 @@ pub type VsockListeners = (
 /// Returns an unbounded receiver that delivers accepted connections.
 /// The returned retained objects must be kept alive for the listeners
 /// to remain active.
-pub fn setup_vsock_listeners(
-    socket_devices: &NSArray<VZSocketDevice>,
-    ports: &[u32],
-) -> Result<VsockListeners> {
+pub fn setup_vsock_listeners(socket_devices: &NSArray<VZSocketDevice>, ports: &[u32]) -> Result<VsockListeners> {
     let device_count = socket_devices.count();
     if device_count == 0 {
         anyhow::bail!("no socket devices configured on VM");
@@ -106,8 +103,7 @@ pub fn setup_vsock_listeners(
     let (tx, rx) = mpsc::unbounded_channel();
 
     let delegate = VsockListenerDelegate::new(tx);
-    let delegate_proto =
-        ProtocolObject::from_retained(delegate.clone() as Retained<VsockListenerDelegate>);
+    let delegate_proto = ProtocolObject::from_retained(delegate.clone() as Retained<VsockListenerDelegate>);
 
     let mut listeners = Vec::new();
     for &port in ports {

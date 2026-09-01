@@ -7,14 +7,13 @@ use serde_json::json;
 
 use super::*;
 use crate::events::{
-    credential_reference, Decision, ModelCall, NetEvent, SecurityDetectionLevel,
-    SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
+    credential_reference, Decision, ModelCall, NetEvent, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent,
+    ToolCallEntry, ToolResponseEntry,
 };
 use crate::WriteOp;
 
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
-static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[test]
 fn db_handle_contract_names_db_ownership_and_schema_failures() {
@@ -33,10 +32,7 @@ fn db_handle_contract_names_db_ownership_and_schema_failures() {
 }
 
 fn temp_db_path(name: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!(
-        "capsem-test-db-handle-{name}-{}.db",
-        std::process::id()
-    ));
+    let p = std::env::temp_dir().join(format!("capsem-test-db-handle-{name}-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(p.with_extension("db-wal"));
     let _ = std::fs::remove_file(p.with_extension("db-shm"));
@@ -152,16 +148,12 @@ fn make_correctness_tool_emit_model_call(credential_ref: &str) -> ModelCall {
         tools_count: 1,
         request_bytes: 123,
         request_body_preview: Some(r#"{"input":"write file"}"#.into()),
-        request_body_full: Some(
-            r#"{"input":"write file","nonce":"model-request-before-after"}"#.into(),
-        ),
+        request_body_full: Some(r#"{"input":"write file","nonce":"model-request-before-after"}"#.into()),
         message_id: Some("resp_correctness_1".into()),
         status_code: Some(200),
         text_content: Some("I wrote the file.".into()),
         thinking_content: Some("Need to call write_file.".into()),
-        response_body_full: Some(
-            r#"{"output_text":"I wrote the file.","nonce":"model-response-before-after"}"#.into(),
-        ),
+        response_body_full: Some(r#"{"output_text":"I wrote the file.","nonce":"model-response-before-after"}"#.into()),
         stop_reason: Some("tool_use".into()),
         input_tokens: Some(17),
         output_tokens: Some(19),
@@ -201,16 +193,14 @@ fn make_correctness_tool_response_model_call(credential_ref: &str) -> ModelCall 
         request_bytes: 111,
         request_body_preview: Some(r#"{"tool_result":"write_file"}"#.into()),
         request_body_full: Some(
-            r#"{"tool_result":"write_file","nonce":"model-tool-response-request-before-after"}"#
-                .into(),
+            r#"{"tool_result":"write_file","nonce":"model-tool-response-request-before-after"}"#.into(),
         ),
         message_id: Some("resp_correctness_2".into()),
         status_code: Some(200),
         text_content: Some("The tool result was accepted.".into()),
         thinking_content: Some("Need to summarize the tool result.".into()),
         response_body_full: Some(
-            r#"{"output_text":"The tool result was accepted.","nonce":"model-tool-response-output"}"#
-                .into(),
+            r#"{"output_text":"The tool result was accepted.","nonce":"model-tool-response-output"}"#.into(),
         ),
         stop_reason: Some("end_turn".into()),
         input_tokens: Some(23),
@@ -234,7 +224,8 @@ fn make_correctness_tool_response_model_call(credential_ref: &str) -> ModelCall 
 
 fn make_correctness_security_event(credential_ref: &str) -> SecurityRuleEvent {
     let rule_json = r#"{"name":"correctness_detect","match":"http.host == 'correctness.example'"}"#;
-    let event_json = r#"{"event_type":"http.request","http":{"host":"correctness.example"},"decision":{"effective":"allow"}}"#;
+    let event_json =
+        r#"{"event_type":"http.request","http":{"host":"correctness.example"},"decision":{"effective":"allow"}}"#;
     SecurityRuleEvent::new(
         1_771_100_003,
         "111111111111",
@@ -305,11 +296,7 @@ async fn correctness_snapshot(db: &DbHandle) -> serde_json::Value {
              FROM event_body_blobs
              WHERE event_id IN (?, ?, ?)
              ORDER BY event_id, direction",
-            &[
-                json!("111111111111"),
-                json!("222222222222"),
-                json!("333333333333"),
-            ],
+            &[json!("111111111111"), json!("222222222222"), json!("333333333333")],
         )
         .await
         .expect("query correctness body blobs"),
@@ -345,10 +332,7 @@ async fn db_handle_ready_query_write() {
         .expect("query ledger");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
 
-    assert_eq!(
-        value["columns"],
-        json!(["domain", "decision", "bytes_sent"])
-    );
+    assert_eq!(value["columns"], json!(["domain", "decision", "bytes_sent"]));
     assert_eq!(value["rows"], json!([["db-handle.example", "allowed", 11]]));
 }
 
@@ -586,10 +570,7 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
     drop(db);
 
     let reopened = DbHandle::open(&p).expect("reopen handle");
-    reopened
-        .ready()
-        .await
-        .expect("rehydrate after recovery flush");
+    reopened.ready().await.expect("rehydrate after recovery flush");
     let after_reopen = query_json(
         &reopened
             .query(
@@ -726,8 +707,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
     let net_request = r#"{"prompt":"ledger","nonce":"net-before-after"}"#;
     let net_response = r#"{"ok":true,"nonce":"net-response-before-after"}"#;
     let model_request = r#"{"input":"write file","nonce":"model-request-before-after"}"#;
-    let model_response =
-        r#"{"output_text":"I wrote the file.","nonce":"model-response-before-after"}"#;
+    let model_response = r#"{"output_text":"I wrote the file.","nonce":"model-response-before-after"}"#;
     let model_tool_response_request =
         r#"{"tool_result":"write_file","nonce":"model-tool-response-request-before-after"}"#;
     let model_tool_response_body =
@@ -736,19 +716,17 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
     let before_flush = {
         let db = DbHandle::open(&p).expect("open handle");
         db.ready().await.expect("db ready");
-        db.write(WriteOp::NetEvent(make_correctness_net_event(
-            &credential_ref,
-        )))
-        .await
-        .expect("write correctness net event");
+        db.write(WriteOp::NetEvent(make_correctness_net_event(&credential_ref)))
+            .await
+            .expect("write correctness net event");
         db.write(WriteOp::ModelCall(make_correctness_tool_emit_model_call(
             &credential_ref,
         )))
         .await
         .expect("write correctness model/tool emit event");
-        db.write(WriteOp::ModelCall(
-            make_correctness_tool_response_model_call(&credential_ref),
-        ))
+        db.write(WriteOp::ModelCall(make_correctness_tool_response_model_call(
+            &credential_ref,
+        )))
         .await
         .expect("write correctness model/tool response event");
         db.write(WriteOp::SecurityRuleEvent(make_correctness_security_event(
@@ -1048,10 +1026,7 @@ async fn db_handle_query_binds_params_and_caps_rows() {
         10_000,
         "query(sql, params) must cap route-visible output at the DB boundary. {DB_BOUNDARY_RATIONALE}"
     );
-    assert_eq!(
-        rows.first(),
-        Some(&json!(["bind-00000.example", "allowed"]))
-    );
+    assert_eq!(rows.first(), Some(&json!(["bind-00000.example", "allowed"])));
     assert_eq!(rows.last(), Some(&json!(["bind-09999.example", "allowed"])));
 }
 
@@ -1060,12 +1035,9 @@ async fn db_handle_query_returns_exact_columns_rows() {
     let p = temp_db_path("query-exact-columns-rows");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
-    db.write(WriteOp::NetEvent(make_net_event(
-        "exact.example",
-        Decision::Denied,
-    )))
-    .await
-    .expect("write exact fixture");
+    db.write(WriteOp::NetEvent(make_net_event("exact.example", Decision::Denied)))
+        .await
+        .expect("write exact fixture");
     db.flush_for_tests().await;
 
     let raw = db
@@ -1109,12 +1081,9 @@ async fn db_handle_query_records_read_metrics() {
     let p = temp_db_path("query-records-read-metrics");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
-    db.write(WriteOp::NetEvent(make_net_event(
-        "metrics.example",
-        Decision::Allowed,
-    )))
-    .await
-    .expect("write metric fixture");
+    db.write(WriteOp::NetEvent(make_net_event("metrics.example", Decision::Allowed)))
+        .await
+        .expect("write metric fixture");
     db.flush_for_tests().await;
 
     let raw = db
@@ -1130,9 +1099,9 @@ async fn db_handle_query_records_read_metrics() {
     );
 
     let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_QUERY_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
+    assert!(snapshot
+        .iter()
+        .any(|(key, _, _, value)| { key.key().name() == DB_QUERY_TOTAL && matches!(value, DebugValue::Counter(_)) }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_QUERY_DURATION_MS && matches!(value, DebugValue::Histogram(_))
     }));
@@ -1158,12 +1127,9 @@ async fn db_handle_query_many_preserves_order_and_exact_rows() {
     )))
     .await
     .expect("write first fixture");
-    db.write(WriteOp::NetEvent(make_net_event(
-        "batch-two.example",
-        Decision::Denied,
-    )))
-    .await
-    .expect("write second fixture");
+    db.write(WriteOp::NetEvent(make_net_event("batch-two.example", Decision::Denied)))
+        .await
+        .expect("write second fixture");
     db.flush_for_tests().await;
 
     let raw = db
@@ -1197,14 +1163,8 @@ async fn db_handle_query_many_rejects_mutations() {
 
     let error = db
         .query_many(vec![
-            (
-                "SELECT COUNT(*) AS count FROM net_events".to_string(),
-                vec![],
-            ),
-            (
-                "DELETE FROM net_events WHERE domain = ?".to_string(),
-                vec![json!("x")],
-            ),
+            ("SELECT COUNT(*) AS count FROM net_events".to_string(), vec![]),
+            ("DELETE FROM net_events WHERE domain = ?".to_string(), vec![json!("x")]),
         ])
         .await
         .expect_err("query_many must reject mutation SQL");
@@ -1227,16 +1187,8 @@ async fn db_handle_query_many_cache_invalidates_after_write() {
     .expect("write first fixture");
     db.flush_for_tests().await;
 
-    let count_query = || {
-        vec![(
-            "SELECT COUNT(*) AS count FROM net_events".to_string(),
-            Vec::new(),
-        )]
-    };
-    let first = db
-        .query_many(count_query())
-        .await
-        .expect("first cached batch query");
+    let count_query = || vec![("SELECT COUNT(*) AS count FROM net_events".to_string(), Vec::new())];
+    let first = db.query_many(count_query()).await.expect("first cached batch query");
     let first: serde_json::Value = serde_json::from_str(&first[0]).expect("first count JSON");
     assert_eq!(first["rows"], json!([[1]]));
 
@@ -1272,17 +1224,9 @@ async fn external_reader_query_many_does_not_cache_across_external_writes() {
 
     let db = DbHandle::open_external_reader(&p).expect("open service external reader");
     db.ready().await.expect("external reader ready");
-    let count_query = || {
-        vec![(
-            "SELECT COUNT(*) AS count FROM net_events".to_string(),
-            Vec::new(),
-        )]
-    };
+    let count_query = || vec![("SELECT COUNT(*) AS count FROM net_events".to_string(), Vec::new())];
 
-    let first = db
-        .query_many(count_query())
-        .await
-        .expect("first external batch query");
+    let first = db.query_many(count_query()).await.expect("first external batch query");
     let first: serde_json::Value = serde_json::from_str(&first[0]).expect("first count JSON");
     assert_eq!(first["rows"], json!([[1]]));
 
@@ -1334,10 +1278,7 @@ async fn db_handle_query_uses_worker_not_runtime_block() {
         ticks
     });
 
-    let (query, ticks) = tokio::join!(
-        db.query("SELECT COUNT(*) AS count FROM net_events", &[]),
-        ticker
-    );
+    let (query, ticks) = tokio::join!(db.query("SELECT COUNT(*) AS count FROM net_events", &[]), ticker);
 
     query.expect("query should complete through DB worker");
     assert_eq!(
@@ -1500,8 +1441,7 @@ async fn db_write_flush_then_queryable() {
         )
         .await
         .expect("query acknowledged protocol row from memory");
-    let protocol: serde_json::Value =
-        serde_json::from_str(&protocol_raw).expect("protocol query JSON");
+    let protocol: serde_json::Value = serde_json::from_str(&protocol_raw).expect("protocol query JSON");
     assert_eq!(
         protocol["rows"],
         json!([[
@@ -1524,8 +1464,7 @@ async fn db_write_flush_then_queryable() {
         )
         .await
         .expect("query acknowledged security row from memory");
-    let security: serde_json::Value =
-        serde_json::from_str(&security_raw).expect("security query JSON");
+    let security: serde_json::Value = serde_json::from_str(&security_raw).expect("security query JSON");
     assert_eq!(
         security["rows"],
         json!([[
@@ -1706,14 +1645,9 @@ async fn db_handle_ready_preserves_turn_id_through_tool_call_migration() {
     }
 
     let db = DbHandle::open(&p).expect("open and migrate handle");
-    db.ready()
-        .await
-        .expect("migrated schema must satisfy readiness");
+    db.ready().await.expect("migrated schema must satisfy readiness");
     let raw = db
-        .query(
-            "SELECT model_call_id, call_id, tool_name, turn_id FROM tool_calls",
-            &[],
-        )
+        .query("SELECT model_call_id, call_id, tool_name, turn_id FROM tool_calls", &[])
         .await
         .expect("query migrated tool call");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
@@ -1735,9 +1669,7 @@ async fn db_handle_rejects_write_sql_and_broken_schema() {
         .await
         .expect_err("write SQL must be rejected");
     assert!(
-        error.contains("read-only")
-            || error.contains("only SELECT")
-            || error.contains("not allowed"),
+        error.contains("read-only") || error.contains("only SELECT") || error.contains("not allowed"),
         "unexpected write-SQL error: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 

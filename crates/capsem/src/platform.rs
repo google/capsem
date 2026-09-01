@@ -21,8 +21,8 @@ pub fn detect_install_layout() -> InstallLayout {
         Err(_) => return InstallLayout::Development,
     };
 
-    let macos_pkg_marker = cfg!(target_os = "macos")
-        && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
+    let macos_pkg_marker =
+        cfg!(target_os = "macos") && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
     detect_layout_from_path_with_macos_pkg_marker(&exe, macos_pkg_marker)
 }
 
@@ -32,10 +32,7 @@ fn detect_layout_from_path(exe: &std::path::Path) -> InstallLayout {
     detect_layout_from_path_with_macos_pkg_marker(exe, false)
 }
 
-fn detect_layout_from_path_with_macos_pkg_marker(
-    exe: &std::path::Path,
-    macos_pkg_marker: bool,
-) -> InstallLayout {
+fn detect_layout_from_path_with_macos_pkg_marker(exe: &std::path::Path, macos_pkg_marker: bool) -> InstallLayout {
     use std::path::Component;
 
     let components: Vec<_> = exe.components().collect();
@@ -94,9 +91,9 @@ fn detect_layout_from_path_with_macos_pkg_marker(
 /// Return the install bin directory for the current layout.
 pub fn install_bin_dir() -> Option<PathBuf> {
     match detect_install_layout() {
-        InstallLayout::MacosPkg => Some(capsem_core::paths::capsem_bin_dir()),
+        InstallLayout::MacosPkg => Some(capsem_foundation::paths::capsem_bin_dir()),
         InstallLayout::LinuxDeb => Some(PathBuf::from("/usr/bin")),
-        InstallLayout::UserDir => Some(capsem_core::paths::capsem_bin_dir()),
+        InstallLayout::UserDir => Some(capsem_foundation::paths::capsem_bin_dir()),
         InstallLayout::Development => None,
     }
 }

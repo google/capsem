@@ -38,7 +38,7 @@ from pathlib import Path
 import psutil
 
 PROJECT_ROOT = Path(os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())).resolve()
-DEFAULT_BASELINE = PROJECT_ROOT / "target" / "gate-process-baseline.json"
+DEFAULT_BASELINE = PROJECT_ROOT / "cache" / "target" / "gate-process-baseline.json"
 
 # A gate that just finished may still have companions winding down: capsem-guard
 # polls parent liveness every 100ms and the service gives its VM children a
@@ -92,10 +92,10 @@ def _process_facts(proc: psutil.Process) -> dict | None:
 
 
 def _owned_roots(root: Path) -> list[Path]:
-    """`root`, plus wherever its own `target/` profile links actually point.
+    """`root`, plus wherever its own `cache/target/` profile links actually point.
 
     Compiler output is shared between runs at one absolute path, so a prefix
-    reaches it through `target/debug` and `target/release` symlinks. Resolving
+    reaches it through `cache/target/cargo/debug` and `cache/target/release` symlinks. Resolving
     an exe therefore lands outside the tree that launched it, and a check that
     only compared against `root` stopped recognizing this run's own service --
     which is the failure direction that matters: an unrecognized process is not
@@ -107,7 +107,7 @@ def _owned_roots(root: Path) -> list[Path]:
     reason the sharing is safe at all: one gate runs per machine under `flock`.
     """
     roots = [root.resolve()]
-    for link in sorted((root / "target").glob("*")):
+    for link in sorted((root / "cache" / "target" / "cargo").glob("*")):
         try:
             if link.is_symlink():
                 roots.append(link.resolve())

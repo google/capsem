@@ -9,10 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use capsem_core::{
-    boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, VirtioFsShare,
-    VSOCK_PORT_CONTROL,
-};
+use capsem_core::{boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, VirtioFsShare};
+use capsem_proto::VSOCK_PORT_CONTROL;
 
 fn arguments() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
@@ -21,9 +19,7 @@ fn arguments() -> Result<BTreeMap<String, String>> {
         if !flag.starts_with("--") {
             bail!("unexpected positional argument: {flag}");
         }
-        let value = args
-            .next()
-            .with_context(|| format!("missing value for {flag}"))?;
+        let value = args.next().with_context(|| format!("missing value for {flag}"))?;
         if values.insert(flag.clone(), value).is_some() {
             bail!("repeated argument: {flag}");
         }
@@ -55,8 +51,7 @@ fn verify_image(path: &Path, digest: &str, label: &str) -> Result<()> {
     if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("{label} BLAKE3 is malformed");
     }
-    let mut input =
-        std::fs::File::open(path).with_context(|| format!("open {label} {}", path.display()))?;
+    let mut input = std::fs::File::open(path).with_context(|| format!("open {label} {}", path.display()))?;
     let mut hasher = blake3::Hasher::new();
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
@@ -157,11 +152,11 @@ fn run() -> Result<()> {
             checkpoint_path: None,
             machine_identifier_path: Some(&machine_identifier),
             serial_log_path: Some(&serial_log),
-        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
-            kernel: kernel_blake3.clone(),
-            initrd: initrd_blake3.clone(),
-            rootfs: rootfs_blake3.clone(),
-        }),
+            expected_asset_hashes: Some(capsem_assets::asset_manager::ExpectedAssetHashes {
+                kernel: kernel_blake3.clone(),
+                initrd: initrd_blake3.clone(),
+                rootfs: rootfs_blake3.clone(),
+            }),
         })?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -193,17 +188,10 @@ fn run() -> Result<()> {
     })();
 
     if result.is_ok() {
-        std::fs::remove_dir_all(&session_root).with_context(|| {
-            format!(
-                "remove successful boot-proof session {}",
-                session_root.display()
-            )
-        })?;
+        std::fs::remove_dir_all(&session_root)
+            .with_context(|| format!("remove successful boot-proof session {}", session_root.display()))?;
     } else {
-        eprintln!(
-            "profile boot failure evidence retained at {}",
-            session_root.display()
-        );
+        eprintln!("profile boot failure evidence retained at {}", session_root.display());
     }
     result
 }

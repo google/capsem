@@ -78,11 +78,7 @@ impl AsyncVsock {
 }
 
 impl AsyncRead for AsyncVsock {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         loop {
             let mut guard = match self.inner.poll_read_ready(cx) {
                 Poll::Ready(Ok(guard)) => guard,
@@ -106,11 +102,7 @@ impl AsyncRead for AsyncVsock {
 }
 
 impl AsyncWrite for AsyncVsock {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         loop {
             let mut guard = match self.inner.poll_write_ready(cx) {
                 Poll::Ready(Ok(guard)) => guard,
@@ -153,18 +145,10 @@ struct ProcessAttributor {
 impl ProcessAttributor {
     /// Retrieve the process name that initiated the TCP connection.
     async fn get_process_name(&self, client_port: u16) -> Option<String> {
-        let recent_pids = self
-            .recent_pids
-            .lock()
-            .unwrap()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        let pid = tokio::task::spawn_blocking(move || {
-            find_process_pid(Path::new("/proc"), client_port, &recent_pids)
-        })
-        .await
-        .unwrap_or(None)?;
+        let recent_pids = self.recent_pids.lock().unwrap().iter().copied().collect::<Vec<_>>();
+        let pid = tokio::task::spawn_blocking(move || find_process_pid(Path::new("/proc"), client_port, &recent_pids))
+            .await
+            .unwrap_or(None)?;
 
         self.remember(pid);
         Some(procfs::process_name_for_pid(pid))
@@ -264,16 +248,13 @@ async fn handle_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAtt
         .await
         .unwrap_or_else(|| "unknown".to_string());
 
-    let vsock_raw =
-        match tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY))
-            .await
-        {
-            Ok(Ok(fd)) => fd,
-            _ => {
-                eprintln!("[capsem-net-proxy] vsock connect failed");
-                return;
-            }
-        };
+    let vsock_raw = match tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)).await {
+        Ok(Ok(fd)) => fd,
+        _ => {
+            eprintln!("[capsem-net-proxy] vsock connect failed");
+            return;
+        }
+    };
 
     let mut vsock_stream = match AsyncVsock::new(vsock_raw) {
         Ok(v) => v,

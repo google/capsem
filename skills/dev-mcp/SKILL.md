@@ -96,9 +96,9 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 | Read a guest file to understand state | `capsem_read_file` |
 | Verify telemetry was recorded | typed telemetry routes or Ironbank direct ledger reads |
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
-| Full regression suite | `just test-full` |
+| Full regression suite | `just test` |
 | Build + boot + focused developer validation | `just focus-test functional` |
-| Benchmark performance | `just test-full` |
+| Benchmark performance | `just test` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 
@@ -127,7 +127,7 @@ MCP tools use **camelCase** on the wire (ramMb, cpuCount) because that is the MC
 
 Registered in AI CLI settings:
 ```json
-{ "mcpServers": { "capsem": { "command": "target/debug/capsem-mcp" } } }
+{ "mcpServers": { "capsem": { "command": "cache/target/cargo/debug/capsem-mcp" } } }
 ```
 
 ### Environment variables

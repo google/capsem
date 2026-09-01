@@ -505,8 +505,8 @@ fn parse_oversized_qdcount_does_not_oom() {
 fn parse_total_garbage_is_err_not_panic() {
     // Random bytes that don't form a valid DNS message at all.
     let garbage = [
-        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE,
-        0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22,
+        0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
     ];
     // Either the length-byte interpretation lands on a too-large
     // value (Err) or the structure is wrong (Err); never Ok.
@@ -604,8 +604,7 @@ fn build_redirect_mixed_family_yields_only_matching() {
 #[test]
 fn build_redirect_preserves_id_and_question() {
     let req = build_query_bytes("blocked.example.com.", RecordType::A, 0xBEEF);
-    let resp_bytes =
-        build_redirect_response(&req, &[IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))], 60).unwrap();
+    let resp_bytes = build_redirect_response(&req, &[IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))], 60).unwrap();
     let resp = Message::from_vec(&resp_bytes).unwrap();
     assert_eq!(resp.metadata.id, 0xBEEF);
     assert_eq!(resp.queries.len(), 1);
@@ -632,8 +631,7 @@ fn build_redirect_garbage_input_errors() {
 #[test]
 fn build_redirect_ttl_propagates_verbatim() {
     let req = build_query_bytes("foo.example.com.", RecordType::A, 1);
-    let resp_bytes =
-        build_redirect_response(&req, &[IpAddr::V4(Ipv4Addr::LOCALHOST)], 12345).unwrap();
+    let resp_bytes = build_redirect_response(&req, &[IpAddr::V4(Ipv4Addr::LOCALHOST)], 12345).unwrap();
     let resp = Message::from_vec(&resp_bytes).unwrap();
     assert_eq!(resp.answers[0].ttl, 12345);
 }

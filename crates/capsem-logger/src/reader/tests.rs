@@ -3,16 +3,22 @@ use serde_json::json;
 
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
-    reader.conn.execute(
-        "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
+    reader
+        .conn
+        .execute(
+            "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
              VALUES ('2026-01-01T00:00:00Z', 'example.com', 443, 'allowed', 100, 200, 50)",
-        [],
-    ).unwrap();
-    reader.conn.execute(
-        "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
+            [],
+        )
+        .unwrap();
+    reader
+        .conn
+        .execute(
+            "INSERT INTO net_events (timestamp, domain, port, decision, bytes_sent, bytes_received, duration_ms)
              VALUES ('2026-01-01T00:01:00Z', 'evil.com', 443, 'denied', 0, 0, 1)",
-        [],
-    ).unwrap();
+            [],
+        )
+        .unwrap();
     reader
 }
 
@@ -69,10 +75,7 @@ fn query_raw_with_params_float_bind() {
     let reader = setup_reader_with_data();
     let params = vec![json!(49.5)];
     let json_str = reader
-        .query_raw_with_params(
-            "SELECT domain FROM net_events WHERE duration_ms > ?",
-            &params,
-        )
+        .query_raw_with_params("SELECT domain FROM net_events WHERE duration_ms > ?", &params)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
@@ -487,16 +490,10 @@ fn recent_tool_calls_reads_unified_model_and_mcp_rows() {
     assert_eq!(mcp.method.as_deref(), Some("tools/call"));
     assert_eq!(mcp.request_id.as_deref(), Some("req-1"));
     assert_eq!(mcp.tool_name, "local__fetch_http");
-    assert_eq!(
-        mcp.arguments.as_deref(),
-        Some("{\"url\":\"https://example.com\"}")
-    );
+    assert_eq!(mcp.arguments.as_deref(), Some("{\"url\":\"https://example.com\"}"));
     assert_eq!(mcp.response_preview.as_deref(), Some("{\"status\":200}"));
     assert_eq!(mcp.decision, "denied");
-    assert_eq!(
-        mcp.policy_rule.as_deref(),
-        Some("profiles.rules.block_fetch")
-    );
+    assert_eq!(mcp.policy_rule.as_deref(), Some("profiles.rules.block_fetch"));
 
     let native = rows.iter().find(|row| row.origin == "native").unwrap();
     assert_eq!(native.model_call_id, Some(1));
@@ -545,11 +542,7 @@ fn brokered_credential_stats_merges_injected_rows_without_provider() {
                     timestamp, material_class, source, event_type, algorithm,
                     substitution_ref, outcome, provider, trace_id
                  ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-2')",
-            params![
-                "2026-06-14T22:00:01Z",
-                "http.header.authorization",
-                credential_ref,
-            ],
+            params!["2026-06-14T22:00:01Z", "http.header.authorization", credential_ref,],
         )
         .unwrap();
     r.conn
@@ -558,11 +551,7 @@ fn brokered_credential_stats_merges_injected_rows_without_provider() {
                     timestamp, material_class, source, event_type, algorithm,
                     substitution_ref, outcome, provider, trace_id
                  ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-3')",
-            params![
-                "2026-06-14T22:00:02Z",
-                "http.query.access_token",
-                credential_ref,
-            ],
+            params!["2026-06-14T22:00:02Z", "http.query.access_token", credential_ref,],
         )
         .unwrap();
 
@@ -650,10 +639,7 @@ fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
 
 #[test]
 fn validate_select_only_rejects_upsert() {
-    assert!(
-        validate_select_only("INSERT INTO t VALUES (1) ON CONFLICT DO UPDATE SET x = 2")
-            .is_err()
-    );
+    assert!(validate_select_only("INSERT INTO t VALUES (1) ON CONFLICT DO UPDATE SET x = 2").is_err());
 }
 
 #[test]
@@ -674,10 +660,7 @@ fn query_raw_rejects_non_select() {
     let r = setup_full_fixture();
     let err = r.query_raw("DELETE FROM net_events").unwrap_err();
     // validate_select_only returns "<KEYWORD> statements are not allowed".
-    assert!(
-        err.contains("DELETE") && err.contains("not allowed"),
-        "got: {err}"
-    );
+    assert!(err.contains("DELETE") && err.contains("not allowed"), "got: {err}");
 }
 
 #[test]
@@ -686,10 +669,7 @@ fn query_raw_with_params_rejects_non_select() {
     let err = r
         .query_raw_with_params("UPDATE net_events SET domain = ?", &[json!("x")])
         .unwrap_err();
-    assert!(
-        err.contains("UPDATE") && err.contains("not allowed"),
-        "got: {err}"
-    );
+    assert!(err.contains("UPDATE") && err.contains("not allowed"), "got: {err}");
 }
 
 #[test]
@@ -700,10 +680,7 @@ fn query_raw_returns_row_cap_on_large_results() {
         r.conn
             .execute(
                 "INSERT INTO net_events (timestamp, domain, decision) VALUES (?, ?, 'allowed')",
-                params![
-                    format!("2026-01-01T00:{:02}:00Z", i % 60),
-                    format!("d{i}.com")
-                ],
+                params![format!("2026-01-01T00:{:02}:00Z", i % 60), format!("d{i}.com")],
             )
             .unwrap();
     }

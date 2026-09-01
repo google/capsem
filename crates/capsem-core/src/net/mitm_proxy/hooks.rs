@@ -12,7 +12,8 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
@@ -143,16 +144,10 @@ impl<'pipe> HookCtx<'pipe> {
     /// scoped to this `on_event` call.
     pub fn state<T: Send + Sync + 'static>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         let key = TypeId::of::<T>();
-        let entry = self
-            .state
-            .map
-            .entry(key)
-            .or_insert_with(|| Box::new(init()));
+        let entry = self.state.map.entry(key).or_insert_with(|| Box::new(init()));
         // SAFETY: the TypeId key uniquely identifies T's storage; we
         // inserted a Box<T> for this key, so downcasting is sound.
-        entry
-            .downcast_mut::<T>()
-            .expect("HookCtx::state type punned")
+        entry.downcast_mut::<T>().expect("HookCtx::state type punned")
     }
 }
 
@@ -173,9 +168,7 @@ impl HookState {
     /// and telemetry to inspect the hook's accumulated state after a
     /// dispatch finishes.
     pub fn peek<T: 'static>(&self) -> Option<&T> {
-        self.map
-            .get(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_ref())
+        self.map.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref())
     }
 
     /// Insert / replace a typed slot. Used by `handle_request` to seed
@@ -215,10 +208,7 @@ impl std::error::Error for EmitError {}
 /// dispatch without `Pipeline` being a generic type parameter on
 /// `HookCtx`.
 pub(super) trait DynEmitter: Send {
-    fn emit<'a, 'b>(
-        &'b mut self,
-        ev: Event<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
+    fn emit<'a, 'b>(&'b mut self, ev: Event<'a>) -> Pin<Box<dyn Future<Output = Result<(), EmitError>> + Send + 'b>>
     where
         'a: 'b;
 }
@@ -265,9 +255,9 @@ pub type ArcHook = Arc<dyn Hook>;
 ///
 /// Why sync: per-chunk work is fundamentally CPU-bound byte
 /// transformation -- decompression, regex match-and-replace,
-/// streaming parsers -- none of which need an `.await`. Hooks that
-/// genuinely need async per-chunk (rare) push to an `mpsc` from the
-/// sync method and drain in their own task.
+/// streaming parsers -- none of which need an `.await`. Response-end
+/// work that needs async backpressure returns a `ChunkEndFuture`; genuinely
+/// async per-chunk work (rare) pushes to an `mpsc` and drains in its own task.
 ///
 /// Per-connection state for a chunk hook lives in the same
 /// `HookCtx` slot map the async hooks use, keyed by the chunk
@@ -295,6 +285,15 @@ pub trait ChunkHook: Send + Sync {
     /// Called once when the response body finishes.
     fn on_response_end(&self, _ctx: &mut ChunkCtx<'_>) {}
 
+    /// Return async completion work prepared by `on_response_end`.
+    ///
+    /// The body polls returned work before exposing EOF. Most chunk hooks are
+    /// CPU-only and return `None`; telemetry uses this handoff to await the
+    /// logger's bounded queue without blocking inside the sync callback.
+    fn take_response_end_future(&self, _ctx: &mut ChunkCtx<'_>) -> Option<ChunkEndFuture> {
+        None
+    }
+
     /// Return bytes withheld while classifying or transforming the response.
     /// The pipeline feeds this tail through later chunk hooks before their end
     /// callbacks, then the body wrapper emits it as the final data frame.
@@ -304,6 +303,32 @@ pub trait ChunkHook: Send + Sync {
 }
 
 pub type ArcChunkHook = Arc<dyn ChunkHook>;
+
+/// Async work produced by a sync chunk-end callback.
+///
+/// Chunk callbacks run inside `Body::poll_frame`, so they cannot await a
+/// bounded downstream queue directly. The body wrapper polls this future
+/// before exposing end-of-stream, turning queue saturation into ordinary HTTP
+/// backpressure without blocking a Tokio worker or dropping the work.
+pub struct ChunkEndFuture {
+    inner: Mutex<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+}
+
+impl ChunkEndFuture {
+    pub fn new(future: impl Future<Output = ()> + Send + 'static) -> Self {
+        Self {
+            inner: Mutex::new(Box::pin(future)),
+        }
+    }
+}
+
+impl Future for ChunkEndFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.lock().unwrap().as_mut().poll(cx)
+    }
+}
 
 /// Per-connection sync context passed to every `ChunkHook` callback.
 /// Cheap to construct each call -- it borrows the long-lived
@@ -328,14 +353,8 @@ impl<'a> ChunkCtx<'a> {
     /// access, persists across all chunks in the connection.
     pub fn state<T: Send + Sync + 'static>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         let key = TypeId::of::<T>();
-        let entry = self
-            .state
-            .map
-            .entry(key)
-            .or_insert_with(|| Box::new(init()));
-        entry
-            .downcast_mut::<T>()
-            .expect("ChunkCtx::state type punned")
+        let entry = self.state.map.entry(key).or_insert_with(|| Box::new(init()));
+        entry.downcast_mut::<T>().expect("ChunkCtx::state type punned")
     }
 }
 

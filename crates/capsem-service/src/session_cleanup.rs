@@ -11,10 +11,7 @@ pub(super) async fn preserve_failed_run_shutdown_result(
     shutdown_result: Option<(PathBuf, bool, u32)>,
 ) -> Result<Option<PathBuf>, AppError> {
     let Some((session_dir, persistent, _pid)) = shutdown_result else {
-        tracing::debug!(
-            id,
-            "failed session preservation already owned by child watcher"
-        );
+        tracing::debug!(id, "failed session preservation already owned by child watcher");
         return Ok(None);
     };
     if persistent {
@@ -38,9 +35,7 @@ async fn ensure_failed_session_preserved(
     id: String,
     shutdown_result: Option<(PathBuf, bool, u32)>,
 ) -> Result<Option<PathBuf>, AppError> {
-    if let Some(path) =
-        preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?
-    {
+    if let Some(path) = preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await? {
         return Ok(Some(path));
     }
     let original = state.run_dir.join("sessions").join(&id);
@@ -102,9 +97,8 @@ pub(super) async fn handle_preserve_failure(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
-    let _preserved =
-        ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
-            .await?
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+    let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
+        .await?
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
     Ok(Json(json!({ "success": true })))
 }

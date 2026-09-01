@@ -90,21 +90,9 @@ impl VirtioDevice for VirtioConsoleDevice {
                 "virtio-console transmit queue activated"
             );
             self.transmitq = Some(if q.warm_restore {
-                VirtQueue::new_restored(
-                    mem.clone(),
-                    q.desc_addr,
-                    q.driver_addr,
-                    q.device_addr,
-                    q.size,
-                )
+                VirtQueue::new_restored(mem.clone(), q.desc_addr, q.driver_addr, q.device_addr, q.size)
             } else {
-                VirtQueue::new(
-                    mem.clone(),
-                    q.desc_addr,
-                    q.driver_addr,
-                    q.device_addr,
-                    q.size,
-                )
+                VirtQueue::new(mem.clone(), q.desc_addr, q.driver_addr, q.device_addr, q.size)
             });
         }
         self.mem = Some(mem);

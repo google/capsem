@@ -1,9 +1,8 @@
 use std::time::Instant;
 
 use capsem_proto::{
-    decode_dns_request, decode_guest_msg, decode_host_msg, decode_mcp_frame_body,
-    encode_dns_request, encode_guest_msg, encode_host_msg, encode_mcp_frame, DnsRequest,
-    GuestToHost, HostToGuest,
+    decode_dns_request, decode_guest_msg, decode_host_msg, decode_mcp_frame_body, encode_dns_request, encode_guest_msg,
+    encode_host_msg, encode_mcp_frame, DnsRequest, GuestToHost, HostToGuest,
 };
 
 const ITERS: usize = 1_000_000;

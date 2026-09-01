@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use capsem_proto::{decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE};
 use tokio::sync::mpsc;
 use tracing::{debug_span, info, info_span, warn};
 
@@ -17,9 +18,7 @@ use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
 use crate::net::policy_config;
-use crate::{
-    decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
-};
+use crate::VirtioFsShare;
 use capsem_logger::DbWriter;
 
 use super::registry::SandboxNetworkState;
@@ -81,7 +80,7 @@ pub struct BootOptions<'a> {
     /// can answer this: the caller knows which profile it is starting and must
     /// say what that profile pins. Absent means the caller could not determine
     /// them, which is a hard error rather than a licence to boot unverified.
-    pub expected_asset_hashes: Option<crate::asset_manager::ExpectedAssetHashes>,
+    pub expected_asset_hashes: Option<capsem_assets::asset_manager::ExpectedAssetHashes>,
 }
 
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
@@ -178,17 +177,11 @@ pub fn boot_vm(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| assets.join("initrd.img"));
         if initrd_path.exists() {
-            info!(
-                "[boot-audit] initrd: {} (exists=true)",
-                initrd_path.display()
-            );
+            info!("[boot-audit] initrd: {} (exists=true)", initrd_path.display());
             builder = builder.initrd_path(initrd_path);
             builder = builder.expected_initrd_hash(&expected_hashes.initrd);
         } else {
-            info!(
-                "[boot-audit] initrd: {} (exists=false)",
-                initrd_path.display()
-            );
+            info!("[boot-audit] initrd: {} (exists=false)", initrd_path.display());
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
@@ -198,11 +191,7 @@ pub fn boot_vm(
             .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
-            info!(
-                "[boot-audit] rootfs: {} (exists={})",
-                rootfs.display(),
-                rootfs.exists()
-            );
+            info!("[boot-audit] rootfs: {} (exists={})", rootfs.display(), rootfs.exists());
             builder = builder.disk_path(rootfs);
             builder = builder.expected_disk_hash(&expected_hashes.rootfs);
         } else {
@@ -231,7 +220,7 @@ pub fn boot_vm(
     info!("[boot-audit] calling hypervisor boot");
     let boot_span = debug_span!(
         target: "capsem.launch",
-        crate::telemetry::LAUNCH_VM_BOOT_SPAN,
+        capsem_foundation::telemetry::LAUNCH_VM_BOOT_SPAN,
         status = tracing::field::Empty,
     );
     let (vm, vsock_rx) = {
@@ -258,11 +247,7 @@ pub fn boot_vm(
     Ok((vm, vsock_rx, sm))
 }
 
-fn effective_kernel_cmdline(
-    base: &str,
-    virtiofs_shares: &[VirtioFsShare],
-    rootfs_override: Option<&Path>,
-) -> String {
+fn effective_kernel_cmdline(base: &str, virtiofs_shares: &[VirtioFsShare], rootfs_override: Option<&Path>) -> String {
     effective_kernel_cmdline_with_erofs_mode(
         base,
         virtiofs_shares,
@@ -333,9 +318,9 @@ pub fn send_boot_config(
     cli_env: &[(String, String)],
     preloaded_guest_config: Option<policy_config::GuestConfig>,
 ) -> Result<()> {
-    use crate::capsem_proto::{
-        validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS,
-        MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+    use capsem_proto::{
+        validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
+        MAX_BOOT_FILE_BYTES,
     };
 
     let epoch_secs = std::time::SystemTime::now()
@@ -344,7 +329,7 @@ pub fn send_boot_config(
         .as_secs();
 
     // 1. Send BootConfig with clock.
-    let traceparent = crate::telemetry::current_parent_traceparent().to_string();
+    let traceparent = capsem_foundation::telemetry::current_parent_traceparent().to_string();
     write_control_msg(
         file,
         &HostToGuest::BootConfig {
@@ -377,8 +362,7 @@ pub fn send_boot_config(
     }
 
     // 2. Send metadata-driven env vars from settings UI metadata.
-    let guest_config =
-        preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
+    let guest_config = preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.

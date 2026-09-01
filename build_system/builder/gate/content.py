@@ -88,6 +88,10 @@ class ProfileContent:
     def profiles(self, config) -> Path:
         return self.config / config.functional.profiles_subdir
 
+    def config_manifest(self, config) -> Path:
+        """The runtime manifest copied into this content bundle's config tree."""
+        return self.config / config.assets.merged_assets_dir / config.install.manifest_name
+
     def require_complete(self, config, arches: tuple | None = None) -> None:
         """Fail unless this exact pair is complete for the requested targets."""
         requested = tuple(config.architectures.values()) if arches is None else arches
@@ -100,10 +104,10 @@ class ProfileContent:
         if not self.root.is_dir():
             raise GateError(f"profile content root is missing: {self.root}")
         assets = _require_real_subdirectory(self.root, self.assets_path, "assets")
-        content_config = _require_real_subdirectory(self.root, self.config_path, "config")
+        _require_real_subdirectory(self.root, self.config_path, "config")
 
         manifest = assets / config.install.manifest_name
-        config_manifest = content_config / config.suites.pytest.test_manifest
+        config_manifest = self.config_manifest(config)
         if not manifest.is_file():
             raise GateError(f"profile content asset manifest is missing: {manifest}")
         if not config_manifest.is_file():

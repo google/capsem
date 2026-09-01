@@ -444,7 +444,7 @@ path = "profiles/code/root.manifest.json"
 def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
         "assets",
@@ -480,7 +480,7 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path, include_x86_64=True)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     result = _run_admin(
         "assets",
@@ -617,7 +617,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
 def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path, include_binary_files=False)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
         "assets",
@@ -667,7 +667,7 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
         date="2030-01-02",
     )
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
         "assets",
@@ -728,7 +728,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     manifest["assets"]["releases"]["2030.0101.1"] = deprecated_release
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
         "assets",
@@ -785,17 +785,17 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     )[0]
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "cargo run -p capsem-admin -- manifest generate target/assets" in author
+    assert "cargo run -p capsem-admin -- manifest generate cache/target/assets" in author
     assert "build_system/scripts/release/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
     assert "build_system/scripts/release/build-complete-release-channel.py" in author
-    assert '--channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json"' in author
+    assert '--channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json"' in author
     assert '--primary-channel "$CHANNEL"' in author
     assert "--allow-mirror-missing" in author
     assert '--asset-source-base "$ASSET_BASE"' in author
     assert "releases/download/$PROFILE_IDENTITY" in author
-    assert "--source-manifest target/source-channel/manifest.json" in author
-    assert "--out-dir target/profile-candidate" in author
+    assert "--source-manifest cache/target/source-channel/manifest.json" in author
+    assert "--out-dir cache/target/profile-candidate" in author
     assert "source_changed: ${{ steps.profile-delta.outputs.source_changed }}" in author
     assert "activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}" in author
     assert "release_needed: ${{ steps.profile-delta.outputs.release_needed }}" in author
@@ -815,9 +815,9 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
     assert "build_system/scripts/release/build-complete-release-channel.py" in publish
-    assert "--out-dir target/distribution" in publish
+    assert "--out-dir cache/target/release/distribution" in publish
     assert "name: asset-channel-preview" in publish
-    assert "path: target/distribution/" in publish
+    assert "path: cache/target/release/distribution/" in publish
     assert "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}" in publish
 
     assert (
@@ -876,7 +876,7 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -918,7 +918,7 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
 def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -963,7 +963,7 @@ def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> 
 def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1002,7 +1002,7 @@ def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -
 
 def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1040,7 +1040,7 @@ def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> No
 def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1080,7 +1080,7 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
 
 def test_release_index_check_rejects_missing_vm_obom_evidence(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1126,7 +1126,7 @@ def test_release_index_check_rejects_vm_obom_content_drift(tmp_path: Path) -> No
         "size": len(bad_obom),
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1160,7 +1160,7 @@ def test_release_index_check_rejects_missing_vm_asset_attestation_evidence(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1203,7 +1203,7 @@ def test_release_index_check_rejects_mismatched_vm_attestation_predicate_evidenc
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1250,7 +1250,7 @@ def test_release_index_check_rejects_missing_vm_attestation_predicate_evidence(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1292,7 +1292,7 @@ def test_release_index_check_rejects_missing_vm_attestation_predicate_evidence(
 
 def test_release_index_check_rejects_attestation_rail_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1335,7 +1335,7 @@ def test_release_index_check_rejects_attestation_rail_drift(tmp_path: Path) -> N
 
 def test_release_index_check_rejects_missing_host_sbom_evidence(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1374,7 +1374,7 @@ def test_release_index_check_rejects_noncanonical_host_sbom_evidence(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1411,7 +1411,7 @@ def test_release_index_check_rejects_noncanonical_host_sbom_evidence(
 
 def test_release_index_check_rejects_host_binary_hash_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1451,7 +1451,7 @@ def test_binary_release_index_records_source_on_packages_without_changing_profil
 ) -> None:
     legacy_manifest = _write_release_manifest(tmp_path)
     profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "candidate-channel"
+    dist = tmp_path / "cache" / "target" / "candidate-channel"
     _run_admin(
         "assets",
         "channel",
@@ -1723,7 +1723,7 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
         if local_asset.name != "software-inventory.json":
             local_asset.unlink()
 
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
     asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}"
     _run_admin(
         "assets",

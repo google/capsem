@@ -23,9 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use capsem_proto::{
-    MCP_FRAME_FLAG_NOTIFICATION, MCP_FRAME_HEADER_LEN, MCP_FRAME_MAX_SIZE, VSOCK_PORT_SNI_PROXY,
-};
+use capsem_proto::{MCP_FRAME_FLAG_NOTIFICATION, MCP_FRAME_HEADER_LEN, MCP_FRAME_MAX_SIZE, VSOCK_PORT_SNI_PROXY};
 use process_attribution::{encode_meta_line, sanitize_process_name};
 use serde_json::Value;
 use vsock_io::{read_exact_fd, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
@@ -98,10 +96,7 @@ fn get_parent_process_name() -> String {
 }
 
 fn main() {
-    eprintln!(
-        "[capsem-mcp-server] starting framed relay (pid {})",
-        process::id()
-    );
+    eprintln!("[capsem-mcp-server] starting framed relay (pid {})", process::id());
 
     let process_name = get_parent_process_name();
     let pending = PendingRequests::new();
@@ -130,9 +125,7 @@ fn main() {
             JsonRpcLineKind::Request { json_id, method } => {
                 let id = next_stream_id;
                 if id == u32::MAX {
-                    eprintln!(
-                        "[capsem-mcp-server] framed stream id exhausted; reconnecting before next request"
-                    );
+                    eprintln!("[capsem-mcp-server] framed stream id exhausted; reconnecting before next request");
                     close_broken_connection(conn);
                     conn = connect_framed(&process_name, pending.clone(), Arc::clone(&stdout));
                     next_stream_id = 1;
@@ -152,12 +145,7 @@ fn main() {
             }
         };
 
-        let frame = match capsem_proto::encode_mcp_frame(
-            stream_id,
-            flags,
-            &process_name,
-            line.as_bytes(),
-        ) {
+        let frame = match capsem_proto::encode_mcp_frame(stream_id, flags, &process_name, line.as_bytes()) {
             Ok(frame) => frame,
             Err(e) => {
                 eprintln!("[capsem-mcp-server] failed to encode MCP frame: {e:#}");
@@ -184,11 +172,7 @@ fn main() {
     finish_connection(conn);
 }
 
-fn connect_framed(
-    process_name: &str,
-    pending: PendingRequests,
-    stdout: Arc<Mutex<io::Stdout>>,
-) -> FramedConnection {
+fn connect_framed(process_name: &str, pending: PendingRequests, stdout: Arc<Mutex<io::Stdout>>) -> FramedConnection {
     let fd = vsock_connect_retry(VSOCK_HOST_CID, MCP_TRANSPORT_PORT, "mcp-framed");
 
     // Keep the established diagnostic metadata prefix so host logs can still
@@ -231,12 +215,7 @@ fn finish_connection(conn: FramedConnection) {
     }
 }
 
-fn framed_vsock_to_stdout(
-    fd: RawFd,
-    pending: PendingRequests,
-    stdout: Arc<Mutex<io::Stdout>>,
-    alive: Arc<AtomicBool>,
-) {
+fn framed_vsock_to_stdout(fd: RawFd, pending: PendingRequests, stdout: Arc<Mutex<io::Stdout>>, alive: Arc<AtomicBool>) {
     let dup_fd = unsafe { nix::libc::dup(fd) };
 
     loop {
@@ -350,11 +329,7 @@ fn normalize_guest_snapshot_path(raw: &str) -> Option<std::path::PathBuf> {
     }
     let stripped = raw.strip_prefix("/root/").unwrap_or(raw);
     let path = std::path::Path::new(stripped);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
+    if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return None;
     }
     Some(std::path::Path::new("/root").join(path))
@@ -416,11 +391,7 @@ fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
     }
 }
 
-fn emit_disconnect_errors(
-    pending: &PendingRequests,
-    stdout: &Arc<Mutex<io::Stdout>>,
-    reason: &str,
-) {
+fn emit_disconnect_errors(pending: &PendingRequests, stdout: &Arc<Mutex<io::Stdout>>, reason: &str) {
     let requests = pending.take_all();
     if requests.is_empty() {
         return;
@@ -432,21 +403,13 @@ fn emit_disconnect_errors(
     let _ = out.flush();
 }
 
-fn emit_single_disconnect_error(
-    stdout: &Arc<Mutex<io::Stdout>>,
-    request: PendingRequest,
-    reason: &str,
-) {
+fn emit_single_disconnect_error(stdout: &Arc<Mutex<io::Stdout>>, request: PendingRequest, reason: &str) {
     let mut out = stdout.lock().expect("stdout mutex poisoned");
     let _ = write_disconnect_error(&mut *out, request, reason);
     let _ = out.flush();
 }
 
-fn write_disconnect_error<W: Write>(
-    out: &mut W,
-    request: PendingRequest,
-    reason: &str,
-) -> io::Result<()> {
+fn write_disconnect_error<W: Write>(out: &mut W, request: PendingRequest, reason: &str) -> io::Result<()> {
     let method = request.method.as_deref().unwrap_or("request");
     let response = serde_json::json!({
         "jsonrpc": "2.0",

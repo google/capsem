@@ -1,16 +1,15 @@
 mod collector;
 mod commands;
 mod machine;
+mod protocol;
+mod scenarios;
 mod schema;
 mod stats;
 mod store;
-mod protocol;
-mod scenarios;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::process::Command as StdCommand;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
@@ -49,7 +48,7 @@ enum Command {
 #[derive(Parser, Debug)]
 struct ReportArgs {
     /// The benchmark store to read.
-    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
     store: PathBuf,
     #[arg(long, default_value = "code")]
     profile: String,
@@ -63,7 +62,7 @@ struct RunArgs {
     #[arg(long, default_value = "benchmarks/collectors")]
     collectors: PathBuf,
     /// The benchmark store to record into.
-    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
     out: PathBuf,
     /// Reduced samples, skipping everything that boots a guest.
     #[arg(long)]
@@ -117,7 +116,7 @@ struct CompareArgs {
 #[derive(Parser, Debug)]
 struct VerifyArgs {
     /// The store holding this run.
-    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
     records: PathBuf,
     /// The store holding checked-in evidence.
     #[arg(long)]
@@ -200,7 +199,6 @@ struct ProtocolDeltaArgs {
     json_out: PathBuf,
 }
 
-
 use protocol::*;
 use scenarios::*;
 
@@ -223,8 +221,7 @@ async fn main() -> Result<()> {
     })) {
         Command::Protocol(args) => {
             let destination = args.record.clone();
-            let (channel, commit, profile) =
-                (args.channel.clone(), args.commit.clone(), args.profile.clone());
+            let (channel, commit, profile) = (args.channel.clone(), args.commit.clone(), args.profile.clone());
             let artifact = run_protocol(args).await?;
             if let Some(root) = destination {
                 let record = commands::protocol_record(
@@ -232,7 +229,7 @@ async fn main() -> Result<()> {
                     &channel,
                     &commit,
                     &profile,
-                    running_capsem_processes(),
+                    machine::running_capsem_processes(),
                 );
                 let mut connection = store::open(&root)?;
                 let run_id = store::insert(&mut connection, &record)?;
@@ -252,11 +249,9 @@ async fn main() -> Result<()> {
             let artifact = run_delta(args)?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
-        Command::Report(args) => {
-            return commands::report(&args.store, std::env::consts::ARCH, &args.profile)
-        }
+        Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH, &args.profile),
         Command::List => commands::list_dimensions(),
-        Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
+        Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()),
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
             return commands::compare(
@@ -281,24 +276,12 @@ async fn main() -> Result<()> {
                 &args.channel,
                 &args.commit,
                 &args.profile,
-                running_capsem_processes(),
+                machine::running_capsem_processes(),
             );
         }
     }
     Ok(())
 }
-
-/// Capsem processes already running, which compete for the CPU being measured.
-fn running_capsem_processes() -> Vec<String> {
-    let Ok(output) = StdCommand::new("pgrep").args(["-l", "^capsem"]).output() else {
-        return Vec::new();
-    };
-    machine::strays_from_pgrep(
-        &String::from_utf8_lossy(&output.stdout),
-        &std::process::id().to_string(),
-    )
-}
-
 
 #[cfg(test)]
 mod tests;

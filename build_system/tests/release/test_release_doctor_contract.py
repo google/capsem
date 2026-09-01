@@ -54,13 +54,13 @@ REQUIRED_PR_GATE_JOBS = frozenset(
     }
 )
 
-# The Rust line-coverage floor `just test-full` enforces. Named once because two
+# The Rust line-coverage floor `just test` enforces. Named once because two
 # separate contracts assert it, and a floor that disagrees with itself is worse
 # than no floor. It tracks the real measured surface: adding previously
 # unmonitored crates to the measurement lowered the percentage without
 # removing a single test, and the floor followed the measurement rather than
 # tests being written to flatter it.
-RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 63"
+RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 67"
 FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
 OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
@@ -163,7 +163,6 @@ _DISPATCHED = {
     "release-profile": ("release-profile", {"channel": "nightly", "profile": "code"}),
     "_build-assets": ("build-assets", {"profile": "code", "arch": "arm64", "template": "all"}),
     "_pack-initrd:": ("pack-initrd", {}),
-    "_docker-gc:": ("storage", {"action": "gc", "rail": None}),
 }
 
 
@@ -177,7 +176,7 @@ def _issued(command: str, args: tuple) -> str:
     return gate_issued(command, args)
 
 
-#: `test-full:` is the whole local diagnostic, and running its plan against a
+#: `test:` is the whole local diagnostic, and running its plan against a
 #: recording runner
 #: stops at the first step that needs a real machine. So the text for it is the
 #: union of what each phase issues, gathered by running each module command --
@@ -193,7 +192,7 @@ def _whole_gate() -> tuple[tuple[str, dict], ...]:
 
 @functools.cache
 def _dispatched_text(name: str) -> str:
-    if name in {"test-full:", "_test-candidate:"}:
+    if name in {"test:", "_test-candidate:"}:
         return "\n".join(
             _issued(command, tuple(sorted(args.items()))) for command, args in _whole_gate()
         )
@@ -527,7 +526,7 @@ fi
 
 
 def test_canonical_gate_builds_both_linux_release_architectures() -> None:
-    canonical_gate = _dispatched_text("test-full:")
+    canonical_gate = _dispatched_text("test:")
 
     arm64 = canonical_gate.index("package.arm64")
     x86_64 = canonical_gate.index("package.x86_64")
@@ -725,7 +724,7 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
 
 def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     workflow = _workflow_job_block("test")
-    just_test = _dispatched_text("test-full:")
+    just_test = _dispatched_text("test:")
     local_suite = _source_text("tests/capsem-release/test_release_channel_contract.py")
 
     assert "tests/capsem-release/" in workflow
@@ -832,8 +831,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "deployments: write" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: packages" in workflow
-    assert "output: target/profile-public-before/packages" in workflow
-    assert "--input-dir target/profile-public-before/packages" in workflow
+    assert "output: cache/target/profile-public-before/packages" in workflow
+    assert "--input-dir cache/target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
     assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
@@ -877,7 +876,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_API_TOKEN:" in workflow
     assert "required: true" in workflow
     assert "actions/download-artifact@" in workflow
-    assert "DIST_DIR: target/distribution" in workflow
+    assert "DIST_DIR: cache/target/release/distribution" in workflow
     assert 'test -f "$DIST_DIR/index.html"' in workflow
     assert 'test -f "$DIST_DIR/health.json"' in workflow
     assert 'test -f "$DIST_DIR/_headers"' in workflow
@@ -898,7 +897,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
         "cloudflare/wrangler-action@"
     )
-    assert "pages deploy target/distribution/ --project-name=release" in workflow
+    assert "pages deploy cache/target/release/distribution/ --project-name=release" in workflow
     assert "assets/stable/manifest.json" not in workflow
     assert (
         "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"
@@ -942,7 +941,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
-    assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in (
+    assert "--expect-snapshot cache/target/release/staging/channel-deployment/candidate-release.json" in (
         validator_step
     )
     assert workflow.index("Activate verified production distribution") < workflow.index(
@@ -982,7 +981,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "release_site_url: ${{ inputs.release_site_url }}" in workflow
     assert "activate_production: false" in workflow
     assert (
-        "pages deploy target/distribution/ --project-name=release "
+        "pages deploy cache/target/release/distribution/ --project-name=release "
         "--branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}"
     ) in reusable
 
@@ -1664,12 +1663,12 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "run: just test-full" not in workflow
+    assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: profiles" in workflow
-    assert "output: target/binary-public-before/profiles" in workflow
-    assert "output: target/candidate-profile-inputs" in workflow
-    assert "--input-dir target/candidate-profile-inputs" in workflow
+    assert "output: cache/target/binary-public-before/profiles" in workflow
+    assert "output: cache/target/candidate-profile-inputs" in workflow
+    assert "--input-dir cache/target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
@@ -1720,14 +1719,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     ).read_text()
     assert 'gh release create "$release_tag"' in immutable_publisher
     assert 'gh release upload "$release_tag" "$owned_dir/$missing"' in immutable_publisher
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
     assert "name: binary-channel-candidate" in assemble_channel
-    assert "path: target/binary-channel/" in assemble_channel
+    assert "path: cache/target/binary-channel/" in assemble_channel
     record_step = author_candidate.split(
         "- name: Record binary candidate metadata once", maxsplit=1
     )[1].split("- name: Prove binary candidate preserved every profile", maxsplit=1)[0]
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
         "- name: Build complete release channels with existing VM assets", maxsplit=1
@@ -1736,7 +1735,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert '--generated-at "$generated_at"' in build_channels
     assert "build_system/scripts/release/build-complete-release-channel.py" in build_channels
     assert (
-        '--channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"'
+        '--channel-source "$RELEASE_CHANNEL=file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"'
         in build_channels
     )
     assert '--primary-channel "$RELEASE_CHANNEL"' in build_channels
@@ -1919,6 +1918,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     agents = _source_text("AGENTS.md")
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
+    normalized_release_skill = " ".join(release_skill.split())
 
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
@@ -1936,14 +1936,23 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     assert "workflow_dispatch:" not in runtime_preflight
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
-    assert "Local `just test-full` is the whole-world proof" in release_skill
+    assert (
+        "Each release command is sufficient on its own because its hosted lane "
+        "performs release qualification"
+        in normalized_release_skill
+    )
+    assert (
+        "`just test <source-commit>` is optional reusable local whole-system "
+        "verification, not a release prerequisite"
+        in normalized_release_skill
+    )
     assert "Release CI reuses the same checked-in private modules" in testing_skill
     assert "Serialized Orthogonal Releases" in agents
 
 
 def test_clean_build_pins_sse_stream_api() -> None:
     workspace = _source_text("Cargo.toml")
-    server_manager = _source_text("crates/capsem-core/src/mcp/server_manager.rs")
+    server_manager = _source_text("crates/capsem-mcp-aggregator/src/server_manager.rs")
 
     assert 'sse-stream = "=0.2.4"' in workspace
     assert "SseStream::from_bytes_stream" in server_manager
@@ -2031,7 +2040,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "--session-name release-exact-shell-x86_64" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "/usr/bin/capsem run" not in linux
-    assert "run: just test-full" not in workflow
+    assert "run: just test" not in workflow
     assert (
         "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
         in create_release
@@ -2051,9 +2060,6 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     image it had just deleted. It is a step with edges now, so "after" is a
     property of the graph rather than of the file.
     """
-    from capsem_builder.gate import config as gate_config
-
-    config = gate_config.load(PROJECT_ROOT)
     source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installplan.py").read_text()
     identity_source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installimage.py").read_text()
 
@@ -2092,8 +2098,13 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
             "the package builds run this image; releasing it first is exit 125"
         )
 
-    phase = config.storage.phases["after-install"]
-    assert (phase.boundary, phase.rail) == ("after-install", "install")
+    from capsem_builder.cache.config import load_policy
+
+    control = load_policy(PROJECT_ROOT).control
+    assert control is not None
+    release = control.docker.releases["after-install"]
+    assert release.rail == "install"
+    assert release.images == ("capsem-host-builder:latest",)
 
     # An image that merely exists is not current: every later phase revalidates
     # its input-key label and exact platform child before use.
@@ -2109,7 +2120,7 @@ def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> No
     assert "Native installation and platform gates" in release_skill
     assert "macOS CI builds the publishable `.pkg`" in release_skill
     assert "Linux CI builds every required `.deb`" in release_skill
-    assert "Local Apple Silicon `just test-full` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
     assert "Hosted macOS owns signing, notarization" in normalized_release_skill
     assert "publication depends on both platform rails" in release_skill
     assert "Fix forward with a normal commit" in release_skill
@@ -2792,8 +2803,8 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     for text in (docs,):
         normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
-        assert "target/distribution/assets/<channel>/manifest.json" in text or (
-            "target/distribution/assets/stable/manifest.json" in text
+        assert "cache/target/release/distribution/assets/<channel>/manifest.json" in text or (
+            "cache/target/release/distribution/assets/stable/manifest.json" in text
         )
         assert "https://release.capsem.org/assets/nightly/manifest.json" in text
         assert "https://release.capsem.org/channels.json" in text
@@ -2814,7 +2825,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
 
     asset_skill_text = " ".join(asset_skill.split())
     assert "https://release.capsem.org/assets/stable/manifest.json" in asset_skill
-    assert "target/distribution/assets/<channel>/manifest.json" in asset_skill
+    assert "cache/target/release/distribution/assets/<channel>/manifest.json" in asset_skill
     assert "`channels.json`" in asset_skill
     assert "package artifacts separate from per-binary inventory" in asset_skill_text
     assert (
@@ -2824,7 +2835,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "channels/stable/index.json" not in asset_skill
 
     assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
-    assert "target/distribution/assets/<channel>/manifest.json" in release_skill
+    assert "cache/target/release/distribution/assets/<channel>/manifest.json" in release_skill
     assert "`channels.json`" in release_skill
     assert "Profiles belong to channels" in release_skill
     assert "Packages are delivery containers" in release_skill_text
@@ -3092,9 +3103,9 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
             f"{marker!r} exists in the gate"
         )
 
-    assert "## PR gate compared with `just test-full`" in docs
+    assert "## PR gate compared with `just test`" in docs
     assert (
-        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test-full` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
+        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
         in docs
     )
     assert (
@@ -3106,7 +3117,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         in docs
     )
     assert (
-        "| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-full` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |"
+        "| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |"
         in docs
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
@@ -3144,7 +3155,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     fast_gate = _workflow_text("fast-gate.yaml")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
-    assert "test-full" in just
+    assert "test" in just
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
@@ -3212,7 +3223,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     ):
         assert unavoidable_boundary in release_skill
     assert "Apple VZ is owned by the complete" in release_skill
-    assert "Local Apple Silicon `just test-full` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
 
 
 def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
@@ -3241,7 +3252,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "pnpm --dir web/marketing run check" in script
     assert "astro_build pnpm --dir web/marketing run build" in script
 
-    fast = _dispatched_text("test-full:")
+    fast = _dispatched_text("test:")
     for surface in ("frontend-verify", "docs", "site", "release-site"):
         assert f"check-web-surface.sh {surface}" in fast
 
@@ -3331,7 +3342,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     for document in (testing, ironbank, release):
         assert "Ironbank parity rule" in document
         assert "every portable release gate" in document
-        assert "`just test-full`" in document
+        assert "`just test`" in document
 
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
@@ -3339,7 +3350,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
         assert "just _test-release-contracts" not in workflow
-    gate = _dispatched_text("test-full:")
+    gate = _dispatched_text("test:")
     assert "cargo llvm-cov" in gate
     assert RUST_LINE_COVERAGE_FLOOR.replace(" ", "=") in gate
     # The Python floor is `fail_under` in pyproject's [tool.coverage.report], so
@@ -4630,7 +4641,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
-    gate = _dispatched_text("test-full:")
+    gate = _dispatched_text("test:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
     assert "pnpm --dir web/app run check" in web_gate
@@ -4738,6 +4749,7 @@ def test_settings_generator_uses_current_config_authority() -> None:
 def test_runtime_credential_store_does_not_use_native_keychain() -> None:
     runtime_files = [
         PROJECT_ROOT / "crates" / "capsem-core" / "src" / "credential_broker.rs",
+        PROJECT_ROOT / "crates" / "capsem-credentials" / "src" / "durable.rs",
         PROJECT_ROOT / "crates" / "capsem" / "src" / "service_install.rs",
         PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs",
         PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs",
@@ -4764,9 +4776,9 @@ def test_runtime_credential_store_does_not_use_native_keychain() -> None:
         for needle in forbidden:
             assert needle not in source, f"{path} must not call native Keychain storage"
 
-    broker = runtime_files[0].read_text()
-    assert "CAPSEM_CREDENTIAL_STORE_PATH" in broker
-    assert "default_credential_store_path()" in broker
+    durable_store = runtime_files[1].read_text()
+    assert "CAPSEM_CREDENTIAL_STORE_PATH" in durable_store
+    assert "default_store_path" in durable_store
 
 
 def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
@@ -4888,7 +4900,7 @@ def test_helper_version_surfaces_support_installed_update_smoke() -> None:
 
     for path, struct_name in [
         ("crates/capsem-admin/src/main.rs", "Cli"),
-        ("crates/capsem-mcp-aggregator/src/main.rs", "Args"),
+        ("crates/capsem-mcp-aggregator/src/runtime.rs", "Args"),
         ("crates/capsem-gateway/src/main.rs", "Args"),
         ("crates/capsem-tray/src/main.rs", "Args"),
     ]:
@@ -4913,7 +4925,10 @@ def test_desktop_shell_does_not_run_native_updater_or_background_https_check() -
     """
 
     app_manifest = (PROJECT_ROOT / "crates" / "capsem-app" / "Cargo.toml").read_text()
-    app_source = (PROJECT_ROOT / "crates" / "capsem-app" / "src" / "main.rs").read_text()
+    app_source = "\n".join(
+        (PROJECT_ROOT / "crates" / "capsem-app" / "src" / source).read_text()
+        for source in ("main.rs", "lib.rs")
+    )
     tauri_conf = (PROJECT_ROOT / "crates" / "capsem-app" / "tauri.conf.json").read_text()
     capabilities = (
         PROJECT_ROOT / "crates" / "capsem-app" / "capabilities" / "default.json"
@@ -5113,7 +5128,7 @@ def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> Non
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     tsconfig = json.loads((PROJECT_ROOT / "web" / "app" / "tsconfig.json").read_text())
 
-    assert "target/coverage/web-app/coverage-final.json" in workflow
+    assert "cache/target/coverage/web-app/coverage-final.json" in workflow
     assert "web/app/coverage/coverage-final.json" not in workflow
     assert "coverage" in tsconfig["exclude"]
 
@@ -5144,10 +5159,10 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
         "--doc",
     ):
         assert test_selector not in report_command.split()
-    assert "target/coverage/rust/unit.json" in workflow
-    assert "target/coverage/rust/summary.txt" in workflow
-    assert "target/coverage/linux/codecov.json" in workflow
-    assert "target/coverage/linux/summary.txt" in workflow
+    assert "cache/target/coverage/rust/unit.json" in workflow
+    assert "cache/target/coverage/rust/summary.txt" in workflow
+    assert "cache/target/coverage/linux/codecov.json" in workflow
+    assert "cache/target/coverage/linux/summary.txt" in workflow
 
 
 def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
@@ -5168,8 +5183,10 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     assert "--fail-under-lines" not in runner
     from capsem_builder.gate import config as gate_config
 
-    floor = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floor
-    assert floor.replace("=", " ") == RUST_LINE_COVERAGE_FLOOR
+    floors = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floors
+    assert next(floor for floor in floors if "--fail-under-lines" in floor).replace(
+        "=", " "
+    ) == RUST_LINE_COVERAGE_FLOOR
     assert "--profile ci" in runner
     assert slow_timeout == {
         "period": "120s",
@@ -5186,7 +5203,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     from capsem_builder.gate.hostimage import cargo_tool
     from helpers.gate import gate_issued, gate_plan
 
-    canonical_gate = _dispatched_text("test-full:")
+    canonical_gate = _dispatched_text("test:")
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
     runner = _source_text("build_system/scripts/test/test-linux-rust.sh")
@@ -5312,7 +5329,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
 
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
-    canonical_gate = _dispatched_text("test-full:")
+    canonical_gate = _dispatched_text("test:")
     mac_glowup = _source_text("build_system/packaging/macos/macos_release_glowup.py")
     host_sbom = _recipe_block("_gate-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
@@ -5344,7 +5361,7 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "capsem-gate host-sbom" in host_sbom
     assert "SBOM" in host_sbom
     # Exactly the current version's packages, so an older `.deb` still in
-    # `target/packages/` cannot be described by a cohort nobody ships.
+    # `cache/target/packages/` cannot be described by a cohort nobody ships.
     from capsem_builder.gate import config as gate_config
 
     sbom = gate_config.load(PROJECT_ROOT).sbom
@@ -5371,13 +5388,13 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "Fetch exact selected arm64 profiles" in mac_job
     assert "uses: ./.github/actions/fetch-release-inputs" in mac_job
     assert "architecture: arm64" in mac_job
-    assert "output: target/binary-selected-profiles" in mac_job
-    assert "--input-dir target/binary-selected-profiles" in mac_job
-    assert "--assets-dir target/release-assets" in mac_job
-    assert "--config-root target/release-config" in mac_job
+    assert "output: cache/target/binary-selected-profiles" in mac_job
+    assert "--input-dir cache/target/binary-selected-profiles" in mac_job
+    assert "--assets-dir cache/target/release/staging/assets" in mac_job
+    assert "--config-root cache/target/release/staging/config" in mac_job
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in mac_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in mac_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config"' in mac_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
     assert "bash build_system/scripts/build/materialize-config.sh" in mac_job
     assert mac_job.index("Fetch exact selected arm64 profiles") < mac_job.index(
@@ -5388,14 +5405,14 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "Fetch exact selected ${{ matrix.arch }} profiles" in linux_job
     assert "uses: ./.github/actions/fetch-release-inputs" in linux_job
     assert "architecture: ${{ matrix.arch }}" in linux_job
-    assert "output: target/binary-selected-profiles" in linux_job
-    assert "--input-dir target/binary-selected-profiles" in linux_job
-    assert "--assets-dir target/package-content/assets" in linux_job
-    assert "--config-root target/package-source-config" in linux_job
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in linux_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config"' in linux_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets"' in linux_job
-    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config"' in linux_job
+    assert "output: cache/target/binary-selected-profiles" in linux_job
+    assert "--input-dir cache/target/binary-selected-profiles" in linux_job
+    assert "--assets-dir cache/target/package-content/assets" in linux_job
+    assert "--config-root cache/target/package-source-config" in linux_job
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"' in linux_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/package-source-config"' in linux_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets"' in linux_job
+    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config"' in linux_job
     assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in linux_job
     assert_unmasked_step(
         "release.yaml",
@@ -5409,7 +5426,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
         "bash build_system/scripts/build/materialize-config.sh"
     )
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
-    assert "--content-root target/package-content" in linux_job
+    assert "--content-root cache/target/package-content" in linux_job
     assert "--defer-proof" in linux_job
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
     for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
@@ -5434,7 +5451,7 @@ def test_linux_release_always_retains_full_per_arch_gate_evidence() -> None:
     assert "if: always()" in upload
     assert "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in upload
     assert "name: release-linux-${{ matrix.arch }}-gate-runs-${{ github.run_attempt }}" in upload
-    assert "path: target/gate-runs/" in upload
+    assert "path: cache/target/gate-runs/" in upload
     assert "if-no-files-found: error" in upload
 
 
@@ -5446,10 +5463,10 @@ def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
 
     assert step["if"] == "failure()"
     assert set(step["with"]["path"].splitlines()) >= {
-        "target/test-artifacts/",
-        "target/gate-runs/",
-        "target/test-home/.capsem/run/sessions/",
-        "target/test-home/.capsem/logs/",
+        "cache/target/tests/evidence/",
+        "cache/target/gate-runs/",
+        "cache/target/tests/home/.capsem/run/sessions/",
+        "cache/target/tests/home/.capsem/logs/",
     }
     assert step["with"]["include-hidden-files"] is True
     assert step["with"]["if-no-files-found"] == "error"
@@ -5471,7 +5488,7 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
     assert step["if"] == "failure()"
     assert step["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     assert set(step["with"]["path"].splitlines()) == {
-        "target/gate-runs/",
+        "cache/target/gate-runs/",
         f"{evidence}/",
     }
     assert step["with"]["if-no-files-found"] == (
@@ -5500,7 +5517,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
-    canonical_gate = _dispatched_text("test-full:")
+    canonical_gate = _dispatched_text("test:")
     guard = (
         _source_text("build_system/scripts/audit/check-hardcoded-release-selections.sh")
         + _source_text("build_system/builder/gate/tools/audit/release_selections.py")
@@ -5901,8 +5918,8 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
     script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "generate-settings.sh").read_text()
 
-    mkdir_pos = script.find('mkdir -p "$ROOT/target/config/profiles"')
-    catalog_pos = script.find("target/config/profiles/catalog.generated.json")
+    mkdir_pos = script.find('mkdir -p "$ROOT/cache/target/config/profiles"')
+    catalog_pos = script.find("cache/target/config/profiles/catalog.generated.json")
 
     assert mkdir_pos != -1
     assert catalog_pos != -1
@@ -5930,7 +5947,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
         "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
     )
     bench_package_pos = block.find("-p capsem-bench")
-    bench_binary_pos = block.find("target/debug/capsem-bench-rs")
+    bench_binary_pos = block.find("cache/target/cargo/debug/capsem-bench-rs")
     sign_pos = block.find("codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force")
     pytest_pos = block.find(
         "uv run --project build_system --frozen python -m pytest "
@@ -5941,7 +5958,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     assert build_pos != -1
     assert bench_package_pos != -1
     assert bench_binary_pos != -1
-    assert "target/debug/capsem-bench;" not in block
+    assert "cache/target/cargo/debug/capsem-bench;" not in block
     assert sign_pos != -1
     assert pytest_pos != -1
     assert asset_pos < pytest_pos

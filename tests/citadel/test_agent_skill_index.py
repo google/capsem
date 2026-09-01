@@ -96,7 +96,7 @@ def test_release_spine_keeps_paired_profile_content_boundary() -> None:
         "Assets and materialized configuration travel as one `ProfileContent` root.",
         "must derive both paths from that one value and validate it before Docker or Colima",
         "stages raw manifest inputs into the paired root on the host",
-        "the sealed proof never rematerializes them or falls back to checkout `assets`/`target/config` selectors",
+        "the sealed proof never rematerializes them or falls back to checkout `assets`/`cache/target/config` selectors",
     ):
         assert required in normalized
 

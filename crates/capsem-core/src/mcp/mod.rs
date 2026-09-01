@@ -1,9 +1,6 @@
-pub mod aggregator;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod policy;
-pub mod server_manager;
-pub mod types;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,16 +9,14 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::mcp::policy::McpProfileConfig;
-use crate::mcp::types::{McpServerDef, McpToolDef, ToolAnnotations};
+use capsem_proto::mcp_contracts::{McpServerDef, McpToolDef, ToolAnnotations};
 
 /// Compute a CPU-proportional default for framed MCP in-flight handlers.
 ///
 /// Rule: `host_parallelism * 4`. This matches the empirically selected cap
 /// from the legacy gateway and is now shared by the MITM MCP endpoint.
 pub fn default_inflight_cap() -> usize {
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(8);
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     cores * 4
 }
 
@@ -35,11 +30,7 @@ pub fn resolve_inflight_cap() -> usize {
         .unwrap_or_else(default_inflight_cap)
 }
 
-fn local_builtin_server_def(
-    bin: &Path,
-    builtin_env: HashMap<String, String>,
-    enabled: bool,
-) -> McpServerDef {
+fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, enabled: bool) -> McpServerDef {
     // Stateless builtin tools that are safe to round-robin across pool
     // peers when the builtin is not writing a shared session ledger.
     // Snapshot tools (`snapshots_*`) mutate per-process state and therefore
@@ -92,11 +83,7 @@ pub fn build_profile_server_list(
 
     if let Some(bin) = builtin_binary {
         if bin.exists() {
-            let enabled = profile_config
-                .server_enabled
-                .get("local")
-                .copied()
-                .unwrap_or(true);
+            let enabled = profile_config.server_enabled.get("local").copied().unwrap_or(true);
             servers.push(local_builtin_server_def(bin, builtin_env, enabled));
             seen.insert("local".to_string());
             info!(bin = %bin.display(), "added profile local builtin MCP server");
@@ -114,8 +101,8 @@ pub fn build_profile_server_list(
             warn!("profile MCP server uses reserved name 'builtin', skipping");
             continue;
         }
-        if manual.name.contains(crate::mcp::types::NS_SEP) {
-            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+        if manual.name.contains(capsem_proto::mcp_contracts::NS_SEP) {
+            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", capsem_proto::mcp_contracts::NS_SEP);
             continue;
         }
         if seen.insert(manual.name.clone()) {
@@ -198,10 +185,7 @@ pub fn compute_tool_hash(tool: &McpToolDef) -> String {
 /// Detect changes between newly discovered tools and the cache.
 pub fn detect_pin_changes(new_tools: &[McpToolDef], cache: &[ToolCacheEntry]) -> Vec<PinChange> {
     let mut changes = Vec::new();
-    let cache_map: HashMap<&str, &ToolCacheEntry> = cache
-        .iter()
-        .map(|e| (e.namespaced_name.as_str(), e))
-        .collect();
+    let cache_map: HashMap<&str, &ToolCacheEntry> = cache.iter().map(|e| (e.namespaced_name.as_str(), e)).collect();
 
     let mut seen = std::collections::HashSet::new();
 
@@ -243,26 +227,18 @@ pub fn detect_pin_changes(new_tools: &[McpToolDef], cache: &[ToolCacheEntry]) ->
 pub fn detect_name_collisions(tools: &[McpToolDef]) -> Vec<(String, Vec<String>)> {
     let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
     for tool in tools {
-        by_name
-            .entry(&tool.original_name)
-            .or_default()
-            .push(&tool.server_name);
+        by_name.entry(&tool.original_name).or_default().push(&tool.server_name);
     }
     by_name
         .into_iter()
         .filter(|(_, servers)| servers.len() > 1)
-        .map(|(name, servers)| {
-            (
-                name.to_string(),
-                servers.into_iter().map(String::from).collect(),
-            )
-        })
+        .map(|(name, servers)| (name.to_string(), servers.into_iter().map(String::from).collect()))
         .collect()
 }
 
 /// Tool cache file path inside the capsem home dir.
 fn tool_cache_path() -> Option<std::path::PathBuf> {
-    crate::paths::capsem_home_opt().map(|h| h.join("mcp_tool_cache.json"))
+    capsem_foundation::paths::capsem_home_opt().map(|h| h.join("mcp_tool_cache.json"))
 }
 
 /// Save tool cache to disk.
@@ -291,15 +267,10 @@ pub fn load_tool_cache() -> Vec<ToolCacheEntry> {
 }
 
 /// Build cache entries from current tool catalog.
-pub fn build_cache_entries(
-    tools: &[McpToolDef],
-    existing: &[ToolCacheEntry],
-) -> Vec<ToolCacheEntry> {
+pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) -> Vec<ToolCacheEntry> {
     let now = humantime::format_rfc3339(std::time::SystemTime::now()).to_string();
-    let existing_map: HashMap<&str, &ToolCacheEntry> = existing
-        .iter()
-        .map(|e| (e.namespaced_name.as_str(), e))
-        .collect();
+    let existing_map: HashMap<&str, &ToolCacheEntry> =
+        existing.iter().map(|e| (e.namespaced_name.as_str(), e)).collect();
 
     tools
         .iter()
@@ -313,9 +284,7 @@ pub fn build_cache_entries(
                 server_name: tool.server_name.clone(),
                 annotations: tool.annotations.clone(),
                 pin_hash: hash.clone(),
-                first_seen: prev
-                    .map(|p| p.first_seen.clone())
-                    .unwrap_or_else(|| now.clone()),
+                first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
                 last_seen: now.clone(),
                 approved: prev
                     .map(|p| {

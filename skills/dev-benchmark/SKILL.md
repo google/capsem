@@ -46,7 +46,7 @@ list with stable dotted keys (`gateway./vms/list.cpu_s`). Per metric: `n`,
 `min`, `max`, `mean`, `median`, `p90`, `p95`, `p99`, `p999`, `stddev`, `cv`,
 `mad`, rounded to two decimals.
 
-It lives in SQLite -- `target/test-benchmarks/benchmarks.db`, two tables. The
+It lives in SQLite -- `cache/target/tests/benchmarks/benchmarks.db`, two tables. The
 scheme before it was a file per dimension per release per architecture per
 profile in ten incompatible shapes, one of them 80 KB of captured stdout;
 asking "is `/vms/list` slower than three releases ago" meant globbing filenames

@@ -1,14 +1,14 @@
 version = 1
 
 approved_output_probes = [
-  "target/assets/.boundary-probe",
-  "target/packages/.boundary-probe",
-  "target/distribution/.boundary-probe",
-  "target/test-artifacts/.boundary-probe",
-  "target/config/.boundary-probe",
-  "target/test-benchmarks/.boundary-probe",
-  "target/gate-runs/.boundary-probe",
-  "target/coverage/.boundary-probe",
+  "cache/target/assets/.boundary-probe",
+  "cache/target/packages/.boundary-probe",
+  "cache/target/release/distribution/.boundary-probe",
+  "cache/target/tests/evidence/.boundary-probe",
+  "cache/target/config/.boundary-probe",
+  "cache/target/tests/benchmarks/.boundary-probe",
+  "cache/target/gate-runs/.boundary-probe",
+  "cache/target/coverage/.boundary-probe",
 ]
 
 allowed_generated_support = [
@@ -25,12 +25,12 @@ ambient_asset_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b
 ci_transfer_count = 0
 ci_transfer_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 prefix_exports = [
-  "target/assets",
-  "target/config",
-  "target/coverage",
-  "target/distribution",
-  "target/gate-runs",
-  "target/packages",
-  "target/test-artifacts",
-  "target/test-benchmarks",
+  "cache/target/assets",
+  "cache/target/config",
+  "cache/target/coverage",
+  "cache/target/release/distribution",
+  "cache/target/gate-runs",
+  "cache/target/packages",
+  "cache/target/tests/evidence",
+  "cache/target/tests/benchmarks",
 ]

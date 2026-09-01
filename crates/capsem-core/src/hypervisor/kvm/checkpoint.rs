@@ -13,9 +13,9 @@ use super::memory::GuestMemory;
 use super::sys::KVM_MP_STATE_RUNNABLE;
 #[cfg(target_arch = "x86_64")]
 use super::sys::{
-    KvmClockData, KvmDebugRegs, KvmFpu, KvmIrqchip, KvmLapicState, KvmMpState, KvmMsrEntry,
-    KvmPitState2, KvmRegs, KvmSregs, KvmVcpuEvents, KvmXcrs, KvmXsave, VcpuFd, VmFd,
-    KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
+    KvmClockData, KvmDebugRegs, KvmFpu, KvmIrqchip, KvmLapicState, KvmMpState, KvmMsrEntry, KvmPitState2, KvmRegs,
+    KvmSregs, KvmVcpuEvents, KvmXcrs, KvmXsave, VcpuFd, VmFd, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER,
+    KVM_IRQCHIP_PIC_SLAVE,
 };
 #[cfg(target_arch = "x86_64")]
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
@@ -273,10 +273,7 @@ pub(super) fn write_checkpoint(
         .filter(|p| !p.as_os_str().is_empty())
         .context("checkpoint path must have a parent directory")?;
     if !parent.is_dir() {
-        bail!(
-            "checkpoint parent directory does not exist: {}",
-            parent.display()
-        );
+        bail!("checkpoint parent directory does not exist: {}", parent.display());
     }
 
     let tmp_path = temp_path_for(path);
@@ -286,13 +283,8 @@ pub(super) fn write_checkpoint(
         return Err(err);
     }
 
-    std::fs::rename(&tmp_path, path).with_context(|| {
-        format!(
-            "rename checkpoint {} -> {}",
-            tmp_path.display(),
-            path.display()
-        )
-    })?;
+    std::fs::rename(&tmp_path, path)
+        .with_context(|| format!("rename checkpoint {} -> {}", tmp_path.display(), path.display()))?;
 
     Ok(())
 }
@@ -304,20 +296,12 @@ pub(super) fn read_checkpoint(
     expected_vcpu_count: u32,
     expected_mmio_device_count: u32,
 ) -> Result<RestoredCheckpoint> {
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
+    let file = std::fs::File::open(path).with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut header_bytes = [0u8; HEADER_LEN as usize];
-    reader
-        .read_exact(&mut header_bytes)
-        .context("read checkpoint header")?;
+    reader.read_exact(&mut header_bytes).context("read checkpoint header")?;
     let header = CheckpointHeader::decode(&header_bytes)?;
-    validate_header(
-        &header,
-        memory.size(),
-        expected_vcpu_count,
-        expected_mmio_device_count,
-    )?;
+    validate_header(&header, memory.size(), expected_vcpu_count, expected_mmio_device_count)?;
 
     let mut vcpus = Vec::with_capacity(header.vcpu_count as usize);
     for id in 0..header.vcpu_count {
@@ -338,9 +322,7 @@ pub(super) fn read_checkpoint(
     let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
     while offset < memory.size() {
         let len = (memory.size() - offset).min(buf.len() as u64) as usize;
-        reader
-            .read_exact(&mut buf[..len])
-            .context("read checkpoint memory")?;
+        reader.read_exact(&mut buf[..len]).context("read checkpoint memory")?;
         memory
             .write_at(offset, &buf[..len])
             .context("restore checkpoint memory")?;
@@ -348,11 +330,7 @@ pub(super) fn read_checkpoint(
     }
 
     let mut trailing = [0u8; 1];
-    if reader
-        .read(&mut trailing)
-        .context("check checkpoint length")?
-        != 0
-    {
+    if reader.read(&mut trailing).context("check checkpoint length")? != 0 {
         bail!("checkpoint has trailing bytes");
     }
 
@@ -387,11 +365,8 @@ fn write_checkpoint_inner(
         .with_context(|| format!("create checkpoint temp file: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
-    let header =
-        CheckpointHeader::current(memory.size(), vcpus.len() as u32, mmio_devices.len() as u32);
-    writer
-        .write_all(&header.encode())
-        .context("write checkpoint header")?;
+    let header = CheckpointHeader::current(memory.size(), vcpus.len() as u32, mmio_devices.len() as u32);
+    writer.write_all(&header.encode()).context("write checkpoint header")?;
     for snapshot in vcpus {
         write_vcpu_snapshot(&mut writer, snapshot)?;
     }
@@ -400,9 +375,7 @@ fn write_checkpoint_inner(
         write_mmio_device_snapshot(&mut writer, snapshot)?;
     }
 
-    let memory_start = writer
-        .stream_position()
-        .context("checkpoint memory start position")?;
+    let memory_start = writer.stream_position().context("checkpoint memory start position")?;
     let memory_end = memory_start
         .checked_add(memory.size())
         .context("checkpoint memory end offset overflow")?;
@@ -423,9 +396,7 @@ fn write_checkpoint_inner(
                 .context("seek sparse guest memory checkpoint hole")?;
             sparse_bytes += len as u64;
         } else {
-            writer
-                .write_all(&buf[..len])
-                .context("write guest memory checkpoint")?;
+            writer.write_all(&buf[..len]).context("write guest memory checkpoint")?;
             data_bytes += len as u64;
         }
         offset += len as u64;
@@ -450,20 +421,12 @@ fn write_checkpoint_inner(
         .get_ref()
         .set_len(memory_end)
         .context("set sparse checkpoint logical length")?;
-    writer
-        .get_ref()
-        .sync_all()
-        .context("sync checkpoint temp file")?;
+    writer.get_ref().sync_all().context("sync checkpoint temp file")?;
     Ok(())
 }
 
 #[cfg(target_arch = "x86_64")]
-fn validate_header(
-    header: &CheckpointHeader,
-    ram_bytes: u64,
-    vcpu_count: u32,
-    mmio_device_count: u32,
-) -> Result<()> {
+fn validate_header(header: &CheckpointHeader, ram_bytes: u64, vcpu_count: u32, mmio_device_count: u32) -> Result<()> {
     if header.version != VERSION {
         bail!(
             "unsupported KVM checkpoint version: got {}, expected {}",
@@ -541,9 +504,7 @@ fn write_vcpu_snapshot(writer: &mut impl Write, snapshot: &VcpuSnapshot) -> Resu
 #[cfg(target_arch = "x86_64")]
 fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSnapshot> {
     let mut id_bytes = [0u8; 4];
-    reader
-        .read_exact(&mut id_bytes)
-        .context("read checkpoint vCPU id")?;
+    reader.read_exact(&mut id_bytes).context("read checkpoint vCPU id")?;
     let id = u32::from_le_bytes(id_bytes);
     if id != expected_id {
         bail!("checkpoint vCPU id out of order: got {id}, expected {expected_id}");
@@ -568,8 +529,7 @@ fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSn
             }
             let mut entries = Vec::with_capacity(count);
             for i in 0..SELECTED_MSR_INDEXES.len() {
-                let entry: KvmMsrEntry =
-                    read_pod(reader).context("read checkpoint vCPU MSR entry")?;
+                let entry: KvmMsrEntry = read_pod(reader).context("read checkpoint vCPU MSR entry")?;
                 if i < count {
                     entries.push(entry);
                 }
@@ -609,15 +569,11 @@ fn read_vm_snapshot(reader: &mut impl Read) -> Result<VmSnapshot> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn write_mmio_device_snapshot(
-    writer: &mut impl Write,
-    snapshot: &MmioDeviceSnapshot,
-) -> Result<()> {
+fn write_mmio_device_snapshot(writer: &mut impl Write, snapshot: &MmioDeviceSnapshot) -> Result<()> {
     writer
         .write_all(&snapshot.slot.to_le_bytes())
         .context("write checkpoint MMIO slot")?;
-    write_u32(writer, snapshot.transport.device_type)
-        .context("write checkpoint MMIO device type")?;
+    write_u32(writer, snapshot.transport.device_type).context("write checkpoint MMIO device type")?;
     ensure_device_state_len(snapshot.transport.device_state.len())?;
     write_u32(writer, snapshot.transport.device_state.len() as u32)
         .context("write checkpoint MMIO device state length")?;
@@ -625,22 +581,16 @@ fn write_mmio_device_snapshot(
         .write_all(&snapshot.transport.device_state)
         .context("write checkpoint MMIO device state")?;
     write_u32(writer, snapshot.transport.status).context("write checkpoint MMIO status")?;
-    write_u32(writer, snapshot.transport.features_sel)
-        .context("write checkpoint MMIO features_sel")?;
-    write_u64(writer, snapshot.transport.driver_features)
-        .context("write checkpoint MMIO driver_features")?;
-    write_u32(writer, snapshot.transport.driver_features_sel)
-        .context("write checkpoint MMIO driver_features_sel")?;
+    write_u32(writer, snapshot.transport.features_sel).context("write checkpoint MMIO features_sel")?;
+    write_u64(writer, snapshot.transport.driver_features).context("write checkpoint MMIO driver_features")?;
+    write_u32(writer, snapshot.transport.driver_features_sel).context("write checkpoint MMIO driver_features_sel")?;
     write_u32(writer, snapshot.transport.queue_sel).context("write checkpoint MMIO queue_sel")?;
-    write_u32(writer, snapshot.transport.interrupt_status)
-        .context("write checkpoint MMIO interrupt_status")?;
-    write_u32(writer, snapshot.transport.config_generation)
-        .context("write checkpoint MMIO config_generation")?;
+    write_u32(writer, snapshot.transport.interrupt_status).context("write checkpoint MMIO interrupt_status")?;
+    write_u32(writer, snapshot.transport.config_generation).context("write checkpoint MMIO config_generation")?;
     writer
         .write_all(&[u8::from(snapshot.transport.activated)])
         .context("write checkpoint MMIO activated")?;
-    write_u32(writer, snapshot.transport.queues.len() as u32)
-        .context("write checkpoint MMIO queue count")?;
+    write_u32(writer, snapshot.transport.queues.len() as u32).context("write checkpoint MMIO queue count")?;
     for queue in &snapshot.transport.queues {
         write_queue_snapshot(writer, queue)?;
     }
@@ -659,8 +609,7 @@ fn read_mmio_device_snapshot_with_budget(
 ) -> Result<MmioDeviceSnapshot> {
     let slot = read_u32(reader).context("read checkpoint MMIO slot")?;
     let device_type = read_u32(reader).context("read checkpoint MMIO device type")?;
-    let device_state_len =
-        read_u32(reader).context("read checkpoint MMIO device state length")? as usize;
+    let device_state_len = read_u32(reader).context("read checkpoint MMIO device state length")? as usize;
     ensure_device_state_len(device_state_len)?;
     if device_state_len > remaining_device_state {
         bail!("checkpoint total device state exceeds limit");
@@ -672,8 +621,7 @@ fn read_mmio_device_snapshot_with_budget(
     let status = read_u32(reader).context("read checkpoint MMIO status")?;
     let features_sel = read_u32(reader).context("read checkpoint MMIO features_sel")?;
     let driver_features = read_u64(reader).context("read checkpoint MMIO driver_features")?;
-    let driver_features_sel =
-        read_u32(reader).context("read checkpoint MMIO driver_features_sel")?;
+    let driver_features_sel = read_u32(reader).context("read checkpoint MMIO driver_features_sel")?;
     let queue_sel = read_u32(reader).context("read checkpoint MMIO queue_sel")?;
     let interrupt_status = read_u32(reader).context("read checkpoint MMIO interrupt_status")?;
     let config_generation = read_u32(reader).context("read checkpoint MMIO config_generation")?;
@@ -793,9 +741,7 @@ fn read_u64(reader: &mut impl Read) -> Result<u64> {
 
 #[cfg(target_arch = "x86_64")]
 fn write_pod<T>(writer: &mut impl Write, value: &T) -> Result<()> {
-    let bytes = unsafe {
-        std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of::<T>())
-    };
+    let bytes = unsafe { std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of::<T>()) };
     writer.write_all(bytes)?;
     Ok(())
 }
@@ -803,9 +749,7 @@ fn write_pod<T>(writer: &mut impl Write, value: &T) -> Result<()> {
 #[cfg(target_arch = "x86_64")]
 fn read_pod<T: Copy>(reader: &mut impl Read) -> Result<T> {
     let mut value = std::mem::MaybeUninit::<T>::zeroed();
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, std::mem::size_of::<T>())
-    };
+    let bytes = unsafe { std::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, std::mem::size_of::<T>()) };
     reader.read_exact(bytes)?;
     Ok(unsafe { value.assume_init() })
 }

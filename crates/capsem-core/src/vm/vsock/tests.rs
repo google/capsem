@@ -1,4 +1,5 @@
 use super::*;
+use capsem_proto::{max_frame_size, VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL};
 
 // -----------------------------------------------------------------------
 // Constants
@@ -188,14 +189,8 @@ fn coalesce_many_small_chunks() {
         flush_count += 1;
     }
     assert_eq!(total, 200 * line.len());
-    assert!(
-        flush_count >= 3,
-        "expected at least 3 flushes, got {flush_count}"
-    );
-    assert!(
-        flush_count <= 10,
-        "expected at most 10 flushes, got {flush_count}"
-    );
+    assert!(flush_count >= 3, "expected at least 3 flushes, got {flush_count}");
+    assert!(flush_count <= 10, "expected at most 10 flushes, got {flush_count}");
 }
 
 #[test]

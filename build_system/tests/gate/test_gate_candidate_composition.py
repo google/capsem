@@ -1,4 +1,4 @@
-"""`just test-full` is one process, one lock, one workspace, one plan.
+"""`just test` is one process, one lock, one workspace, one plan.
 
 It used to be a tree of processes. `candidate` ran `just _test-fast`, which ran
 `capsem-gate test-fast`; then a Colima wrapper around `just _test-candidate`,
@@ -189,6 +189,31 @@ def test_the_fast_phase_precedes_everything_expensive() -> None:
     assert _at(labels, "fast.") < _at(labels, "prepare")
 
 
+def test_benchmark_fitness_precedes_expensive_assets_and_timing() -> None:
+    """An unfit host must not spend an hour before the benchmark refuses it."""
+    plan = _plan()
+    labels = list(plan.labels)
+    harness = labels.index("prepare.benchmark-harness")
+    fitness = labels.index("prepare.benchmark-fitness")
+
+    assert harness < fitness
+    assert fitness < labels.index("assets.build.arm64")
+    assert fitness < labels.index("functional.pytest.timing.code")
+
+
+def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
+    """Snapshot outages fail before asset builds, VMs, and the broad matrix."""
+    plan = _plan()
+    labels = list(plan.labels)
+    dependencies = [f"prepare.package-dependencies.{arch}" for arch in CONFIG.architectures]
+
+    assert all(label in labels for label in dependencies)
+    assert labels.index("prepare.benchmark-fitness") < labels.index(dependencies[0])
+    assert labels.index(dependencies[-1]) < labels.index("assets.build.arm64")
+    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad.code")
+    assert all(("host-image", label) in plan.edges for label in dependencies)
+
+
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:
     """A phase is finished when every independent branch of it is finished.
 
@@ -229,6 +254,21 @@ def test_shared_host_image_waits_for_canonical_preparation() -> None:
     assert fast <= prerequisites, "these fast checks can still race the host image: " + ", ".join(
         sorted(fast - prerequisites)
     )
+
+
+def test_macos_parity_consumes_shared_host_image_without_back_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late shared-image consumer must not reorder its producer backwards."""
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "system", lambda: "Darwin")
+    monkeypatch.setattr(host, "machine", lambda: "arm64")
+    plan = _plan()
+
+    assert "linux-rust" in plan.labels
+    assert "prepare.sign" not in plan.after_of("host-image")
+    assert {"host-image", "prepare.sign"} <= set(plan.after_of("warm-base"))
 
 
 # ---------------------------------------------------------------------------

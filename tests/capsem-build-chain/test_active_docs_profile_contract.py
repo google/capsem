@@ -22,9 +22,9 @@ ALLOWED_CONFIG_FILES = {
     # pairs the storage policy accepts. Product config, read by the gate rather
     # than by the product, but config/ is where the repository keeps authority
     # files and a second location would be a second place to look.
+    "cache.toml",
     "gate.toml",
     "public-surface.toml",
-    "storage-policy.toml",
     # The dependency graph this workspace has accepted: which packages resolve,
     # which declare a build script, and what each one depends on. An authority
     # file for the same reason as the others -- the drift report is only

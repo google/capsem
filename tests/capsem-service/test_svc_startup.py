@@ -2,7 +2,7 @@
 
 These tests verify that capsem-service actually starts, binds its socket,
 and accepts connections -- the exact failure mode that was missed when
-'just test-full' excluded integration tests.
+'just test' excluded integration tests.
 """
 
 import contextlib

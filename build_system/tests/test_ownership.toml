@@ -406,18 +406,8 @@ target = "build_system/tests/gate/test_gate_step_output.py"
 
 [[owned]]
 owner = "gate"
-source = "tests/test_gate_storage.py"
-target = "build_system/tests/gate/test_gate_storage.py"
-
-[[owned]]
-owner = "gate"
-source = "tests/test_gate_storage_consumers.py"
-target = "build_system/tests/gate/test_gate_storage_consumers.py"
-
-[[owned]]
-owner = "gate"
-source = "tests/test_gate_storage_ordering.py"
-target = "build_system/tests/gate/test_gate_storage_ordering.py"
+source = "tests/test_gate_cache_control.py"
+target = "build_system/tests/gate/test_gate_cache_control.py"
 
 [[owned]]
 owner = "gate"
@@ -618,11 +608,6 @@ target = "build_system/tests/packaging/test_prove_installed_shell.py"
 owner = "packaging"
 source = "tests/test_repack_deb.py"
 target = "build_system/tests/packaging/test_repack_deb.py"
-
-[[owned]]
-owner = "policy"
-source = "tests/test_docker_storage_policy.py"
-target = "build_system/tests/policy/test_docker_storage_policy.py"
 
 [[owned]]
 owner = "policy"

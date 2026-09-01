@@ -36,8 +36,7 @@ fn parse_resize_wrong_type() {
 
 #[test]
 fn parse_resize_extra_fields_ignored() {
-    let (cols, rows) =
-        parse_resize_message(r#"{"cols": 80, "rows": 24, "extra": true}"#).unwrap();
+    let (cols, rows) = parse_resize_message(r#"{"cols": 80, "rows": 24, "extra": true}"#).unwrap();
     assert_eq!(cols, 80);
     assert_eq!(rows, 24);
 }

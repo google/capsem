@@ -211,13 +211,13 @@ class InstallContainer:
         self._docker.exec(self.name, ["mkdir", "-p", *self._owned])
         self._docker.exec(self.name, ["chown", "-R", f"{guest}:{guest}", *self._owned])
         # Unlinking these needs write permission on the *parent* directory
-        # entry, not on the entries themselves. On Linux /src/target belongs to
+        # entry, not on the entries themselves. On Linux /src/cache/target belongs to
         # the host user rather than the container's capsem, so the staging
         # step's `rm -rf` fails with "Permission denied" before it can restage.
         # Grant the one directory entry: a recursive chown here would walk
         # every cargo artifact in the checkout.
         owner = self._settings.guest_user.name
-        target = Path(self._settings.layout.assets).parts[0]
+        target = Path(self._settings.layout.assets).parent
         self._docker.exec(
             self.name,
             ["chown", f"{owner}:{owner}", f"{self._settings.mount}/{target}"],

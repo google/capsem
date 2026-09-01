@@ -4,18 +4,12 @@ use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, Securit
 #[test]
 fn collected_gzip_chunked_response_headers_are_materialized() {
     let mut headers = http::HeaderMap::new();
-    headers.insert(
-        http::header::CONTENT_ENCODING,
-        http::HeaderValue::from_static("gzip"),
-    );
+    headers.insert(http::header::CONTENT_ENCODING, http::HeaderValue::from_static("gzip"));
     headers.insert(
         http::header::TRANSFER_ENCODING,
         http::HeaderValue::from_static("chunked"),
     );
-    headers.insert(
-        http::header::CONTENT_LENGTH,
-        http::HeaderValue::from_static("9999"),
-    );
+    headers.insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("9999"));
 
     materialize_collected_response_headers(&mut headers, 1234, true);
 
@@ -116,9 +110,7 @@ match = 'http.host == "127.0.0.1"'
 #[test]
 fn provider_detection_promotes_unknown_host_by_bounded_body_shape() {
     assert_eq!(
-        ai_protocol_for_body_preview(
-            br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#
-        ),
+        ai_protocol_for_body_preview(br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#),
         Some(ModelProtocol::OpenAi)
     );
     assert_eq!(
@@ -128,9 +120,7 @@ fn provider_detection_promotes_unknown_host_by_bounded_body_shape() {
         Some(ModelProtocol::Anthropic)
     );
     assert_eq!(
-        ai_protocol_for_body_preview(
-            br#"{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]}"#
-        ),
+        ai_protocol_for_body_preview(br#"{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]}"#),
         Some(ModelProtocol::Google)
     );
 }
@@ -138,9 +128,7 @@ fn provider_detection_promotes_unknown_host_by_bounded_body_shape() {
 #[test]
 fn provider_detection_body_shape_ignores_oversized_or_irrelevant_bodies() {
     let mut oversized = vec![b' '; AI_BODY_CAPTURE_LIMIT + 1];
-    oversized.extend_from_slice(
-        br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#,
-    );
+    oversized.extend_from_slice(br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#);
     assert_eq!(ai_protocol_for_body_preview(&oversized), None);
     assert_eq!(ai_protocol_for_body_preview(br#"{"hello":"world"}"#), None);
 }
@@ -150,20 +138,11 @@ fn retry_replayability_is_limited_to_empty_idempotent_requests() {
     let headers = http::HeaderMap::new();
     assert!(request_can_replay_empty_body(&http::Method::GET, &headers));
     assert!(request_can_replay_empty_body(&http::Method::HEAD, &headers));
-    assert!(!request_can_replay_empty_body(
-        &http::Method::POST,
-        &headers
-    ));
+    assert!(!request_can_replay_empty_body(&http::Method::POST, &headers));
 
     let mut with_body = http::HeaderMap::new();
-    with_body.insert(
-        http::header::CONTENT_LENGTH,
-        http::HeaderValue::from_static("12"),
-    );
-    assert!(!request_can_replay_empty_body(
-        &http::Method::GET,
-        &with_body
-    ));
+    with_body.insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("12"));
+    assert!(!request_can_replay_empty_body(&http::Method::GET, &with_body));
 
     let mut chunked = http::HeaderMap::new();
     chunked.insert(
@@ -207,11 +186,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
 "#,
     )
     .expect("profile parses");
-    let rules = SecurityRuleSet::compile_profile(
-        &profile,
-        crate::net::policy_config::SecurityRuleSource::Corp,
-    )
-    .expect("rules compile");
+    let rules = SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::Corp)
+        .expect("rules compile");
 
     let body = Bytes::from_static(br#"{"kind":"ironbank_http_plain_json"}"#);
     let event = http_request_security_event(HttpRequestSecurityEventInput {
@@ -243,15 +219,8 @@ fn unknown_model_body_sniffing_is_json_and_length_bounded() {
         http::header::CONTENT_TYPE,
         http::HeaderValue::from_static("application/json"),
     );
-    headers.insert(
-        http::header::CONTENT_LENGTH,
-        http::HeaderValue::from_static("128"),
-    );
-    assert!(should_sniff_unknown_model_body(
-        None,
-        &http::Method::POST,
-        &headers
-    ));
+    headers.insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("128"));
+    assert!(should_sniff_unknown_model_body(None, &http::Method::POST, &headers));
     assert!(!should_sniff_unknown_model_body(
         Some(ProviderKind::OpenAi),
         &http::Method::POST,
@@ -261,17 +230,9 @@ fn unknown_model_body_sniffing_is_json_and_length_bounded() {
         http::header::CONTENT_LENGTH,
         http::HeaderValue::from_str(&(AI_BODY_CAPTURE_LIMIT + 1).to_string()).unwrap(),
     );
-    assert!(!should_sniff_unknown_model_body(
-        None,
-        &http::Method::POST,
-        &headers
-    ));
+    assert!(!should_sniff_unknown_model_body(None, &http::Method::POST, &headers));
     headers.remove(http::header::CONTENT_LENGTH);
-    assert!(!should_sniff_unknown_model_body(
-        None,
-        &http::Method::POST,
-        &headers
-    ));
+    assert!(!should_sniff_unknown_model_body(None, &http::Method::POST, &headers));
 }
 
 #[test]
@@ -281,10 +242,7 @@ fn unknown_mcp_http_body_sniffing_is_json_and_length_bounded() {
         http::header::CONTENT_TYPE,
         http::HeaderValue::from_static("application/json"),
     );
-    headers.insert(
-        http::header::CONTENT_LENGTH,
-        http::HeaderValue::from_static("128"),
-    );
+    headers.insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("128"));
     assert!(should_sniff_mcp_http_body(&http::Method::POST, &headers));
 
     headers.insert(
@@ -293,24 +251,17 @@ fn unknown_mcp_http_body_sniffing_is_json_and_length_bounded() {
     );
     assert!(!should_sniff_mcp_http_body(&http::Method::POST, &headers));
 
-    headers.insert(
-        http::header::CONTENT_LENGTH,
-        http::HeaderValue::from_static("128"),
-    );
+    headers.insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("128"));
     assert!(!should_sniff_mcp_http_body(&http::Method::GET, &headers));
 
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        http::HeaderValue::from_static("text/plain"),
-    );
+    headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("text/plain"));
     assert!(!should_sniff_mcp_http_body(&http::Method::POST, &headers));
 }
 
 #[test]
 fn observed_mcp_http_request_requires_mcp_json_rpc_shape() {
     let body = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"fetch_http","arguments":{"url":"https://example.com"}}}"#;
-    let observed =
-        observed_mcp_http_request_for_body(body, "mcp.example.test", 443, "/mcp").unwrap();
+    let observed = observed_mcp_http_request_for_body(body, "mcp.example.test", 443, "/mcp").unwrap();
     assert_eq!(observed.method, "tools/call");
     assert_eq!(observed.tool_name.as_deref(), Some("fetch_http"));
     assert_eq!(observed.request_id.as_deref(), Some("7"));
@@ -339,13 +290,7 @@ fn body_capture_limit_captures_oauth_broker_candidates_without_body_logging() {
         CREDENTIAL_BODY_CAPTURE_LIMIT
     );
     assert_eq!(
-        body_capture_limit(
-            None,
-            "api.github.com",
-            "/login/oauth/access_token",
-            false,
-            0
-        ),
+        body_capture_limit(None, "api.github.com", "/login/oauth/access_token", false, 0),
         CREDENTIAL_BODY_CAPTURE_LIMIT
     );
 }

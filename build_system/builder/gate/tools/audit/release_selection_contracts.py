@@ -22,6 +22,7 @@ def repository_files(root: Path) -> Iterable[Path]:
         ignored_parts = {
             ".astro",
             ".claude",
+            "cache",
             ".git",
             ".venv",
             "dist",
@@ -45,7 +46,7 @@ def repository_files(root: Path) -> Iterable[Path]:
         if any(part.startswith(".sprinty") for part in relative.parts):
             continue
         if any(
-            part in {".astro", ".claude", "dist", "node_modules", "target"}
+            part in {".astro", ".claude", "cache", "dist", "node_modules", "target"}
             for part in relative.parts
         ):
             continue

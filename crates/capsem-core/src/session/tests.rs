@@ -16,10 +16,7 @@ fn boot_failure_summary_returns_the_last_line_that_says_something() {
 fn boot_failure_summary_skips_the_blank_tail_a_crash_leaves_behind() {
     let tail = "ERROR capsem_process: vz launch rejected\n\r\n   \n\n";
 
-    assert_eq!(
-        boot_failure_summary(tail),
-        "ERROR capsem_process: vz launch rejected"
-    );
+    assert_eq!(boot_failure_summary(tail), "ERROR capsem_process: vz launch rejected");
 }
 
 #[test]

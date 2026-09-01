@@ -20,15 +20,17 @@ GUEST = MACOS_PACKAGING / "macos_tart_guest.sh"
 GUEST_REGRESSIONS = MACOS_PACKAGING / "macos-tart-regression-probes.sh"
 GUEST_SUPPORT = MACOS_PACKAGING / "macos_tart_transition_support.py"
 HOST_BOOT = MACOS_PACKAGING / "prove-macos-package-boot.sh"
-INSTALLED_WINTERFELL = PROJECT_ROOT / "build_system" / "scripts" / "build" / "run-installed-winterfell.py"
-NATIVE_REPORT_CHECK = PROJECT_ROOT / "build_system" / "scripts" / "build" / "check-macos-native-glowup.py"
+INSTALLED_WINTERFELL = (
+    PROJECT_ROOT / "build_system" / "scripts" / "build" / "run-installed-winterfell.py"
+)
+NATIVE_REPORT_CHECK = (
+    PROJECT_ROOT / "build_system" / "scripts" / "build" / "check-macos-native-glowup.py"
+)
 INSTALLED_WINTERFELL_IMPLEMENTATION = (
-    PROJECT_ROOT
-    / "build_system/builder/image/tools/build/run_installed_winterfell.py"
+    PROJECT_ROOT / "build_system/builder/image/tools/build/run_installed_winterfell.py"
 )
 NATIVE_REPORT_CHECK_IMPLEMENTATION = (
-    PROJECT_ROOT
-    / "build_system/builder/image/tools/build/check_macos_native_glowup.py"
+    PROJECT_ROOT / "build_system/builder/image/tools/build/check_macos_native_glowup.py"
 )
 LOCAL_PACKAGE_BUILD = MACOS_PACKAGING / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
@@ -123,13 +125,19 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
         "--wait",
         "300",
     ]
-    assert module.storage_control_command("tart-clean", "preflight") == [
+    assert module.cache_control_command("preflight") == [
         "uv",
         "run",
-        "python",
-        str(PROJECT_ROOT / "build_system" / "scripts" / "build" / "docker-storage-policy.py"),
-        "tart-clean",
-        "--label",
+        "--project",
+        str(PROJECT_ROOT / "build_system"),
+        "--frozen",
+        "capsem-cache",
+        "--repository",
+        str(PROJECT_ROOT),
+        "runtime-prune",
+        "tart",
+        "--apply",
+        "--reason",
         "preflight",
     ]
 
@@ -645,9 +653,7 @@ def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None
 
 
 def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> None:
-    module = _load_script(
-        NATIVE_REPORT_CHECK_IMPLEMENTATION, "macos_native_report_check"
-    )
+    module = _load_script(NATIVE_REPORT_CHECK_IMPLEMENTATION, "macos_native_report_check")
     cargo_toml = tmp_path / "Cargo.toml"
     cargo_toml.write_text('[workspace.package]\nversion = "1.2.3"\n')
     report_path = tmp_path / "report.json"
@@ -738,9 +744,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
 
 
 def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:
-    module = _load_script(
-        INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct"
-    )
+    module = _load_script(INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct")
 
     assert module.WINTERFELL_TESTS == (
         "tests/capsem-mcp/test_winterfell_rw.py",
@@ -753,7 +757,7 @@ def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
 
     assert 'final_report_path = work_dir / "report.json"' in source
     assert "final_report_path.write_text(rendered_report)" in source
-    assert 'run_storage_control("tart-clean", "macos-glowup-preflight")' in source
+    assert 'run_cache_control("macos-glowup-preflight")' in source
     assert '"macos-glowup-final"' in source
 
 
@@ -761,19 +765,23 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
-    doctor = (
-        PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-macos.sh"
-    ).read_text()
+    doctor = (PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-macos.sh").read_text()
     justfile = (PROJECT_ROOT / "justfile").read_text()
 
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
-    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"' in bootstrap
+    assert (
+        'uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"'
+        in bootstrap
+    )
     assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in bootstrap
     assert "authenticated outside-sandbox action" in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
-    assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py"' in doctor
+    assert (
+        'uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py"'
+        in doctor
+    )
     assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" not in doctor
     assert "CAPSEM_SKIP_TART_CHECK" in doctor
     assert "test-macos-install:" not in justfile
@@ -805,9 +813,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     readiness = next(line for line in issues.splitlines() if "tart_readiness.py" in line)
     assert "--require-cache" in readiness
     assert "[outside kernel sandbox]" in readiness
-    macos_glowup = next(
-        line for line in issues.splitlines() if "macos_release_glowup.py" in line
-    )
+    macos_glowup = next(line for line in issues.splitlines() if "macos_release_glowup.py" in line)
     assert "[outside kernel sandbox]" in macos_glowup
     config = gate_config.load(PROJECT_ROOT)
     content_root = Path(config.assets.test_root) / config.suites.pytest.base_profile
@@ -829,7 +835,7 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert '"--content-root"' in source
     assert '"--assets-dir"' in source and '"--config-root"' in source
     assert '"$ROOT/assets"' not in build
-    assert '"$ROOT/target/config"' not in build
+    assert '"$ROOT/cache/target/config"' not in build
     assert '"$ROOT/assets"' not in physical
 
 
@@ -855,7 +861,7 @@ def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() 
     assert "APPLE_INSTALLER_SIGNING_IDENTITY" in release
     assert "notarytool submit" in release
     assert "stapler staple" in release
-    assert 'pkgutil --check-signature "target/packages/Capsem-$VERSION.pkg"' in release
+    assert 'pkgutil --check-signature "cache/target/packages/Capsem-$VERSION.pkg"' in release
 
 
 def test_public_release_dispatch_recipe_is_gone() -> None:

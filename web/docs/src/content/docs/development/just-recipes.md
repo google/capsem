@@ -29,13 +29,17 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just fast-test` | Incomplete source feedback from the canonical `_test-fast` module | No |
 | `just focus-test <group>` | Run one existing owner: `assets`, `binaries`, `benchmark`, `install`, `release-system`, or `functional`; `release-system` is source-only contract proof | Depends on group |
 | `just install` | Build the complete local macOS package and install that exact package for hands-on testing | No |
-| `just test-full [commit]` | Exceptional cold whole-system diagnostic: rebuild and exercise every configured artifact and VM path | Yes |
+| `just test [commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason | Yes |
 
 Use `fast-test` once for cheap source feedback and the smallest `focus-test`
-group for a specific regression. Use `test-full` only when stale reuse is
-suspected or a release candidate is ready for one cold Mac diagnostic. The
-hosted `release-profile` and `release-binaries` lanes are the publication
-qualification authority; they do not consume the local diagnostic journal.
+group for a specific regression. Use `test` when complete local whole-system
+verification is useful; it reuses valid build products. It is optional before
+release. The hosted `release-profile` and `release-binaries` lanes each perform
+their own release qualification and do not consume the local test journal.
+Low-impact source is admitted to another complete run after ten commits. Before
+that threshold, the command refuses early and prints the exact `focus-test`
+groups. Unknown and high-impact changes remain eligible for complete proof, and
+two forced attempts can never be made consecutively.
 
 ## Policy Verification
 
@@ -52,7 +56,7 @@ and telemetry. Use this sequence for focused iteration:
 | Focused VM feedback | `just focus-test functional` |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |
-| Final gate | `just test-full` |
+| Final gate | `just test` |
 
 Useful policy audit queries:
 
@@ -106,8 +110,8 @@ _check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
 ```
 
 `_materialize-config` invokes `capsem-admin profile materialize`, which writes
-the current-build runtime profile under `target/config/` from checked-in
-`config/` source files and `target/assets/manifest.json`.
+the current-build runtime profile under `cache/target/config/` from checked-in
+`config/` source files and `cache/target/assets/manifest.json`.
 
 ## Session inspection
 
@@ -128,7 +132,7 @@ the current-build runtime profile under `target/config/` from checked-in
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
 Rust and JavaScript vulnerability audits are mandatory parts of `just fast-test`
-and `just test-full`; there is no separate public audit recipe that can drift from
+and `just test`; there is no separate public audit recipe that can drift from
 the tested composition.
 
 ## Release

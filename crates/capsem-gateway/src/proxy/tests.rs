@@ -81,9 +81,7 @@ async fn returns_502_when_uds_missing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "service unavailable");
 }
@@ -91,10 +89,7 @@ async fn returns_502_when_uds_missing() {
 #[tokio::test]
 async fn returns_502_for_post_when_uds_missing() {
     let app = proxy_app("/tmp/capsem-gw-test-nonexistent.sock");
-    assert_eq!(
-        status_of(app, "POST", "/vms/create").await,
-        StatusCode::BAD_GATEWAY
-    );
+    assert_eq!(status_of(app, "POST", "/vms/create").await, StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]
@@ -115,10 +110,7 @@ async fn returns_502_when_uds_exists_but_closed() {
     // Drop the listener -- socket file exists but nobody is listening
     drop(std::fs::File::open(&sock_path)); // keep file alive via dir
     let app = proxy_app(sock_path.to_str().unwrap());
-    assert_eq!(
-        status_of(app, "GET", "/vms/list").await,
-        StatusCode::BAD_GATEWAY
-    );
+    assert_eq!(status_of(app, "GET", "/vms/list").await, StatusCode::BAD_GATEWAY);
 }
 
 // --- Forwarding: basic ---
@@ -142,9 +134,7 @@ async fn forwards_get_to_uds() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["sandboxes"], serde_json::json!([]));
     h.abort();
@@ -152,10 +142,7 @@ async fn forwards_get_to_uds() {
 
 #[tokio::test]
 async fn forwards_post_with_body() {
-    let mock = axum::Router::new().route(
-        "/echo",
-        axum::routing::post(|body: Bytes| async move { body }),
-    );
+    let mock = axum::Router::new().route("/echo", axum::routing::post(|body: Bytes| async move { body }));
     let (path, h, _d) = mock_uds(mock).await;
 
     let app = proxy_app(&path);
@@ -171,9 +158,7 @@ async fn forwards_post_with_body() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(&body[..], b"hello-gateway");
     h.abort();
 }
@@ -182,10 +167,7 @@ async fn forwards_post_with_body() {
 
 #[tokio::test]
 async fn forwards_put_request() {
-    let mock = axum::Router::new().route(
-        "/item",
-        axum::routing::put(|body: Bytes| async move { body }),
-    );
+    let mock = axum::Router::new().route("/item", axum::routing::put(|body: Bytes| async move { body }));
     let (path, h, _d) = mock_uds(mock).await;
 
     let app = proxy_app(&path);
@@ -201,9 +183,7 @@ async fn forwards_put_request() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert!(body.starts_with(b"{"));
     h.abort();
 }
@@ -220,8 +200,7 @@ async fn forwards_patch_request() {
 
 #[tokio::test]
 async fn forwards_head_request() {
-    let mock =
-        axum::Router::new().route("/health", axum::routing::head(|| async { StatusCode::OK }));
+    let mock = axum::Router::new().route("/health", axum::routing::head(|| async { StatusCode::OK }));
     let (path, h, _d) = mock_uds(mock).await;
 
     let app = proxy_app(&path);
@@ -237,9 +216,7 @@ async fn forwards_head_request() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     // HEAD must not have a body
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty());
     h.abort();
 }
@@ -264,19 +241,14 @@ async fn forwards_empty_body_post() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(&body[..], b"len=0");
     h.abort();
 }
 
 #[tokio::test]
 async fn forwards_binary_body() {
-    let mock = axum::Router::new().route(
-        "/bin",
-        axum::routing::post(|body: Bytes| async move { body }),
-    );
+    let mock = axum::Router::new().route("/bin", axum::routing::post(|body: Bytes| async move { body }));
     let (path, h, _d) = mock_uds(mock).await;
 
     let binary_data: Vec<u8> = vec![0x00, 0x01, 0x7f, 0x80, 0xff, 0xfe];
@@ -292,9 +264,7 @@ async fn forwards_binary_body() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(body.to_vec(), binary_data);
     h.abort();
 }
@@ -308,14 +278,8 @@ async fn preserves_upstream_response_headers() {
         axum::routing::get(|| async {
             (
                 [
-                    (
-                        http::header::HeaderName::from_static("x-custom"),
-                        "test-value",
-                    ),
-                    (
-                        http::header::HeaderName::from_static("x-request-id"),
-                        "abc-123",
-                    ),
+                    (http::header::HeaderName::from_static("x-custom"), "test-value"),
+                    (http::header::HeaderName::from_static("x-request-id"), "abc-123"),
                 ],
                 "ok",
             )
@@ -371,9 +335,7 @@ async fn preserves_client_headers_except_auth_and_host() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["has_accept"], true);
@@ -430,9 +392,7 @@ async fn strips_hop_by_hop_request_headers_before_forwarding() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["forwarded"], serde_json::json!([]));
@@ -445,14 +405,8 @@ async fn strips_hop_by_hop_request_headers_before_forwarding() {
 async fn preserves_status_codes() {
     let mock = axum::Router::new()
         .route("/ok", axum::routing::get(|| async { StatusCode::OK }))
-        .route(
-            "/created",
-            axum::routing::post(|| async { StatusCode::CREATED }),
-        )
-        .route(
-            "/bad",
-            axum::routing::get(|| async { StatusCode::BAD_REQUEST }),
-        )
+        .route("/created", axum::routing::post(|| async { StatusCode::CREATED }))
+        .route("/bad", axum::routing::get(|| async { StatusCode::BAD_REQUEST }))
         .route(
             "/err",
             axum::routing::get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
@@ -486,9 +440,7 @@ async fn preserves_status_codes() {
 async fn preserves_query_string() {
     let mock = axum::Router::new().route(
         "/search",
-        axum::routing::get(|req: axum::extract::Request| async move {
-            req.uri().query().unwrap_or("").to_string()
-        }),
+        axum::routing::get(|req: axum::extract::Request| async move { req.uri().query().unwrap_or("").to_string() }),
     );
     let (path, h, _d) = mock_uds(mock).await;
 
@@ -502,9 +454,7 @@ async fn preserves_query_string() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(std::str::from_utf8(&body).unwrap(), "q=test&limit=10");
     h.abort();
 }
@@ -513,9 +463,7 @@ async fn preserves_query_string() {
 async fn handles_encoded_query_values() {
     let mock = axum::Router::new().route(
         "/search",
-        axum::routing::get(|req: axum::extract::Request| async move {
-            req.uri().query().unwrap_or("").to_string()
-        }),
+        axum::routing::get(|req: axum::extract::Request| async move { req.uri().query().unwrap_or("").to_string() }),
     );
     let (path, h, _d) = mock_uds(mock).await;
 
@@ -529,18 +477,10 @@ async fn handles_encoded_query_values() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let qs = std::str::from_utf8(&body).unwrap();
-    assert!(
-        qs.contains("foo%20bar"),
-        "encoded space not preserved: {qs}"
-    );
-    assert!(
-        qs.contains("%26%3D"),
-        "encoded special chars not preserved: {qs}"
-    );
+    assert!(qs.contains("foo%20bar"), "encoded space not preserved: {qs}");
+    assert!(qs.contains("%26%3D"), "encoded special chars not preserved: {qs}");
     h.abort();
 }
 
@@ -565,9 +505,7 @@ async fn rejects_oversized_body() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "request body too large");
     h.abort();
@@ -595,9 +533,7 @@ async fn accepts_body_under_limit() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(std::str::from_utf8(&body).unwrap(), "len=1048576");
     h.abort();
 }

@@ -19,9 +19,9 @@ def _host_arch():
 
 
 def test_agent_binaries_555():
-    """Guest binaries in target/linux-agent/ should be chmod 555."""
+    """Guest binaries in cache/target/build/linux-agent/ should be chmod 555."""
     arch = _host_arch()
-    agent_dir = PROJECT_ROOT / "target" / "linux-agent" / arch
+    agent_dir = PROJECT_ROOT / "cache" / "target" / "build" / "linux-agent" / arch
     if not agent_dir.exists():
         pytest.skip(f"Agent dir not found: {agent_dir}")
 

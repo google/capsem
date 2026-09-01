@@ -23,11 +23,7 @@ impl Provider for OpenAiProvider {
         "https://api.openai.com"
     }
 
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder {
+    fn inject_key(&self, builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
         builder.header("authorization", format!("Bearer {api_key}"))
     }
 }
@@ -268,8 +264,7 @@ impl OpenAiStreamParser {
                     return vec![];
                 };
                 // Only emit ToolCallEnd for function_call items, not text or other types
-                if done.item.as_ref().and_then(|i| i.item_type.as_deref()) == Some("function_call")
-                {
+                if done.item.as_ref().and_then(|i| i.item_type.as_deref()) == Some("function_call") {
                     vec![LlmEvent::ToolCallEnd {
                         index: done.output_index.unwrap_or(0),
                     }]
@@ -363,11 +358,7 @@ impl ProviderStreamParser for OpenAiStreamParser {
                             let tc_index = tc.index.unwrap_or(0);
                             // If id is present, this is the start of a tool call
                             if let Some(id) = &tc.id {
-                                let name = tc
-                                    .function
-                                    .as_ref()
-                                    .and_then(|f| f.name.clone())
-                                    .unwrap_or_default();
+                                let name = tc.function.as_ref().and_then(|f| f.name.clone()).unwrap_or_default();
                                 events.push(LlmEvent::ToolCallStart {
                                     index: tc_index,
                                     call_id: id.clone(),

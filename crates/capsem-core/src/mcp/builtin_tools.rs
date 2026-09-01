@@ -14,15 +14,13 @@ use reqwest::Client;
 use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
-    evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent,
-    RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
-    SecurityEvent, TcpSecurityEvent,
+    evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
+    SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
-
-use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
@@ -203,44 +201,10 @@ pub async fn call_builtin_tool(
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => {
-            handle_fetch_http(
-                arguments,
-                client,
-                security_rules,
-                plugin_policy,
-                request_id,
-                db,
-            )
-            .await
-        }
-        "grep_http" => {
-            handle_grep_http(
-                arguments,
-                client,
-                security_rules,
-                plugin_policy,
-                request_id,
-                db,
-            )
-            .await
-        }
-        "http_headers" => {
-            handle_http_headers(
-                arguments,
-                client,
-                security_rules,
-                plugin_policy,
-                request_id,
-                db,
-            )
-            .await
-        }
-        _ => JsonRpcResponse::err(
-            request_id,
-            -32602,
-            format!("unknown builtin tool: {local_name}"),
-        ),
+        "fetch_http" => handle_fetch_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
+        "grep_http" => handle_grep_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
+        "http_headers" => handle_http_headers(arguments, client, security_rules, plugin_policy, request_id, db).await,
+        _ => JsonRpcResponse::err(request_id, -32602, format!("unknown builtin tool: {local_name}")),
     }
 }
 
@@ -287,7 +251,7 @@ async fn emit_net_event(
             policy_action: Some(enforcement.action.as_str().to_string()),
             policy_rule: enforcement.rule_id.clone(),
             policy_reason: enforcement.reason.clone(),
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
             credential_ref: None,
         }),
     )
@@ -336,14 +300,8 @@ async fn handle_fetch_http(
     };
     let domain = checked.domain.clone();
 
-    let format = args
-        .get("format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("markdown");
-    let start_index = args
-        .get("start_index")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
+    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
@@ -401,10 +359,7 @@ async fn handle_fetch_http(
     let (chunk, total, has_more) = paginate(&text, start_index, max_length);
     let mut output = format!("URL: {url}\nDomain: {domain}\nContent length: {total}\n");
     if start_index > 0 || has_more {
-        output.push_str(&format!(
-            "Showing: {start_index}..{}\n",
-            start_index + chunk.len()
-        ));
+        output.push_str(&format!("Showing: {start_index}..{}\n", start_index + chunk.len()));
         if has_more {
             output.push_str(&format!(
                 "Remaining: {} characters. Use start_index={} to continue.\n",
@@ -473,10 +428,7 @@ async fn handle_grep_http(
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_MAX_MATCHES) as usize;
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-    let start_index = args
-        .get("start_index")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
@@ -486,10 +438,7 @@ async fn handle_grep_http(
         return tool_error(id, "pattern must not be empty");
     }
 
-    let re = match regex::RegexBuilder::new(pattern_str)
-        .case_insensitive(true)
-        .build()
-    {
+    let re = match regex::RegexBuilder::new(pattern_str).case_insensitive(true).build() {
         Ok(r) => r,
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
@@ -537,11 +486,7 @@ async fn handle_grep_http(
     )
     .await;
 
-    let text = if raw {
-        body
-    } else {
-        extract_text_from_html(&body)
-    };
+    let text = if raw { body } else { extract_text_from_html(&body) };
 
     let lines: Vec<&str> = text.lines().collect();
     let mut matches = Vec::new();
@@ -567,9 +512,7 @@ async fn handle_grep_http(
 
     let mut output = format!("URL: {url}\nPattern: {pattern_str}\nMatches found: {match_count}\n");
     if match_count > max_matches {
-        output.push_str(&format!(
-            "(showing first {max_matches} of {match_count} matches)\n"
-        ));
+        output.push_str(&format!("(showing first {max_matches} of {match_count} matches)\n"));
     }
     output.push('\n');
     for (i, block) in matches.iter().enumerate() {
@@ -606,10 +549,7 @@ async fn handle_http_headers(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let method = args
-        .get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("HEAD");
+    let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("HEAD");
 
     let checked = match evaluate_builtin_http_request(url, method, security_rules, plugin_policy) {
         Ok(checked) => checked,
@@ -634,10 +574,7 @@ async fn handle_http_headers(
             return tool_error(id, &e);
         }
     };
-    let start_index = args
-        .get("start_index")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let max_length = args
         .get("max_length")
         .and_then(|v| v.as_u64())
@@ -658,11 +595,7 @@ async fn handle_http_headers(
 
     let mut output = format!("URL: {url}\nStatus: {}\n\nHeaders:\n", resp.status());
     for (name, value) in resp.headers() {
-        output.push_str(&format!(
-            "  {}: {}\n",
-            name,
-            value.to_str().unwrap_or("<binary>")
-        ));
+        output.push_str(&format!("  {}: {}\n", name, value.to_str().unwrap_or("<binary>")));
     }
     let url_path = reqwest::Url::parse(url)
         .map(|u| u.path().to_string())
@@ -706,15 +639,8 @@ const BINARY_MIME_PREFIXES: &[&str] = &[
 
 /// Returns true if the Content-Type indicates binary content.
 fn is_binary_content_type(content_type: &str) -> bool {
-    let ct = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    BINARY_MIME_PREFIXES
-        .iter()
-        .any(|prefix| ct.starts_with(prefix))
+    let ct = content_type.split(';').next().unwrap_or("").trim().to_lowercase();
+    BINARY_MIME_PREFIXES.iter().any(|prefix| ct.starts_with(prefix))
 }
 
 /// Extract the Content-Type header value from a response, defaulting to empty.
@@ -763,11 +689,7 @@ fn evaluate_builtin_http_request(
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
-        other => {
-            return Err(format!(
-                "only http:// and https:// URLs are supported (got {other}://)"
-            ))
-        }
+        other => return Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
     }
     let domain = parsed
         .host_str()
@@ -788,7 +710,7 @@ fn evaluate_builtin_http_request(
             http::HeaderMap::new(),
             parsed.query().map(str::to_string),
         ));
-    if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
+    if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         event = event.with_trace_id(trace_id);
     }
     if let Some(port) = parsed.port_or_known_default() {
@@ -895,11 +817,7 @@ const BLOCK_TAGS: &[&str] = &[
     "summary",
 ];
 
-fn extract_text_recursive_scraper(
-    doc: &scraper::Html,
-    node_id: ego_tree::NodeId,
-    output: &mut String,
-) {
+fn extract_text_recursive_scraper(doc: &scraper::Html, node_id: ego_tree::NodeId, output: &mut String) {
     let node_ref = match doc.tree.get(node_id) {
         Some(n) => n,
         None => return,
@@ -1069,11 +987,7 @@ fn extract_md_recursive(doc: &scraper::Html, node_id: ego_tree::NodeId, output: 
     }
 }
 
-fn md_children(
-    doc: &scraper::Html,
-    node_ref: ego_tree::NodeRef<scraper::Node>,
-    output: &mut String,
-) {
+fn md_children(doc: &scraper::Html, node_ref: ego_tree::NodeRef<scraper::Node>, output: &mut String) {
     for child in node_ref.children() {
         extract_md_recursive(doc, child.id(), output);
     }

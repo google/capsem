@@ -1,7 +1,7 @@
 """The package rail builds one architecture, and proves which package it built.
 
 The rail's sharpest rule is that it publishes the package *this run* produced.
-`target/packages/` accumulates, so globbing it would let a package built from a
+`cache/target/packages/` accumulates, so globbing it would let a package built from a
 different commit be proved, installed, and shipped -- which is why the builder
 writes the basename it created and this reads it back rather than looking around.
 """
@@ -21,8 +21,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.objects import digest_file, verify
+from capsem_builder.cache.views import ViewReceipt
+from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import crosscompile
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
@@ -63,6 +65,9 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     for name in CONFIG.package.builder.identity_inputs:
         destination = tmp_path / name
         if destination.exists():
@@ -85,7 +90,7 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (config_root / CONFIG.functional.profiles_subdir / "code" / "profile.toml").write_text(
         'id = "code"\n'
     )
-    config_manifest = config_root / CONFIG.suites.pytest.test_manifest
+    config_manifest = config_root / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
     config_manifest.parent.mkdir(parents=True, exist_ok=True)
     config_manifest.write_text(manifest)
     return tmp_path
@@ -119,7 +124,6 @@ def _run_lane(rail):
     The phases are plan steps now, so a test that wants the whole lane says
     so -- and a test that wants one phase can finally ask for one.
     """
-    rail.release_rails()
     rail.reserve()
     rail.sync_clock()
     rail.require_content()
@@ -155,6 +159,9 @@ def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
     assert content.root == missing
     assert content.assets == missing / CONFIG.assets.merged_assets_dir
     assert content.config == missing / CONFIG.assets.merged_config_dir
+    assert content.config_manifest(CONFIG) == (
+        content.config / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
+    )
     assert content.profiles(CONFIG) == content.config / CONFIG.functional.profiles_subdir
 
 
@@ -275,7 +282,7 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
-    isolated = root / "target" / "ironbank-assets" / "code"
+    isolated = root / "cache" / "target" / "ironbank-assets" / "code"
     content = ProfileContent.isolated(config, isolated)
     content.assets.mkdir(parents=True)
     content.config.mkdir(parents=True)
@@ -287,7 +294,7 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     profile = content.profiles(config) / "code" / "profile.toml"
     profile.parent.mkdir(parents=True)
     profile.write_text('id = "code"\n')
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_text(manifest)
 
@@ -310,9 +317,9 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
 
     create = runner.matching(r"docker create")[0]
     assert f"{content.assets}:/src/{CONFIG.outputs.assets}:ro" in create
-    assert f"{content.config}:/src/target/config:ro" in create
+    assert f"{content.config}:/src/cache/target/config:ro" in create
     assert f"{canonical_assets}:/src/{CONFIG.outputs.assets}" not in create
-    assert f"{root / 'target' / 'config'}:/src/target/config" not in create
+    assert f"{root / 'target' / 'config'}:/src/cache/target/config" not in create
     assert canonical_assets.lstat().st_ino == selector_inode
     assert canonical_assets.readlink() == selector_target
     assert sentinel.read_bytes() == b"canonical config must survive"
@@ -453,6 +460,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
     normalized_dockerfile = " ".join(dockerfile.replace("\\\n", " ").split())
     script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
+    materializer = "build_system/builder/image/tools/build/materialize_package_ort.py"
 
     assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
     assert 'grep -F "${selected}-"' in dockerfile
@@ -467,7 +475,9 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "web/app/pnpm-workspace.yaml" in dockerfile
     assert "ORT_STRATEGY=system" in dockerfile
     assert "ORT_LIB_LOCATION" in dockerfile
-    assert "materialize-package-ort.py" in dockerfile
+    assert f"COPY {materializer} /usr/local/bin/materialize-package-ort.py" in dockerfile
+    assert materializer in builder.identity_inputs
+    assert "build_system/scripts/build/materialize-package-ort.py" not in builder.identity_inputs
     assert "cargo build" not in dockerfile
     assert "COPY --from=dependency-fetch /cargo-target" not in dockerfile
     assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile
@@ -888,6 +898,8 @@ def test_package_helper_is_host_native_and_target_specific(
     assert "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages) in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
+    assert f"APT_LISTS_CACHE_ID={config.package.builder.apt_lists_cache_id}" in build
+    assert f"APT_ARCHIVES_CACHE_ID={config.package.builder.apt_archives_cache_id}" in build
     assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build
     assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build
@@ -1253,7 +1265,7 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     # The lane's first phase depends on the image; the rest chain from there.
     # It was one step, so the edge landed on the whole lane -- which is also
     # why nothing could be ordered against a phase inside it.
-    assert (hostimage.STEP, f"package.{TARGET.name}.storage-release") in plan.edges
+    assert (hostimage.STEP, f"package.{TARGET.name}.materialize") in plan.edges
 
 
 def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None:
@@ -1269,7 +1281,7 @@ def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None
         graph=False,
         timing=False,
         arch=TARGET.name,
-        content_root="target/package-content",
+        content_root="cache/target/package-content",
         defer_proof=True,
     )
     plan = GateCommand.registry["cross-compile"](RecordingRunner(PROJECT_ROOT), args)._describe()
@@ -1311,13 +1323,22 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
-    # A package from an earlier build of a different commit, still in target/packages/.
+    # A package from an earlier build of a different commit, still in cache/target/packages/.
     packages = root / PACKAGE_ROOT
     packages.mkdir(parents=True)
     (packages / "Capsem_0.0.1_arm64.deb").write_text("stale")
     runner = Building(root, replies={"select-linux": "skip"})
 
-    assert _run_lane(_rail(runner)) == packages / PACKAGE
+    package = _run_lane(_rail(runner))
+
+    assert package == packages / PACKAGE
+    receipt = ViewReceipt.model_validate_json(
+        package.with_name(f"{package.name}.object.json").read_text(encoding="utf-8")
+    )
+    paths = cachelayout.cache_paths(gate_config.load(root))
+    cached = verify(paths, receipt.object)
+    assert digest_file(package) == receipt.object.digest
+    assert package.read_bytes() == cached.read_bytes()
 
 
 def test_a_build_that_recorded_nothing_fails(
@@ -1335,7 +1356,7 @@ def test_a_build_that_recorded_nothing_fails(
     "recorded, reason",
     [
         ("capsem.tar.gz", "invalid Debian package record"),
-        ("../outside/capsem.deb", "escaped target/packages/"),
+        ("../outside/capsem.deb", "escaped cache/target/packages/"),
     ],
 )
 def test_a_nonsense_package_record_is_refused(

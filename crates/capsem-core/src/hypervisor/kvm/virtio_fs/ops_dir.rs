@@ -37,18 +37,14 @@ impl FuseProcessor {
             let name = entry.file_name().into_encoded_bytes().to_vec();
             let meta = entry.metadata().ok();
             let ino = meta.as_ref().map_or(0, |m| m.ino());
-            let type_ = meta
-                .as_ref()
-                .map_or(DT_UNKNOWN, |m| fuse::mode_to_dtype(m.mode()));
+            let type_ = meta.as_ref().map_or(DT_UNKNOWN, |m| fuse::mode_to_dtype(m.mode()));
             entries.push(DirEntryData { name, ino, type_ });
         }
 
-        let fh = match self.file_handles.alloc_dir(
-            header.nodeid,
-            dir_metadata.dev(),
-            dir_metadata.ino(),
-            entries,
-        ) {
+        let fh = match self
+            .file_handles
+            .alloc_dir(header.nodeid, dir_metadata.dev(), dir_metadata.ino(), entries)
+        {
             Some(fh) => fh,
             None => return fuse::error_response(header.unique, -libc::EMFILE),
         };
@@ -94,10 +90,7 @@ impl FuseProcessor {
             };
             buf.extend_from_slice(fuse::as_bytes(&dirent));
             buf.extend_from_slice(&entry.name);
-            buf.extend(std::iter::repeat_n(
-                0u8,
-                entry_size - dirent_hdr - entry.name.len(),
-            ));
+            buf.extend(std::iter::repeat_n(0u8, entry_size - dirent_hdr - entry.name.len()));
         }
 
         fuse::success_response(header.unique, &buf)
@@ -199,11 +192,7 @@ impl FuseProcessor {
             Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
-        self.rename_impl(
-            header,
-            r.newdir,
-            &body[std::mem::size_of::<FuseRenameIn>()..],
-        )
+        self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRenameIn>()..])
     }
 
     pub(super) fn do_rename2(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -214,11 +203,7 @@ impl FuseProcessor {
             Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
-        self.rename_impl(
-            header,
-            r.newdir,
-            &body[std::mem::size_of::<FuseRename2In>()..],
-        )
+        self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRename2In>()..])
     }
 
     fn rename_impl(&mut self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
@@ -263,8 +248,7 @@ impl FuseProcessor {
             Ok(c) => c,
             Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        if unsafe { libc::mknod(c_path.as_ptr(), mk.mode & !mk.umask, libc::dev_t::from(mk.rdev)) } != 0
-        {
+        if unsafe { libc::mknod(c_path.as_ptr(), mk.mode & !mk.umask, libc::dev_t::from(mk.rdev)) } != 0 {
             return fuse::error_response(header.unique, -fuse::errno());
         }
         let ino = match self.inodes.lookup(header.nodeid, name) {

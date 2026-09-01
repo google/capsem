@@ -174,11 +174,7 @@ pub fn describe_all() {
         "Wall time of one upstream DNS resolution attempt (UDP forward + receive). Only emitted on the upstream-forward path."
     );
 
-    describe_gauge!(
-        ACTIVE_CONNECTIONS,
-        Unit::Count,
-        "Currently active proxy connections."
-    );
+    describe_gauge!(ACTIVE_CONNECTIONS, Unit::Count, "Currently active proxy connections.");
     describe_gauge!(
         UPSTREAM_POOL_SIZE,
         Unit::Count,

@@ -26,7 +26,7 @@ from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_proc
 from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MCP_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
+MCP_BINARY = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-mcp"
 
 pytestmark = pytest.mark.integration
 

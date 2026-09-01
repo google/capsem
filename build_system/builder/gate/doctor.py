@@ -19,6 +19,7 @@ import shutil
 import tomllib
 from dataclasses import dataclass
 
+from ..cache.config import load_policy
 from . import config as gate_config
 from .actions import Call
 from .command import GateCommand
@@ -68,26 +69,13 @@ def _runs_through_uv(runner: Runner, project: str, name: str) -> bool:
     return runner.succeeds(uv_run(config, name, "--help"))
 
 
-def _storage_rails(config: gate_config.GateConfig) -> list[Finding]:
-    """Every storage phase must name a rail the policy declares.
-
-    A phase pointing at a rail that does not exist releases nothing, and the
-    next build fails on ENOSPC somewhere unrelated.
-    """
-    policy_path = config.path(config.storage.policy_file)
+def _cache_control(config: gate_config.GateConfig) -> list[Finding]:
+    """The sole cache policy must load and connect its runtime controls."""
     try:
-        rails = set(tomllib.loads(policy_path.read_text(encoding="utf-8"))["rails"])
-    except (OSError, KeyError) as error:
-        return [Finding("storage policy", f"cannot read rails from {policy_path}: {error}")]
-
-    return [
-        Finding(
-            f"storage phase {name}",
-            f"names rail {phase.rail!r}, which {policy_path.name} does not declare",
-        )
-        for name, phase in sorted(config.storage.phases.items())
-        if phase.rail not in rails
-    ]
+        policy = load_policy(config.root)
+    except (OSError, ValueError) as error:
+        return [Finding("cache policy", f"cannot load config/cache.toml: {error}")]
+    return [] if policy.control is not None else [Finding("cache policy", "control is missing")]
 
 
 def _dispatched_subcommands(config: gate_config.GateConfig, runner: Runner) -> list[Finding]:
@@ -134,7 +122,7 @@ def check(runner: Runner) -> list[Finding]:
     config = gate_config.for_root(runner.root)
     return [
         *_installed_entry_points(config, runner),
-        *_storage_rails(config),
+        *_cache_control(config),
         *_dispatched_subcommands(config, runner),
     ]
 

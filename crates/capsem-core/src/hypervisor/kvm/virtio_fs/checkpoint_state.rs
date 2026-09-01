@@ -5,9 +5,7 @@ use std::io::{Cursor, Read};
 use anyhow::{bail, ensure, Context, Result};
 
 use super::TAG_LEN;
-use crate::hypervisor::fuse::file_handles::{
-    FileHandleKindSnapshot, FileHandleSnapshot, FileHandleTableSnapshot,
-};
+use crate::hypervisor::fuse::file_handles::{FileHandleKindSnapshot, FileHandleSnapshot, FileHandleTableSnapshot};
 use crate::hypervisor::fuse::inode_table::{InodeSnapshot, InodeTableSnapshot};
 use crate::hypervisor::fuse::DirEntryData;
 
@@ -30,10 +28,7 @@ pub(super) struct VirtioFsBackendSnapshot {
 
 impl VirtioFsBackendSnapshot {
     pub(super) fn encode(&self) -> Result<Vec<u8>> {
-        ensure!(
-            self.inodes.entries.len() <= MAX_INODES,
-            "too many VirtioFS inodes"
-        );
+        ensure!(self.inodes.entries.len() <= MAX_INODES, "too many VirtioFS inodes");
         ensure!(
             self.file_handles.handles.len() <= MAX_HANDLES,
             "too many VirtioFS handles"
@@ -86,10 +81,7 @@ impl VirtioFsBackendSnapshot {
                     host_inode,
                     entries,
                 } => {
-                    ensure!(
-                        entries.len() <= MAX_DIR_ENTRIES,
-                        "too many VirtioFS directory entries"
-                    );
+                    ensure!(entries.len() <= MAX_DIR_ENTRIES, "too many VirtioFS directory entries");
                     out.push(2);
                     push_u64(&mut out, *device);
                     push_u64(&mut out, *host_inode);
@@ -130,9 +122,7 @@ impl VirtioFsBackendSnapshot {
             "unsupported VirtioFS checkpoint version: {version}"
         );
         let mut tag = [0u8; TAG_LEN];
-        reader
-            .read_exact(&mut tag)
-            .context("read VirtioFS checkpoint tag")?;
+        reader.read_exact(&mut tag).context("read VirtioFS checkpoint tag")?;
         let read_only = read_bool(&mut reader, "read_only")?;
         let inode_count = read_bounded_count(&mut reader, MAX_INODES, "inode")?;
         let next_ino = read_u64(&mut reader)?;
@@ -166,18 +156,13 @@ impl VirtioFsBackendSnapshot {
                 2 => {
                     let device = read_u64(&mut reader)?;
                     let host_inode = read_u64(&mut reader)?;
-                    let count =
-                        read_bounded_count(&mut reader, MAX_DIR_ENTRIES, "directory entry")?;
+                    let count = read_bounded_count(&mut reader, MAX_DIR_ENTRIES, "directory entry")?;
                     let mut entries = Vec::with_capacity(count);
                     for _ in 0..count {
                         entries.push(DirEntryData {
                             ino: read_u64(&mut reader)?,
                             type_: read_u32(&mut reader)?,
-                            name: read_bounded_bytes(
-                                &mut reader,
-                                MAX_NAME_BYTES,
-                                "directory entry name",
-                            )?,
+                            name: read_bounded_bytes(&mut reader, MAX_NAME_BYTES, "directory entry name")?,
                         });
                     }
                     FileHandleKindSnapshot::Dir {
@@ -243,18 +228,12 @@ fn read_u64(reader: &mut impl Read) -> Result<u64> {
 }
 fn read_bounded_count(reader: &mut impl Read, max: usize, field: &str) -> Result<usize> {
     let count = read_u32(reader)? as usize;
-    ensure!(
-        count <= max,
-        "VirtioFS checkpoint {field} count exceeds limit: {count}"
-    );
+    ensure!(count <= max, "VirtioFS checkpoint {field} count exceeds limit: {count}");
     Ok(count)
 }
 fn read_bounded_bytes(reader: &mut impl Read, max: usize, field: &str) -> Result<Vec<u8>> {
     let len = read_u32(reader)? as usize;
-    ensure!(
-        len <= max,
-        "VirtioFS checkpoint {field} length exceeds limit: {len}"
-    );
+    ensure!(len <= max, "VirtioFS checkpoint {field} length exceeds limit: {len}");
     let mut bytes = vec![0u8; len];
     reader.read_exact(&mut bytes)?;
     Ok(bytes)

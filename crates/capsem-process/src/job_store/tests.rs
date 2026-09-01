@@ -37,15 +37,12 @@ fn job_store_active_exec_set_and_clear() {
     let store = JobStore::new();
     assert!(store.active_execs.lock().unwrap().is_empty());
 
-    store
-        .active_execs
-        .lock()
-        .unwrap()
-        .insert(42, ActiveExec::new());
+    store.active_execs.lock().unwrap().insert(42, ActiveExec::new());
     {
         let guard = store.active_execs.lock().unwrap();
         let active = guard.get(&42).unwrap();
         assert!(active.captured.is_empty());
+        drop(guard);
     }
 
     store.active_execs.lock().unwrap().remove(&42);
@@ -55,23 +52,12 @@ fn job_store_active_exec_set_and_clear() {
 #[test]
 fn job_store_active_exec_captures_data() {
     let store = JobStore::new();
-    store
-        .active_execs
-        .lock()
-        .unwrap()
-        .insert(1, ActiveExec::new());
+    store.active_execs.lock().unwrap().insert(1, ActiveExec::new());
     if let Some(active) = store.active_execs.lock().unwrap().get_mut(&1) {
         active.captured.extend_from_slice(b"hello ");
         active.captured.extend_from_slice(b"world");
     }
-    let captured = store
-        .active_execs
-        .lock()
-        .unwrap()
-        .get(&1)
-        .unwrap()
-        .captured
-        .clone();
+    let captured = store.active_execs.lock().unwrap().get(&1).unwrap().captured.clone();
     assert_eq!(captured, b"hello world");
 }
 
@@ -248,10 +234,7 @@ async fn fail_all_resolves_every_pending_oneshot() {
             other => panic!("expected JobResult::Error, got {other:?}"),
         }
     }
-    assert!(
-        snap_rx.await.is_ok(),
-        "snapshot_ready waiter must be resolved"
-    );
+    assert!(snap_rx.await.is_ok(), "snapshot_ready waiter must be resolved");
     assert!(job_store.active_execs.lock().unwrap().is_empty());
     assert!(job_store.jobs.lock().unwrap().is_empty());
     tokio::time::timeout(std::time::Duration::from_millis(100), first_waiter)
@@ -282,9 +265,7 @@ fn job_oneshot_send_receive() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(rx).unwrap();
     match result {
-        JobResult::Exec {
-            stdout, exit_code, ..
-        } => {
+        JobResult::Exec { stdout, exit_code, .. } => {
             assert_eq!(stdout, b"hello");
             assert_eq!(exit_code, 0);
         }
@@ -309,12 +290,9 @@ async fn quiescence_timeout_fires() {
 
     // 1. Never send SnapshotReady
     let start = std::time::Instant::now();
-    let result = with_quiescence(
-        &tx,
-        &job_store,
-        std::time::Duration::from_millis(100),
-        || async { Ok(()) },
-    )
+    let result = with_quiescence(&tx, &job_store, std::time::Duration::from_millis(100), || async {
+        Ok(())
+    })
     .await;
 
     let elapsed = start.elapsed();
@@ -369,17 +347,8 @@ async fn quiescence_channel_closed_returns_error() {
         });
     }
 
-    let result = with_quiescence(
-        &tx,
-        &job_store,
-        std::time::Duration::from_secs(5),
-        || async { Ok(()) },
-    )
-    .await;
+    let result = with_quiescence(&tx, &job_store, std::time::Duration::from_secs(5), || async { Ok(()) }).await;
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("closed prematurely"));
+    assert!(result.unwrap_err().to_string().contains("closed prematurely"));
 }

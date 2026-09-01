@@ -9,9 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The exceptional cold whole-system diagnostic is now `just test-full`; the
-  previous spelling has no compatibility alias, and release,
-  testing, CI, and developer guidance use the new public command consistently.
+- Repository-generated and reusable state now has one hard cache root:
+  `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
+  journals, private gate worktrees, and retained prefix products no longer
+  spill across root `target/` and ambient `.cg/` directories. Gate paths resolve
+  through the typed cache library, and Citadel rejects either legacy root.
+- Cargo profiles, uv downloads, Python bytecode, and pnpm packages now use
+  policy-owned cache stages. Python and uv reuse whole ABI/source or lockfile
+  generations, pnpm workspaces share one content store, Cargo internals are
+  never selectively pruned, and gate attempts record typed hit/miss/size data.
+- VM kernels, root filesystems, initrds, guest binaries, host packages, and
+  release staging views now reuse digest-verified immutable objects through
+  component-specific input identities. Hardlinks avoid duplicate multi-gigabyte
+  copies, strict receipts make every reused byte auditable, and runtime boot
+  evidence remains fresh rather than being mistaken for construction output.
+- `just cache` now reconciles repository usage with owned Docker images,
+  containers, BuildKit data, and Tart VMs through bounded typed adapters.
+  Snapshots write strict receipts under `cache/containers`, prune previews
+  protect active and foreign resources, and applied native cleanup is exact,
+  reasoned, and journaled alongside its runtime output.
+- Complete local tests now refuse low-impact repeats until ten commits have
+  accumulated since the latest successful proof and print the exact focused
+  owners to run instead. High-impact and unknown changes remain eligible;
+  exceptional forced attempts require a journaled reason and cannot occur
+  twice consecutively.
+- One complete local qualification now executes each behavioral cohort once:
+  Node workspaces and Python collection are prepared once, source-contract
+  coverage is appended into the later functional result without recollection,
+  and digest-verified release staging reuses the fresh VM result instead of
+  rerunning the same pytest, injection, and integration work. Hosted binary and
+  profile release lanes still run their complete independent qualification.
+- Complete local verification is `just test` again and reuses valid
+  content-addressed build output between source commits. The cold-only
+  `test-full` public command is removed without a compatibility alias. Release
+  commands remain sufficient on their own because their hosted lanes perform
+  release qualification; `just test` is not a prerequisite.
 - Brand and Tauri icon sources now have one canonical owner under
   `web/graphics/`; native packaging, CI, documentation, and web callers no
   longer depend on the retired root or a duplicate crate-local icon set.
@@ -31,16 +63,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `just cache` now provides a typed, repository-owned inventory and retention
+  interface. Status and verification are read-only, pruning previews its exact
+  plan unless `--apply` is supplied, and every applied deletion is contained
+  beneath `cache/` and journaled with its reason.
 - Developer verification now has explicit cost boundaries: `just fast-test`
   prints that it is incomplete, `just focus-test <group>` reruns one existing
   owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or
   `functional`), `release-system` stays source-only instead of demanding a
   locally built package, and `just install` builds and installs the complete local
-  macOS package for hands-on testing. The duplicate public `test` and
-  `vm-smoke` spellings are gone; `just test-full` remains the exceptional
-  cold whole-system diagnostic. Release qualification belongs to the hosted
-  `release-profile` and `release-binaries` lanes, which reuse immutable inputs
-  and do not require a developer-machine journal.
+  macOS package for hands-on testing. The duplicate public `vm-smoke` spelling
+  is gone, while `just test` remains the reusable complete whole-system proof.
+  Publication belongs to the hosted `release-profile` and
+  `release-binaries` lanes, which reuse immutable inputs.
 
 - `build_system/scripts/release/write-release-notes.py`: the GitHub release notes are rendered by a
   program with tests instead of a shell heredoc. The heredoc's tag was
@@ -63,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete local qualification now retains the shared Cargo build directory
+  even when it crosses its advisory size threshold; only an explicit cold-build
+  diagnostic may discard reusable compiler output.
+- Session deletion now absorbs transient Linux `ENOTEMPTY` races from final
+  SQLite or filesystem cleanup after VM exit, while remaining bounded and
+  fail-closed for persistent or unrelated filesystem errors.
+- MITM response telemetry now applies async backpressure at HTTP completion
+  when the bounded logger queue fills, preserving every session-ledger event
+  under high request concurrency instead of dropping the saturated tail.
 - Suspend now treats the guest's `Suspended` state as an acknowledgement and
   waits for the VM process to exit before allowing resume, preventing Apple VZ
   checkpoint restores from racing the old process's checkpoint ownership.

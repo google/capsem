@@ -332,11 +332,7 @@ pub(crate) fn select_scenarios(selected: Option<&str>) -> Result<Vec<Scenario>> 
         return Ok(SCENARIOS.to_vec());
     };
     let mut out = Vec::new();
-    for name in selected
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    {
+    for name in selected.split(',').map(str::trim).filter(|name| !name.is_empty()) {
         let Some(scenario) = by_name.get(name).copied() else {
             let valid = by_name.keys().copied().collect::<Vec<_>>().join(", ");
             bail!("unknown scenario {name:?}; valid: {valid}");
@@ -383,10 +379,7 @@ pub(crate) fn result_ok(sample: &RequestSample, scenario: Scenario) -> bool {
 pub(crate) fn required_text_present(body: &[u8], scenario: Scenario) -> bool {
     scenario
         .required_text
-        .map(|needle| {
-            body.windows(needle.len())
-                .any(|window| window == needle.as_bytes())
-        })
+        .map(|needle| body.windows(needle.len()).any(|window| window == needle.as_bytes()))
         .unwrap_or(true)
 }
 
@@ -434,7 +427,6 @@ pub(crate) fn percentile(sorted: &[f64], percentile: f64) -> f64 {
         sorted[lo] * (1.0 - weight) + sorted[hi] * weight
     }
 }
-
 
 pub(crate) fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0

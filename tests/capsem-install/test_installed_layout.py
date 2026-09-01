@@ -406,7 +406,7 @@ class TestInstalledLayoutContract:
 
 
 class TestInstalledLayoutSymlink:
-    """Symlink-based dev workflow: ln -s target/debug ~/.capsem/bin."""
+    """Symlink-based dev workflow: ln -s cache/target/cargo/debug ~/.capsem/bin."""
 
     def test_symlinked_capsem_dir_works(self, installed_layout, tmp_path):
         """If ~/.capsem is a symlink, capsem version still works."""

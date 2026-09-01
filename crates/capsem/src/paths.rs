@@ -5,10 +5,10 @@ use crate::service_install;
 
 /// Return the capsem home directory.
 ///
-/// Delegates to [`capsem_core::paths::capsem_home_opt`] so `CAPSEM_HOME`
+/// Delegates to [`capsem_foundation::paths::capsem_home_opt`] so `CAPSEM_HOME`
 /// overrides `$HOME/.capsem` uniformly across the workspace.
 pub fn capsem_home() -> Result<PathBuf> {
-    capsem_core::paths::capsem_home_opt().context("HOME not set")
+    capsem_foundation::paths::capsem_home_opt().context("HOME not set")
 }
 
 /// Resolved paths for capsem binaries and assets.
@@ -24,7 +24,7 @@ pub struct CapsemPaths {
 /// Discover paths for sibling binaries and assets.
 ///
 /// Binaries: current_exe() parent -> sibling capsem-service, capsem-process.
-/// Assets: `<capsem_home>/assets/` via [`capsem_core::paths::capsem_assets_dir`].
+/// Assets: `<capsem_home>/assets/` via [`capsem_foundation::paths::capsem_assets_dir`].
 pub fn discover_paths() -> Result<CapsemPaths> {
     let exe_path = std::env::current_exe().context("cannot determine executable path")?;
     let bin_dir = exe_path
@@ -36,12 +36,12 @@ pub fn discover_paths() -> Result<CapsemPaths> {
         process_bin: bin_dir.join("capsem-process"),
         gateway_bin: bin_dir.join("capsem-gateway"),
         tray_bin: bin_dir.join("capsem-tray"),
-        assets_dir: capsem_core::paths::capsem_assets_dir(),
+        assets_dir: capsem_foundation::paths::capsem_assets_dir(),
     })
 }
 
 /// Build the assets dir path from HOME. Test-only: production paths go through
-/// [`capsem_core::paths::capsem_assets_dir`] so `CAPSEM_HOME` /
+/// [`capsem_foundation::paths::capsem_assets_dir`] so `CAPSEM_HOME` /
 /// `CAPSEM_ASSETS_DIR` are honored.
 #[cfg(test)]
 fn assets_dir_from_home(home: &str) -> PathBuf {
@@ -69,10 +69,7 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
 
     #[cfg(target_os = "macos")]
     {
-        if service_install::plist_path()
-            .map(|p| p.exists())
-            .unwrap_or(false)
-        {
+        if service_install::plist_path().map(|p| p.exists()).unwrap_or(false) {
             let uid = nix::unistd::getuid();
             let status = tokio::process::Command::new("launchctl")
                 .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])

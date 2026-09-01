@@ -1,3 +1,5 @@
+pub use capsem_foundation::time::epoch_to_iso;
+use capsem_foundation::time::epoch_to_parts;
 /// Session management: VM route IDs, session index DB, and lifecycle.
 ///
 /// Each VM has an opaque UUID route ID. Human names such as `code-vm1` are
@@ -145,60 +147,6 @@ pub struct McpToolSummary {
     pub call_count: u64,
     pub total_bytes: u64,
     pub total_duration_ms: u64,
-}
-
-/// Break epoch seconds into (year, month, day, hour, minute, second) UTC components.
-pub(crate) fn epoch_to_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    let mut y = 1970i64;
-    let mut remaining_days = days as i64;
-    loop {
-        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if remaining_days < year_days {
-            break;
-        }
-        remaining_days -= year_days;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0u32;
-    for md in &month_days {
-        if remaining_days < *md {
-            break;
-        }
-        remaining_days -= md;
-        m += 1;
-    }
-    (y, m + 1, remaining_days as u32 + 1, hours, minutes, seconds)
-}
-
-/// Convert epoch seconds to ISO 8601 string (YYYY-MM-DDTHH:MM:SSZ).
-pub fn epoch_to_iso(secs: u64) -> String {
-    let (y, m, d, hours, minutes, seconds) = epoch_to_parts(secs);
-    format!("{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 /// Current UTC time as ISO 8601 string.

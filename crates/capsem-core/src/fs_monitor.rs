@@ -134,11 +134,7 @@ fn reconciliation_events(
     previous: &HashMap<String, SnapshotEntry>,
     current: &HashMap<String, SnapshotEntry>,
 ) -> Vec<QueuedEvent> {
-    let mut paths = previous
-        .keys()
-        .chain(current.keys())
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut paths = previous.keys().chain(current.keys()).cloned().collect::<Vec<_>>();
     paths.sort();
     paths.dedup();
 
@@ -339,10 +335,7 @@ impl FsMonitor {
         }
 
         if *dropped > 0 {
-            warn!(
-                count = *dropped,
-                "fs-monitor queue overflow, events dropped"
-            );
+            warn!(count = *dropped, "fs-monitor queue overflow, events dropped");
             *dropped = 0;
         }
 
@@ -366,15 +359,7 @@ impl FsMonitor {
                     let (old_action, old_fs_path) = pending
                         .insert(event.path.clone(), (event.action, event.fs_path.clone()))
                         .unwrap();
-                    Self::emit(
-                        db,
-                        security_rules,
-                        trace_state,
-                        &event.path,
-                        &old_fs_path,
-                        old_action,
-                    )
-                    .await;
+                    Self::emit(db, security_rules, trace_state, &event.path, &old_fs_path, old_action).await;
                     Self::update_snapshot(snapshot, &event.path, &old_fs_path, old_action);
                     emitted += 1;
                 }
@@ -396,12 +381,7 @@ impl FsMonitor {
         }
     }
 
-    fn update_snapshot(
-        snapshot: &mut HashMap<String, SnapshotEntry>,
-        path: &str,
-        fs_path: &Path,
-        action: FileAction,
-    ) {
+    fn update_snapshot(snapshot: &mut HashMap<String, SnapshotEntry>, path: &str, fs_path: &Path, action: FileAction) {
         if action == FileAction::Deleted {
             snapshot.remove(path);
         } else if let Some(entry) = snapshot_entry(fs_path) {
@@ -427,10 +407,9 @@ impl FsMonitor {
             let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
             state
                 .lookup_file_path(path)
-                .or_else(crate::telemetry::ambient_capsem_trace_id)
+                .or_else(capsem_foundation::telemetry::ambient_capsem_trace_id)
         };
-        let credential_ref =
-            Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
+        let credential_ref = Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
         crate::security_engine::emit_file_security_write_and_rules(
             db,
             &rules,

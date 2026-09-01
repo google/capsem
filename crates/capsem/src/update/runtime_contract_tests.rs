@@ -302,11 +302,7 @@ fn update_plan_graph(min_capsem_version: &str, package_version: &str) -> Vec<u8>
     .unwrap()
 }
 
-fn plan_test_update(
-    mut check: UpdateCheck,
-    body: &[u8],
-    installed_binary: &str,
-) -> Result<VerifiedUpdatePlan> {
+fn plan_test_update(mut check: UpdateCheck, body: &[u8], installed_binary: &str) -> Result<VerifiedUpdatePlan> {
     check.channel_hash = Some(channel_payload_hash(body));
     plan_verified_update(&check, body, installed_binary)
 }
@@ -314,21 +310,11 @@ fn plan_test_update(
 #[test]
 fn complete_update_plan_keeps_binary_and_profiles_orthogonal() {
     let binary_body = update_plan_graph("1.0.0", "2.0.0");
-    let binary = plan_test_update(
-        update_plan_check(true, false, false, false),
-        &binary_body,
-        "1.0.0",
-    )
-    .unwrap();
+    let binary = plan_test_update(update_plan_check(true, false, false, false), &binary_body, "1.0.0").unwrap();
     assert_eq!(binary.steps, vec![UpdatePlanStep::Binary]);
 
     let profile_body = update_plan_graph("1.0.0", "1.0.0");
-    let profile = plan_test_update(
-        update_plan_check(false, true, true, true),
-        &profile_body,
-        "1.0.0",
-    )
-    .unwrap();
+    let profile = plan_test_update(update_plan_check(false, true, true, true), &profile_body, "1.0.0").unwrap();
     assert_eq!(profile.steps, vec![UpdatePlanStep::Profiles]);
 }
 
@@ -337,10 +323,7 @@ fn complete_update_plan_orders_binary_before_profiles() {
     let body = update_plan_graph("2.0.0", "2.0.0");
     let plan = plan_test_update(update_plan_check(true, true, true, true), &body, "1.0.0").unwrap();
 
-    assert_eq!(
-        plan.steps,
-        vec![UpdatePlanStep::Binary, UpdatePlanStep::Profiles]
-    );
+    assert_eq!(plan.steps, vec![UpdatePlanStep::Binary, UpdatePlanStep::Profiles]);
     assert_eq!(plan.installed_binary, "1.0.0");
     assert_eq!(plan.selected_binary, "2.0.0");
 }
@@ -440,7 +423,7 @@ url = "https://release.capsem.org/assets/releases/images-2/x86_64-rootfs.erofs"
             "status": "current",
         })
     };
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let body = serde_json::to_vec(&serde_json::json!({
         "version": "1.0.0",
         "channel": "stable",
@@ -474,9 +457,7 @@ url = "https://release.capsem.org/assets/releases/images-2/x86_64-rootfs.erofs"
     .unwrap();
     let manifest_path = release_dir.join("manifest.json");
     std::fs::write(&manifest_path, &body).unwrap();
-    let source = reqwest::Url::from_file_path(&manifest_path)
-        .unwrap()
-        .to_string();
+    let source = reqwest::Url::from_file_path(&manifest_path).unwrap().to_string();
     (body, source, kernel)
 }
 
@@ -489,9 +470,8 @@ fn profile_stage_plan() -> VerifiedUpdatePlan {
 }
 
 fn assert_profile_uses_release_manifest_pins(profile_path: &Path, release_dir: &Path) {
-    let profile: toml::Value =
-        toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
-    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let profile: toml::Value = toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let assets = &profile["assets"]["arch"][arch];
     for (kind, name) in [
         ("kernel", "vmlinuz"),
@@ -541,14 +521,8 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
         .await
         .unwrap();
 
-    assert_eq!(
-        std::fs::read(&installed_manifest).unwrap(),
-        b"installed-manifest"
-    );
-    assert_eq!(
-        std::fs::read(&installed_profile).unwrap(),
-        b"installed-profile"
-    );
+    assert_eq!(std::fs::read(&installed_manifest).unwrap(), b"installed-manifest");
+    assert_eq!(std::fs::read(&installed_profile).unwrap(), b"installed-profile");
     assert_eq!(std::fs::read(&staged.manifest_path).unwrap(), body);
     assert_eq!(
         std::fs::read(
@@ -556,8 +530,8 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
                 .assets_dir
                 .as_ref()
                 .unwrap()
-                .join(capsem_core::asset_manager::host_manifest_arch())
-                .join(capsem_core::asset_manager::hash_filename(
+                .join(capsem_assets::asset_manager::host_manifest_arch())
+                .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
                     blake3::hash(&kernel).to_hex().as_ref(),
                 )),
@@ -566,11 +540,7 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
         kernel
     );
     assert_profile_uses_release_manifest_pins(
-        &staged
-            .profiles_dir
-            .as_ref()
-            .unwrap()
-            .join("code/profile.toml"),
+        &staged.profiles_dir.as_ref().unwrap().join("code/profile.toml"),
         &release_dir,
     );
     assert!(staged.installer_path.is_none());
@@ -595,10 +565,7 @@ async fn stage_verified_update_rejects_corruption_before_candidate_or_install_mu
         .expect_err("corrupt profile bytes must fail before activation");
 
     assert!(format!("{error:#}").contains("mismatch"), "{error:#}");
-    assert_eq!(
-        std::fs::read(&installed_manifest).unwrap(),
-        b"installed-manifest"
-    );
+    assert_eq!(std::fs::read(&installed_manifest).unwrap(), b"installed-manifest");
     assert!(
         !capsem_home
             .join("updates/candidates")
@@ -653,8 +620,8 @@ async fn activate_staged_update_switches_profiles_assets_and_manifest_together()
     assert_eq!(
         std::fs::read(
             installed_assets
-                .join(capsem_core::asset_manager::host_manifest_arch())
-                .join(capsem_core::asset_manager::hash_filename(
+                .join(capsem_assets::asset_manager::host_manifest_arch())
+                .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
                     blake3::hash(&kernel).to_hex().as_ref(),
                 )),
@@ -662,10 +629,8 @@ async fn activate_staged_update_switches_profiles_assets_and_manifest_together()
         .unwrap(),
         kernel
     );
-    let metadata: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(installed_assets.join("manifest-metadata.json")).unwrap(),
-    )
-    .unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(installed_assets.join("manifest-metadata.json")).unwrap()).unwrap();
     assert_eq!(metadata["manifest_url"], source);
     assert_eq!(metadata["validation_status"], "valid");
 }
@@ -697,16 +662,13 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
         .assets_dir
         .as_ref()
         .unwrap()
-        .join(capsem_core::asset_manager::host_manifest_arch())
-        .join(capsem_core::asset_manager::hash_filename(
+        .join(capsem_assets::asset_manager::host_manifest_arch())
+        .join(capsem_assets::asset_manager::hash_filename(
             "vmlinuz",
             blake3::hash(&kernel).to_hex().as_ref(),
         ));
-    let installed_kernel = installed_assets.join(
-        staged_kernel
-            .strip_prefix(staged.assets_dir.as_ref().unwrap())
-            .unwrap(),
-    );
+    let installed_kernel =
+        installed_assets.join(staged_kernel.strip_prefix(staged.assets_dir.as_ref().unwrap()).unwrap());
     std::fs::create_dir(installed_assets.join("manifest.tmp")).unwrap();
 
     let error = activate_staged_update_at(
@@ -719,18 +681,9 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
     .expect_err("manifest activation failure must roll the profile transaction back");
 
     assert!(format!("{error:#}").contains("manifest.tmp"), "{error:#}");
-    assert_eq!(
-        std::fs::read(&installed_manifest).unwrap(),
-        b"installed-manifest"
-    );
-    assert_eq!(
-        std::fs::read(&installed_metadata).unwrap(),
-        b"installed-metadata"
-    );
-    assert_eq!(
-        std::fs::read(&installed_profile).unwrap(),
-        b"installed-profile"
-    );
+    assert_eq!(std::fs::read(&installed_manifest).unwrap(), b"installed-manifest");
+    assert_eq!(std::fs::read(&installed_metadata).unwrap(), b"installed-metadata");
+    assert_eq!(std::fs::read(&installed_profile).unwrap(), b"installed-profile");
     assert!(
         !installed_kernel.exists(),
         "new content-addressed assets must be removed on rollback"

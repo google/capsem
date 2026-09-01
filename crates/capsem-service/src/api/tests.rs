@@ -90,12 +90,7 @@ fn provision_response_roundtrip() {
         status: VmLifecycleState::Running,
         persistent: true,
         can_resume: false,
-        available_actions: vec![
-            VmAction::Pause,
-            VmAction::Stop,
-            VmAction::Fork,
-            VmAction::Delete,
-        ],
+        available_actions: vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
         uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
     };
     let json = serde_json::to_string(&r).unwrap();
@@ -108,12 +103,7 @@ fn provision_response_roundtrip() {
     assert!(!r2.can_resume);
     assert_eq!(
         r2.available_actions,
-        vec![
-            VmAction::Pause,
-            VmAction::Stop,
-            VmAction::Fork,
-            VmAction::Delete
-        ]
+        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
     );
     assert_eq!(
         r2.uds_path.as_deref(),
@@ -138,25 +128,13 @@ fn list_response_multiple() {
     let r = ListResponse {
         sandboxes: vec![
             {
-                let mut s = SandboxInfo::new(
-                    "a".into(),
-                    "code".into(),
-                    100,
-                    VmLifecycleState::Running,
-                    true,
-                );
+                let mut s = SandboxInfo::new("a".into(), "code".into(), 100, VmLifecycleState::Running, true);
                 s.name = Some("a".into());
                 s.ram_mb = Some(2048);
                 s.cpus = Some(2);
                 s
             },
-            SandboxInfo::new(
-                "b".into(),
-                "code".into(),
-                200,
-                VmLifecycleState::Running,
-                false,
-            ),
+            SandboxInfo::new("b".into(), "code".into(), 200, VmLifecycleState::Running, false),
         ],
     };
     let json = serde_json::to_string(&r).unwrap();
@@ -170,13 +148,7 @@ fn list_response_multiple() {
 
 #[test]
 fn sandbox_info_optional_fields_omitted() {
-    let s = SandboxInfo::new(
-        "x".into(),
-        "code".into(),
-        1,
-        VmLifecycleState::Running,
-        false,
-    );
+    let s = SandboxInfo::new("x".into(), "code".into(), 1, VmLifecycleState::Running, false);
     let json = serde_json::to_string(&s).unwrap();
     assert!(!json.contains("ram_mb"));
     assert!(!json.contains("cpus"));
@@ -184,8 +156,7 @@ fn sandbox_info_optional_fields_omitted() {
 
 #[test]
 fn sandbox_info_rejects_unknown_lifecycle_state() {
-    let json =
-        r#"{"id":"x","profile_id":"code","pid":1,"status":"HalfRestored","persistent":true}"#;
+    let json = r#"{"id":"x","profile_id":"code","pid":1,"status":"HalfRestored","persistent":true}"#;
     let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
     assert!(err.to_string().contains("unknown variant"));
 }
@@ -364,8 +335,7 @@ fn exec_response_carries_truncation_to_the_client() {
 fn exec_response_from_an_older_service_decodes_as_not_truncated() {
     // A client built with the field talking to a service without it must read
     // absence as "complete", never as truncated.
-    let back: ExecResponse =
-        serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
+    let back: ExecResponse = serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
 
     assert!(!back.truncated);
     assert_eq!(back.stdout, "ok");

@@ -11,6 +11,8 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-proto = { path = "../capsem-proto" }
 rusqlite = { workspace = true }
 humantime = { workspace = true }
 tokio = { workspace = true }

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import stat
 import tomllib
 from pathlib import Path
+
+from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 OWNER = ROOT / "build_system/docker"
@@ -37,9 +38,7 @@ def test_host_docker_resources_have_one_exact_owner() -> None:
     }
     assert found == EXPECTED
     assert not (ROOT / "docker").exists()
-    for relative in EXPECTED:
-        mode = stat.S_IMODE((OWNER / relative).stat().st_mode)
-        assert mode == 0o644, f"{relative} mode is {mode:o}"
+    assert tracked_source_modes(ROOT, OWNER) == dict.fromkeys(EXPECTED, 0o644)
 
 
 def test_product_image_templates_and_root_secret_exclusions_stay_owned() -> None:
@@ -84,5 +83,28 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     host = (OWNER / "Dockerfile.host-builder").read_text(encoding="utf-8")
     assert "COPY --chmod=555 build_system/docker/materialize-install-os.sh" in install
     assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh" in package
+    assert (
+        "COPY build_system/builder/image/tools/build/materialize_package_ort.py "
+        "/usr/local/bin/materialize-package-ort.py"
+    ) in package
     assert "COPY sources-multiarch.sh /tmp/" in host
     assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
+
+
+def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
+    """A failed immutable snapshot request must not discard completed bytes."""
+    config = (ROOT / "config/gate.toml").read_text(encoding="utf-8")
+    for name, namespace in (
+        ("Dockerfile.install-builder", "install"),
+        ("Dockerfile.package-builder", "package"),
+    ):
+        source = (OWNER / name).read_text(encoding="utf-8")
+        assert f'apt_lists_cache_id = "capsem-{namespace}-apt-lists"' in config
+        assert f'apt_archives_cache_id = "capsem-{namespace}-apt-archives"' in config
+        assert "id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked" in source
+        assert "id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked" in source
+        assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
+
+    for helper in ("materialize-install-os.sh", "swap-dev-libs.sh"):
+        source = (OWNER / helper).read_text(encoding="utf-8")
+        assert "rm -rf /var/lib/apt/lists" not in source

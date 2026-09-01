@@ -72,6 +72,25 @@ def test_the_harness_is_built_before_it_is_invoked() -> None:
     assert _argv(plan, "bench.run")[0] == str(CONFIG.path(SETTINGS.binary))
 
 
+def test_complete_gate_fitness_uses_the_owned_harness() -> None:
+    """Preparation asks the Rust machine model before expensive VM work."""
+    harness, fitness = bench.fitness(CONFIG)
+    build = [shlex.split(action.render()) for action in harness.actions]
+    doctor = [shlex.split(action.render()) for action in fitness.actions]
+
+    assert build[0] == [
+        "cargo",
+        "build",
+        "-p",
+        SETTINGS.crate,
+        "--bin",
+        SETTINGS.bin_name,
+    ]
+    assert doctor[0] == [str(CONFIG.path(SETTINGS.binary)), "doctor"]
+    assert [exclusive.name for exclusive in harness.contends] == ["workspace_binaries"]
+    assert [exclusive.name for exclusive in fitness.contends] == ["host_service"]
+
+
 def _step(plan, label: str):
     for step in plan.steps:
         if step.label == label:

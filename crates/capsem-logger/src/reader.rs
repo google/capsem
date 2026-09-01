@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::events::{
-    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, ModelCall, NetEvent, SecurityAskEvent,
-    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent,
-    ToolCallEntry, ToolResponseEntry,
+    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, ModelCall, NetEvent, SecurityAskEvent, SecurityAskStatus,
+    SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
 
@@ -347,9 +346,10 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 
     match first.as_str() {
         "SELECT" | "WITH" | "EXPLAIN" => Ok(()),
-        "PRAGMA" | "INSERT" | "UPDATE" | "DELETE" | "DROP" | "ALTER" | "CREATE" | "ATTACH"
-        | "DETACH" | "REPLACE" | "VACUUM" | "REINDEX" | "BEGIN" | "COMMIT" | "ROLLBACK"
-        | "SAVEPOINT" | "RELEASE" => Err(format!("{first} statements are not allowed")),
+        "PRAGMA" | "INSERT" | "UPDATE" | "DELETE" | "DROP" | "ALTER" | "CREATE" | "ATTACH" | "DETACH" | "REPLACE"
+        | "VACUUM" | "REINDEX" | "BEGIN" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" => {
+            Err(format!("{first} statements are not allowed"))
+        }
         _ => Err(format!("unsupported statement type: {first}")),
     }
 }
@@ -367,9 +367,7 @@ pub struct DbReader {
 impl DbReader {
     /// Open a query-only connection to the given DB file.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_URI;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
         let memory_uri = schema::memory_uri_for_path(path);
         schema::with_memory_schema_lock(|| {
@@ -512,12 +510,7 @@ impl DbReader {
         self.query_raw_params_inner(sql, &[], max_rows)
     }
 
-    fn query_raw_params_inner(
-        &self,
-        sql: &str,
-        params: &[Value],
-        max_rows: usize,
-    ) -> Result<String, String> {
+    fn query_raw_params_inner(&self, sql: &str, params: &[Value], max_rows: usize) -> Result<String, String> {
         let mut stmt = self.conn.prepare(sql).map_err(|e| e.to_string())?;
 
         let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -545,13 +538,10 @@ impl DbReader {
                 boxed
             })
             .collect();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            rusqlite_params.iter().map(|b| b.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
         let mut rows: Vec<Vec<Value>> = Vec::new();
-        let mut raw_rows = stmt
-            .query(param_refs.as_slice())
-            .map_err(|e| e.to_string())?;
+        let mut raw_rows = stmt.query(param_refs.as_slice()).map_err(|e| e.to_string())?;
 
         while let Some(row) = raw_rows.next().map_err(|e| e.to_string())? {
             if rows.len() >= max_rows {
@@ -562,9 +552,7 @@ impl DbReader {
                 let val = row.get_ref(i).map_err(|e| e.to_string())?;
                 let json_val = match val {
                     rusqlite::types::ValueRef::Null => Value::Null,
-                    rusqlite::types::ValueRef::Integer(n) => {
-                        Value::Number(serde_json::Number::from(n))
-                    }
+                    rusqlite::types::ValueRef::Integer(n) => Value::Number(serde_json::Number::from(n)),
                     rusqlite::types::ValueRef::Real(f) => {
                         if f.is_finite() {
                             serde_json::Number::from_f64(f)
@@ -578,9 +566,7 @@ impl DbReader {
                         let s = std::str::from_utf8(t).unwrap_or("<invalid utf8>");
                         Value::String(s.to_string())
                     }
-                    rusqlite::types::ValueRef::Blob(b) => {
-                        Value::String(format!("<blob {} bytes>", b.len()))
-                    }
+                    rusqlite::types::ValueRef::Blob(b) => Value::String(format!("<blob {} bytes>", b.len())),
                 };
                 values.push(json_val);
             }
@@ -669,10 +655,7 @@ impl DbReader {
     /// This returns the full forensic row, including the rule snapshot and
     /// normalized event payload as stored at match time. Runtime endpoints may
     /// expose a smaller projection, but must not consult live rules for truth.
-    pub fn recent_security_rule_events(
-        &self,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
+    pub fn recent_security_rule_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
                     rule_action, detection_level, rule_json, event_json, trace_id,
@@ -686,10 +669,7 @@ impl DbReader {
     }
 
     /// Query recent ask lifecycle records, newest first.
-    pub fn recent_security_ask_events(
-        &self,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<SecurityAskEvent>> {
+    pub fn recent_security_ask_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityAskEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
                     rule_name, status, rule_json, event_json, resolver, reason, trace_id
@@ -702,10 +682,7 @@ impl DbReader {
     }
 
     /// Return the latest lifecycle row for an ask id.
-    pub fn latest_security_ask_event(
-        &self,
-        ask_id: &str,
-    ) -> rusqlite::Result<Option<SecurityAskEvent>> {
+    pub fn latest_security_ask_event(&self, ask_id: &str) -> rusqlite::Result<Option<SecurityAskEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
                     rule_name, status, rule_json, event_json, resolver, reason, trace_id
@@ -720,11 +697,11 @@ impl DbReader {
 
     /// Aggregate security rule information from the session DB only.
     pub fn security_rule_stats(&self) -> rusqlite::Result<SecurityRuleStats> {
-        let total =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
-                    row.get::<_, i64>(0).map(|value| value as u64)
-                })?;
+        let total = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
+                row.get::<_, i64>(0).map(|value| value as u64)
+            })?;
 
         let mut action_stmt = self.conn.prepare(
             "SELECT rule_action, COUNT(*) FROM security_rule_events
@@ -852,10 +829,9 @@ impl DbReader {
 
     /// Count total model calls.
     pub fn model_call_count(&self) -> rusqlite::Result<usize> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM model_calls", [], |row| {
-                row.get::<_, i64>(0).map(|n| n as usize)
-            })
+        self.conn.query_row("SELECT COUNT(*) FROM model_calls", [], |row| {
+            row.get::<_, i64>(0).map(|n| n as usize)
+        })
     }
 
     /// Get tool calls for a given model_call_id.
@@ -870,9 +846,7 @@ impl DbReader {
                 call_id: row.get(1)?,
                 tool_name: row.get(2)?,
                 arguments: row.get(3)?,
-                origin: row
-                    .get::<_, String>(4)
-                    .unwrap_or_else(|_| "native".to_string()),
+                origin: row.get::<_, String>(4).unwrap_or_else(|_| "native".to_string()),
                 trace_id: None,
             })
         })?;
@@ -880,10 +854,7 @@ impl DbReader {
     }
 
     /// Get tool responses for a given model_call_id.
-    pub fn tool_responses_for(
-        &self,
-        model_call_id: i64,
-    ) -> rusqlite::Result<Vec<ToolResponseEntry>> {
+    pub fn tool_responses_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolResponseEntry>> {
         let credential_ref_col = self.optional_column_expr("tool_responses", "credential_ref");
         let sql = format!(
             "SELECT call_id, content_preview, is_error, {credential_ref_col}
@@ -905,9 +876,8 @@ impl DbReader {
     /// Compute aggregate session statistics from all tables.
     pub fn session_stats(&self) -> rusqlite::Result<SessionStats> {
         // Net event aggregates.
-        let (net_total, net_allowed, net_denied, net_error, net_bytes_sent, net_bytes_received) =
-            self.conn.query_row(
-                "SELECT
+        let (net_total, net_allowed, net_denied, net_error, net_bytes_sent, net_bytes_received) = self.conn.query_row(
+            "SELECT
                     COUNT(*),
                     COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
@@ -915,18 +885,18 @@ impl DbReader {
                     COALESCE(SUM(bytes_sent), 0),
                     COALESCE(SUM(bytes_received), 0)
                  FROM net_events",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)? as u64,
-                        row.get::<_, i64>(1)? as u64,
-                        row.get::<_, i64>(2)? as u64,
-                        row.get::<_, i64>(3)? as u64,
-                        row.get::<_, i64>(4)? as u64,
-                        row.get::<_, i64>(5)? as u64,
-                    ))
-                },
-            )?;
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
+                    row.get::<_, i64>(5)? as u64,
+                ))
+            },
+        )?;
 
         // Model call aggregates.
         let (
@@ -1017,11 +987,7 @@ impl DbReader {
     /// Net events bucketed over time. Fetches timestamps in a window
     /// and buckets them in Rust. Returns `count` buckets of `bucket_min` minutes each,
     /// ending at the most recent event.
-    pub fn net_events_over_time(
-        &self,
-        bucket_min: u64,
-        count: usize,
-    ) -> rusqlite::Result<Vec<TimeBucket>> {
+    pub fn net_events_over_time(&self, bucket_min: u64, count: usize) -> rusqlite::Result<Vec<TimeBucket>> {
         let bucket_sec = bucket_min * 60;
         let window_sec = bucket_sec * count as u64;
 
@@ -1054,16 +1020,13 @@ impl DbReader {
         )?;
 
         let offset = format!("-{window_sec} seconds");
-        let rows = stmt.query_map(
-            params![window_start as i64, bucket_sec as i64, offset],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as usize,
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, i64>(2)? as u64,
-                ))
-            },
-        )?;
+        let rows = stmt.query_map(params![window_start as i64, bucket_sec as i64, offset], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as usize,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+            ))
+        })?;
 
         for row in rows {
             let (mut idx, allowed, denied) = row?;
@@ -1138,11 +1101,7 @@ impl DbReader {
     }
 
     /// Search model calls by provider or model substring.
-    pub fn search_model_calls(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<(i64, ModelCall)>> {
+    pub fn search_model_calls(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<(i64, ModelCall)>> {
         let pattern = format!("%{query}%");
         let sql = format!(
             "SELECT {}
@@ -1155,9 +1114,7 @@ impl DbReader {
             self.model_call_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit as i64], |row| {
-            read_model_call_row(row)
-        })?;
+        let rows = stmt.query_map(params![pattern, limit as i64], read_model_call_row)?;
         rows.collect()
     }
 
@@ -1210,10 +1167,9 @@ impl DbReader {
 
     /// Count total file events in the session DB.
     pub fn file_event_count(&self) -> rusqlite::Result<u64> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| {
-                row.get::<_, i64>(0).map(|n| n as u64)
-            })
+        self.conn.query_row("SELECT COUNT(*) FROM fs_events", [], |row| {
+            row.get::<_, i64>(0).map(|n| n as u64)
+        })
     }
 
     /// Tool usage with response byte and duration stats from model_calls.
@@ -1372,21 +1328,18 @@ impl DbReader {
                     call_id: row.get(2)?,
                     tool_name: row.get(3)?,
                     arguments: row.get(4)?,
-                    origin: row
-                        .get::<_, String>(5)
-                        .unwrap_or_else(|_| "native".to_string()),
+                    origin: row.get::<_, String>(5).unwrap_or_else(|_| "native".to_string()),
                     trace_id: None,
                 },
             ))
         })?;
 
         // Fetch all tool responses for this trace in one batch.
-        let tool_response_credential_ref_col =
-            if self.has_column("tool_responses", "credential_ref") {
-                "tr.credential_ref".to_string()
-            } else {
-                "NULL AS credential_ref".to_string()
-            };
+        let tool_response_credential_ref_col = if self.has_column("tool_responses", "credential_ref") {
+            "tr.credential_ref".to_string()
+        } else {
+            "NULL AS credential_ref".to_string()
+        };
         let tool_response_sql = format!(
             "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}
              FROM tool_responses tr
@@ -1408,8 +1361,7 @@ impl DbReader {
         })?;
 
         // Group by model_call_id.
-        let mut tool_calls_map: std::collections::HashMap<i64, Vec<ToolCallEntry>> =
-            std::collections::HashMap::new();
+        let mut tool_calls_map: std::collections::HashMap<i64, Vec<ToolCallEntry>> = std::collections::HashMap::new();
         for res in all_tool_calls {
             let (mc_id, entry) = res?;
             tool_calls_map.entry(mc_id).or_default().push(entry);
@@ -1454,11 +1406,7 @@ impl DbReader {
     }
 
     /// Search file events by path substring.
-    pub fn search_file_events(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<FileEvent>> {
+    pub fn search_file_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
         let pattern = format!("%{query}%");
         let trace_id_col = self.optional_column_expr("fs_events", "trace_id");
         let credential_ref_col = self.optional_column_expr("fs_events", "credential_ref");
@@ -1549,16 +1497,15 @@ impl DbReader {
              FROM tool_calls
              WHERE origin IN ('native', 'mcp', 'builtin', 'local')"
             .to_string();
-        let (total, allowed, warned, denied, errored) =
-            self.conn.query_row(&totals_sql, [], |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u64,
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, i64>(2)? as u64,
-                    row.get::<_, i64>(3)? as u64,
-                    row.get::<_, i64>(4)? as u64,
-                ))
-            })?;
+        let (total, allowed, warned, denied, errored) = self.conn.query_row(&totals_sql, [], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u64,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+                row.get::<_, i64>(3)? as u64,
+                row.get::<_, i64>(4)? as u64,
+            ))
+        })?;
 
         let by_server_sql = "SELECT COALESCE(server_name, origin),
                     COUNT(*) as cnt,
@@ -1591,10 +1538,9 @@ impl DbReader {
 
     /// Raw tool-call row count for session-index rollups.
     pub fn raw_tool_call_count(&self) -> rusqlite::Result<u64> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM tool_calls", [], |row| {
-                Ok(row.get::<_, i64>(0)? as u64)
-            })
+        self.conn.query_row("SELECT COUNT(*) FROM tool_calls", [], |row| {
+            Ok(row.get::<_, i64>(0)? as u64)
+        })
     }
 
     // -----------------------------------------------------------------
@@ -1603,12 +1549,12 @@ impl DbReader {
 
     /// Counts of exec and audit events in this session.
     pub fn history_counts(&self) -> rusqlite::Result<HistoryCounts> {
-        let exec_count: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM exec_events", [], |row| row.get(0))?;
-        let audit_count: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?;
+        let exec_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM exec_events", [], |row| row.get(0))?;
+        let audit_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?;
         Ok(HistoryCounts {
             exec_count: exec_count as u64,
             audit_count: audit_count as u64,

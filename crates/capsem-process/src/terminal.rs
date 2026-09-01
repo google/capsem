@@ -61,6 +61,7 @@ impl TerminalRelay {
         let inner = self.inner.lock().unwrap();
         let rx = inner.broadcast.subscribe();
         let snapshot: Vec<u8> = inner.buffer.iter().copied().collect();
+        drop(inner);
         (snapshot, rx)
     }
 }

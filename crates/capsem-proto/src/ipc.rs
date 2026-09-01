@@ -22,11 +22,7 @@ pub enum ServiceToProcess {
     /// Execute a command and wait for completion (structured).
     Exec { id: u64, command: String },
     /// Write a file to the guest.
-    WriteFile {
-        id: u64,
-        path: String,
-        data: Vec<u8>,
-    },
+    WriteFile { id: u64, path: String, data: Vec<u8> },
     /// Read a file from the guest.
     ReadFile { id: u64, path: String },
     /// Record an explicit file import/export boundary through the process-owned
@@ -88,11 +84,7 @@ pub enum ProcessToService {
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },
     /// State change notification (e.g. Booting -> Running).
-    StateChanged {
-        id: String,
-        state: String,
-        trigger: String,
-    },
+    StateChanged { id: String, state: String, trigger: String },
     /// Result of an Exec command.
     ExecResult {
         id: u64,
@@ -131,10 +123,7 @@ pub enum ProcessToService {
     /// Guest quiescence complete: filesystem frozen, safe to snapshot.
     SnapshotReady { id: String },
     /// Response to McpListServers.
-    McpServersResult {
-        id: u64,
-        servers: Vec<McpServerStatus>,
-    },
+    McpServersResult { id: u64, servers: Vec<McpServerStatus> },
     /// Response to McpListTools.
     McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
     /// Response to McpRefreshTools.

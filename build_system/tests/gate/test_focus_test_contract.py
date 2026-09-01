@@ -32,7 +32,7 @@ def _args(group: str, mode: str = "reuse") -> argparse.Namespace:
 @pytest.mark.parametrize(("group", "target"), sorted(focus.TARGETS.items()))
 def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> None:
     runner = RecordingRunner(ROOT)
-    qualification = LocalQualification(bin_dir="target/debug")
+    qualification = LocalQualification(bin_dir="cache/target/cargo/debug")
     alias = focus.FocusTestCommand(runner, _args(group), qualification=qualification)
     owner_args = vars(_args(group)) | {"quick": False, "dimensions": "", "commit": "unknown"}
     owner = target(
@@ -49,7 +49,7 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     plan = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("release-system"),
-        qualification=LocalQualification(bin_dir="target/debug"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     ).plan().describe()
 
     assert "contracts.release" in plan
@@ -61,11 +61,27 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     assert "rehearsal.cohort" not in plan
 
 
+def test_rust_focus_uses_the_configured_affected_selector() -> None:
+    assert focus.TARGETS["rust"] is focus.RustAffectedCommand
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("rust"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    )
+
+    rendered = command.plan().describe()
+    assert command.private_checkout is False
+    assert command.exclusive is True
+    assert "rust.affected" in rendered
+    assert command._config.devloop.rust_affected in rendered
+    assert "capsem-gate" not in rendered
+
+
 def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> None:
     command = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("assets", "clean"),
-        qualification=LocalQualification(bin_dir="target/debug"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     )
 
     owner = command._target()
@@ -91,3 +107,10 @@ def test_the_public_recipe_passes_only_the_group_and_reuse_mode() -> None:
     recipe = (ROOT / "justfile").read_text(encoding="utf-8")
     assert f'{variables.FOCUS_TEST} group mode="reuse":' in recipe
     assert f"capsem-gate {variables.FOCUS_TEST}" in recipe
+
+
+def test_the_just_skill_lists_every_focus_owner() -> None:
+    guide = (ROOT / "skills/dev-just/SKILL.md").read_text(encoding="utf-8")
+    row = next(line for line in guide.splitlines() if "just focus-test <group>" in line)
+    for group in focus.TARGETS:
+        assert f"`{group}`" in row, f"focus owner {group!r} is missing from /dev-just"

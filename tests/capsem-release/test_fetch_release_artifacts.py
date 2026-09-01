@@ -1439,11 +1439,12 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
 
     staged_manifest = STAGE.stage_profiles(inputs, assets, config_root, ROOT / "config")
     config = gate_config.load(ROOT)
-    config_manifest = config_root / config.suites.pytest.test_manifest
+    content = ProfileContent.isolated(config, root)
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(staged_manifest.read_bytes())
 
-    selected = SelectedInstallContent(ProfileContent.isolated(config, root))
+    selected = SelectedInstallContent(content)
     selected.require_complete(config, arches=(config.architectures["x86_64"],))
 
     assert (inputs / "manifest.json").read_bytes() == original_manifest
@@ -1700,7 +1701,7 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
             (root / name).write_bytes(payload)
 
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
-    binary_dir = tmp_path / "target/debug"
+    binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     stale = binary_dir / "capsem-source-built"
     stale.write_bytes(b"must-not-survive")
@@ -1795,7 +1796,7 @@ def test_package_staging_rejects_inventory_missing_from_the_package(
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
 
     with pytest.raises(ValueError, match="capsem-service"):
-        STAGE.stage_package_binaries(inputs, tmp_path / "target/debug")
+        STAGE.stage_package_binaries(inputs, tmp_path / "cache/target/cargo/debug")
 
 
 def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
@@ -1813,7 +1814,7 @@ def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
             (root / name).write_bytes(payload)
 
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
-    binary_dir = tmp_path / "target/debug"
+    binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     (binary_dir / "capsem").write_bytes(b"source-capsem")
     (binary_dir / "capsem-mcp").write_bytes(b"source-only-fallback")

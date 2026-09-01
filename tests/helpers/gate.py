@@ -159,6 +159,8 @@ class RecordingRunner(Runner):
     test can make one step fail and assert what the gate does next.
     """
 
+    observing = True
+
     def __init__(
         self,
         root: Path,
@@ -529,7 +531,7 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
         # its clonefile choice must use the real interpreter platform.
         with patch.object(host, "on_macos", return_value=sys.platform == "darwin"):
             # The subject only, not `_copy_carried`'s build outputs. A plan's
-            # text comes from source; the carried inputs are `target/`, which a
+            # text comes from source; the carried inputs are `cache/target/`, which a
             # release proof is actively writing while this copy is taken --
             # so the faithfulness check saw the tree in two states and refused
             # a copy that "holds files from more than one state of it".

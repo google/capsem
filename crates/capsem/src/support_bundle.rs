@@ -65,12 +65,7 @@ impl Default for Opts {
 /// Backwards-compat wrapper over [`run_with_opts`]. Test-only today;
 /// the CLI dispatch goes through `run_with_opts` directly.
 #[allow(dead_code)]
-pub fn run(
-    output: Option<PathBuf>,
-    sessions: usize,
-    include_rootfs: bool,
-    no_redact: bool,
-) -> Result<PathBuf> {
+pub fn run(output: Option<PathBuf>, sessions: usize, include_rootfs: bool, no_redact: bool) -> Result<PathBuf> {
     run_with_opts(Opts {
         output,
         sessions,
@@ -94,10 +89,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     // metadata rather than from the DB itself) but adequate for the
     // user-facing "stays attachable to bug reports" goal.
     let _max_session_bytes = max_session_bytes; // consumed in the session-include loop below
-    let home = capsem_core::paths::capsem_home();
+    let home = capsem_foundation::paths::capsem_home();
     let support_dir = home.join("support");
-    fs::create_dir_all(&support_dir)
-        .with_context(|| format!("create {}", support_dir.display()))?;
+    fs::create_dir_all(&support_dir).with_context(|| format!("create {}", support_dir.display()))?;
 
     let timestamp = ts_filename();
     let host = host_label();
@@ -112,13 +106,13 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     let mut warnings: Vec<String> = Vec::new();
 
     // -- host logs --
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let run_dir = capsem_foundation::paths::capsem_run_dir();
     for name in ["service", "mcp", "gateway", "tray"] {
         let stream = run_dir.join(format!("{name}.log"));
         // Rotation means a stream is several files. Collect them newest-first
         // so a bundle taken days after the failure still carries the day it
         // happened, not just the day it was reported.
-        let files = capsem_core::telemetry::log_stream_files(&stream);
+        let files = capsem_foundation::telemetry::log_stream_files(&stream);
         if files.is_empty() {
             sections.push(Section {
                 path: format!("{bundle_root}/host/{name}.log"),
@@ -138,11 +132,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             let entry_path = format!("{bundle_root}/host/{file_name}");
             match read_tail(&path, MAX_LOG_TAIL_BYTES) {
                 Some(bytes) => {
-                    let bytes = if no_redact {
-                        bytes
-                    } else {
-                        redact_log_bytes(&bytes)
-                    };
+                    let bytes = if no_redact { bytes } else { redact_log_bytes(&bytes) };
                     let len = bytes.len() as u64;
                     add_bytes(&mut tar, &entry_path, &bytes)?;
                     sections.push(Section {
@@ -151,9 +141,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                         bytes: Some(len),
                         missing: false,
                         reason: None,
-                        truncated_to_last_bytes: if path.metadata().map(|m| m.len()).unwrap_or(0)
-                            > MAX_LOG_TAIL_BYTES
-                        {
+                        truncated_to_last_bytes: if path.metadata().map(|m| m.len()).unwrap_or(0) > MAX_LOG_TAIL_BYTES {
                             Some(MAX_LOG_TAIL_BYTES)
                         } else {
                             None
@@ -187,11 +175,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             };
             let entry_path = format!("{bundle_root}/host/stderr/{name}");
             if let Some(bytes) = read_tail(&path, MAX_LOG_TAIL_BYTES) {
-                let bytes = if no_redact {
-                    bytes
-                } else {
-                    redact_log_bytes(&bytes)
-                };
+                let bytes = if no_redact { bytes } else { redact_log_bytes(&bytes) };
                 let len = bytes.len() as u64;
                 add_bytes(&mut tar, &entry_path, &bytes)?;
                 sections.push(Section {
@@ -228,11 +212,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                 .unwrap_or("unnamed.jsonl")
                 .to_string();
             if let Some(bytes) = read_tail(&p, MAX_LOG_TAIL_BYTES) {
-                let bytes = if no_redact {
-                    bytes
-                } else {
-                    redact_log_bytes(&bytes)
-                };
+                let bytes = if no_redact { bytes } else { redact_log_bytes(&bytes) };
                 let len = bytes.len() as u64;
                 let entry_path = format!("{bundle_root}/host/app/{name}");
                 add_bytes(&mut tar, &entry_path, &bytes)?;
@@ -320,9 +300,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                 match fs::read(&path) {
                     Ok(bytes) => {
                         // session.db is binary; don't redact. Logs get redacted unless --no-redact.
-                        let bytes = if !no_redact
-                            && (fname.ends_with(".log") || fname.ends_with(".json"))
-                        {
+                        let bytes = if !no_redact && (fname.ends_with(".log") || fname.ends_with(".json")) {
                             redact_log_bytes(&bytes)
                         } else {
                             bytes
@@ -331,11 +309,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                         add_bytes(&mut tar, &entry_path, &bytes)?;
                         sections.push(Section {
                             path: entry_path,
-                            kind: if fname == "session.db" {
-                                "sqlite"
-                            } else {
-                                "log"
-                            },
+                            kind: if fname == "session.db" { "sqlite" } else { "log" },
                             bytes: Some(len),
                             missing: false,
                             reason: None,
@@ -370,9 +344,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                     });
                 }
             } else {
-                warnings.push(format!(
-                    "rootfs.img for session {id} excluded (use --include-rootfs)"
-                ));
+                warnings.push(format!("rootfs.img for session {id} excluded (use --include-rootfs)"));
             }
         }
     }
@@ -643,11 +615,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         let path = run_dir.join("doctor-latest.log");
         let entry_path = format!("{bundle_root}/doctor/output.txt");
         if let Ok(bytes) = fs::read(&path) {
-            let bytes = if no_redact {
-                bytes
-            } else {
-                redact_log_bytes(&bytes)
-            };
+            let bytes = if no_redact { bytes } else { redact_log_bytes(&bytes) };
             let len = bytes.len() as u64;
             add_bytes(&mut tar, &entry_path, &bytes)?;
             sections.push(Section {
@@ -716,22 +684,14 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         ],
     };
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
-    add_bytes(
-        &mut tar,
-        &format!("{bundle_root}/manifest.json"),
-        &manifest_bytes,
-    )?;
+    add_bytes(&mut tar, &format!("{bundle_root}/manifest.json"), &manifest_bytes)?;
 
     let gz = tar.into_inner().context("finalize tar")?;
     gz.finish().context("finalize gzip")?;
 
     // Print a one-line summary to stderr (not stdout -- stdout reserved
     // for scripts that wrap the command and pipe stdout).
-    let total_bytes = manifest
-        .sections
-        .iter()
-        .filter_map(|s| s.bytes)
-        .sum::<u64>();
+    let total_bytes = manifest.sections.iter().filter_map(|s| s.bytes).sum::<u64>();
     let missing = manifest.sections.iter().filter(|s| s.missing).count();
     eprintln!(
         "wrote support bundle: {} ({} bytes across {} sections, {} missing)",
@@ -762,13 +722,11 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     // Delegates: the shared reader seeks to each file's tail, so guest console
     // output cannot decide how much memory `capsem support` allocates, and a
     // rotated stream resolves the same way it does for every other consumer.
-    capsem_core::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
+    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {
-    use capsem_core::net::policy_config::{
-        corp_config_paths, corp_provision, ProfileCatalog, ProfileCatalogSource,
-    };
+    use capsem_core::net::policy_config::{corp_config_paths, corp_provision, ProfileCatalog, ProfileCatalogSource};
 
     let profiles = match ProfileCatalog::load_default() {
         Ok(catalog) => {
@@ -780,8 +738,7 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
                 .profiles()
                 .map(|profile| {
                     let obom = profile.obom.as_ref().and_then(|obom| {
-                        let current_arch =
-                            capsem_core::net::policy_config::current_profile_arch().to_string();
+                        let current_arch = capsem_core::net::policy_config::current_profile_arch().to_string();
                         let descriptor = obom.current_arch_obom()?;
                         let rootfs_hash = profile
                             .assets
@@ -805,10 +762,7 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
                         .mcp
                         .as_ref()
                         .map(|mcp| {
-                            mcp.servers.len()
-                                + usize::from(
-                                    mcp.server_enabled.get("local").copied().unwrap_or(false),
-                                )
+                            mcp.servers.len() + usize::from(mcp.server_enabled.get("local").copied().unwrap_or(false))
                         })
                         .unwrap_or(0);
                     serde_json::json!({
@@ -898,26 +852,14 @@ fn ts_filename() -> String {
         .replace("-", "")
         .chars()
         .enumerate()
-        .map(|(i, c)| {
-            if i == 8 {
-                format!("-{c}")
-            } else {
-                c.to_string()
-            }
-        })
+        .map(|(i, c)| if i == 8 { format!("-{c}") } else { c.to_string() })
         .collect()
 }
 
 fn host_label() -> String {
     hostname()
         .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
         .collect::<String>()
         .chars()
         .take(32)
@@ -925,7 +867,7 @@ fn host_label() -> String {
 }
 
 fn runtime_boundary_debug_contract() -> serde_json::Value {
-    let host_vsock_services: Vec<_> = capsem_core::capsem_proto::host_vsock_services()
+    let host_vsock_services: Vec<_> = capsem_proto::host_vsock_services()
         .iter()
         .map(|service| {
             serde_json::json!({

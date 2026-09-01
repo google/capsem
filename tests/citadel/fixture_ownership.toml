@@ -57,7 +57,10 @@ target = "tests/fixtures/session/test.db"
 disposition = "retain"
 owner = "logger roundtrip/session fixture owner"
 item = "S05-004"
-consumer = "crates/capsem-logger/tests/roundtrip.rs"
+consumers = [
+  "crates/capsem-logger/tests/roundtrip/file_events.rs",
+  "crates/capsem-logger/tests/roundtrip/reader_queries.rs",
+]
 symbols = [
   "fixture_query_raw_select",
   "fixture_recent_traces_non_empty",

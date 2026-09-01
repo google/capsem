@@ -126,19 +126,13 @@ fn rejects_slash() {
     let dir = temp_share("path-slash");
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("sub/file.txt"), b"data").unwrap();
-    assert!(InodeTable::new(&dir)
-        .unwrap()
-        .lookup(1, b"sub/file.txt")
-        .is_none());
+    assert!(InodeTable::new(&dir).unwrap().lookup(1, b"sub/file.txt").is_none());
 }
 
 #[test]
 fn rejects_null() {
     let dir = temp_share("path-null");
-    assert!(InodeTable::new(&dir)
-        .unwrap()
-        .lookup(1, b"file\0.txt")
-        .is_none());
+    assert!(InodeTable::new(&dir).unwrap().lookup(1, b"file\0.txt").is_none());
 }
 
 #[test]
@@ -173,20 +167,14 @@ fn preserves_symlink_to_directory_outside_share_without_following_it() {
 fn allows_regular_file() {
     let dir = temp_share("path-regular");
     std::fs::write(dir.join("ok.txt"), b"fine").unwrap();
-    assert!(InodeTable::new(&dir)
-        .unwrap()
-        .lookup(1, b"ok.txt")
-        .is_some());
+    assert!(InodeTable::new(&dir).unwrap().lookup(1, b"ok.txt").is_some());
 }
 
 #[test]
 fn allows_dotfile() {
     let dir = temp_share("path-dotfile");
     std::fs::write(dir.join(".hidden"), b"secret").unwrap();
-    assert!(InodeTable::new(&dir)
-        .unwrap()
-        .lookup(1, b".hidden")
-        .is_some());
+    assert!(InodeTable::new(&dir).unwrap().lookup(1, b".hidden").is_some());
 }
 
 #[test]

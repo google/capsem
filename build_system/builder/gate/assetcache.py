@@ -7,15 +7,15 @@ import time
 from pathlib import Path
 
 from ..policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
-from . import assetreceipt, prefix
+from . import assetreceipt, cachelayout, prefix
 from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import link, make_dir, remove
 
 
 def root(config: GateConfig) -> Path:
-    """The stable VM image cache beside the ephemeral prefix root."""
-    return Path(config.prefix.vm_image_cache.format(parent=config.prefix.parent)).expanduser()
+    """The stable VM image cache inside the repository cache."""
+    return cachelayout.shared_path(config, config.prefix.vm_image_cache)
 
 
 def lane(config: GateConfig, identity: str, *, profile: str, arch: Arch) -> Path:
@@ -125,15 +125,23 @@ def enforce(config: GateConfig, *, protected: frozenset[Path]) -> tuple[Path, ..
             size = _tree_size(path)
         else:
             created, last_used, size = metadata
-        products.append(CacheProduct(key, size, created, last_used, path.resolve() in pinned))
+        products.append(
+            CacheProduct(
+                key=key,
+                size_bytes=size,
+                created_at=created,
+                last_used_at=last_used,
+                protected=path.resolve() in pinned,
+            )
+        )
         by_key[key] = path
     policy = config.assets.cache
     plan = plan_reclaim(
         tuple(products),
         CacheLimits(
-            policy.maximum_count,
-            policy.maximum_age_hours * 3600,
-            policy.maximum_bytes,
+            maximum_count=policy.maximum_count,
+            maximum_age_seconds=policy.maximum_age_hours * 3600,
+            maximum_bytes=policy.maximum_bytes,
         ),
         now=now,
     )

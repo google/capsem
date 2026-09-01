@@ -1,17 +1,17 @@
-"""Citadel guard: a test may not resolve a `target/` tree a pulled lane lacks.
+"""Citadel guard: a test may not resolve a `cache/target/` tree a pulled lane lacks.
 
 A release lane qualifies from a prefix carrying only tracked files, so anything
-under `target/` is absent unless the prefix links it or a step builds it. The
-checked-in tests resolve `PROJECT_ROOT / "target" / ...` in about forty places
+under `cache/target/` is absent unless the prefix links it or a step builds it. The
+checked-in tests resolve `PROJECT_ROOT / "cache" / "target" / ...` in about forty places
 and are right to -- a test should not have to know whether this run built its
 inputs or was handed them.
 
 Three binary-release dispatches were spent on exactly that mismatch, one
-directory at a time: `target/debug` for the host binaries, then `target/config`
+directory at a time: `cache/target/cargo/debug` for the host binaries, then `cache/target/config`
 for the materialized profiles, with `--maxfail=5` hiding whatever stood behind
 them. Each fix was applied at the site that failed rather than to the class.
 
-The class is checkable without running anything: for each `target/` subtree a
+The class is checkable without running anything: for each `cache/target/` subtree a
 test resolves, either the prefix links it for a pulled lane, or a step in that
 lane builds it, or the test skips when it is absent. Anything else is a
 dispatch waiting to happen.
@@ -26,8 +26,8 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: Both first-party trees that run inside a lane. Scripts were the hole the
-#: first version left: `integration_test.py` resolves `target/config` and
-#: `mock_server.py` resolves `target/debug`, exactly like the tests do, and
+#: first version left: `integration_test.py` resolves `cache/target/config` and
+#: `mock_server.py` resolves `cache/target/cargo/debug`, exactly like the tests do, and
 #: nothing was checking them.
 SOURCES = (PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
 
@@ -53,20 +53,20 @@ CREATED_BY_THE_RUN = {
 
 DECLARED_ABSENT = {
     # Pulled lanes set CAPSEM_ASSETS_DIR to the verified content cohort before
-    # importing test helpers, so their target/assets fallback is deliberately
+    # importing test helpers, so their cache/target/assets fallback is deliberately
     # absent from the private prefix.
     "assets",
-    # `conftest._required_artifacts_for_run` drops this for a release lane: it
-    # is a source-build intermediate, and requiring it there would force a
-    # rebuild that proves nothing about the pulled package.
-    "linux-agent",
+    # `conftest._required_artifacts_for_run` drops build/linux-agent for a
+    # release lane: build/ contains source-build intermediates, and requiring
+    # it there would force a rebuild that proves nothing about the package.
+    "build",
 }
 
 #: Read through the AST rather than by pattern. The first version matched the
 #: literal `PROJECT_ROOT`, and thirty-three modules spell the same thing `ROOT`
-#: -- so a test resolving `ROOT / "target/..."` walked straight past a guard
+#: -- so a test resolving `ROOT / "cache/target/..."` walked straight past a guard
 #: written to stop exactly that.
-_TARGET = "target"
+_CACHE_PREFIX = ("cache", "target")
 
 
 def _first_party() -> list[Path]:
@@ -110,7 +110,7 @@ def _joined(node: ast.expr) -> list[str]:
 
 
 def _resolved_trees() -> dict[str, list[str]]:
-    """Every `target/<tree>` a test resolves from its checkout root."""
+    """Every `cache/target/<tree>` a test resolves from its checkout root."""
     trees: dict[str, list[str]] = {}
     for path in _first_party():
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -124,9 +124,13 @@ def _resolved_trees() -> dict[str, list[str]]:
             if len(parts) < 2 or parts[0] not in roots:
                 continue
             segments = [segment for part in parts[1:] for segment in part.split("/") if segment]
-            if len(segments) < 2 or segments[0] != _TARGET:
+            if len(segments) < 3 or tuple(segments[:2]) != _CACHE_PREFIX:
                 continue
-            tree_name = segments[1]
+            tree_name = segments[2]
+            if tree_name == "cargo":
+                if len(segments) < 4:
+                    continue
+                tree_name = segments[3]
             # A name with a suffix is a file, and every one found this way is
             # scratch the test writes itself -- a run-state json, a build lock,
             # a fixture blob. What a lane must provide is a directory of
@@ -140,8 +144,8 @@ def _resolved_trees() -> dict[str, list[str]]:
 def test_the_guard_has_subjects() -> None:
     """A rule over nothing asserts nothing."""
     resolved = _resolved_trees()
-    assert resolved, "no test resolves a target/ tree; the pattern has drifted"
-    assert "debug" in resolved, "target/debug is resolved by tests; the pattern missed it"
+    assert resolved, "no test resolves a cache/target/ tree; the pattern has drifted"
+    assert "debug" in resolved, "cache/target/cargo/debug is resolved by tests; the pattern missed it"
 
 
 def test_every_resolved_target_tree_exists_in_a_pulled_lane() -> None:
@@ -167,7 +171,7 @@ def test_every_resolved_target_tree_exists_in_a_pulled_lane() -> None:
         if not name.startswith(("synthetic", "missing"))
     }
     assert not unaccounted, (
-        "these resolve a target/ tree that a release lane's prefix does not "
+        "these resolve a cache/target/ tree that a release lane's prefix does not "
         f"have: {unaccounted}. Link it in cargotarget.link_prefix_trees, or "
         "declare it absent and skip when it is missing."
     )
@@ -186,6 +190,6 @@ def test_the_prefix_actually_links_what_this_guard_claims(tree: str) -> None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert tree in literals or f"{tree}" in source, (
-        f"this guard claims a pulled lane links target/{tree}, but "
+        f"this guard claims a pulled lane links cache/target/{tree}, but "
         "cargotarget never names it"
     )

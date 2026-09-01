@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import platform
-import re
 import shlex
 import shutil
 import subprocess
@@ -18,6 +17,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.runtimemodels import TartRuntimePolicy
 from capsem_builder.release.tools.release_glowup import (
     ArtifactIdentity,
     GlowupContractError,
@@ -33,29 +34,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
 
-STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
-STORAGE_CONTROLLER = PROJECT_ROOT / "build_system" / "scripts" / "build" / "docker-storage-policy.py"
-
-
-def storage_policy_string(section: str, key: str) -> str:
-    text = STORAGE_POLICY.read_text()
-    section_match = re.search(
-        rf"(?ms)^\[{re.escape(section)}\]\s*(.*?)(?=^\[|\Z)",
-        text,
-    )
-    if section_match is None:
-        raise RuntimeError(f"storage policy is missing [{section}]")
-    value_match = re.search(
-        rf'(?m)^{re.escape(key)}\s*=\s*"([^"]+)"\s*$',
-        section_match.group(1),
-    )
-    if value_match is None:
-        raise RuntimeError(f"storage policy [{section}] is missing {key}")
-    return value_match.group(1)
-
-
-OWNED_VM_PREFIX = storage_policy_string("tart", "owned_vm_prefix")
-DEFAULT_IMAGE = storage_policy_string("tart", "base_image")
+_TART = load_policy(PROJECT_ROOT).runtimes["tart"]
+if not isinstance(_TART, TartRuntimePolicy):
+    raise RuntimeError("cache runtime 'tart' is not configured as Tart")
+OWNED_VM_PREFIX = _TART.vm_prefixes[0]
+DEFAULT_IMAGE = _TART.base_images[0]
 AUTHENTICATED_SENTINEL = "CAPSEM_TART_SSH_AUTHENTICATED"
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -98,31 +81,34 @@ def tart_ip_command(vm_name: str, wait_seconds: int = 300) -> list[str]:
     return ["tart", "ip", vm_name, "--wait", str(wait_seconds)]
 
 
-def storage_control_command(command: str, label: str) -> list[str]:
+def cache_control_command(label: str) -> list[str]:
     return [
         "uv",
         "run",
-        "python",
-        str(STORAGE_CONTROLLER),
-        command,
-        "--label",
+        "--project",
+        str(PROJECT_ROOT / "build_system"),
+        "--frozen",
+        "capsem-cache",
+        "--repository",
+        str(PROJECT_ROOT),
+        "runtime-prune",
+        "tart",
+        "--apply",
+        "--reason",
         label,
     ]
 
 
-def run_storage_control(
-    command: str,
+def run_cache_control(
     label: str,
     *,
     strict: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    control = storage_control_command(command, label)
+    control = cache_control_command(label)
     print("+", shlex.join(control), flush=True)
     result = subprocess.run(control, check=False, text=True)
     if strict and result.returncode != 0:
-        raise RuntimeError(
-            f"Tart storage controller failed at {label} (status {result.returncode})"
-        )
+        raise RuntimeError(f"Tart cache controller failed at {label} (status {result.returncode})")
     return result
 
 
@@ -292,7 +278,7 @@ def wait_for_guest_ip(
         if returncode is not None:
             raise RuntimeError(
                 f"Tart VM runner exited before boot (status {returncode}); "
-                "inspect target/macos-tart-glowup/tart-run.log"
+                "inspect cache/target/macos-tart-glowup/tart-run.log"
             )
         result = subprocess.run(
             tart_ip_command(vm_name, 5),
@@ -394,12 +380,12 @@ def main() -> int:
     parser.add_argument(
         "--work-dir",
         type=Path,
-        default=PROJECT_ROOT / "target" / "macos-tart-glowup",
+        default=PROJECT_ROOT / "cache" / "target" / "macos-tart-glowup",
     )
     args = parser.parse_args()
 
     validate_host()
-    run_storage_control("tart-clean", "macos-glowup-preflight")
+    run_cache_control("macos-glowup-preflight")
     package = args.package.resolve()
     if not package.is_file() or package.stat().st_size == 0:
         raise RuntimeError(f"package is missing or empty: {package}")
@@ -457,11 +443,21 @@ def main() -> int:
     request = PROJECT_ROOT / "build_system/packaging/shared/install-manifest-request.sh"
     stage_file(request, share / request.name)
     release_script_root = PROJECT_ROOT / "build_system" / "scripts" / "release"
-    for name in ("verify-installed-release.py", "release_fixture_server.py", "release_transition.py"):
+    for name in (
+        "verify-installed-release.py",
+        "release_fixture_server.py",
+        "release_transition.py",
+    ):
         stage_file(release_script_root / name, share / name)
-    release_site_script = PROJECT_ROOT / "build_system/release_site/scripts/serve-release-test-root.py"
+    release_site_script = (
+        PROJECT_ROOT / "build_system/release_site/scripts/serve-release-test-root.py"
+    )
     stage_file(release_site_script, share / release_site_script.name)
-    for name in ("macos-install-user-request.sh", "macos_tart_transition_support.py", "macos-tart-regression-probes.sh"):
+    for name in (
+        "macos-install-user-request.sh",
+        "macos_tart_transition_support.py",
+        "macos-tart-regression-probes.sh",
+    ):
         stage_file(Path(__file__).resolve().parent / name, share / name)
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
@@ -546,8 +542,7 @@ def main() -> int:
             capture_guest_diagnostics(ip, work_dir)
         cleanup_vm(vm_name)
         terminate_runner(runner, log_stream)
-        final_control = run_storage_control(
-            "tart-clean",
+        final_control = run_cache_control(
             "macos-glowup-final",
             strict=False,
         )

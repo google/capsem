@@ -20,7 +20,7 @@ The Python wrapper may orchestrate but never generate protocol numbers.
 Intentional host evidence lives under
 `benchmarks/baselines/{lifecycle,fork,route-latency}`.
 Historical host-native evidence includes filesystem and machine metadata under
-`benchmarks/baselines/host-native`; use `target/host-native-benchmark`, not `/tmp`, unless
+`benchmarks/baselines/host-native`; use `cache/target/host-native-benchmark`, not `/tmp`, unless
 `CAPSEM_HOST_NATIVE_BENCH_DIR` explicitly selects another disk. There is no Just
 history command: run the owner, review JSON, and commit a new file without
 overwriting prior evidence. Compare Linux x86_64 and macOS arm64 only after the

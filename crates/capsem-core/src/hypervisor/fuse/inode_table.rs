@@ -157,14 +157,11 @@ impl InodeTable {
         let moved: Vec<u64> = self
             .entries
             .iter()
-            .filter_map(|(&ino, entry)| {
-                same_or_descendant(&entry.host_path, old_path).then_some(ino)
-            })
+            .filter_map(|(&ino, entry)| same_or_descendant(&entry.host_path, old_path).then_some(ino))
             .collect();
 
-        self.entries.retain(|ino, entry| {
-            moved.contains(ino) || !same_or_descendant(&entry.host_path, new_path)
-        });
+        self.entries
+            .retain(|ino, entry| moved.contains(ino) || !same_or_descendant(&entry.host_path, new_path));
 
         for ino in moved {
             if let Some(entry) = self.entries.get_mut(&ino) {
@@ -186,15 +183,12 @@ impl InodeTable {
         );
         let mut entries = Vec::with_capacity(self.entries.len());
         for (&ino, entry) in &self.entries {
-            let relative = entry
-                .host_path
-                .strip_prefix(&self.root_canonical)
-                .with_context(|| {
-                    format!(
-                        "VirtioFS inode {ino} path is outside VirtioFS root: {}",
-                        entry.host_path.display()
-                    )
-                })?;
+            let relative = entry.host_path.strip_prefix(&self.root_canonical).with_context(|| {
+                format!(
+                    "VirtioFS inode {ino} path is outside VirtioFS root: {}",
+                    entry.host_path.display()
+                )
+            })?;
             let relative_path = relative.as_os_str().as_bytes().to_vec();
             ensure!(
                 relative_path.len() <= MAX_CHECKPOINT_PATH_BYTES,
@@ -203,9 +197,7 @@ impl InodeTable {
             let metadata = match std::fs::symlink_metadata(&entry.host_path) {
                 Ok(metadata) => metadata,
                 Err(error)
-                    if error.kind() == std::io::ErrorKind::NotFound
-                        && ino != 1
-                        && !handle_inodes.contains(&ino) =>
+                    if error.kind() == std::io::ErrorKind::NotFound && ino != 1 && !handle_inodes.contains(&ino) =>
                 {
                     tracing::debug!(
                         inode = ino,
@@ -216,10 +208,7 @@ impl InodeTable {
                 }
                 Err(error) => {
                     return Err(error).with_context(|| {
-                        format!(
-                            "VirtioFS inode {ino} is not reopenable: {}",
-                            entry.host_path.display()
-                        )
+                        format!("VirtioFS inode {ino} is not reopenable: {}", entry.host_path.display())
                     });
                 }
             };
@@ -252,15 +241,8 @@ impl InodeTable {
         let mut paths = HashSet::with_capacity(snapshot.entries.len());
         let mut max_ino = 0u64;
         for entry in &snapshot.entries {
-            ensure!(
-                entry.ino != 0,
-                "VirtioFS inode checkpoint contains inode zero"
-            );
-            ensure!(
-                entry.refcount != 0,
-                "VirtioFS inode {} has zero refcount",
-                entry.ino
-            );
+            ensure!(entry.ino != 0, "VirtioFS inode checkpoint contains inode zero");
+            ensure!(entry.refcount != 0, "VirtioFS inode {} has zero refcount", entry.ino);
             ensure!(
                 entry.relative_path.len() <= MAX_CHECKPOINT_PATH_BYTES,
                 "VirtioFS inode {} checkpoint path exceeds limit",
@@ -292,10 +274,7 @@ impl InodeTable {
                 )
                 .is_some()
             {
-                bail!(
-                    "VirtioFS inode checkpoint contains duplicate inode {}",
-                    entry.ino
-                );
+                bail!("VirtioFS inode checkpoint contains duplicate inode {}", entry.ino);
             }
             max_ino = max_ino.max(entry.ino);
         }
@@ -343,12 +322,9 @@ fn restore_path(root: &Path, relative_bytes: &[u8]) -> Result<PathBuf> {
                 resolved = candidate;
             }
             Ok(_) => {
-                let canonical = candidate.canonicalize().with_context(|| {
-                    format!(
-                        "canonicalize restored VirtioFS path: {}",
-                        candidate.display()
-                    )
-                })?;
+                let canonical = candidate
+                    .canonicalize()
+                    .with_context(|| format!("canonicalize restored VirtioFS path: {}", candidate.display()))?;
                 ensure!(
                     canonical.starts_with(root),
                     "restored path is outside VirtioFS root: {}",
@@ -360,9 +336,7 @@ fn restore_path(root: &Path, relative_bytes: &[u8]) -> Result<PathBuf> {
                 resolved = candidate;
             }
             Err(err) => {
-                return Err(err).with_context(|| {
-                    format!("inspect restored VirtioFS path: {}", candidate.display())
-                })
+                return Err(err).with_context(|| format!("inspect restored VirtioFS path: {}", candidate.display()))
             }
         }
     }
@@ -376,12 +350,7 @@ fn restore_path(root: &Path, relative_bytes: &[u8]) -> Result<PathBuf> {
 
 fn valid_child_name(name: &[u8]) -> Option<&str> {
     let name_str = std::str::from_utf8(name).ok()?;
-    if name_str.is_empty()
-        || name_str == "."
-        || name_str == ".."
-        || name_str.contains('/')
-        || name_str.contains('\0')
-    {
+    if name_str.is_empty() || name_str == "." || name_str == ".." || name_str.contains('/') || name_str.contains('\0') {
         return None;
     }
     Some(name_str)

@@ -84,11 +84,7 @@ fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
     Ok(())
 }
 
-fn reject_settings_keys_not_owned_by(
-    file: &SettingsFile,
-    expected: ConfigOwner,
-    label: &str,
-) -> Result<(), String> {
+fn reject_settings_keys_not_owned_by(file: &SettingsFile, expected: ConfigOwner, label: &str) -> Result<(), String> {
     for id in file.settings.keys() {
         let owner = setting_id_owner(id);
         if owner != expected {

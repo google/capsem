@@ -14,7 +14,7 @@ companions:
        and the companion's watcher detects the PPID change.
 
 Together these prevent the orphan-accumulation class of bug that used to
-make `just test-full -n 4` flake: interrupted or killed test runs can no longer
+make `just test -n 4` flake: interrupted or killed test runs can no longer
 leak trays/gateways that interfere with subsequent runs.
 """
 
@@ -40,8 +40,8 @@ pytestmark = pytest.mark.integration
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-TRAY_BIN = PROJECT_ROOT / "target/debug/capsem-tray"
-GATEWAY_BIN = PROJECT_ROOT / "target/debug/capsem-gateway"
+TRAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-tray"
+GATEWAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-gateway"
 
 # Parent-watch poll interval is 500ms in capsem-guard; give a generous factor
 # for loaded CI while still catching real regressions.
@@ -405,7 +405,7 @@ class TestCompanionDiesWithParent:
 class TestServiceSigkillReapsAllCompanions:
     """End-to-end: SIGKILL the service and verify gateway + tray are gone
     within the watch deadline. This is the regression guard for the orphan
-    accumulation that used to flake `just test-full -n 4`."""
+    accumulation that used to flake `just test -n 4`."""
 
     def test_sigkill_service_kills_companions(self):
         svc = ServiceInstance()

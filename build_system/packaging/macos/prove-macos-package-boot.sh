@@ -30,7 +30,7 @@ done
     echo "ERROR: package, version, and selected assets are required" >&2
     exit 2
 }
-WORK_ROOT="$ROOT/target/macos-package-boot"
+WORK_ROOT="$ROOT/cache/target/macos-package-boot"
 EXPANDED="$WORK_ROOT/expanded"
 CAPSEM_HOME_DIR="$WORK_ROOT/home"
 RUN_DIR=$(mktemp -d /tmp/capsem-pkg-boot.XXXXXX)

@@ -82,7 +82,7 @@ Keep profile and config ownership crisp:
 - Read `config/README.md` and `tests/README.md` before changing profile source,
   generated config, or config fixtures.
 - Checked-in profile files are source contracts. Generated hashes and
-  materialized config belong under `target/` and are produced by the same
+  materialized config belong under `cache/target/` and are produced by the same
   `capsem-admin` rail CI and release use.
 - Developer skills live in repository-level `skills/`; product configuration
   must not mirror them.

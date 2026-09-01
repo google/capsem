@@ -7,8 +7,7 @@ fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
         name: name.into(),
         profile_id: "code".into(),
         profile_revision: "2026.06.08.7".into(),
-        profile_payload_hash:
-            "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
+        profile_payload_hash: "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
         asset_pins: test_asset_pins(),
         ram_mb: 2048,
         cpus: 2,
@@ -29,18 +28,15 @@ fn test_asset_pins() -> BootAssetPins {
     BootAssetPins {
         kernel: BootAssetPin {
             name: "vmlinuz".into(),
-            hash: "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"
-                .into(),
+            hash: "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1".into(),
         },
         initrd: BootAssetPin {
             name: "initrd.img".into(),
-            hash: "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"
-                .into(),
+            hash: "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96".into(),
         },
         rootfs: BootAssetPin {
             name: "rootfs.erofs".into(),
-            hash: "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620"
-                .into(),
+            hash: "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620".into(),
         },
     }
 }
@@ -98,10 +94,7 @@ fn persistent_registry_backfills_missing_ids() {
 
     let registry = PersistentRegistry::load(path.clone());
     let id = &registry.get("legacy").unwrap().id;
-    assert!(
-        !id.is_empty(),
-        "legacy registry entries must get durable ids"
-    );
+    assert!(!id.is_empty(), "legacy registry entries must get durable ids");
 
     let reloaded = PersistentRegistry::load(path);
     assert_eq!(
@@ -129,9 +122,7 @@ fn persistent_registry_unregister() {
     let path = dir.path().join("test_registry.json");
 
     let mut registry = PersistentRegistry::load(path);
-    registry
-        .register(make_entry("tmp", dir.path().join("tmp")))
-        .unwrap();
+    registry.register(make_entry("tmp", dir.path().join("tmp"))).unwrap();
     assert!(registry.contains("tmp"));
     registry.unregister("tmp").unwrap();
     assert!(!registry.contains("tmp"));
@@ -197,7 +188,8 @@ fn suspended_flag_roundtrips_through_json() {
 
 #[test]
 fn persistent_vm_entry_rejects_missing_profile_contract_fields() {
-    let json = r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
+    let json =
+        r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
     let err = serde_json::from_str::<PersistentVmEntry>(json).unwrap_err();
     assert!(
         err.to_string().contains("profile_id"),
@@ -263,15 +255,10 @@ fn list_iterates_all_registered() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("reg.json");
     let mut registry = PersistentRegistry::load(path);
-    registry
-        .register(make_entry("a", dir.path().join("a")))
-        .unwrap();
-    registry
-        .register(make_entry("b", dir.path().join("b")))
-        .unwrap();
+    registry.register(make_entry("a", dir.path().join("a"))).unwrap();
+    registry.register(make_entry("b", dir.path().join("b"))).unwrap();
 
-    let names: std::collections::HashSet<&str> =
-        registry.list().map(|e| e.name.as_str()).collect();
+    let names: std::collections::HashSet<&str> = registry.list().map(|e| e.name.as_str()).collect();
     assert_eq!(names.len(), 2);
     assert!(names.contains("a"));
     assert!(names.contains("b"));
@@ -284,14 +271,9 @@ fn save_writes_atomically_via_temp_rename() {
     let tmp_path = path.with_extension("json.tmp");
 
     let mut registry = PersistentRegistry::load(path.clone());
-    registry
-        .register(make_entry("one", dir.path().join("one")))
-        .unwrap();
+    registry.register(make_entry("one", dir.path().join("one"))).unwrap();
 
     // Final file present, temp sibling gone (rename completed).
     assert!(path.exists(), "registry json should exist after save");
-    assert!(
-        !tmp_path.exists(),
-        "temp file should be renamed, not left behind"
-    );
+    assert!(!tmp_path.exists(), "temp file should be renamed, not left behind");
 }

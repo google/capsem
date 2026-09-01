@@ -5,22 +5,17 @@
 //! `cargo bench -p capsem-core --bench security_actions`.
 
 use capsem_core::credential_broker::{
-    broker_observed_credential, resolve_broker_reference_for_provider, CredentialObservation,
-    CredentialProvider,
+    broker_observed_credential, resolve_broker_reference_for_provider, CredentialObservation, CredentialProvider,
 };
 use capsem_core::net::ai_traffic::provider::ProviderKind;
 use capsem_core::net::policy_config::{
-    DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet,
-    SecurityRuleSource,
+    DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
 };
 use capsem_core::security_engine::{
-    materialize_http_request_for_upstream, HttpRequestSecurityEvent, HttpSecurityEvent,
-    RuntimeSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEvent,
-    SecurityPluginStage,
+    materialize_http_request_for_upstream, HttpRequestSecurityEvent, HttpSecurityEvent, RuntimeSecurityEvent,
+    RuntimeSecurityEventType, SecurityActionRegistry, SecurityEvent, SecurityPluginStage,
 };
-use capsem_logger::{
-    AuditEvent, Decision, DnsEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent, WriteOp,
-};
+use capsem_logger::{AuditEvent, Decision, DnsEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent, WriteOp};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -51,8 +46,7 @@ impl Drop for EnvVarGuard {
 
 fn security_rules(toml_text: &str) -> SecurityRuleSet {
     let profile = SecurityRuleProfile::parse_toml(toml_text).expect("bench rules parse");
-    SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
-        .expect("bench rules compile")
+    SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("bench rules compile")
 }
 
 fn rule_match_set() -> SecurityRuleSet {
@@ -96,12 +90,7 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard
     );
 
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
-        HttpRequestSecurityEvent::new(
-            "api.anthropic.com",
-            Some(ProviderKind::Anthropic),
-            headers,
-            None,
-        ),
+        HttpRequestSecurityEvent::new("api.anthropic.com", Some(ProviderKind::Anthropic), headers, None),
     );
     (event, tmp, guards)
 }
@@ -161,8 +150,7 @@ fn net_write() -> WriteOp {
         policy_reason: None,
         trace_id: Some("bench-trace".to_string()),
         credential_ref: Some(
-            "credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                .to_string(),
+            "credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
         ),
     })
 }
@@ -288,15 +276,14 @@ fn process_write() -> WriteOp {
 
 fn bench_rule_match(c: &mut Criterion) {
     let rules = rule_match_set();
-    let event =
-        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
-            host: Some("api.anthropic.com".to_string()),
-            method: Some("POST".to_string()),
-            path: Some("/v1/messages".to_string()),
-            query: None,
-            status: None,
-            body: None,
-        });
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("api.anthropic.com".to_string()),
+        method: Some("POST".to_string()),
+        path: Some("/v1/messages".to_string()),
+        query: None,
+        status: None,
+        body: None,
+    });
 
     c.bench_function("security_rule_set_match_allow", |b| {
         b.iter(|| {
@@ -351,10 +338,7 @@ fn bench_broker_substitute(c: &mut Criterion) {
     c.bench_function("security_action_broker_substitute_header_ref", |b| {
         b.iter(|| {
             let event = registry
-                .apply_security_plugins(
-                    black_box(SecurityPluginStage::Preprocess),
-                    black_box(event.clone()),
-                )
+                .apply_security_plugins(black_box(SecurityPluginStage::Preprocess), black_box(event.clone()))
                 .unwrap();
             let materialized = materialize_http_request_for_upstream(&event).unwrap();
             black_box(materialized);
@@ -367,11 +351,8 @@ fn bench_mcp_brokered_auth(c: &mut Criterion) {
 
     c.bench_function("mcp_brokered_oauth_resolve", |b| {
         b.iter(|| {
-            let resolved = resolve_broker_reference_for_provider(
-                CredentialProvider::Mcp,
-                black_box(&credential_ref),
-            )
-            .unwrap();
+            let resolved =
+                resolve_broker_reference_for_provider(CredentialProvider::Mcp, black_box(&credential_ref)).unwrap();
             black_box(resolved);
         });
     });

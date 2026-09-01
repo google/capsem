@@ -29,10 +29,7 @@ fn test_app(token: &str) -> Router {
         .route("/status", get(|| async { "status" }))
         .route("/events", get(|| async { "events" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state)
 }
 
@@ -102,10 +99,7 @@ fn auth_state_lifecycle() {
     let state = AuthState::new(dir.path(), "test-token", 19222).unwrap();
 
     assert!(state.token_path.exists());
-    assert_eq!(
-        std::fs::read_to_string(&state.token_path).unwrap(),
-        "test-token"
-    );
+    assert_eq!(std::fs::read_to_string(&state.token_path).unwrap(), "test-token");
     assert_eq!(std::fs::read_to_string(&state.port_path).unwrap(), "19222");
     assert!(state.pid_path.exists());
 
@@ -138,10 +132,7 @@ fn auth_state_creates_run_dir_if_missing() {
 fn auth_state_pid_file_contains_current_pid() {
     let dir = tempfile::tempdir().unwrap();
     let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
-    let pid: u32 = std::fs::read_to_string(&state.pid_path)
-        .unwrap()
-        .parse()
-        .unwrap();
+    let pid: u32 = std::fs::read_to_string(&state.pid_path).unwrap().parse().unwrap();
     assert_eq!(pid, std::process::id());
     state.cleanup();
 }
@@ -160,13 +151,7 @@ fn cleanup_is_idempotent() {
 async fn health_endpoint_requires_no_auth() {
     let app = test_app("secret-token");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -176,18 +161,11 @@ async fn health_endpoint_requires_no_auth() {
 async fn rejects_request_without_token() {
     let app = test_app("secret-token");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/vms/list")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/vms/list").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "unauthorized");
 }
@@ -276,13 +254,7 @@ async fn rejects_empty_bearer_token() {
 async fn post_to_health_requires_auth() {
     let app = test_app("tok");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().method("POST").uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     // POST / is not the health check (only GET / is exempt)
@@ -298,11 +270,7 @@ async fn all_non_root_paths_require_auth() {
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::UNAUTHORIZED,
-            "{path} should require auth"
-        );
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path} should require auth");
     }
 }
 
@@ -396,12 +364,7 @@ async fn health_exempt_only_exact_paths() {
     // /healthz is NOT exempt
     let resp = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/healthz")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -409,24 +372,14 @@ async fn health_exempt_only_exact_paths() {
     // GET / is exempt
     let resp = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/?foo=bar")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/?foo=bar").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // GET /health is exempt
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -487,12 +440,7 @@ async fn events_rejects_wrong_query_param_token() {
 async fn events_rejects_a_missing_token() {
     let app = test_app("required");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/events")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/events").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -616,10 +564,7 @@ async fn delete_method_on_root_requires_auth() {
 async fn auth_failure_tracker_allows_initial_failures() {
     let tracker = AuthFailureTracker::new();
     for _ in 0..MAX_AUTH_FAILURES {
-        assert!(
-            !tracker.record_failure().await,
-            "should not throttle within limit"
-        );
+        assert!(!tracker.record_failure().await, "should not throttle within limit");
     }
 }
 
@@ -629,10 +574,7 @@ async fn auth_failure_tracker_throttles_after_limit() {
     for _ in 0..MAX_AUTH_FAILURES {
         tracker.record_failure().await;
     }
-    assert!(
-        tracker.record_failure().await,
-        "should throttle after exceeding limit"
-    );
+    assert!(tracker.record_failure().await, "should throttle after exceeding limit");
 }
 
 #[tokio::test]
@@ -670,10 +612,7 @@ async fn returns_429_after_too_many_failures() {
     let app = Router::new()
         .route("/", get(|| async { "health" }))
         .route("/vms/list", get(|| async { "ok" }))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
 
     let resp = app
@@ -687,9 +626,7 @@ async fn returns_429_after_too_many_failures() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "too many failed auth attempts");
 }
@@ -704,10 +641,7 @@ async fn valid_auth_succeeds_even_after_many_failures() {
 
     let app = Router::new()
         .route("/vms/list", get(|| async { "ok" }))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
 
     let resp = app

@@ -22,6 +22,7 @@ from typing import ClassVar
 
 from . import config as gate_config
 from . import egress, enforcement, planreport, prefix, preflight, qualificationflow, resume, sandbox
+from .commandhooks import CommandHooks
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -39,7 +40,7 @@ from .scopeenv import command_environment
 from .sourcecommit import SourceCommit, qualified_commit
 
 
-class GateCommand(Recorded, ABC):
+class GateCommand(CommandHooks, Recorded, ABC):
     publishes: ClassVar[bool] = False
     """Whether this command can make something other people see."""
 
@@ -203,7 +204,6 @@ class GateCommand(Recorded, ABC):
             return
 
         preflight.refuse_inside_a_run(self._config, self.name, exclusive=self.exclusive)
-
         commit = self.source_commit()
         decision = qualificationflow.decide(
             self._config,
@@ -239,7 +239,7 @@ class GateCommand(Recorded, ABC):
         replacement = self.reexec()
         if replacement is not None:
             raise SystemExit(self._runner.run(replacement, check=False))
-
+        self.admit(commit)
         with (
             self._recording(source_commit=None if commit is None else str(commit)) as log,
             observing(self._config, log, plan, publishes=self.publishes) as watch,
@@ -287,6 +287,7 @@ class GateCommand(Recorded, ABC):
                 qualificationflow.finish(
                     log, self._config, commit, self.qualification_policy, plan, decision
                 )
+                self.completed(commit)
 
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.

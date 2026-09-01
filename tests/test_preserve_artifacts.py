@@ -5,7 +5,7 @@ everything in a tmp_dir on test failure; rootfs.img files and other
 multi-GB blobs filled up the dev machine's disk (100% on /System/Volumes/Data).
 These tests pin the skip list, the per-file size cap, and the rotation
 so a future "helpful" loosening that reintroduces the bloat surfaces
-in CI rather than on the next `just test-full` run.
+in CI rather than on the next `just test` run.
 """
 
 import tomllib
@@ -40,7 +40,9 @@ def _seed_tmp_dir(root: Path) -> Path:
     (tmp / "sessions" / "v1" / "session.db").write_bytes(b"\x00" * 1024)
     (tmp / "sessions" / "v1" / "process.log").write_text("process logs\n")
     # Files the helper SHOULD skip.
-    (tmp / "sessions" / "v1" / "rootfs.img").write_bytes(b"\x00" * (1024 * 1024))  # 1 MB
+    (tmp / "sessions" / "v1" / "rootfs.img").write_bytes(
+        b"\x00" * (1024 * 1024)
+    )  # 1 MB
     (tmp / "sessions" / "v1" / "huge_blob.bin").write_bytes(
         b"\x00" * (svc_mod.ARTIFACT_MAX_FILE_BYTES + 1)
     )
@@ -52,21 +54,24 @@ def _copied_files(archive_root: Path) -> set[str]:
     if not archive_root.exists():
         return set()
     return {
-        str(p.relative_to(archive_root))
-        for p in archive_root.rglob("*")
-        if p.is_file()
+        str(p.relative_to(archive_root)) for p in archive_root.rglob("*") if p.is_file()
     }
 
 
-def test_failure_artifact_limits_come_from_storage_policy() -> None:
-    with (svc_mod.PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as stream:
-        debug = tomllib.load(stream)["debug_artifacts"]
+def test_failure_artifact_limits_come_from_cache_policy() -> None:
+    with (svc_mod.PROJECT_ROOT / "config" / "cache.toml").open("rb") as stream:
+        policy = tomllib.load(stream)
+    debug = policy["control"]["failure_artifacts"]
+    stage = policy["stages"][debug["stage"]]
 
-    assert svc_mod.PROJECT_ROOT / debug["root"] == tests_conftest.ARTIFACTS_ROOT
-    assert debug["minimum_runs"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
-    assert debug["maximum_runs"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
-    assert debug["maximum_total_gib"] * 1024**3 == svc_mod.ARTIFACT_MAX_TOTAL_BYTES
-    assert debug["maximum_file_mib"] * 1024**2 == svc_mod.ARTIFACT_MAX_FILE_BYTES
+    assert (
+        svc_mod.PROJECT_ROOT / policy["root"] / stage["path"]
+        == tests_conftest.ARTIFACTS_ROOT
+    )
+    assert debug["minimum_count"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
+    assert debug["maximum_count"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
+    assert debug["maximum_bytes"] == svc_mod.ARTIFACT_MAX_TOTAL_BYTES
+    assert debug["maximum_file_bytes"] == svc_mod.ARTIFACT_MAX_FILE_BYTES
 
 
 def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):
@@ -93,9 +98,7 @@ def test_rootfs_img_is_skipped(artifact_env, tmp_path):
     copied = _copied_files(artifact_env)
     # Should NOT contain any rootfs.img.
     rootfs_copies = [p for p in copied if p.endswith("rootfs.img")]
-    assert not rootfs_copies, (
-        f"rootfs.img must never be archived; got: {rootfs_copies}"
-    )
+    assert not rootfs_copies, f"rootfs.img must never be archived; got: {rootfs_copies}"
 
 
 def test_oversize_files_are_skipped(artifact_env, tmp_path):
@@ -115,17 +118,19 @@ def test_logs_and_session_db_are_preserved(artifact_env, tmp_path):
 
     copied = _copied_files(artifact_env)
     # Should include logs and small session.db.
-    expected = {"service.log", "logs/gateway.log", "sessions/v1/session.db",
-                "sessions/v1/process.log"}
+    expected = {
+        "service.log",
+        "logs/gateway.log",
+        "sessions/v1/session.db",
+        "sessions/v1/process.log",
+    }
     for rel in expected:
         assert any(p.endswith(rel) for p in copied), (
             f"{rel} missing from archive (copied: {sorted(copied)})"
         )
 
 
-def test_service_client_preserves_failure_evidence_before_delete(
-    tmp_path, monkeypatch
-):
+def test_service_client_preserves_failure_evidence_before_delete(tmp_path, monkeypatch):
     """A cleanup DELETE in an exception handler must not erase the evidence
     before the test harness can archive it.
 
@@ -163,7 +168,9 @@ def test_service_client_preserves_failure_evidence_before_delete(
         service.stop()
 
 
-def test_service_client_preserves_explicit_diagnostic_evidence_before_delete(tmp_path, monkeypatch):
+def test_service_client_preserves_explicit_diagnostic_evidence_before_delete(
+    tmp_path, monkeypatch
+):
     """Forced diagnostic capture must run before a successful VM DELETE.
 
     Waiting for service teardown is too late: the VM session containing
@@ -242,7 +249,8 @@ def test_session_archive_uses_prior_worker_failure_after_later_pass(
     failed = "tests/capsem-mcp/test_errors.py::test_two_vms_isolated"
     monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [failed])
     monkeypatch.setenv(
-        "PYTEST_CURRENT_TEST", "tests/capsem-mcp/test_tools.py::test_later_pass (teardown)"
+        "PYTEST_CURRENT_TEST",
+        "tests/capsem-mcp/test_tools.py::test_later_pass (teardown)",
     )
 
     svc_mod.preserve_tmp_dir_on_failure(src, any_worker_failure=True)
@@ -265,6 +273,7 @@ def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch
     # will be unlinked before the copy phase reaches it. Emulate by
     # monkeypatching shutil.copy2 to unlink the source before copying.
     import shutil
+
     original_copy2 = shutil.copy2
     poison_target = src / "sessions" / "v1" / "poison.log"
     poison_target.write_text("will vanish")
@@ -280,8 +289,12 @@ def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch
 
     copied = _copied_files(artifact_env)
     # Critical logs must still be archived despite the racing unlink.
-    must_exist = {"service.log", "logs/gateway.log",
-                  "sessions/v1/session.db", "sessions/v1/process.log"}
+    must_exist = {
+        "service.log",
+        "logs/gateway.log",
+        "sessions/v1/session.db",
+        "sessions/v1/process.log",
+    }
     for rel in must_exist:
         assert any(p.endswith(rel) for p in copied), (
             f"{rel} must survive concurrent unlink; archive: {sorted(copied)}"
@@ -325,13 +338,15 @@ def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
 
     # Seed 5 pre-existing failure dirs with timestamps.
     artifact_env.mkdir(parents=True)
-    for i, stamp in enumerate([
-        "20260101-000001-gw0-fail-1",
-        "20260101-000002-gw0-fail-2",
-        "20260101-000003-gw0-fail-3",
-        "20260101-000004-gw0-fail-4",
-        "20260101-000005-gw0-fail-5",
-    ]):
+    for i, stamp in enumerate(
+        [
+            "20260101-000001-gw0-fail-1",
+            "20260101-000002-gw0-fail-2",
+            "20260101-000003-gw0-fail-3",
+            "20260101-000004-gw0-fail-4",
+            "20260101-000005-gw0-fail-5",
+        ]
+    ):
         (artifact_env / stamp).mkdir()
         (artifact_env / stamp / "marker").write_text(str(i))
 

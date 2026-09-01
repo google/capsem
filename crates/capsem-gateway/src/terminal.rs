@@ -21,17 +21,12 @@ enum TerminalRelayBatch {
     Binary(Vec<u8>),
 }
 
-fn queue_text_batch(
-    pending: &mut Option<TerminalRelayBatch>,
-    text: String,
-) -> Option<TerminalRelayBatch> {
+fn queue_text_batch(pending: &mut Option<TerminalRelayBatch>, text: String) -> Option<TerminalRelayBatch> {
     if text.is_empty() {
         return None;
     }
     match pending {
-        Some(TerminalRelayBatch::Text(buffer))
-            if buffer.len() + text.len() <= TERMINAL_RELAY_BATCH_MAX_BYTES =>
-        {
+        Some(TerminalRelayBatch::Text(buffer)) if buffer.len() + text.len() <= TERMINAL_RELAY_BATCH_MAX_BYTES => {
             buffer.push_str(&text);
             if buffer.len() >= TERMINAL_RELAY_BATCH_MAX_BYTES {
                 pending.take()
@@ -51,17 +46,12 @@ fn queue_text_batch(
     }
 }
 
-fn queue_binary_batch(
-    pending: &mut Option<TerminalRelayBatch>,
-    bytes: Vec<u8>,
-) -> Option<TerminalRelayBatch> {
+fn queue_binary_batch(pending: &mut Option<TerminalRelayBatch>, bytes: Vec<u8>) -> Option<TerminalRelayBatch> {
     if bytes.is_empty() {
         return None;
     }
     match pending {
-        Some(TerminalRelayBatch::Binary(buffer))
-            if buffer.len() + bytes.len() <= TERMINAL_RELAY_BATCH_MAX_BYTES =>
-        {
+        Some(TerminalRelayBatch::Binary(buffer)) if buffer.len() + bytes.len() <= TERMINAL_RELAY_BATCH_MAX_BYTES => {
             buffer.extend_from_slice(&bytes);
             if buffer.len() >= TERMINAL_RELAY_BATCH_MAX_BYTES {
                 pending.take()
@@ -87,9 +77,7 @@ where
 {
     match batch {
         TerminalRelayBatch::Text(text) => writer.send(Message::Text(text.into())).await.is_ok(),
-        TerminalRelayBatch::Binary(bytes) => {
-            writer.send(Message::Binary(bytes.into())).await.is_ok()
-        }
+        TerminalRelayBatch::Binary(bytes) => writer.send(Message::Binary(bytes.into())).await.is_ok(),
     }
 }
 
@@ -115,10 +103,7 @@ fn validate_vm_id(id: &str) -> Result<(), &'static str> {
     if !id.chars().next().unwrap().is_ascii_alphanumeric() {
         return Err("VM id must start with a letter or digit");
     }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("VM id must contain only letters, digits, hyphens, and underscores");
     }
     Ok(())
@@ -130,7 +115,7 @@ fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> PathBuf {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("/tmp"));
-    capsem_core::uds::terminal_socket_path(run_dir, id)
+    capsem_foundation::uds::terminal_socket_path(run_dir, id)
 }
 
 pub async fn handle_terminal_ws(
@@ -156,11 +141,7 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
     let stream = match UnixStream::connect(&uds_path).await {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!(
-                "Failed to connect to process WS UDS {}: {}",
-                uds_path.display(),
-                e
-            );
+            tracing::error!("Failed to connect to process WS UDS {}: {}", uds_path.display(), e);
             // The concrete reason, not "VM not available". That string was
             // all a user got while the real cause was a socket path over the
             // platform limit -- true only in the sense that nothing could
@@ -219,21 +200,13 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
                 }
                 Some(Ok(Message::Ping(p))) => {
                     let vec = p.to_vec();
-                    if process_write
-                        .send(TungsteniteMessage::Ping(vec.into()))
-                        .await
-                        .is_err()
-                    {
+                    if process_write.send(TungsteniteMessage::Ping(vec.into())).await.is_err() {
                         break;
                     }
                 }
                 Some(Ok(Message::Pong(p))) => {
                     let vec = p.to_vec();
-                    if process_write
-                        .send(TungsteniteMessage::Pong(vec.into()))
-                        .await
-                        .is_err()
-                    {
+                    if process_write.send(TungsteniteMessage::Pong(vec.into())).await.is_err() {
                         break;
                     }
                 }

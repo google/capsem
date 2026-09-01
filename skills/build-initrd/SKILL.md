@@ -64,7 +64,7 @@ All guest binaries are deployed read-only:
 The initrd is a gzip+cpio archive. `src/capsem/gate/initrd.py`:
 
 1. Stages stale Rust payloads under the configured
-   `target/linux-agent/<arch>/` tree.
+   `cache/target/build/linux-agent/<arch>/` tree.
 2. Unpacks the exact target into a temporary directory.
 3. Replaces the config-owned binaries, files, trees, and init script at their
    configured modes.

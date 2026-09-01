@@ -93,18 +93,13 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let trace_id = "trace-body-blob".to_string();
     let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
     let request_preview = "{\"prompt\":\"short\"}".to_string();
-    let response_body = format!(
-        "event: message\ndata: {}\n\n",
-        "s".repeat(MAX_BODY_BLOB_BYTES + 128)
-    );
+    let response_body = format!("event: message\ndata: {}\n\n", "s".repeat(MAX_BODY_BLOB_BYTES + 128));
     let response_preview = "event: message\ndata: short\n\n".to_string();
     let response_hash = blake3_bytes_ref(response_body.as_bytes());
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::NetEvent(crate::events::NetEvent {
@@ -192,10 +187,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
         .unwrap();
     assert_eq!(blobs.len(), 2);
 
-    let request = blobs
-        .iter()
-        .find(|blob| blob.direction == "request")
-        .unwrap();
+    let request = blobs.iter().find(|blob| blob.direction == "request").unwrap();
     assert_eq!(request.event_type, "http.request");
     assert_eq!(request.content_type, "application/json");
     assert_eq!(request.original_bytes, request_body.len() as i64);
@@ -205,10 +197,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(request.body, request_body.as_bytes());
     assert_eq!(request.trace_id, trace_id);
 
-    let response = blobs
-        .iter()
-        .find(|blob| blob.direction == "response")
-        .unwrap();
+    let response = blobs.iter().find(|blob| blob.direction == "response").unwrap();
     assert_eq!(response.event_type, "http.request");
     assert_eq!(response.content_type, "text/event-stream");
     assert_eq!(response.original_bytes, response_body.len() as i64);
@@ -216,10 +205,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(response.truncated, 1);
     assert_eq!(response.body_hash, response_hash);
     assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
-    assert_eq!(
-        &response.body,
-        &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]
-    );
+    assert_eq!(&response.body, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
     assert_eq!(response.trace_id, trace_id);
 }
 
@@ -258,16 +244,10 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
     wait_for_child_ready(&builtin_ready);
     std::fs::write(&process_go, b"go").unwrap();
     let process_status = process_child.wait().expect("wait process child");
-    assert!(
-        process_status.success(),
-        "process writer failed: {process_status}"
-    );
+    assert!(process_status.success(), "process writer failed: {process_status}");
     std::fs::write(&builtin_go, b"go").unwrap();
     let builtin_status = builtin_child.wait().expect("wait builtin child");
-    assert!(
-        builtin_status.success(),
-        "builtin writer failed: {builtin_status}"
-    );
+    assert!(builtin_status.success(), "builtin writer failed: {builtin_status}");
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let rows: Vec<(String, String, String)> = conn
@@ -280,16 +260,8 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
     assert_eq!(
         rows,
         vec![
-            (
-                process_event_id.clone(),
-                "curl".to_string(),
-                "/deny-target".to_string()
-            ),
-            (
-                builtin_event_id.clone(),
-                "mcp_builtin".to_string(),
-                "/tiny".to_string()
-            ),
+            (process_event_id, "curl".to_string(), "/deny-target".to_string()),
+            (builtin_event_id, "mcp_builtin".to_string(), "/tiny".to_string()),
         ]
     );
 
@@ -327,10 +299,7 @@ fn spawn_net_event_writer_child(event: ChildNetEvent<'_>) -> std::process::Child
         .env("CAPSEM_LOGGER_CHILD_NET_EVENT_PROCESS", event.process_name)
         .env("CAPSEM_LOGGER_CHILD_NET_EVENT_PATH", event.path)
         .env("CAPSEM_LOGGER_CHILD_NET_EVENT_DECISION", event.decision)
-        .env(
-            "CAPSEM_LOGGER_CHILD_NET_EVENT_RESPONSE",
-            event.response_body,
-        )
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_RESPONSE", event.response_body)
         .env("CAPSEM_LOGGER_CHILD_READY", event.ready_path)
         .env("CAPSEM_LOGGER_CHILD_GO", event.go_path)
         .spawn()
@@ -376,9 +345,7 @@ fn multi_writer_net_event_child_process() {
         }
         assert!(go.exists(), "child go file never appeared");
     }
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(async {
         writer
             .write(WriteOp::NetEvent(crate::events::NetEvent {
@@ -425,9 +392,7 @@ fn db_writer_checkpoints_wal_on_drop() {
     // Write some events, then drop the writer.
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
@@ -466,9 +431,7 @@ fn writer_generates_twelve_hex_event_id_for_primary_events() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
@@ -486,9 +449,7 @@ fn writer_generates_twelve_hex_event_id_for_primary_events() {
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let event_id: String = conn
-        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| {
-            row.get(0)
-        })
+        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| row.get(0))
         .unwrap();
     assert_eq!(event_id.len(), 12);
     assert!(event_id
@@ -503,9 +464,7 @@ fn writer_preserves_supplied_primary_event_id() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
@@ -523,9 +482,7 @@ fn writer_preserves_supplied_primary_event_id() {
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let event_id: String = conn
-        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| {
-            row.get(0)
-        })
+        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| row.get(0))
         .unwrap();
     assert_eq!(event_id, "abcdef123456");
 }
@@ -537,9 +494,7 @@ fn snapshot_fs_events_cross_reference() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             // Write some fs_events first.
             for i in 0..5 {
@@ -629,9 +584,7 @@ fn shutdown_blocking_through_arc_flushes_wal() {
     let db_path = dir.path().join("shutdown.db");
     let writer = Arc::new(DbWriter::open(&db_path, 64).unwrap());
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(async {
         writer
             .write(WriteOp::FileEvent(crate::events::FileEvent {
@@ -681,17 +634,15 @@ fn write_after_shutdown_is_noop() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("no.db"), 16).unwrap();
     writer.shutdown_blocking();
-    assert!(
-        !writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/after".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        }))
-    );
+    assert!(!writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action: crate::events::FileAction::Created,
+        path: "/after".into(),
+        size: None,
+        trace_id: None,
+        credential_ref: None,
+    })));
 }
 
 #[tokio::test]
@@ -701,24 +652,19 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     let writer = DbWriter::open(&db_path, 64).unwrap();
 
     writer
-        .write(WriteOp::SecurityRuleEvent(
-            crate::events::SecurityRuleEvent {
-                timestamp_unix_ms: 1_789_000_000_000,
-                event_id: "abcdef123456".into(),
-                event_type: "model.call".into(),
-                rule_id: "openai_api_block".into(),
-                rule_action: crate::events::SecurityRuleAction::Block,
-                detection_level: crate::events::SecurityDetectionLevel::Critical,
-                rule_json: r#"{"name":"openai_api_block","match":"model.provider == \"openai\""}"#
-                    .into(),
-                event_json:
-                    r#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#
-                        .into(),
-                trace_id: Some("trace_abc".into()),
-                turn_id: Some("turn_abc".into()),
-                credential_ref: Some(crate::events::credential_reference("openai", "sk-test")),
-            },
-        ))
+        .write(WriteOp::SecurityRuleEvent(crate::events::SecurityRuleEvent {
+            timestamp_unix_ms: 1_789_000_000_000,
+            event_id: "abcdef123456".into(),
+            event_type: "model.call".into(),
+            rule_id: "openai_api_block".into(),
+            rule_action: crate::events::SecurityRuleAction::Block,
+            detection_level: crate::events::SecurityDetectionLevel::Critical,
+            rule_json: r#"{"name":"openai_api_block","match":"model.provider == \"openai\""}"#.into(),
+            event_json: r#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#.into(),
+            trace_id: Some("trace_abc".into()),
+            turn_id: Some("turn_abc".into()),
+            credential_ref: Some(crate::events::credential_reference("openai", "sk-test")),
+        }))
         .await;
     writer.flush().await;
     drop(writer);
@@ -729,10 +675,7 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     assert_eq!(events[0].event_id, "abcdef123456");
     assert_eq!(events[0].event_type, "model.call");
     assert_eq!(events[0].rule_id, "openai_api_block");
-    assert_eq!(
-        events[0].rule_action,
-        crate::events::SecurityRuleAction::Block
-    );
+    assert_eq!(events[0].rule_action, crate::events::SecurityRuleAction::Block);
     assert_eq!(
         events[0].detection_level,
         crate::events::SecurityDetectionLevel::Critical
@@ -754,43 +697,31 @@ async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
     let writer = DbWriter::open(&db_path, 64).unwrap();
 
     writer
-        .write(WriteOp::ProfileMutationEvent(
-            crate::events::ProfileMutationEvent {
-                timestamp_unix_ms: 1_789_000_000_000,
-                mutation_id: "a1b2c3d4e5f6".into(),
-                profile_id: "code".into(),
-                actor: "ui".into(),
-                category: "mcp".into(),
-                filename: "enforcement.toml".into(),
-                affected_path: "profiles/code/enforcement.toml".into(),
-                target_kind: "mcp_tool".into(),
-                target_key: "capsem/fetch_http".into(),
-                operation: "permission".into(),
-                rule_id: Some("profiles.rules.mcp_capsem_fetch_http_permission".into()),
-                old_hash: format!("blake3:{}", "1".repeat(64)),
-                old_size: 10,
-                new_hash: format!("blake3:{}", "2".repeat(64)),
-                new_size: 20,
-                status: crate::events::ProfileMutationStatus::Applied,
-                error: None,
-                trace_id: Some("trace_profile".into()),
-            },
-        ))
+        .write(WriteOp::ProfileMutationEvent(crate::events::ProfileMutationEvent {
+            timestamp_unix_ms: 1_789_000_000_000,
+            mutation_id: "a1b2c3d4e5f6".into(),
+            profile_id: "code".into(),
+            actor: "ui".into(),
+            category: "mcp".into(),
+            filename: "enforcement.toml".into(),
+            affected_path: "profiles/code/enforcement.toml".into(),
+            target_kind: "mcp_tool".into(),
+            target_key: "capsem/fetch_http".into(),
+            operation: "permission".into(),
+            rule_id: Some("profiles.rules.mcp_capsem_fetch_http_permission".into()),
+            old_hash: format!("blake3:{}", "1".repeat(64)),
+            old_size: 10,
+            new_hash: format!("blake3:{}", "2".repeat(64)),
+            new_size: 20,
+            status: crate::events::ProfileMutationStatus::Applied,
+            error: None,
+            trace_id: Some("trace_profile".into()),
+        }))
         .await;
     drop(writer);
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        i64,
-        String,
-    ) = conn
+    let row: (String, String, String, String, String, String, String, i64, String) = conn
         .query_row(
             "SELECT profile_id, actor, category, filename, target_kind, target_key,
                     rule_id, new_size, status
@@ -884,9 +815,7 @@ async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
         .with_resolver("tester")
         .with_reason("approved");
 
-    writer
-        .write(WriteOp::SecurityAskEvent(pending.clone()))
-        .await;
+    writer.write(WriteOp::SecurityAskEvent(pending.clone())).await;
     writer.write(WriteOp::SecurityAskEvent(approved)).await;
     drop(writer);
 
@@ -898,10 +827,7 @@ async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
     assert_eq!(rows[1].status, crate::events::SecurityAskStatus::Pending);
     assert_eq!(rows[1].event_id, "111111abcdef");
     assert_eq!(rows[1].rule_id, "profiles.rules.ask_openai");
-    let latest = reader
-        .latest_security_ask_event("abcdef123456")
-        .unwrap()
-        .unwrap();
+    let latest = reader.latest_security_ask_event("abcdef123456").unwrap().unwrap();
     assert_eq!(latest.status, crate::events::SecurityAskStatus::Approved);
 }
 
@@ -912,40 +838,28 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
     let writer = DbWriter::open(&db_path, 64).unwrap();
 
     writer
-        .write(WriteOp::SecurityDecisionEvent(
-            crate::events::SecurityDecisionEvent {
-                timestamp_unix_ms: 1_789_000_000_000,
-                event_id: "abcdef123456".into(),
-                event_type: "file.import".into(),
-                stage: crate::events::SecurityDecisionStage::Rewrite,
-                actor: "dummy_pre_eicar".into(),
-                rule_id: Some("profiles.rules.scan_eicar".into()),
-                plugin_id: Some("dummy_pre_eicar".into()),
-                previous_decision: crate::events::SecurityDecision::Allow,
-                requested_decision: crate::events::SecurityDecision::Block,
-                effective_decision: crate::events::SecurityDecision::Block,
-                reason: Some("EICAR test seed observed".into()),
-                event_json: r#"{"file":{"import":{"name":"eicar.txt"}}}"#.into(),
-                trace_id: Some("trace_eicar".into()),
-                turn_id: Some("turn_eicar".into()),
-                credential_ref: Some(crate::events::credential_reference("github", "ghp-test")),
-            },
-        ))
+        .write(WriteOp::SecurityDecisionEvent(crate::events::SecurityDecisionEvent {
+            timestamp_unix_ms: 1_789_000_000_000,
+            event_id: "abcdef123456".into(),
+            event_type: "file.import".into(),
+            stage: crate::events::SecurityDecisionStage::Rewrite,
+            actor: "dummy_pre_eicar".into(),
+            rule_id: Some("profiles.rules.scan_eicar".into()),
+            plugin_id: Some("dummy_pre_eicar".into()),
+            previous_decision: crate::events::SecurityDecision::Allow,
+            requested_decision: crate::events::SecurityDecision::Block,
+            effective_decision: crate::events::SecurityDecision::Block,
+            reason: Some("EICAR test seed observed".into()),
+            event_json: r#"{"file":{"import":{"name":"eicar.txt"}}}"#.into(),
+            trace_id: Some("trace_eicar".into()),
+            turn_id: Some("turn_eicar".into()),
+            credential_ref: Some(crate::events::credential_reference("github", "ghp-test")),
+        }))
         .await;
     drop(writer);
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-    ) = conn
+    let row: (String, String, String, String, String, String, String, String, String) = conn
         .query_row(
             "SELECT stage, actor, previous_decision, requested_decision,
                     effective_decision, reason, trace_id, turn_id, credential_ref
@@ -1006,29 +920,27 @@ async fn security_rule_stats_are_regenerated_from_session_db() {
         ),
     ] {
         writer
-            .write(WriteOp::SecurityRuleEvent(
-                crate::events::SecurityRuleEvent {
-                    timestamp_unix_ms: 1_789_000_000_000 + idx,
-                    event_id: format!("{idx:012x}"),
-                    event_type: if idx == 3 {
-                        "http.request".into()
-                    } else {
-                        "model.call".into()
-                    },
-                    rule_id: if idx == 3 {
-                        "github_api_allow".into()
-                    } else {
-                        "openai_api_block".into()
-                    },
-                    rule_action: action,
-                    detection_level: level,
-                    rule_json: "{}".into(),
-                    event_json: "{}".into(),
-                    trace_id: None,
-                    turn_id: None,
-                    credential_ref: None,
+            .write(WriteOp::SecurityRuleEvent(crate::events::SecurityRuleEvent {
+                timestamp_unix_ms: 1_789_000_000_000 + idx,
+                event_id: format!("{idx:012x}"),
+                event_type: if idx == 3 {
+                    "http.request".into()
+                } else {
+                    "model.call".into()
                 },
-            ))
+                rule_id: if idx == 3 {
+                    "github_api_allow".into()
+                } else {
+                    "openai_api_block".into()
+                },
+                rule_action: action,
+                detection_level: level,
+                rule_json: "{}".into(),
+                event_json: "{}".into(),
+                trace_id: None,
+                turn_id: None,
+                credential_ref: None,
+            }))
             .await;
     }
     drop(writer);
@@ -1100,17 +1012,11 @@ fn try_write_on_open_writer_succeeds() {
 #[test]
 fn writer_channel_capacity_applies_backpressure() {
     let (tx, _rx) = writer_channel(1);
-    tx.try_send(WriterMessage::write(file_event_with_credential(
-        "/queued",
-        None,
-    )))
-    .unwrap();
+    tx.try_send(WriterMessage::write(file_event_with_credential("/queued", None)))
+        .unwrap();
 
     assert!(matches!(
-        tx.try_send(WriterMessage::write(file_event_with_credential(
-            "/full",
-            None,
-        ))),
+        tx.try_send(WriterMessage::write(file_event_with_credential("/full", None,))),
         Err(std::sync::mpsc::TrySendError::Full(_))
     ));
 }
@@ -1140,19 +1046,14 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     crate::schema::apply_pragmas(&conn).unwrap();
     crate::schema::create_tables(&conn).unwrap();
     crate::schema::migrate(&conn);
-    crate::schema::create_memory_tables(
-        &conn,
-        &crate::schema::memory_uri_for_name("writer-metrics-test"),
-    )
-    .unwrap();
+    crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
     metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
 
     let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(
-        |(key, _, _, value)| key.key().name() == DB_WRITE_BATCH_TOTAL
-            && matches!(value, DebugValue::Counter(1))
-    ));
+    assert!(snapshot
+        .iter()
+        .any(|(key, _, _, value)| key.key().name() == DB_WRITE_BATCH_TOTAL && matches!(value, DebugValue::Counter(1))));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_WRITE_BATCH_DURATION_MS && matches!(value, DebugValue::Histogram(_))
     }));
@@ -1199,9 +1100,9 @@ fn db_writer_records_enqueue_metrics() {
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_ENQUEUE_WAIT_MS && matches!(value, DebugValue::Histogram(_))
     }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
+    assert!(snapshot
+        .iter()
+        .any(|(key, _, _, value)| { key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_)) }));
 }
 
 #[test]
@@ -1222,11 +1123,9 @@ fn write_blocking_persists_without_try_drop() {
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM fs_events WHERE path = '/blocking'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM fs_events WHERE path = '/blocking'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(count, 1);
 }
@@ -1273,27 +1172,23 @@ fn brokered_substitution_persists_reference_and_not_secret() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::SubstitutionEvent(
-                    crate::events::SubstitutionEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        material_class: "credential".into(),
-                        source: "http.authorization".into(),
-                        event_type: Some("http.request".into()),
-                        algorithm: "blake3".into(),
-                        substitution_ref: credential_ref.clone(),
-                        outcome: "captured".into(),
-                        provider: Some("github".into()),
-                        confidence: Some(1.0),
-                        trace_id: Some("trace-credential".into()),
-                        context_json: Some(r#"{"header":"authorization"}"#.into()),
-                    },
-                ))
+                .write(WriteOp::SubstitutionEvent(crate::events::SubstitutionEvent {
+                    event_id: None,
+                    timestamp: std::time::SystemTime::now(),
+                    material_class: "credential".into(),
+                    source: "http.authorization".into(),
+                    event_type: Some("http.request".into()),
+                    algorithm: "blake3".into(),
+                    substitution_ref: credential_ref.clone(),
+                    outcome: "captured".into(),
+                    provider: Some("github".into()),
+                    confidence: Some(1.0),
+                    trace_id: Some("trace-credential".into()),
+                    context_json: Some(r#"{"header":"authorization"}"#.into()),
+                }))
                 .await;
             writer
                 .write(WriteOp::NetEvent(crate::events::NetEvent {
@@ -1391,9 +1286,7 @@ fn exec_event_insert_then_update_roundtrip() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::ExecEvent(crate::events::ExecEvent {
@@ -1409,39 +1302,48 @@ fn exec_event_insert_then_update_roundtrip() {
                 .await;
 
             writer
-                .write(WriteOp::ExecEventComplete(
-                    crate::events::ExecEventComplete {
-                        exec_id: 42,
-                        exit_code: 0,
-                        duration_ms: 120,
-                        stdout_preview: Some("out".into()),
-                        stderr_preview: None,
-                        stdout_bytes: 128,
-                        stderr_bytes: 0,
-                        pid: Some(1234),
-                    },
-                ))
+                .write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
+                    exec_id: 42,
+                    exit_code: 0,
+                    duration_ms: 120,
+                    stdout_preview: Some("out".into()),
+                    stderr_preview: None,
+                    stdout_bytes: 128,
+                    stderr_bytes: 0,
+                    pid: Some(1234),
+                }))
                 .await;
         });
     }
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn.query_row(
-        "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
+    let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn
+        .query_row(
+            "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
          FROM exec_events WHERE exec_id = 42",
-        [],
-        |r| {
-            let command: String = r.get(0)?;
-            let source: String = r.get(1)?;
-            let exit: i64 = r.get(2)?;
-            let duration: i64 = r.get(3)?;
-            let stdout_preview: Option<String> = r.get(4)?;
-            let stderr_preview: Option<String> = r.get(5)?;
-            let stdout_bytes: i64 = r.get(6)?;
-            let pid: Option<i64> = r.get(7)?;
-            Ok((command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid))
-        },
-    ).unwrap();
+            [],
+            |r| {
+                let command: String = r.get(0)?;
+                let source: String = r.get(1)?;
+                let exit: i64 = r.get(2)?;
+                let duration: i64 = r.get(3)?;
+                let stdout_preview: Option<String> = r.get(4)?;
+                let stderr_preview: Option<String> = r.get(5)?;
+                let stdout_bytes: i64 = r.get(6)?;
+                let pid: Option<i64> = r.get(7)?;
+                Ok((
+                    command,
+                    source,
+                    exit,
+                    duration,
+                    stdout_preview,
+                    stderr_preview,
+                    stdout_bytes,
+                    pid,
+                ))
+            },
+        )
+        .unwrap();
     assert_eq!(command, "ls -la");
     assert_eq!(source, "mcp");
     assert_eq!(exit, 0);
@@ -1456,9 +1358,7 @@ fn exec_event_insert_then_update_roundtrip() {
 fn exec_event_completion_updates_disk_after_start_was_flushed() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("exec-flushed-start.db");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
     let writer = DbWriter::open(&db_path, 64).unwrap();
     rt.block_on(async {
@@ -1480,54 +1380,36 @@ fn exec_event_completion_updates_disk_after_start_was_flushed() {
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         let exit_code: Option<i64> = conn
-            .query_row(
-                "SELECT exit_code FROM exec_events WHERE exec_id = 7",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT exit_code FROM exec_events WHERE exec_id = 7", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(exit_code.is_none());
     }
 
     rt.block_on(async {
         writer
-            .write(WriteOp::ExecEventComplete(
-                crate::events::ExecEventComplete {
-                    exec_id: 7,
-                    exit_code: 0,
-                    duration_ms: 7_650,
-                    stdout_preview: Some("APT_OK\nNPM_OK\nUV_OK\n".into()),
-                    stderr_preview: None,
-                    stdout_bytes: 21,
-                    stderr_bytes: 0,
-                    pid: Some(4321),
-                },
-            ))
+            .write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
+                exec_id: 7,
+                exit_code: 0,
+                duration_ms: 7_650,
+                stdout_preview: Some("APT_OK\nNPM_OK\nUV_OK\n".into()),
+                stderr_preview: None,
+                stdout_bytes: 21,
+                stderr_bytes: 0,
+                pid: Some(4321),
+            }))
             .await;
         writer.flush().await;
     });
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (exit_code, duration_ms, stdout_preview, stdout_bytes, pid): (
-        i64,
-        i64,
-        Option<String>,
-        i64,
-        Option<i64>,
-    ) = conn
-        .query_row(
+    let (exit_code, duration_ms, stdout_preview, stdout_bytes, pid): (i64, i64, Option<String>, i64, Option<i64>) =
+        conn.query_row(
             "SELECT exit_code, duration_ms, stdout_preview, stdout_bytes, pid
              FROM exec_events WHERE exec_id = 7",
             [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .unwrap();
     assert_eq!(exit_code, 0);
@@ -1544,9 +1426,7 @@ fn mcp_call_insert_populates_row() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::McpCall(crate::events::McpCall {
@@ -1658,9 +1538,7 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let outcome = metrics::with_local_recorder(&recorder, || {
-        execute_memory_batch(&conn, &[event]).unwrap()
-    });
+    let outcome = metrics::with_local_recorder(&recorder, || execute_memory_batch(&conn, &[event]).unwrap());
     let snapshot = snapshotter.snapshot().into_vec();
 
     assert!(
@@ -1683,9 +1561,7 @@ fn audit_event_insert_populates_row() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::AuditEvent(crate::events::AuditEvent {
@@ -1711,16 +1587,8 @@ fn audit_event_insert_populates_row() {
     }
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (pid, ppid, uid, exe, argv, cwd, parent_exe): (
-        i64,
-        i64,
-        i64,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    ) = conn
-        .query_row(
+    let (pid, ppid, uid, exe, argv, cwd, parent_exe): (i64, i64, i64, String, String, Option<String>, Option<String>) =
+        conn.query_row(
             "SELECT pid, ppid, uid, exe, argv, cwd, parent_exe FROM audit_events",
             [],
             |r| {
@@ -1753,9 +1621,7 @@ fn audit_event_insert_preserves_microsecond_precision() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             for micros in [123_456_u64, 123_789_u64] {
                 writer
@@ -1798,10 +1664,7 @@ fn audit_event_insert_preserves_microsecond_precision() {
         vec!["2024-04-14T13:06:40.123456Z", "2024-04-14T13:06:40.123789Z"]
     );
 
-    let events = crate::DbReader::open(&db_path)
-        .unwrap()
-        .recent_audit_events(2)
-        .unwrap();
+    let events = crate::DbReader::open(&db_path).unwrap().recent_audit_events(2).unwrap();
     assert_eq!(events.len(), 2);
     assert!(events[0].timestamp > events[1].timestamp);
 }
@@ -1813,9 +1676,7 @@ fn dns_event_insert_populates_row() {
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
                 .write(WriteOp::DnsEvent(crate::events::DnsEvent {
@@ -1866,15 +1727,11 @@ fn dns_event_insert_populates_row() {
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let row = |sql: &str| -> (String, i64, i64, i64, String) {
-        conn.query_row(sql, [], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        })
-        .unwrap()
+        conn.query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
     };
-    let (qname, qtype, qclass, rcode, decision) = row(
-        "SELECT qname, qtype, qclass, rcode, decision FROM dns_events
-         WHERE qname = 'anthropic.com'",
-    );
+    let (qname, qtype, qclass, rcode, decision) = row("SELECT qname, qtype, qclass, rcode, decision FROM dns_events
+         WHERE qname = 'anthropic.com'");
     let matched: Option<String> = conn
         .query_row(
             "SELECT matched_rule FROM dns_events WHERE qname = 'anthropic.com'",
@@ -1910,12 +1767,7 @@ fn dns_event_insert_populates_row() {
     assert_eq!(rcode_blocked, 3);
     assert_eq!(matched_blocked, "*.example.com");
 
-    let (mode, action, rule, reason): (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ) = conn
+    let (mode, action, rule, reason): (Option<String>, Option<String>, Option<String>, Option<String>) = conn
         .query_row(
             "SELECT policy_mode, policy_action, policy_rule, policy_reason
              FROM dns_events WHERE qname = 'blocked.example.com'",
@@ -1972,9 +1824,7 @@ fn one_rejected_op_does_not_discard_the_rest_of_its_batch() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
     rt.block_on(async {
         // Enqueued together so they land in one batch. The middle op carries a
@@ -2049,9 +1899,7 @@ fn salvaging_a_failed_batch_preserves_model_items() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
     rt.block_on(async {
         writer.write(minimal_model_call("trace_salvage")).await;
@@ -2073,10 +1921,7 @@ fn salvaging_a_failed_batch_preserves_model_items() {
         .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
         .unwrap();
 
-    assert_eq!(
-        calls, 1,
-        "the model call survives the rejected row beside it"
-    );
+    assert_eq!(calls, 1, "the model call survives the rejected row beside it");
     assert!(
         items > 0,
         "the model items must survive retrying the rejected batch one row at a time"
@@ -2089,9 +1934,7 @@ fn a_rejected_op_is_dropped_wherever_it_sits_in_the_batch() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("session.db");
         let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
         rt.block_on(async {
             for index in 0..3 {
@@ -2128,9 +1971,7 @@ fn a_batch_of_only_rejected_ops_writes_nothing_and_does_not_wedge_the_writer() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
     rt.block_on(async {
         for _ in 0..3 {

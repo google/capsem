@@ -17,6 +17,10 @@ def load_injection_script():
 def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path):
     module = load_injection_script()
     captured = {}
+    shared_run_dir = tmp_path / "gate-run"
+    shared_run_dir.mkdir()
+    (shared_run_dir / "service.explicitly-stopped").write_text("stopped\n")
+    monkeypatch.setenv("CAPSEM_RUN_DIR", str(shared_run_dir))
 
     def fake_run(args, env, capture_output, text, timeout):
         captured["args"] = args
@@ -29,9 +33,9 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
     results = module.Results()
-    profiles_dir = tmp_path / "target" / "config" / "profiles"
+    profiles_dir = tmp_path / "cache" / "target" / "config" / "profiles"
     module.run_scenario(
-        "target/debug/capsem",
+        "cache/target/cargo/debug/capsem",
         "assets",
         str(profiles_dir),
         "co-work",
@@ -48,8 +52,12 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     assert captured["env"]["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"] != str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"].startswith("/tmp/capsem-injection-proof-home-")
+    assert captured["env"]["CAPSEM_RUN_DIR"] == str(
+        Path(captured["env"]["CAPSEM_HOME"]) / "run"
+    )
+    assert captured["env"]["CAPSEM_RUN_DIR"] != str(shared_run_dir)
     assert captured["args"] == [
-        "target/debug/capsem",
+        "cache/target/cargo/debug/capsem",
         "run",
         "--profile",
         "co-work",
@@ -60,4 +68,4 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
 def test_default_materialized_profiles_dir_points_at_target_config_profiles():
     module = load_injection_script()
 
-    assert module.default_materialized_profiles_dir().endswith("target/config/profiles")
+    assert module.default_materialized_profiles_dir().endswith("cache/target/config/profiles")

@@ -3,23 +3,19 @@ use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
 
 struct EnvGuard {
     // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
-    _capsem_paths: crate::paths::CapsemPathsGuard,
+    _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
 }
 
 impl EnvGuard {
-    fn install(
-        capsem_home: &std::path::Path,
-        home: &std::path::Path,
-        test_store: &std::path::Path,
-    ) -> Self {
+    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            _capsem_paths: crate::paths::CapsemPathsGuard::redirect(capsem_home),
+            _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
         }
@@ -44,9 +40,7 @@ fn empty_trace_state() -> Arc<std::sync::Mutex<TraceState>> {
 }
 
 fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-        Vec::new(),
-    ))))
+    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
 #[test]
@@ -147,10 +141,7 @@ fn flush_coalesces_same_action_same_path() {
 
 #[test]
 fn flush_preserves_different_actions_same_path() {
-    let result = coalesce(&[
-        ("file.txt", FileAction::Created),
-        ("file.txt", FileAction::Deleted),
-    ]);
+    let result = coalesce(&[("file.txt", FileAction::Created), ("file.txt", FileAction::Deleted)]);
     assert_eq!(result.len(), 2);
     let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
     assert!(actions.contains(&FileAction::Created));
@@ -159,10 +150,7 @@ fn flush_preserves_different_actions_same_path() {
 
 #[test]
 fn flush_different_paths_not_coalesced() {
-    let result = coalesce(&[
-        ("a.txt", FileAction::Modified),
-        ("b.txt", FileAction::Modified),
-    ]);
+    let result = coalesce(&[("a.txt", FileAction::Modified), ("b.txt", FileAction::Modified)]);
     assert_eq!(result.len(), 2);
 }
 
@@ -337,11 +325,9 @@ async fn emit_brokers_env_credentials_and_persists_reference() {
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let file_ref: String = conn
-        .query_row(
-            "SELECT credential_ref FROM fs_events WHERE path = '.env'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT credential_ref FROM fs_events WHERE path = '.env'", [], |row| {
+            row.get(0)
+        })
         .expect(".env fs event should carry brokered credential ref");
     let outcomes: Vec<String> = conn
         .prepare(
@@ -422,10 +408,10 @@ match = 'file.create.path == "openai-two.txt"'
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
     let trace_state = empty_trace_state();
-    trace_state.lock().unwrap().register_tool_file_hints(
-        "trace-model",
-        [r#"{"cmd":"printf x > /root/openai-two.txt"}"#],
-    );
+    trace_state
+        .lock()
+        .unwrap()
+        .register_tool_file_hints("trace-model", [r#"{"cmd":"printf x > /root/openai-two.txt"}"#]);
     FsMonitor::emit(
         &db,
         &security_rules,
@@ -492,11 +478,9 @@ match = 'file.write.path == "blocked.txt"'
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let fs_action: String = conn
-        .query_row(
-            "SELECT action FROM fs_events WHERE path = 'blocked.txt'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT action FROM fs_events WHERE path = 'blocked.txt'", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(fs_action, "modified");
     let (event_type, rule_action, detection_level): (String, String, String) = conn

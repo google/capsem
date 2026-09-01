@@ -1,6 +1,7 @@
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::mcp::types::JsonRpcError;
+use capsem_proto::mcp_contracts::JsonRpcError;
 
 use super::*;
 
@@ -26,10 +27,7 @@ fn log_attribution_reads_tool_namespace() {
 
 #[test]
 fn log_attribution_reads_resource_namespace() {
-    let req = request(
-        "resources/read",
-        json!({"uri": "capsem://slowlist/doc://slow"}),
-    );
+    let req = request("resources/read", json!({"uri": "capsem://slowlist/doc://slow"}));
 
     let (server_name, tool_name) = mcp_log_attribution(&req);
 
@@ -136,11 +134,7 @@ fn every_known_method_maps_to_its_label() {
         "prompts/get",
     ] {
         let summary = interpret_mcp_method(&request(method, json!({})));
-        assert_eq!(
-            summary.kind.label(),
-            method,
-            "{method} round-trips through its kind"
-        );
+        assert_eq!(summary.kind.label(), method, "{method} round-trips through its kind");
     }
 }
 
@@ -246,10 +240,7 @@ fn response_text_and_content_prefer_the_error_message() {
     };
 
     assert_eq!(response_text(&resp).as_deref(), Some("tool denied by policy"));
-    assert_eq!(
-        response_content(&resp).as_deref(),
-        Some("tool denied by policy")
-    );
+    assert_eq!(response_content(&resp).as_deref(), Some("tool denied by policy"));
 }
 
 #[test]
@@ -293,8 +284,131 @@ fn security_decision_projects_into_mcp_call_policy_fields() {
     assert_eq!(fields.policy_mode.as_deref(), Some("security_event"));
     assert_eq!(fields.policy_action.as_deref(), Some("block"));
     assert_eq!(fields.policy_rule.as_deref(), Some("rule-42"));
-    assert_eq!(
-        fields.policy_reason.as_deref(),
-        Some("blocked by corp policy")
-    );
+    assert_eq!(fields.policy_reason.as_deref(), Some("blocked by corp policy"));
+}
+
+// These tests deliberately exercise the byte-stream boundary rather than only
+// the codec. A malformed guest frame must be classified without desynchronizing
+// the next response or losing the stream id needed for an error reply.
+
+#[tokio::test]
+async fn frame_reader_distinguishes_eof_valid_and_invalid_frames() {
+    let (mut peer, mut reader) = tokio::io::duplex(4096);
+    let valid = capsem_proto::encode_mcp_frame(7, 0, "claude", br#"{"jsonrpc":"2.0"}"#).unwrap();
+    peer.write_all(&valid).await.unwrap();
+
+    let frame = match read_next_frame(&mut reader).await.unwrap() {
+        FrameRead::Frame(frame) => frame,
+        other => panic!("expected valid frame, got {other:?}"),
+    };
+    assert_eq!(frame.stream_id, 7);
+    assert_eq!(frame.process_name, "claude");
+
+    let mut invalid_body = vec![0_u8; capsem_proto::MCP_FRAME_HEADER_LEN as usize];
+    invalid_body[4..8].copy_from_slice(&11_u32.to_be_bytes());
+    peer.write_all(&(invalid_body.len() as u32).to_be_bytes())
+        .await
+        .unwrap();
+    peer.write_all(&invalid_body).await.unwrap();
+
+    match read_next_frame(&mut reader).await.unwrap() {
+        FrameRead::InvalidFrame { stream_id, error } => {
+            assert_eq!(stream_id, Some(11));
+            assert!(error.contains("magic"), "unexpected error: {error}");
+        }
+        other => panic!("expected invalid frame, got {other:?}"),
+    }
+
+    drop(peer);
+    assert_eq!(read_next_frame(&mut reader).await.unwrap(), FrameRead::Eof);
+}
+
+#[tokio::test]
+async fn frame_reader_rejects_impossible_lengths_and_truncated_bodies() {
+    let (mut peer, mut reader) = tokio::io::duplex(128);
+    peer.write_all(&1_u32.to_be_bytes()).await.unwrap();
+    let error = read_next_frame(&mut reader).await.unwrap_err().to_string();
+    assert!(error.contains("invalid MCP frame length"), "unexpected error: {error}");
+
+    let (mut peer, mut reader) = tokio::io::duplex(128);
+    peer.write_all(&u32::from(capsem_proto::MCP_FRAME_HEADER_LEN).to_be_bytes())
+        .await
+        .unwrap();
+    peer.write_all(&[0_u8; 3]).await.unwrap();
+    drop(peer);
+    let error = read_next_frame(&mut reader).await.unwrap_err().to_string();
+    assert!(error.contains("read MCP frame body"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn response_writer_emits_a_decodable_attributed_frame() {
+    let (mut writer, mut peer) = tokio::io::duplex(4096);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let response = ok_response(json!({"content": [{"type": "text", "text": "ok"}]}));
+
+    send_response(&tx, 9, "codex", &response).await.unwrap();
+    let outbound = rx.recv().await.unwrap();
+    write_frame(&mut writer, &outbound).await.unwrap();
+
+    let total_len = peer.read_u32().await.unwrap() as usize;
+    let mut body = vec![0_u8; total_len];
+    peer.read_exact(&mut body).await.unwrap();
+    let decoded = capsem_proto::decode_mcp_frame_body(&body).unwrap();
+    assert_eq!(decoded.stream_id, 9);
+    assert_eq!(decoded.process_name, "codex");
+    let decoded_response: JsonRpcResponse = serde_json::from_slice(&decoded.payload).unwrap();
+    assert_eq!(decoded_response.result, response.result);
+}
+
+#[test]
+fn json_rpc_parser_preserves_ids_and_rejects_untrusted_shapes() {
+    let valid = parse_json_rpc_payload(br#"{"jsonrpc":"2.0","id":"req-7","method":"tools/list"}"#).unwrap();
+    assert_eq!(valid.id, Some(json!("req-7")));
+
+    let malformed = parse_json_rpc_payload(b"{").unwrap_err();
+    assert_eq!(malformed.code, -32700);
+    assert!(malformed.id.is_none());
+
+    let wrong_version = parse_json_rpc_payload(br#"{"jsonrpc":"1.0","id":4,"method":"tools/list"}"#).unwrap_err();
+    assert_eq!(wrong_version.code, -32600);
+    assert_eq!(wrong_version.id, Some(json!(4)));
+
+    let missing_method = parse_json_rpc_payload(br#"{"jsonrpc":"2.0","id":5}"#).unwrap_err();
+    assert_eq!(missing_method.id, Some(json!(5)));
+    assert!(missing_method.message.contains("missing JSON-RPC method"));
+
+    let oversized = vec![b' '; MCP_JSON_RPC_MAX_BYTES + 1];
+    let too_large = parse_json_rpc_payload(&oversized).unwrap_err();
+    assert_eq!(too_large.code, -32600);
+    assert!(too_large.message.contains("too large"));
+}
+
+#[test]
+fn frame_and_json_rpc_notification_shapes_must_agree() {
+    let request_frame = capsem_proto::McpFrame {
+        stream_id: 1,
+        flags: 0,
+        process_name: "codex".to_string(),
+        payload: Vec::new(),
+    };
+    let notification_frame = capsem_proto::McpFrame {
+        stream_id: 0,
+        flags: capsem_proto::MCP_FRAME_FLAG_NOTIFICATION,
+        process_name: "codex".to_string(),
+        payload: Vec::new(),
+    };
+    let with_id = request("tools/list", json!({}));
+    let mut without_id = with_id.clone();
+    without_id.id = None;
+
+    assert!(validate_frame_request_pair(&request_frame, &with_id).is_ok());
+    assert!(validate_frame_request_pair(&notification_frame, &without_id).is_ok());
+    assert!(validate_frame_request_pair(&request_frame, &without_id)
+        .unwrap_err()
+        .to_string()
+        .contains("missing"));
+    assert!(validate_frame_request_pair(&notification_frame, &with_id)
+        .unwrap_err()
+        .to_string()
+        .contains("carried"));
 }

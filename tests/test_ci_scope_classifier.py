@@ -44,13 +44,17 @@ def test_ambiguous_or_executable_changes_fail_closed(paths: tuple[str, ...]) -> 
         ("web/marketing/src/pages/index.astro", "web/docs/src/pages/index.astro"),
     ],
 )
-def test_only_inert_web_content_may_skip_expensive_product_jobs(paths: tuple[str, ...]) -> None:
+def test_only_inert_web_content_may_skip_expensive_product_jobs(
+    paths: tuple[str, ...],
+) -> None:
     assert _classifier().web_only(paths) is True
 
 
 def test_null_delimited_git_paths_are_parsed_without_ambiguity() -> None:
     module = _classifier()
-    assert module.paths_from_git(b"web/docs/a file.md\0web/marketing/src/index.astro\0") == (
+    assert module.paths_from_git(
+        b"web/docs/a file.md\0web/marketing/src/index.astro\0"
+    ) == (
         "web/docs/a file.md",
         "web/marketing/src/index.astro",
     )
@@ -58,7 +62,9 @@ def test_null_delimited_git_paths_are_parsed_without_ambiguity() -> None:
         module.paths_from_git(b"web/docs/index.md")
 
 
-def test_cli_emits_independent_scopes_and_job_owners_without_changing_the_default_contract() -> None:
+def test_cli_emits_independent_scopes_and_job_owners_without_changing_the_default_contract() -> (
+    None
+):
     payload = b"web/app/src/App.svelte\0web/docs/src/index.mdx\0"
     default = subprocess.run(
         (sys.executable, str(SCRIPT)),
@@ -103,23 +109,48 @@ def test_cli_rejects_an_unknown_output_mode() -> None:
 @pytest.mark.parametrize(
     ("path", "owners"),
     [
-        ("crates/capsem-core/src/lib.rs", {"fast-gate", "test-linux", "test", "test-install", "pr-gate"}),
-        ("build_system/builder/gate/cli.py", {"fast-gate", "test-linux", "test", "test-install", "pr-gate"}),
+        (
+            "crates/capsem-core/src/lib.rs",
+            {"fast-gate", "test-linux", "test", "test-install", "pr-gate"},
+        ),
+        (
+            "build_system/builder/gate/cli.py",
+            {"fast-gate", "test-linux", "test", "test-install", "pr-gate"},
+        ),
         ("web/docs/src/index.mdx", {"fast-gate", "docs-build", "pr-gate"}),
         ("web/marketing/src/index.astro", {"fast-gate", "site-build", "pr-gate"}),
-        ("build_system/release_site/src/index.astro", {"fast-gate", "release-site-build", "pr-gate"}),
-        (".github/workflows/ci.yaml", {"fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"}),
+        (
+            "build_system/release_site/src/index.astro",
+            {"fast-gate", "release-site-build", "pr-gate"},
+        ),
+        (
+            ".github/workflows/ci.yaml",
+            {
+                "fast-gate",
+                "test-linux",
+                "test",
+                "test-install",
+                "docs-build",
+                "site-build",
+                "release-site-build",
+                "pr-gate",
+            },
+        ),
     ],
 )
-def test_each_surface_maps_to_required_ci_owners(
-    path: str, owners: set[str]
-) -> None:
+def test_each_surface_maps_to_required_ci_owners(path: str, owners: set[str]) -> None:
     assert _classifier().ci_owners((path,)) == owners
 
 
 def test_unknown_empty_and_malformed_paths_fail_closed() -> None:
     module = _classifier()
-    for paths in [(), ("later/new.md",), ("unknown/file",), ("/absolute",), ("../escape",)]:
+    for paths in [
+        (),
+        ("later/new.md",),
+        ("unknown/file",),
+        ("/absolute",),
+        ("../escape",),
+    ]:
         with pytest.raises(ValueError):
             module.ci_owners(paths)
 
@@ -143,6 +174,7 @@ def test_rename_classifies_both_old_and_new_owners() -> None:
         ("crates/capsem-core/src/lib.rs", "rust_guest_config"),
         ("guest/artifacts/capsem-init", "rust_guest_config"),
         ("config/profiles/code/profile.toml", "rust_guest_config"),
+        ("rustfmt.toml", "rust_guest_config"),
         ("benchmarks/collectors/routes", "benchmarks"),
         ("benchmarks/baselines/routes/data.json", "benchmarks"),
         ("sdk/client.py", "sdk"),
@@ -157,6 +189,9 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
     for path in (
         ".github/workflows/ci.yaml",
         ".config/ty.toml",
+        ".npmrc",
+        "uv.toml",
+        "MIGRATION_HANDOFF.md",
         "justfile",
         "config/gate.toml",
         "build_system/scripts/web/check-web-surface.sh",

@@ -10,7 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-core = { path = "../capsem-core" }
+capsem-credentials = { path = "../capsem-credentials" }
+capsem-proto = { path = "../capsem-proto" }
+capsem-foundation = { path = "../capsem-foundation" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,8 +21,18 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
+futures.workspace = true
+http.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-child-process"] }
+sse-stream.workspace = true
 clap = { workspace = true, features = ["derive"] }
 capsem-guard = { path = "../capsem-guard" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-server", "transport-streamable-http-server-session"] }
+tempfile = "3"
+tokio-util.workspace = true

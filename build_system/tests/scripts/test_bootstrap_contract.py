@@ -907,7 +907,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     labels = _gate_labels()
     assert any(label.startswith("fast.") for label in labels)
     assert "prepare.bootstrap" in labels
-    assert "prepare.storage-budget" in labels
+    assert "prepare.cache-budget" in labels
     assert "python.ruff" in labels
     assert "python.ty.strict" in labels
     for command in [
@@ -936,8 +936,8 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
-    assert "run: just test-full" not in binary_workflow
-    assert "run: just test-full" not in profile_workflow
+    assert "run: just test" not in binary_workflow
+    assert "run: just test" not in profile_workflow
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()
 
 

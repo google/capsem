@@ -25,7 +25,7 @@ class PrefixConfig(Strict):
     vm_image_cache: str
     cargo_target: str
     cargo_profiles: tuple[str, ...]
-    cargo_target_max_gb: float
+    cargo_target_warning_gb: float
     lease_template: str
     name_length: int
     keep: int
@@ -77,18 +77,16 @@ class PrefixConfig(Strict):
             )
         return self
 
-    @field_validator("build_cache", "cargo_target", "vm_image_cache")
+    @field_validator("parent", "build_cache", "cargo_target", "vm_image_cache")
     @classmethod
-    def _cache_is_positioned_against_the_prefix_root(cls, template: str) -> str:
-        """One `{parent}`, so the cache cannot be relocated independently.
-
-        They have to move together: a test that points the prefix root at a
-        temporary directory and leaves the cache on the real filesystem gets a
-        cross-device rename, which is a failure about neither of them.
-        """
-        if template.count("{parent}") != 1:
-            raise ValueError("must position itself against {parent} exactly once")
-        return template
+    def _shared_roots_are_cache_owned(cls, value: str) -> str:
+        """Checked-in relative roots belong to cache/; tests may use absolutes."""
+        path = PurePosixPath(value)
+        if path.is_absolute():
+            return value
+        if ".." in path.parts or path.parts[:1] != ("cache",):
+            raise ValueError("shared gate roots must stay under repository cache/")
+        return value
 
     @model_validator(mode="after")
     def _cache_is_not_swept_as_a_prefix(self) -> PrefixConfig:
@@ -99,20 +97,15 @@ class PrefixConfig(Strict):
         its name. A cache underneath would be deleted on the second run.
         """
         parent = PurePosixPath(self.parent)
-        for name, template in (
+        for name, configured in (
             ("build_cache", self.build_cache),
             ("cargo_target", self.cargo_target),
             ("vm_image_cache", self.vm_image_cache),
         ):
-            retained = PurePosixPath(template.format(parent=self.parent))
-            if ".." in retained.parts or retained.parent != parent.parent:
-                raise ValueError(
-                    f"{name} {template!r} must resolve as a direct sibling of "
-                    f"the prefix root {self.parent!r}"
-                )
+            retained = PurePosixPath(configured)
             if retained == parent or parent in retained.parents:
                 raise ValueError(
-                    f"{name} {template!r} is inside the prefix root "
+                    f"{name} {configured!r} is inside the prefix root "
                     f"{self.parent!r}, where a sweep would reclaim it as a prefix"
                 )
         return self
@@ -131,15 +124,15 @@ class PrefixConfig(Strict):
                 raise ValueError(f"cargo profile {profile!r} must be one plain directory name")
         return self
 
-    @field_validator("cargo_target_max_gb")
+    @field_validator("cargo_target_warning_gb")
     @classmethod
-    def _cap_is_a_real_size(cls, cap: float) -> float:
-        """A cap that can be switched off is not a cap.
+    def _warning_is_a_real_size(cls, threshold: float) -> float:
+        """The reported threshold must describe a real positive size.
 
-        `[disk] required_free_gb` is the floor and stays one; this is the bound
-        on the directory itself, and zero or negative would make every run
-        discard what the run before it built.
+        It is advisory rather than destructive: `[disk] required_free_gb` is
+        the fail-closed filesystem floor, and `--clean-build` is the explicit
+        way to discard compiler output.
         """
-        if cap <= 0:
-            raise ValueError("cargo_target_max_gb must be a positive size in GB")
-        return cap
+        if threshold <= 0:
+            raise ValueError("cargo_target_warning_gb must be a positive size in GB")
+        return threshold

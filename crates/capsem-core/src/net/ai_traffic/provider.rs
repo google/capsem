@@ -7,35 +7,17 @@
 
 use super::events::{LlmEvent, ProviderStreamParser};
 use crate::net::parsers::sse_parser::SseEvent;
+pub use capsem_config::model::{ModelProtocol, ProviderKind};
 
-/// Which model wire protocol/parser handles this request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelProtocol {
-    Anthropic,
-    OpenAi,
-    Google,
-    Ollama,
-}
-
-impl ModelProtocol {
-    /// Short name for audit logging.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ModelProtocol::Anthropic => "anthropic",
-            ModelProtocol::OpenAi => "openai",
-            ModelProtocol::Google => "google",
-            ModelProtocol::Ollama => "ollama",
+/// Create an SSE stream parser for the selected wire protocol.
+pub fn create_parser(protocol: ModelProtocol) -> Box<dyn ProviderStreamParser + Send> {
+    match protocol {
+        ModelProtocol::Anthropic => {
+            Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new())
         }
-    }
-
-    /// Create a new SSE stream parser for this provider.
-    pub fn create_parser(&self) -> Box<dyn ProviderStreamParser + Send> {
-        match self {
-            ModelProtocol::Anthropic => Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new()),
-            ModelProtocol::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
-            ModelProtocol::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
-            ModelProtocol::Ollama => Box::new(NativeOllamaStreamParser),
-        }
+        ModelProtocol::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
+        ModelProtocol::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
+        ModelProtocol::Ollama => Box::new(NativeOllamaStreamParser),
     }
 }
 
@@ -44,63 +26,6 @@ struct NativeOllamaStreamParser;
 impl ProviderStreamParser for NativeOllamaStreamParser {
     fn parse_event(&mut self, _sse: &SseEvent) -> Vec<LlmEvent> {
         Vec::new()
-    }
-}
-
-impl TryFrom<&str> for ModelProtocol {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "anthropic" | "claude" => Ok(Self::Anthropic),
-            "openai" | "openai_compatible" | "openai-compatible" => Ok(Self::OpenAi),
-            "google" | "gemini" => Ok(Self::Google),
-            "ollama" => Ok(Self::Ollama),
-            other => Err(format!("unknown model protocol '{other}'")),
-        }
-    }
-}
-
-/// Which provider owns this model endpoint for policy and logging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderKind {
-    Unknown,
-    Anthropic,
-    OpenAi,
-    Google,
-    Ollama,
-}
-
-impl ProviderKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ProviderKind::Unknown => "unknown",
-            ProviderKind::Anthropic => "anthropic",
-            ProviderKind::OpenAi => "openai",
-            ProviderKind::Google => "google",
-            ProviderKind::Ollama => "ollama",
-        }
-    }
-
-    pub fn from_provider_id(provider_id: &str) -> Self {
-        match provider_id.trim().to_ascii_lowercase().as_str() {
-            "anthropic" | "claude" => Self::Anthropic,
-            "openai" => Self::OpenAi,
-            "google" | "gemini" => Self::Google,
-            "ollama" => Self::Ollama,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-impl From<ModelProtocol> for ProviderKind {
-    fn from(protocol: ModelProtocol) -> Self {
-        match protocol {
-            ModelProtocol::Anthropic => Self::Anthropic,
-            ModelProtocol::OpenAi => Self::OpenAi,
-            ModelProtocol::Google => Self::Google,
-            ModelProtocol::Ollama => Self::Ollama,
-        }
     }
 }
 
@@ -122,11 +47,7 @@ pub trait Provider: Send + Sync {
 
     /// Inject the real API key into the outgoing reqwest::RequestBuilder.
     /// Returns the modified builder.
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder;
+    fn inject_key(&self, builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder;
 }
 
 struct OllamaProvider;
@@ -140,11 +61,7 @@ impl Provider for OllamaProvider {
         "http://127.0.0.1:11434"
     }
 
-    fn inject_key(
-        &self,
-        builder: reqwest::RequestBuilder,
-        _api_key: &str,
-    ) -> reqwest::RequestBuilder {
+    fn inject_key(&self, builder: reqwest::RequestBuilder, _api_key: &str) -> reqwest::RequestBuilder {
         builder
     }
 }

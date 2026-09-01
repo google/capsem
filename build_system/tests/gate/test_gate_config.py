@@ -15,10 +15,10 @@ surfacing forty minutes into a run as a `KeyError` inside a Docker call.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from pydantic import ValidationError
@@ -37,10 +37,11 @@ def config() -> gate_config.GateConfig:
 def _checkout(tmp_path: Path) -> Path:
     """A tree carrying a copy of the real configuration, for mutating."""
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "config" / "gate.toml").write_text(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    for name in ("cache.toml", "gate.toml"):
+        (tmp_path / "config" / name).write_text(
+            (PROJECT_ROOT / "config" / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     return tmp_path
 
 
@@ -58,31 +59,29 @@ def test_generated_output_roots_are_target_owned_and_distinct(
     config: gate_config.GateConfig,
 ) -> None:
     assert config.outputs.model_dump() == {
-        "assets": "target/assets",
-        "benchmarks": "target/test-benchmarks",
-        "coverage": "target/coverage",
-        "distribution": "target/distribution",
-        "gate_runs": "target/gate-runs",
-        "materialized_config": "target/config",
-        "packages": "target/packages",
-        "test_artifacts": "target/test-artifacts",
+        "assets": "cache/target/assets",
+        "benchmarks": "cache/target/tests/benchmarks",
+        "coverage": "cache/target/coverage",
+        "distribution": "cache/target/release/distribution",
+        "gate_runs": "cache/target/gate-runs",
+        "materialized_config": "cache/target/config",
+        "packages": "cache/target/packages",
+        "test_artifacts": "cache/target/tests/evidence",
     }
 
 
 @pytest.mark.parametrize("replacement", ('assets = "assets"', 'assets = "../assets"'))
-def test_generated_output_roots_cannot_escape_target(
-    tmp_path: Path, replacement: str
-) -> None:
+def test_generated_output_roots_cannot_escape_target(tmp_path: Path, replacement: str) -> None:
     root = _checkout(tmp_path)
     source = root / "config" / "gate.toml"
     source.write_text(
         source.read_text(encoding="utf-8").replace(
-            'assets = "target/assets"', replacement, 1
+            'assets = "cache/target/assets"', replacement, 1
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(GateError, match="must stay under target"):
+    with pytest.raises(GateError, match="must stay under cache/target"):
         gate_config.load(root)
 
 
@@ -91,7 +90,7 @@ def test_generated_output_roots_cannot_alias(tmp_path: Path) -> None:
     source = root / "config" / "gate.toml"
     source.write_text(
         source.read_text(encoding="utf-8").replace(
-            'packages = "target/packages"', 'packages = "target/assets"', 1
+            'packages = "cache/target/packages"', 'packages = "cache/target/assets"', 1
         ),
         encoding="utf-8",
     )
@@ -154,15 +153,15 @@ def test_retired_public_graph_authority_rejects_duplicate_channels(tmp_path: Pat
 
 def test_an_unknown_key_is_refused_rather_than_ignored(tmp_path: Path) -> None:
     """A typo that silently does nothing is worse than one that fails."""
-    source = tmp_path / "config"
-    source.mkdir()
-    original = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    root = _checkout(tmp_path)
+    source = root / "config"
+    original = (source / "gate.toml").read_text(encoding="utf-8")
     (source / "gate.toml").write_text(
         original.replace('container = "capsem-install-test"', 'containr = "typo"')
     )
 
     with pytest.raises(GateError) as failure:
-        gate_config.load(tmp_path)
+        gate_config.load(root)
 
     assert "is invalid" in str(failure.value)
     assert "containr" in str(failure.value), "the offending key must be named"
@@ -318,28 +317,14 @@ def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(
     )
 
 
-def test_every_storage_phase_names_a_rail_the_policy_declares(
-    config: gate_config.GateConfig,
-) -> None:
-    """A phase naming a rail that does not exist releases nothing, silently."""
-    policy = tomllib.loads(
-        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+def test_cache_release_boundaries_name_declared_rails() -> None:
+    control = load_policy(PROJECT_ROOT).control
+    assert control is not None
+
+    unknown = {release.rail for release in control.docker.releases.values()} - set(
+        control.docker.rails
     )
-
-    unknown = sorted(
-        {phase.rail for phase in config.storage.phases.values()} - set(policy["rails"])
-    )
-    assert not unknown, f"storage phases name rails the policy does not declare: {unknown}"
-
-
-def test_every_phase_declares_a_distinct_boundary_and_rail_pair(
-    config: gate_config.GateConfig,
-) -> None:
-    pairs = [(phase.boundary, phase.rail) for phase in config.storage.phases.values()]
-
-    assert len(set(pairs)) == len(pairs), (
-        "two names for one boundary/rail pair means one of them is dead"
-    )
+    assert not unknown
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +384,7 @@ def test_the_lockfile_lives_outside_every_tree_the_gate_wipes(
 @pytest.mark.parametrize("field", ("path", "holder_record"))
 def test_a_checkout_relative_machine_lock_is_refused(field: str) -> None:
     policy = CONFIG.locks.gate.model_dump()
-    policy[field] = "target/not-a-machine-lock"
+    policy[field] = "cache/target/not-a-machine-lock"
 
     with pytest.raises(ValidationError, match="user-home-relative"):
         type(CONFIG.locks.gate).model_validate(policy)
@@ -445,18 +430,18 @@ def test_nothing_reclaimable_can_be_aimed_outside_the_checkout(
         assert ".." not in Path(entry).parts
 
 
-@pytest.mark.parametrize("escape", ["/etc", "../../elsewhere", "target/../.."])
+@pytest.mark.parametrize("escape", ["/etc", "../../elsewhere", "cache/target/../.."])
 def test_a_reclaimable_path_that_escapes_is_refused_at_load(tmp_path: Path, escape: str) -> None:
     """Red-first, permanently: the loader must reject the shape it forbids."""
-    source = tmp_path / "config"
-    source.mkdir()
-    original = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    root = _checkout(tmp_path)
+    source = root / "config"
+    original = (source / "gate.toml").read_text(encoding="utf-8")
     (source / "gate.toml").write_text(
-        original.replace('    "target/gate-runs",', f'    "{escape}",')
+        original.replace('    "cache/target/gate-runs",', f'    "{escape}",')
     )
 
     with pytest.raises(GateError) as failure:
-        gate_config.load(tmp_path)
+        gate_config.load(root)
 
     assert "escape" in str(failure.value)
 

@@ -69,7 +69,7 @@ immutable cache policy. Every public reference must resolve through the graph;
 bare local paths are invalid.
 
 The generated distribution lives under
-`target/distribution/assets/<channel>/manifest.json`. Public selectors are
+`cache/target/release/distribution/assets/<channel>/manifest.json`. Public selectors are
 `https://release.capsem.org/channels.json`,
 `https://release.capsem.org/assets/stable/manifest.json`, and
 `https://release.capsem.org/assets/nightly/manifest.json`.
@@ -168,7 +168,7 @@ activates the channel. Nothing is rebuilt twice.
 
 ## Test composition
 
-Local `just test-full` rebuilds every package and profile, then runs all shared
+Local `just test` rebuilds every package and profile, then runs all shared
 modules. Release CI calls those modules against the exact lane output plus
 digest-resolved complementary artifacts.
 

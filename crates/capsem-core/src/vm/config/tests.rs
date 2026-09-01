@@ -44,10 +44,7 @@ fn valid_config_all_fields() {
     assert_eq!(config.kernel_path, kernel);
     assert_eq!(config.initrd_path.unwrap(), initrd);
     assert_eq!(config.disk_path.unwrap(), disk);
-    assert_eq!(
-        config.kernel_cmdline,
-        "console=ttyS0 root=/dev/vda rw quiet"
-    );
+    assert_eq!(config.kernel_cmdline, "console=ttyS0 root=/dev/vda rw quiet");
 }
 
 // --- CPU boundary tests ---
@@ -55,10 +52,7 @@ fn valid_config_all_fields() {
 #[test]
 fn accepts_cpu_min_boundary() {
     let kernel = temp_file("vmlinuz-cpu1");
-    let config = VmConfig::builder()
-        .cpu_count(1)
-        .kernel_path(&kernel)
-        .build();
+    let config = VmConfig::builder().cpu_count(1).kernel_path(&kernel).build();
     assert!(config.is_ok());
     assert_eq!(config.unwrap().cpu_count, 1);
 }
@@ -66,10 +60,7 @@ fn accepts_cpu_min_boundary() {
 #[test]
 fn accepts_cpu_max_boundary() {
     let kernel = temp_file("vmlinuz-cpu8");
-    let config = VmConfig::builder()
-        .cpu_count(8)
-        .kernel_path(&kernel)
-        .build();
+    let config = VmConfig::builder().cpu_count(8).kernel_path(&kernel).build();
     assert!(config.is_ok());
     assert_eq!(config.unwrap().cpu_count, 8);
 }
@@ -77,30 +68,21 @@ fn accepts_cpu_max_boundary() {
 #[test]
 fn rejects_cpu_zero() {
     let kernel = temp_file("vmlinuz-cpu0");
-    let err = VmConfig::builder()
-        .cpu_count(0)
-        .kernel_path(&kernel)
-        .build();
+    let err = VmConfig::builder().cpu_count(0).kernel_path(&kernel).build();
     assert!(matches!(err, Err(ConfigError::CpuOutOfRange(0))));
 }
 
 #[test]
 fn rejects_cpu_just_above_max() {
     let kernel = temp_file("vmlinuz-cpu9");
-    let err = VmConfig::builder()
-        .cpu_count(9)
-        .kernel_path(&kernel)
-        .build();
+    let err = VmConfig::builder().cpu_count(9).kernel_path(&kernel).build();
     assert!(matches!(err, Err(ConfigError::CpuOutOfRange(9))));
 }
 
 #[test]
 fn rejects_cpu_far_above_max() {
     let kernel = temp_file("vmlinuz-cpu99");
-    let err = VmConfig::builder()
-        .cpu_count(99)
-        .kernel_path(&kernel)
-        .build();
+    let err = VmConfig::builder().cpu_count(99).kernel_path(&kernel).build();
     assert!(matches!(err, Err(ConfigError::CpuOutOfRange(99))));
 }
 
@@ -149,10 +131,7 @@ fn rejects_ram_just_above_max() {
 #[test]
 fn rejects_ram_zero() {
     let kernel = temp_file("vmlinuz-ram0");
-    let err = VmConfig::builder()
-        .ram_bytes(0)
-        .kernel_path(&kernel)
-        .build();
+    let err = VmConfig::builder().ram_bytes(0).kernel_path(&kernel).build();
     assert!(matches!(err, Err(ConfigError::RamOutOfRange(0))));
 }
 
@@ -176,9 +155,7 @@ fn rejects_no_kernel_path_set() {
 
 #[test]
 fn rejects_nonexistent_kernel_file() {
-    let err = VmConfig::builder()
-        .kernel_path("/nonexistent/vmlinuz")
-        .build();
+    let err = VmConfig::builder().kernel_path("/nonexistent/vmlinuz").build();
     assert!(matches!(err, Err(ConfigError::MissingKernel(_))));
 }
 
@@ -189,10 +166,7 @@ fn kernel_error_contains_path() {
         .build()
         .unwrap_err();
     let msg = err.to_string();
-    assert!(
-        msg.contains("/nonexistent/vmlinuz"),
-        "error should contain path: {msg}"
-    );
+    assert!(msg.contains("/nonexistent/vmlinuz"), "error should contain path: {msg}");
 }
 
 // --- kernel arch validation tests ---
@@ -253,10 +227,7 @@ fn rejects_nonexistent_initrd() {
 fn accepts_valid_initrd() {
     let kernel = temp_file("vmlinuz-initrd-ok");
     let initrd = temp_file("initrd-ok");
-    let config = VmConfig::builder()
-        .kernel_path(&kernel)
-        .initrd_path(&initrd)
-        .build();
+    let config = VmConfig::builder().kernel_path(&kernel).initrd_path(&initrd).build();
     assert!(config.is_ok());
     assert_eq!(config.unwrap().initrd_path.unwrap(), initrd);
 }
@@ -277,10 +248,7 @@ fn rejects_nonexistent_disk() {
 fn accepts_valid_disk() {
     let kernel = temp_file("vmlinuz-disk-ok");
     let disk = temp_file("rootfs-ok.img");
-    let config = VmConfig::builder()
-        .kernel_path(&kernel)
-        .disk_path(&disk)
-        .build();
+    let config = VmConfig::builder().kernel_path(&kernel).disk_path(&disk).build();
     assert!(config.is_ok());
     assert_eq!(config.unwrap().disk_path.unwrap(), disk);
 }

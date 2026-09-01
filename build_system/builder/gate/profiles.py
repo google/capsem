@@ -77,7 +77,7 @@ def selected(config: GateConfig) -> list[str]:
     """The profile axis for a functional proof, base profile first.
 
     From `config/profiles/`, which is checked in -- **not** from what happens
-    to be materialized under `target/`. This is read while the plan is being
+    to be materialized under `cache/target/`. This is read while the plan is being
     *built*, and plan construction cannot depend on build output: a step's
     output does not exist yet, so the same commit produced one plan on a warm
     tree and a different one on a fresh clone. `just release-profile` passed a

@@ -80,7 +80,7 @@ def test_the_environment_points_every_command_at_this_home(tmp_path: Path) -> No
 
 
 def test_the_benchmark_recordings_survive_the_workspace(tmp_path: Path) -> None:
-    """`just test-full` runs several modules through one workspace and the VM
+    """`just test` runs several modules through one workspace and the VM
     recordings come from the functional one. A later module clearing them is
     why a fortnight of full gates left this empty and froze the published
     arm64 history."""

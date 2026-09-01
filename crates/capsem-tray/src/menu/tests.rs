@@ -1,7 +1,5 @@
 use super::*;
-use crate::gateway::{
-    UpdateCompatibilityState, UpdateStatusResponse, UpdateTrackState, UpdateTrackStatus,
-};
+use crate::gateway::{UpdateCompatibilityState, UpdateStatusResponse, UpdateTrackState, UpdateTrackStatus};
 use muda::MenuId;
 
 fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
@@ -183,10 +181,7 @@ fn parse_resume() {
 
 #[test]
 fn parse_new_session() {
-    assert_eq!(
-        parse_action(&MenuId::new("new-session")),
-        Some(Action::NewSession)
-    );
+    assert_eq!(parse_action(&MenuId::new("new-session")), Some(Action::NewSession));
 }
 
 #[test]
@@ -196,10 +191,7 @@ fn parse_open() {
 
 #[test]
 fn parse_start_service() {
-    assert_eq!(
-        parse_action(&MenuId::new("start-service")),
-        Some(Action::StartService)
-    );
+    assert_eq!(parse_action(&MenuId::new("start-service")), Some(Action::StartService));
 }
 
 #[test]
@@ -226,18 +218,12 @@ fn parse_action_with_colon_in_vm_id() {
 
 #[test]
 fn label_named_vm() {
-    assert_eq!(
-        vm_label(&named_vm("abc123def456", "dev", "running")),
-        "dev -- running"
-    );
+    assert_eq!(vm_label(&named_vm("abc123def456", "dev", "running")), "dev -- running");
 }
 
 #[test]
 fn label_unnamed_vm_shows_full_id() {
-    assert_eq!(
-        vm_label(&temp_vm("abc123def456", "running")),
-        "abc123def456 -- running"
-    );
+    assert_eq!(vm_label(&temp_vm("abc123def456", "running")), "abc123def456 -- running");
 }
 
 #[test]
@@ -345,11 +331,7 @@ fn spec_blocked_profile_update_shows_blocked_indicator() {
 #[test]
 fn spec_blocked_asset_update_shows_blocked_indicator() {
     let mut updates = update_status();
-    updates.assets = blocked_track(
-        "2026.0627.1",
-        "2030.0101.1",
-        "requires binary 99.99.99 or newer",
-    );
+    updates.assets = blocked_track("2026.0627.1", "2030.0101.1", "requires binary 99.99.99 or newer");
 
     let spec = menu_spec(&with_updates(make_status(vec![]), updates));
 
@@ -381,10 +363,7 @@ fn spec_binary_update_keeps_blocked_profile_visible() {
 
 #[test]
 fn spec_update_fetch_error_shows_unavailable_indicator() {
-    let spec = menu_spec(&with_update_error(
-        make_status(vec![]),
-        "gateway returned 404",
-    ));
+    let spec = menu_spec(&with_update_error(make_status(vec![]), "gateway returned 404"));
 
     assert!(spec.iter().any(|entry| matches!(
         entry,
@@ -395,10 +374,7 @@ fn spec_update_fetch_error_shows_unavailable_indicator() {
 
 #[test]
 fn spec_non_running_service_does_not_offer_dead_session_actions() {
-    let spec = menu_spec(&make_service_status(
-        "stopped",
-        vec![named_vm("n1", "dev", "running")],
-    ));
+    let spec = menu_spec(&make_service_status("stopped", vec![named_vm("n1", "dev", "running")]));
     let ids = collect_ids(&spec);
 
     assert_eq!(ids, vec!["status", "start-service", "quit"]);
@@ -406,9 +382,7 @@ fn spec_non_running_service_does_not_offer_dead_session_actions() {
     assert!(!ids.contains(&"connect:n1".into()));
     assert!(!ids.contains(&"new-session".into()));
     assert!(!ids.contains(&"open".into()));
-    assert!(
-        matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected")
-    );
+    assert!(matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected"));
 }
 
 #[test]
@@ -431,10 +405,7 @@ fn spec_sessions_header_is_disabled() {
 #[test]
 fn persistent_running_vm_has_connect_stop_fork_delete() {
     let spec = menu_spec(&make_status(vec![named_vm("n1", "prod", "running")]));
-    let sub = spec
-        .iter()
-        .find(|e| matches!(e, MenuEntry::Sub { .. }))
-        .unwrap();
+    let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
     assert_eq!(ids, vec!["connect:n1", "stop:n1", "fork:n1", "delete:n1"]);
 }
@@ -444,10 +415,7 @@ fn ephemeral_running_vm_has_connect_save_delete() {
     // Ephemeral VMs cannot be stopped (stopping == destruction).
     // Save converts to persistent; delete destroys.
     let spec = menu_spec(&make_status(vec![temp_vm("t1", "running")]));
-    let sub = spec
-        .iter()
-        .find(|e| matches!(e, MenuEntry::Sub { .. }))
-        .unwrap();
+    let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
     assert_eq!(ids, vec!["connect:t1", "save:t1", "delete:t1"]);
 }
@@ -456,10 +424,7 @@ fn ephemeral_running_vm_has_connect_save_delete() {
 fn persistent_suspended_vm_has_resume_fork_delete() {
     // Suspended persistent VMs have no "stop" (already not running).
     let spec = menu_spec(&make_status(vec![named_vm("s1", "staging", "suspended")]));
-    let sub = spec
-        .iter()
-        .find(|e| matches!(e, MenuEntry::Sub { .. }))
-        .unwrap();
+    let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
     assert_eq!(ids, vec!["resume:s1", "fork:s1", "delete:s1"]);
 }
@@ -469,10 +434,7 @@ fn ephemeral_suspended_vm_has_resume_delete() {
     // Edge case: ephemeral VM in a suspended state. No save (ephemeral
     // must be running to save), no fork (fork is persistent-only).
     let spec = menu_spec(&make_status(vec![temp_vm("t2", "suspended")]));
-    let sub = spec
-        .iter()
-        .find(|e| matches!(e, MenuEntry::Sub { .. }))
-        .unwrap();
+    let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
     assert_eq!(ids, vec!["resume:t2", "delete:t2"]);
 }
@@ -482,10 +444,7 @@ fn persistent_stopped_vm_has_fork_delete_no_connect() {
     // Stopped persistent (not suspended) -- needs explicit resume from
     // the UI dialog, but fork and delete remain.
     let spec = menu_spec(&make_status(vec![named_vm("s2", "prod", "stopped")]));
-    let sub = spec
-        .iter()
-        .find(|e| matches!(e, MenuEntry::Sub { .. }))
-        .unwrap();
+    let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
     assert_eq!(ids, vec!["fork:s2", "delete:s2"]);
 }
@@ -496,9 +455,7 @@ fn unavailable_spec_has_disconnected_and_quit() {
     let ids = collect_ids(&spec);
     assert_eq!(ids, vec!["status", "start-service", "quit"]);
     // status shows "Disconnected" and is disabled
-    assert!(
-        matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected")
-    );
+    assert!(matches!(&spec[0], MenuEntry::Item { label, enabled: false, .. } if label == "Disconnected"));
 }
 
 #[test]

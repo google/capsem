@@ -31,11 +31,7 @@ fn mask_membership() {
 fn mask_empty_and_all() {
     assert!(EventMask::empty().is_empty());
     assert!(!EventMask::all().is_empty());
-    for k in [
-        EventKind::RawRequestHead,
-        EventKind::SseEvent,
-        EventKind::McpCall,
-    ] {
+    for k in [EventKind::RawRequestHead, EventKind::SseEvent, EventKind::McpCall] {
         assert!(EventMask::all().contains(k));
         assert!(!EventMask::empty().contains(k));
     }

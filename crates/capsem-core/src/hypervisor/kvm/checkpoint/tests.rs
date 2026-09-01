@@ -18,9 +18,7 @@ fn test_header() -> CheckpointHeader {
 
 #[cfg(target_arch = "x86_64")]
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join("capsem-kvm-checkpoint")
-        .join(name);
+    let dir = std::env::temp_dir().join("capsem-kvm-checkpoint").join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -32,10 +30,7 @@ fn header_roundtrips() {
     let decoded = CheckpointHeader::decode(&header.encode()).unwrap();
     assert_eq!(decoded, header);
     assert_eq!(decoded.version, VERSION);
-    assert_eq!(
-        decoded.version, 9,
-        "complete virtio device graph identity requires v9"
-    );
+    assert_eq!(decoded.version, 9, "complete virtio device graph identity requires v9");
     assert_eq!(decoded.ram_bytes, 4096);
     assert_eq!(decoded.vcpu_count, 2);
     #[cfg(target_arch = "x86_64")]
@@ -59,13 +54,7 @@ fn restore_rejects_version_8_checkpoint() {
     let mut header = test_header();
     header.version = 8;
 
-    let err = validate_header(
-        &header,
-        header.ram_bytes,
-        header.vcpu_count,
-        header.mmio_device_count,
-    )
-    .unwrap_err();
+    let err = validate_header(&header, header.ram_bytes, header.vcpu_count, header.mmio_device_count).unwrap_err();
 
     assert!(
         err.to_string()
@@ -228,10 +217,7 @@ fn rejects_oversized_mmio_queue_count_before_allocation() {
 
     let err = read_mmio_device_snapshot(&mut encoded.as_slice()).unwrap_err();
 
-    assert!(
-        err.to_string().contains("queue count exceeds limit"),
-        "{err:#}"
-    );
+    assert!(err.to_string().contains("queue count exceeds limit"), "{err:#}");
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -243,14 +229,7 @@ fn writes_header_and_memory() {
     mem.write_at(0, b"hello").unwrap();
     mem.write_at(4096, b"world").unwrap();
 
-    write_checkpoint(
-        &path,
-        &mem,
-        &[snapshot(0), snapshot(1)],
-        &vm_snapshot(),
-        &[mmio(0)],
-    )
-    .unwrap();
+    write_checkpoint(&path, &mem, &[snapshot(0), snapshot(1)], &vm_snapshot(), &[mmio(0)]).unwrap();
 
     let bytes = std::fs::read(path).unwrap();
     let header = CheckpointHeader::decode(&bytes[..HEADER_LEN as usize]).unwrap();
@@ -269,14 +248,7 @@ fn restores_memory_and_vcpu_state() {
     let mem = GuestMemory::new(8192).unwrap();
     mem.write_at(0, b"hello").unwrap();
     mem.write_at(4096, b"world").unwrap();
-    write_checkpoint(
-        &path,
-        &mem,
-        &[snapshot(0), snapshot(1)],
-        &vm_snapshot(),
-        &[mmio(3)],
-    )
-    .unwrap();
+    write_checkpoint(&path, &mem, &[snapshot(0), snapshot(1)], &vm_snapshot(), &[mmio(3)]).unwrap();
 
     let restored_mem = GuestMemory::new(8192).unwrap();
     let restored = read_checkpoint(&path, &restored_mem, 2, 1).unwrap();
@@ -360,11 +332,9 @@ fn overwrites_atomically() {
             + std::mem::size_of::<KvmClockData>()
             + 4096
     );
-    assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e
+    assert!(std::fs::read_dir(&dir)
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .contains(".tmp.")));
+        .all(|e| !e.unwrap().file_name().to_string_lossy().contains(".tmp.")));
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -376,9 +346,7 @@ fn rejects_missing_parent() {
 
     let err = write_checkpoint(&path, &mem, &[snapshot(0)], &vm_snapshot(), &[]).unwrap_err();
 
-    assert!(err
-        .to_string()
-        .contains("checkpoint parent directory does not exist"));
+    assert!(err.to_string().contains("checkpoint parent directory does not exist"));
 }
 
 #[cfg(target_arch = "x86_64")]

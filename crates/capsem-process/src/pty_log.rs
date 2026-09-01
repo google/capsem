@@ -117,11 +117,7 @@ impl PtyLog {
 #[cfg(unix)]
 fn open_append(path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)
+    OpenOptions::new().create(true).append(true).mode(0o600).open(path)
 }
 
 #[cfg(not(unix))]

@@ -11,7 +11,9 @@ authors.workspace = true
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio.workspace = true
 serde.workspace = true

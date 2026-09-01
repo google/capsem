@@ -68,8 +68,7 @@ fn test_generate_plist_pins_file_backed_credential_store() {
 
     assert!(plist.contains("<key>EnvironmentVariables</key>"));
     assert!(plist.contains("<key>CAPSEM_CREDENTIAL_STORE_PATH</key>"));
-    assert!(plist
-        .contains("<string>/Users/test/.capsem/credentials/credential-store.json</string>"));
+    assert!(plist.contains("<string>/Users/test/.capsem/credentials/credential-store.json</string>"));
     let retired_test_store = concat!("CAPSEM_CREDENTIAL", "_BROKER_TEST_STORE");
     let retired_keychain_namespace = concat!("org.capsem", ".credentials");
     let retired_keychain_service = concat!("com.capsem", ".credential");
@@ -78,8 +77,7 @@ fn test_generate_plist_pins_file_backed_credential_store() {
         "installed service must not expose the retired credential test-store rail"
     );
     assert!(
-        !plist.contains(retired_keychain_namespace)
-            && !plist.contains(retired_keychain_service),
+        !plist.contains(retired_keychain_namespace) && !plist.contains(retired_keychain_service),
         "installed service must not expose a native Keychain namespace"
     );
     assert!(
@@ -98,16 +96,10 @@ fn macos_stop_uses_bootout_so_keepalive_does_not_restart_service() {
     assert_eq!(primary.program, "launchctl");
     assert_eq!(
         primary.args,
-        vec![
-            "bootout".to_string(),
-            "gui/501/com.capsem.service".to_string()
-        ]
+        vec!["bootout".to_string(), "gui/501/com.capsem.service".to_string()]
     );
     assert!(
-        !primary
-            .args
-            .iter()
-            .any(|arg| arg == "kill" || arg == "SIGTERM"),
+        !primary.args.iter().any(|arg| arg == "kill" || arg == "SIGTERM"),
         "capsem stop must unload the LaunchAgent, not SIGTERM a KeepAlive job"
     );
 
@@ -196,10 +188,7 @@ fn test_plist_with_special_chars_in_path() {
         "/Users/AT&T Corp",
     );
     // Must contain escaped ampersands, not raw &
-    assert!(
-        plist.contains("AT&amp;T"),
-        "plist must XML-escape ampersands"
-    );
+    assert!(plist.contains("AT&amp;T"), "plist must XML-escape ampersands");
     assert!(!plist.contains("AT&T "), "plist must not have unescaped &");
     // Must still be valid-ish XML (balanced tags)
     assert!(plist.contains("</plist>"));
@@ -210,10 +199,7 @@ fn test_plist_with_special_chars_in_path() {
 #[test]
 fn test_systemd_escape_path_no_spaces() {
     let p = Path::new("/home/user/.capsem/bin/capsem-service");
-    assert_eq!(
-        systemd_escape_path(p),
-        "/home/user/.capsem/bin/capsem-service"
-    );
+    assert_eq!(systemd_escape_path(p), "/home/user/.capsem/bin/capsem-service");
 }
 
 #[test]
@@ -295,10 +281,7 @@ fn explicit_stop_marker_roundtrips_under_run_dir() {
     assert!(!service_explicitly_stopped());
     write_explicit_stop_marker().unwrap();
     assert!(service_explicitly_stopped());
-    assert_eq!(
-        explicit_stop_marker_path(),
-        run_dir.join(EXPLICIT_STOP_MARKER)
-    );
+    assert_eq!(explicit_stop_marker_path(), run_dir.join(EXPLICIT_STOP_MARKER));
 
     clear_explicit_stop_marker().unwrap();
     assert!(!service_explicitly_stopped());
@@ -311,14 +294,8 @@ fn reject_test_isolation_env_refuses_capsem_home() {
     let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
     let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
     let err = reject_test_isolation_env().unwrap_err().to_string();
-    assert!(
-        err.contains("CAPSEM_HOME"),
-        "missing CAPSEM_HOME in error: {err}"
-    );
-    assert!(
-        err.contains("unset"),
-        "error should tell user to unset: {err}"
-    );
+    assert!(err.contains("CAPSEM_HOME"), "missing CAPSEM_HOME in error: {err}");
+    assert!(err.contains("unset"), "error should tell user to unset: {err}");
 }
 
 #[test]
