@@ -206,7 +206,7 @@ def test_runtime_apply_uses_exact_argv_and_journals(tmp_path: Path) -> None:
             "--force",
             "--filter",
             "until=72h",
-            "--keep-storage",
+            "--reserved-space",
             "80B",
         )
     ]

@@ -103,7 +103,7 @@ def ensure_capacity(
         pressure = required + rail.reclaim_headroom_bytes
         keep_bytes = min(
             rail.build_cache_keep_bytes,
-            max(0, build_cache.logical_bytes - pressure),
+            max(0, build_cache.reclaimable_bytes - pressure),
         )
         plan = RuntimePrunePlan(
             generated_ns=time.time_ns(),

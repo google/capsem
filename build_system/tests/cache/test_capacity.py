@@ -51,8 +51,8 @@ def test_pressure_prunes_buildkit_then_remeasures(tmp_path: Path) -> None:
         "prune",
         "--force",
         "--all",
-        "--keep-storage",
-        "35B",
+        "--reserved-space",
+        "25B",
     )
 
 

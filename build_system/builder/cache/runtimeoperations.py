@@ -54,7 +54,7 @@ def _argv(
             command.append("--all")
         if action.maximum_age_hours is not None:
             command.extend(("--filter", f"until={action.maximum_age_hours}h"))
-        command.extend(("--keep-storage", f"{action.keep_bytes}B"))
+        command.extend(("--reserved-space", f"{action.keep_bytes}B"))
         return tuple(command)
     if action.operation is RuntimeOperation.CLEAR_BUILD_CACHE:
         return (runtime.command, "builder", "prune", "--all", "--force")
