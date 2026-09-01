@@ -6068,7 +6068,11 @@ where
 #[cfg(test)]
 async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, String> {
     claim_asset_reconcile(&state)?;
-    ensure_assets_after_claim(state).await
+    let result = ensure_assets_after_claim(Arc::clone(&state)).await;
+    state
+        .asset_reconcile_inflight
+        .store(false, Ordering::Release);
+    result
 }
 
 async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, String> {
@@ -6145,9 +6149,6 @@ async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, St
     if let Err(error) = final_status {
         warn!(error = %error, "failed to persist final asset status");
     }
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
     result
 }
 
@@ -6157,7 +6158,11 @@ async fn ensure_profile_assets_for_state(
     profile: &ProfileConfigFile,
 ) -> Result<usize, String> {
     claim_asset_reconcile(&state)?;
-    ensure_profile_assets_after_claim(state, profile).await
+    let result = ensure_profile_assets_after_claim(Arc::clone(&state), profile).await;
+    state
+        .asset_reconcile_inflight
+        .store(false, Ordering::Release);
+    result
 }
 
 fn claim_asset_reconcile(state: &ServiceState) -> Result<(), String> {
@@ -6278,9 +6283,6 @@ async fn ensure_profile_assets_after_claim(
     if let Err(error) = final_status {
         warn!(error = %error, "failed to persist final profile asset status");
     }
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
     result
 }
 
@@ -6701,11 +6703,12 @@ fn build_profile_status_cache(
 }
 
 fn asset_reconcile_has_route_fields(state: &ServiceState) -> bool {
-    state
-        .asset_reconcile
-        .lock()
-        .map(|reconcile| reconcile.in_progress)
-        .unwrap_or(true)
+    state.asset_reconcile_inflight.load(Ordering::Acquire)
+        || state
+            .asset_reconcile
+            .lock()
+            .map(|reconcile| reconcile.in_progress)
+            .unwrap_or(true)
 }
 
 fn json_bytes_response(body: Bytes) -> axum::response::Response {
@@ -6728,7 +6731,9 @@ fn refresh_reconcile_fields(
         .unwrap_or_default();
     if let Some(obj) = value.as_object_mut() {
         if obj.contains_key("downloading") {
-            obj.insert("downloading".to_string(), json!(reconcile.in_progress));
+            let active = reconcile.in_progress
+                || state.asset_reconcile_inflight.load(Ordering::Acquire);
+            obj.insert("downloading".to_string(), json!(active));
         }
     }
     append_asset_reconcile_status(&mut value, &reconcile);
