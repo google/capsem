@@ -1,5 +1,3 @@
-"""Pure retention planning for Docker, BuildKit, and Tart resources."""
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -116,7 +114,8 @@ def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
     for inventory in snapshot.runtimes:
         runtime = policy.runtimes[inventory.runtime_id]
         if not inventory.available:
-            violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
+            if runtime.required:
+                violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
         elif isinstance(runtime, DockerRuntimePolicy):
             actions.extend(_docker_actions(inventory, runtime, policy))
         elif isinstance(runtime, TartRuntimePolicy):
@@ -258,11 +257,12 @@ def plan_release(snapshot: RuntimeSnapshot, policy: CachePolicy, boundary: str) 
 
 
 def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> RuntimePrunePlan:
-    """Select every inactive, explicitly owned native cache resource."""
     actions, violations = [], []
     for inventory in snapshot.runtimes:
+        runtime = policy.runtimes[inventory.runtime_id]
         if not inventory.available:
-            violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
+            if runtime.required:
+                violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
             continue
         for item in inventory.resources:
             if not item.owned or item.protected:

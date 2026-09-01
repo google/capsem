@@ -23,6 +23,7 @@ from capsem_builder.cache.runtimemodels import (
     RuntimeOperation,
     RuntimeResource,
     RuntimeSnapshot,
+    TartRuntimePolicy,
 )
 from capsem_builder.cache.runtimeoperations import apply_runtime_prune
 from capsem_builder.cache.runtimeplanner import (
@@ -165,6 +166,48 @@ def test_runtime_plan_keeps_current_and_active_resources() -> None:
         (RuntimeOperation.REMOVE_CONTAINER, "stopped"),
         (RuntimeOperation.PRUNE_BUILD_CACHE, "buildkit"),
     }
+
+
+def test_optional_unavailable_runtime_does_not_block_retention() -> None:
+    configured = policy().model_copy(
+        update={
+            "runtimes": {
+                **policy().runtimes,
+                "tart": TartRuntimePolicy(
+                    kind="tart",
+                    required=False,
+                    command="tart",
+                    timeout_seconds=30,
+                    mutation_timeout_seconds=60,
+                    receipt_stage="receipts",
+                    log_stage="logs",
+                    vm_prefixes=("capsem-",),
+                    base_images=("base",),
+                    home="~/.tart",
+                ),
+            }
+        }
+    )
+    snapshot = RuntimeSnapshot(
+        generated_ns=1,
+        native_bytes=0,
+        owned_bytes=0,
+        runtimes=(
+            RuntimeInventory(
+                runtime_id="tart",
+                kind=RuntimeKind.TART,
+                available=False,
+                generated_ns=1,
+                native_bytes=0,
+                owned_bytes=0,
+                error="not installed on Linux",
+            ),
+        ),
+    )
+
+    plan = plan_runtime_prune(snapshot, configured)
+
+    assert plan.actions == () and plan.violations == ()
 
 
 def test_runtime_apply_uses_exact_argv_and_journals(tmp_path: Path) -> None:

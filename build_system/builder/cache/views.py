@@ -40,11 +40,7 @@ def _bind(
         destination = view.with_name(f"{view.name}.object.json")
     else:
         destination = (
-            paths.stage("objects")
-            / "receipts"
-            / "views"
-            / reference.digest
-            / f"{view.name}.json"
+            paths.stage("objects") / "receipts" / "views" / reference.digest / f"{view.name}.json"
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{secrets.token_hex(6)}")

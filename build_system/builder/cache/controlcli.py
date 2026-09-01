@@ -20,7 +20,7 @@ def _state(
     docker_control: bool = False,
 ):
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
     if docker_control:
         if policy.control is None:
@@ -83,7 +83,7 @@ def release_boundary(context, boundary, apply, reason) -> None:
 def ensure_space(context, rail, reason) -> None:
     """Prove Docker daemon headroom, retaining hot BuildKit layers."""
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
     try:
         decision = ensure_capacity(paths, policy, rail, reason=reason)
@@ -103,7 +103,7 @@ def ensure_space(context, rail, reason) -> None:
 def capture_failure(context, label, run_id, source_commit, offline) -> None:
     """Preserve bounded typed evidence after an expensive failure."""
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
     try:
         destination = capture_failure_bundle(
@@ -144,7 +144,7 @@ def runtime_prune(context, runtime_id, apply, reason) -> None:
 @click.pass_context
 def show_policy(context) -> None:
     """Emit the validated policy used by every cache producer."""
-    click.echo(load_policy(context.obj["repository"]).model_dump_json(indent=2))
+    click.echo(load_policy(context.obj["policy_repository"]).model_dump_json(indent=2))
 
 
 def register(group: click.Group) -> None:

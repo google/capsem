@@ -35,9 +35,7 @@ class CacheUse(BaseModel):
 def _size(path: Path) -> int:
     if not path.exists():
         return 0
-    result = subprocess.run(
-        ("du", "-sk", str(path)), check=True, capture_output=True, text=True
-    )
+    result = subprocess.run(("du", "-sk", str(path)), check=True, capture_output=True, text=True)
     return int(result.stdout.split()[0]) * 1024
 
 
@@ -48,10 +46,14 @@ def record_use(
     tool: str,
     key: str,
     logical_bytes: int | None = None,
+    probe: Path | None = None,
 ) -> CacheUse:
     """Record whether a keyed invocation found reusable bytes in its stage."""
     stage = paths.stage(stage_id)
-    size = _size(stage) if logical_bytes is None else logical_bytes
+    subject = stage if probe is None else probe.absolute()
+    if subject != stage and stage not in subject.parents:
+        raise ValueError(f"cache telemetry probe {subject} is outside stage {stage}")
+    size = _size(subject) if logical_bytes is None else logical_bytes
     event = CacheUse(
         timestamp_ns=time.time_ns(),
         stage_id=stage_id,

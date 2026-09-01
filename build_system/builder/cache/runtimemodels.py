@@ -45,6 +45,7 @@ class DockerRuntimePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     kind: Literal["docker"]
+    required: StrictBool = True
     command: StrictStr
     timeout_seconds: PositiveInt
     mutation_timeout_seconds: PositiveInt
@@ -80,6 +81,7 @@ class TartRuntimePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     kind: Literal["tart"]
+    required: StrictBool = True
     command: StrictStr
     timeout_seconds: PositiveInt
     mutation_timeout_seconds: PositiveInt

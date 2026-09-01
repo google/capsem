@@ -10,7 +10,7 @@ from capsem_builder.cache.models import (
     StageInventory,
     StagePolicy,
 )
-from capsem_builder.cache.planner import plan_prune
+from capsem_builder.cache.planner import plan_clean, plan_prune
 
 
 def policy() -> CachePolicy:
@@ -43,12 +43,12 @@ def entry(key: str, size: int, used: int, *, protected: bool = False) -> CacheEn
     )
 
 
-def inventory(*entries: CacheEntry) -> CacheInventory:
+def inventory(*entries: CacheEntry, free: int = 1000) -> CacheInventory:
     total = sum(item.logical_bytes for item in entries)
     return CacheInventory(
         root=Path("/repo/cache"),
         generated_ns=100,
-        filesystem_free_bytes=1000,
+        filesystem_free_bytes=free,
         logical_bytes=total,
         allocated_bytes=total,
         stages=(
@@ -88,9 +88,7 @@ def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:
     locked = policy().model_copy(
         update={
             "stages": {
-                "objects": policy().stages["objects"].model_copy(
-                    update={"prune": PruneMethod.NONE}
-                )
+                "objects": policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
             }
         }
     )
@@ -99,3 +97,74 @@ def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:
 
     assert plan.actions == ()
     assert plan.violations == ("objects remains 40 bytes above soft cap 20",)
+
+
+def test_prune_enforces_generation_count_even_below_byte_cap() -> None:
+    counted = policy().model_copy(
+        update={
+            "stages": {
+                "objects": policy().stages["objects"].model_copy(update={"maximum_count": 2})
+            }
+        }
+    )
+
+    plan = plan_prune(
+        inventory(entry("old", 5, 1), entry("middle", 5, 2), entry("new", 5, 3)),
+        counted,
+    )
+
+    assert [(action.key, action.reason) for action in plan.actions] == [("old", "over count cap")]
+
+
+def test_count_ignores_metadata_and_preserves_leased_generations() -> None:
+    counted = policy().model_copy(
+        update={
+            "stages": {
+                "objects": policy().stages["objects"].model_copy(update={"maximum_count": 1})
+            }
+        }
+    )
+    metadata = entry("DIGEST.md", 1, 0).model_copy(update={"managed": False})
+    leased = entry("leased", 5, 1, protected=True)
+
+    plan = plan_prune(inventory(metadata, leased, entry("old", 5, 2)), counted)
+
+    assert [action.key for action in plan.actions] == ["old"]
+
+
+def test_prune_recovers_global_free_space_from_oldest_allocated_entries() -> None:
+    reserved = policy().model_copy(update={"minimum_free_bytes": 15})
+
+    plan = plan_prune(
+        inventory(entry("old", 10, 1), entry("new", 10, 2), free=0),
+        reserved,
+    )
+
+    assert [action.key for action in plan.actions] == ["old", "new"]
+    assert {action.reason for action in plan.actions} == {"below free-space reserve"}
+    assert plan.violations == ()
+
+
+def test_prune_reports_reserve_when_only_nonprunable_bytes_remain() -> None:
+    locked = policy().model_copy(
+        update={
+            "minimum_free_bytes": 15,
+            "stages": {
+                "objects": policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
+            },
+        }
+    )
+
+    plan = plan_prune(inventory(entry("fingerprint", 10, 1), free=0), locked)
+
+    assert plan.actions == ()
+    assert plan.violations == ("filesystem remains at 0 bytes below free-space reserve 15",)
+
+
+def test_explicit_clean_preserves_metadata_and_active_leases() -> None:
+    metadata = entry("DIGEST.md", 1, 0).model_copy(update={"managed": False})
+    leased = entry("leased", 5, 1, protected=True)
+
+    plan = plan_clean(inventory(metadata, leased, entry("generation", 5, 2)), "all")
+
+    assert [action.key for action in plan.actions] == ["generation"]

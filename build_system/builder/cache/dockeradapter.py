@@ -218,18 +218,22 @@ def inventory(
         )
     build = next((row for row in storage if row.name == "Build Cache"), None)
     build_resource = (
-        RuntimeResource(
-            kind=ResourceKind.BUILD_CACHE,
-            identity="buildkit",
-            names=("BuildKit shared cache",),
-            logical_bytes=build.logical_bytes,
-            created_ns=0,
-            last_used_ns=0,
-            active=False,
-            owned=True,
-            protected=False,
-        ),
-    ) if policy.build_cache_owned and build is not None else ()
+        (
+            RuntimeResource(
+                kind=ResourceKind.BUILD_CACHE,
+                identity="buildkit",
+                names=("BuildKit shared cache",),
+                logical_bytes=build.logical_bytes,
+                created_ns=0,
+                last_used_ns=0,
+                active=False,
+                owned=True,
+                protected=False,
+            ),
+        )
+        if policy.build_cache_owned and build is not None
+        else ()
+    )
     resources = (*images, *containers, *build_resource)
     return RuntimeInventory(
         runtime_id=runtime_id,

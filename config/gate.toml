@@ -415,6 +415,10 @@ coverage_file = "COVERAGE_FILE"
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
 # Where cargo compiles, shared by every run; see `[prefix] cargo_target`.
 cargo_target = "CARGO_TARGET_DIR"
+rustc_wrapper = "RUSTC_WRAPPER"
+sccache_dir = "SCCACHE_DIR"
+sccache_cache_size = "SCCACHE_CACHE_SIZE"
+sccache_base_dir = "SCCACHE_BASEDIR"
 # Standard tool variables whose values are resolved from config/cache.toml by
 # the gate before it enters a private source checkout.
 uv_cache = "UV_CACHE_DIR"
@@ -1219,6 +1223,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
+compiler_cache_command = "sccache"
 uv_identity_inputs = ["build_system/uv.lock", "build_system/pyproject.toml"]
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
@@ -1339,11 +1344,11 @@ required_commands = ["bwrap", "file", "musl-gcc", "pkg-config"]
 # that subset; it was simply never compared with any other.
 [toolchain.sets]
 # Everything, for the lane that runs everything.
-complete = ["cargo-audit", "cargo-nextest", "cargo-llvm-cov", "b3sum", "cargo-sbom", "cargo-tauri"]
+complete = ["cargo-audit", "cargo-nextest", "cargo-llvm-cov", "b3sum", "cargo-sbom", "cargo-tauri", "sccache"]
 # The VM-owned suites: nextest runs the Rust half, b3sum checks that a manifest
 # digest matches the bytes it names.
-functional = ["cargo-nextest", "b3sum"]
-coverage = ["cargo-nextest", "cargo-llvm-cov"]
+functional = ["cargo-nextest", "b3sum", "sccache"]
+coverage = ["cargo-nextest", "cargo-llvm-cov", "sccache"]
 advisory = ["cargo-audit"]
 digest = ["b3sum"]
 
@@ -1384,6 +1389,12 @@ name = "cargo-tauri"
 probe = ["cargo-tauri", "--version"]
 expected = "tauri-cli 2.11.1"
 install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
+
+[[toolchain.crates]]
+name = "sccache"
+probe = ["sccache", "--version"]
+expected = "sccache 0.17.0"
+install = ["cargo", "install", "sccache", "--version", "0.17.0", "--locked"]
 
 [release]
 # The selected commit is prepared and committed before release. Qualification

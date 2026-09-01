@@ -60,7 +60,19 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 200
 du -sh ~/.colima                            # host disk usage
 docker system df
 just cache status
+just cache 'health --offline'
+just cache prune # exact preview; no mutation
 ```
+
+`status` inventories repository and native-runtime storage. `health` interprets
+that inventory against the warning, soft, hard, generation-count, and free-space
+limits in `config/cache.toml`; `--offline` avoids Docker and Tart probes. Pruning
+only selects policy-managed generations and preserves active leases and
+structural files. Applied plans require an explicit reason and are journaled.
+
+Gate-owned Rust builds share the stable Cargo target and use the pinned sccache
+toolchain. Cargo keeps normal incremental output hot, while sccache can restore
+compiled objects after that target is lost or deliberately cleaned.
 
 Use `just cache clean all --apply --reason "intentional cold rebuild"` only
 for an intentional cold rebuild. Do not use a broad

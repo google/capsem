@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import fnmatch
 import os
 import shutil
 import time
@@ -9,6 +11,21 @@ from pathlib import Path
 
 from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
 from .paths import CachePaths
+
+
+def _lease_active(stage_path: Path, template: str | None, key: str) -> bool:
+    if template is None:
+        return False
+    lease = stage_path / template.format(key=key)
+    if not lease.is_file() or lease.is_symlink():
+        return False
+    with lease.open("rb") as descriptor:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    return False
 
 
 def _entry_size(path: Path, allocated_seen: set[tuple[int, int]]) -> tuple[int, int]:
@@ -46,6 +63,9 @@ def _stage_inventory(
         for child in sorted(stage_path.iterdir(), key=lambda item: item.name):
             logical, allocated = _entry_size(child, allocated_seen)
             stat = child.lstat()
+            managed = any(
+                fnmatch.fnmatchcase(child.name, pattern) for pattern in stage_policy.managed_globs
+            )
             entries.append(
                 CacheEntry(
                     key=child.name,
@@ -54,6 +74,9 @@ def _stage_inventory(
                     allocated_bytes=allocated,
                     created_ns=stat.st_ctime_ns,
                     last_used_ns=stat.st_atime_ns,
+                    managed=managed,
+                    protected=managed
+                    and _lease_active(stage_path, stage_policy.lease_template, child.name),
                 )
             )
     return StageInventory(

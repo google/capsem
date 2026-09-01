@@ -18,6 +18,7 @@ def paths(tmp_path: Path) -> CachePaths:
             prune=PruneMethod.LRU,
             maximum_age_hours=1,
         )
+
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
@@ -37,5 +38,24 @@ def test_records_miss_then_hit_with_size(tmp_path: Path) -> None:
 
     assert miss.outcome is CacheOutcome.MISS and miss.logical_bytes == 0
     assert hit.outcome is CacheOutcome.HIT and hit.logical_bytes >= 3
-    rows = [json.loads(line) for line in (cache.stage("state") / "usage.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line) for line in (cache.stage("state") / "usage.jsonl").read_text().splitlines()
+    ]
     assert [row["outcome"] for row in rows] == ["miss", "hit"]
+
+
+def test_keyed_probe_does_not_mistake_another_generation_for_a_hit(tmp_path: Path) -> None:
+    cache = paths(tmp_path)
+    other = cache.stage("python-uv") / "other-generation/payload"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(b"warm")
+
+    observed = record_use(
+        cache,
+        "python-uv",
+        tool="uv",
+        key="new-lock",
+        probe=cache.stage("python-uv") / "new-generation",
+    )
+
+    assert observed.outcome is CacheOutcome.MISS

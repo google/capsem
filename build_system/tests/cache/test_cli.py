@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 def repository(tmp_path: Path) -> Path:
     config = tmp_path / "config"
-    config.mkdir()
+    config.mkdir(parents=True)
     config.joinpath("cache.toml").write_text(
         """
 version = 1
@@ -44,6 +44,31 @@ def test_status_json_reports_stage_usage(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["stages"][0]["stage_id"] == "objects"
     assert payload["stages"][0]["logical_bytes"] == 3
+
+
+def test_policy_source_is_independent_from_cache_storage(tmp_path: Path) -> None:
+    policy_root = repository(tmp_path / "source")
+    storage_root = tmp_path / "storage"
+    entry = storage_root / "cache/target/objects/one"
+    entry.mkdir(parents=True)
+    (entry / "payload").write_bytes(b"shared")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "--repository",
+            str(storage_root),
+            "--policy-repository",
+            str(policy_root),
+            "status",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["root"] == str(storage_root / "cache")
+    assert payload["stages"][0]["logical_bytes"] == len(b"shared")
 
 
 def test_prune_previews_then_applies_only_with_flag(tmp_path: Path) -> None:
@@ -89,3 +114,17 @@ def test_verify_rejects_unclassified_cache_paths(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "unclassified cache paths: target/stray" in result.output
+
+
+def test_health_reports_configured_pressure(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    entry = root / "cache/target/objects/one"
+    entry.mkdir(parents=True)
+    (entry / "payload").write_bytes(b"over-the-hard-cap")
+
+    result = invoke(root, "health", "--offline", "--json")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert not payload["healthy"]
+    assert payload["stages"][0]["pressure"] == "hard"

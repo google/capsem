@@ -107,6 +107,7 @@ class LinuxWorkspaceConfig(Strict):
 
 class ToolchainConfig(Strict):
     sync: tuple[str, ...]
+    compiler_cache_command: SafeToken
     uv_identity_inputs: tuple[str, ...]
     node_workspaces: tuple[str, ...]
     node_install: tuple[str, ...]

@@ -3,12 +3,14 @@
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.cachecontrol import CacheControl
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CONFIG = gate_config.load(PROJECT_ROOT)
 
 
 def test_release_names_one_configured_final_consumer_boundary() -> None:
@@ -17,7 +19,7 @@ def test_release_names_one_configured_final_consumer_boundary() -> None:
     CacheControl(runner).release("after-install")
 
     assert runner.matching(
-        r"capsem-cache --repository .* release after-install --apply "
+        r"capsem-cache --repository .* --policy-repository .* release after-install --apply "
         r"--reason 'gate completed cache boundary after-install'"
     )
 
@@ -65,3 +67,18 @@ def test_receipt_limits_come_from_validated_cache_policy() -> None:
     assert limits.maximum_count == 3
     assert limits.maximum_age_seconds == 336 * 3600
     assert limits.maximum_bytes == 96 * 1024**3
+
+
+def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_path: Path) -> None:
+    prefix = tmp_path / "prefix"
+    prefix.mkdir()
+    (prefix / "config").symlink_to(PROJECT_ROOT / "config", target_is_directory=True)
+    monkeypatch.setenv(CONFIG.environment.source_checkout, str(PROJECT_ROOT))
+    runner = RecordingRunner(prefix)
+
+    CacheControl(runner).ensure_space("default", "candidate")
+
+    assert runner.matching(
+        rf"capsem-cache --repository {PROJECT_ROOT} --policy-repository {prefix} "
+        r"ensure-space default"
+    )

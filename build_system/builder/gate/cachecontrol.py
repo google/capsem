@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from ..cache.config import load_policy
 from ..policy.cachepolicy import CacheLimits
+from . import cachelayout
+from .config import for_root
 from .errors import GateError
 from .proc import Runner
 from .sourcecommit import SourceCommit
@@ -14,6 +16,7 @@ class CacheControl:
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
+        self._repository = cachelayout.authority(for_root(runner.root))
         self._policy = load_policy(runner.root)
 
     def _run(self, *arguments: str, check: bool = True) -> int:
@@ -21,6 +24,8 @@ class CacheControl:
             (
                 "capsem-cache",
                 "--repository",
+                str(self._repository),
+                "--policy-repository",
                 str(self._runner.root),
                 *arguments,
             ),

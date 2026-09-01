@@ -166,6 +166,10 @@ class EnvironmentConfig(Strict):
     coverage_file: str
     source_checkout: str
     cargo_target: str
+    rustc_wrapper: str
+    sccache_dir: str
+    sccache_cache_size: str
+    sccache_base_dir: str
     uv_cache: str
     pnpm_store: str
     source_commit: str

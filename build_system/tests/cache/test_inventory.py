@@ -1,5 +1,6 @@
 """Filesystem inventory reports deterministic stage-owned usage."""
 
+import fcntl
 import os
 from pathlib import Path
 
@@ -88,3 +89,25 @@ def test_inventory_reports_minimal_unclassified_roots(tmp_path: Path) -> None:
 
     assert [entry.relative_path for entry in report.unclassified] == [Path("target/stray")]
     assert report.unclassified[0].logical_bytes == len(b"unmanaged")
+
+
+def test_inventory_separates_metadata_and_protects_active_leases(tmp_path: Path) -> None:
+    stage = (
+        policy()
+        .stages["objects"]
+        .model_copy(update={"managed_globs": ("[!.]*",), "lease_template": ".{key}.lock"})
+    )
+    configured = policy().model_copy(update={"stages": {"objects": stage}})
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    generation = paths.stage("objects") / "generation"
+    generation.mkdir(parents=True)
+    lease = paths.stage("objects") / ".generation.lock"
+    lease.touch()
+
+    with lease.open("rb") as descriptor:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        report = scan_inventory(paths, configured, now_ns=10)
+
+    entries = {entry.key: entry for entry in report.stages[0].entries}
+    assert entries["generation"].managed and entries["generation"].protected
+    assert not entries[".generation.lock"].managed

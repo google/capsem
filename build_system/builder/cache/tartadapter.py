@@ -48,9 +48,7 @@ def inventory(
     now_ns: int | None = None,
 ) -> RuntimeInventory:
     generated = time.time_ns() if now_ns is None else now_ns
-    result = runner(
-        (policy.command, "list", "--format", "json"), policy.timeout_seconds
-    )
+    result = runner((policy.command, "list", "--format", "json"), policy.timeout_seconds)
     if result.returncode != 0:
         return RuntimeInventory(
             runtime_id=runtime_id,

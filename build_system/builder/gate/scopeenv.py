@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from . import cachetooling
 from .config import GateConfig
 from .sandbox import SandboxMode
 
@@ -24,7 +25,11 @@ def command_environment(
     knows. Absent when there is no commit to name, which is a checkout with no
     history, and no step may then quietly invent one.
     """
-    scoped = {**inherited, config.environment.command_sandbox_mode: mode.value}
+    scoped = {
+        **inherited,
+        **cachetooling.compiler_environment(config),
+        config.environment.command_sandbox_mode: mode.value,
+    }
     if source_commit is not None:
         scoped[config.environment.qualified_source_commit] = source_commit
     return scoped

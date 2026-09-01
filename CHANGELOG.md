@@ -107,6 +107,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache pressure cleanup now honors each owned image repository's retention
   count before trimming BuildKit to its total-byte target, and rootfs cache
   identities include the exact asset-tools image used for EROFS and inventory.
+- Cache control now separates shared storage authority from qualified-source
+  policy, preserves leased and structural entries, enforces generation and
+  free-space limits, reports typed health, and reuses Rust compilation through
+  the pinned sccache toolchain.
 - MITM forwarding now rejects disallowed plain-HTTP upstream ports before the
   host dials them, and gzip collection rejects decompression beyond its bounded
   payload limit instead of allowing a compressed body to exhaust host memory.

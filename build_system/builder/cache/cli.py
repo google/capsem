@@ -9,6 +9,8 @@ from pathlib import Path
 import click
 
 from .config import load_policy
+from .health import assess
+from .health import render as health_text
 from .inventory import scan_inventory
 from .operations import apply_prune
 from .paths import CachePaths
@@ -19,9 +21,11 @@ from .runtimeoperations import apply_runtime_prune
 from .runtimeplanner import plan_runtime_clean, plan_runtime_prune
 
 
-def _state(repository: Path, *, native: bool = False):
+def _state(context: click.Context, *, native: bool = False):
+    repository = context.obj["repository"]
+    policy_repository = context.obj["policy_repository"]
     root = repository.resolve()
-    policy = load_policy(root)
+    policy = load_policy(policy_repository)
     paths = CachePaths(repository_root=root, policy=policy)
     report = scan_inventory(paths, policy)
     snapshot = scan_runtimes(policy, offline=not native)
@@ -36,11 +40,18 @@ def _state(repository: Path, *, native: bool = False):
     default=Path.cwd,
     show_default="current directory",
 )
+@click.option(
+    "--policy-repository",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Read cache policy from this source tree while controlling --repository storage.",
+)
 @click.pass_context
-def main(context: click.Context, repository: Path) -> None:
+def main(context: click.Context, repository: Path, policy_repository: Path | None) -> None:
     """Inspect and control Capsem's repository cache."""
     context.ensure_object(dict)
     context.obj["repository"] = repository.resolve()
+    context.obj["policy_repository"] = (policy_repository or repository).resolve()
 
 
 @main.command()
@@ -49,7 +60,7 @@ def main(context: click.Context, repository: Path) -> None:
 @click.pass_context
 def status(context: click.Context, as_json: bool, offline: bool) -> None:
     """Show total and per-stage cache inventory."""
-    _, _, report, _ = _state(context.obj["repository"], native=not offline)
+    _, _, report, _ = _state(context, native=not offline)
     click.echo(report.model_dump_json(indent=2) if as_json else inventory_text(report))
 
 
@@ -58,7 +69,7 @@ def status(context: click.Context, as_json: bool, offline: bool) -> None:
 @click.pass_context
 def verify(context: click.Context, as_json: bool) -> None:
     """Validate policy, path containment, and inventory accounting."""
-    policy, paths, report, _ = _state(context.obj["repository"])
+    policy, paths, report, _ = _state(context)
     for stage_id in policy.stages:
         paths.stage(stage_id).relative_to(paths.root)
     if report.unclassified:
@@ -75,13 +86,24 @@ def verify(context: click.Context, as_json: bool) -> None:
 
 
 @main.command()
+@click.option("--json", "as_json", is_flag=True, help="Emit the typed JSON assessment.")
+@click.option("--offline", is_flag=True, help="Do not query native runtimes.")
+@click.pass_context
+def health(context: click.Context, as_json: bool, offline: bool) -> None:
+    """Assess warning, soft, hard, count, and filesystem reserve limits."""
+    policy, _, inventory, _ = _state(context, native=not offline)
+    report = assess(inventory, policy)
+    click.echo(report.model_dump_json(indent=2) if as_json else health_text(report))
+
+
+@main.command()
 @click.option("--apply", is_flag=True, help="Execute the displayed plan.")
 @click.option("--reason", default="policy prune", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit the typed JSON plan.")
 @click.pass_context
 def prune(context: click.Context, apply: bool, reason: str, as_json: bool) -> None:
     """Plan deterministic policy pruning; preview unless --apply is present."""
-    policy, paths, report, snapshot = _state(context.obj["repository"], native=True)
+    policy, paths, report, snapshot = _state(context, native=True)
     plan = plan_prune(report, policy)
     runtime_plan = plan_runtime_prune(snapshot, policy)
     if apply:
@@ -119,7 +141,7 @@ def clean(context: click.Context, stage_id: str, apply: bool, reason: str, as_js
     """Plan removal of one stage or all stages."""
     if apply and stage_id == "all" and not reason.strip():
         raise click.UsageError("clean all --apply requires --reason")
-    policy, paths, report, snapshot = _state(context.obj["repository"], native=stage_id == "all")
+    policy, paths, report, snapshot = _state(context, native=stage_id == "all")
     try:
         plan = plan_clean(report, stage_id)
     except KeyError as error:
@@ -159,7 +181,7 @@ def clean(context: click.Context, stage_id: str, apply: bool, reason: str, as_js
 @click.pass_context
 def snapshot(context: click.Context, as_json: bool) -> None:
     """Persist exact Docker/BuildKit/Tart inventory receipts."""
-    policy, paths, _, report = _state(context.obj["repository"], native=True)
+    policy, paths, _, report = _state(context, native=True)
     receipts = write_receipts(paths, policy, report)
     if as_json:
         click.echo(report.model_dump_json(indent=2))

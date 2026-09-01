@@ -112,6 +112,8 @@ class StagePolicy(BaseModel):
     prune: PruneMethod
     maximum_age_hours: PositiveStrictInt
     maximum_count: PositiveStrictInt | None = None
+    managed_globs: tuple[str, ...] = ("*",)
+    lease_template: str | None = None
     external: StrictBool = False
 
     @model_validator(mode="after")
@@ -121,6 +123,10 @@ class StagePolicy(BaseModel):
             raise ValueError("stage limits must satisfy warning_bytes <= soft_bytes <= hard_bytes")
         if self.external != (self.prune is PruneMethod.EXTERNAL):
             raise ValueError("external stages must use the external prune method")
+        if not self.managed_globs or any(not pattern for pattern in self.managed_globs):
+            raise ValueError("managed_globs must contain non-empty patterns")
+        if self.lease_template is not None and self.lease_template.count("{key}") != 1:
+            raise ValueError("lease_template must contain exactly one {key} placeholder")
         return self
 
 
@@ -197,6 +203,7 @@ class CacheEntry(BaseModel):
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     created_ns: Annotated[StrictInt, Field(ge=0)]
     last_used_ns: Annotated[StrictInt, Field(ge=0)]
+    managed: StrictBool = True
     protected: StrictBool = False
 
 

@@ -11,12 +11,18 @@ from capsem_builder.cache.paths import CachePaths
 
 def paths(tmp_path: Path) -> CachePaths:
     stage = StagePolicy(
-        path=Path("objects"), warning_bytes=1, soft_bytes=2, hard_bytes=3,
-        prune=PruneMethod.NONE, maximum_age_hours=1,
+        path=Path("objects"),
+        warning_bytes=1,
+        soft_bytes=2,
+        hard_bytes=3,
+        prune=PruneMethod.NONE,
+        maximum_age_hours=1,
     )
     return CachePaths(
         repository_root=tmp_path,
-        policy=CachePolicy(version=1, root=Path("cache"), minimum_free_bytes=1, stages={"objects": stage}),
+        policy=CachePolicy(
+            version=1, root=Path("cache"), minimum_free_bytes=1, stages={"objects": stage}
+        ),
     )
 
 

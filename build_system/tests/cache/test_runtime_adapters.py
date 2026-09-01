@@ -43,7 +43,7 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
         if argv[1:3] == ("system", "df"):
             return command(
                 argv,
-                '\n'.join(
+                "\n".join(
                     (
                         '{"Type":"Images","TotalCount":"2","Active":"0",'
                         '"Size":"12GB","Reclaimable":"4GB (33%)"}',
@@ -62,7 +62,7 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
         if argv[1:3] == ("image", "ls"):
             return command(
                 argv,
-                '\n'.join(
+                "\n".join(
                     (
                         '{"ID":"sha256:owned","Repository":"capsem-tool"}',
                         '{"ID":"sha256:foreign","Repository":"ubuntu"}',
@@ -72,8 +72,7 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
         if argv[1:3] == ("image", "inspect"):
             return command(
                 argv,
-                'sha256:owned\\t2026-08-02T00:00:00Z\\t6000000000'
-                '\\t["capsem-tool:one"]',
+                'sha256:owned\\t2026-08-02T00:00:00Z\\t6000000000\\t["capsem-tool:one"]',
             )
         raise AssertionError(argv)
 
