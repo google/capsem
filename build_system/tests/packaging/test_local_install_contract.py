@@ -60,7 +60,7 @@ def test_local_install_packages_the_verified_base_profile_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rendered = _plan(monkeypatch).describe()
-    verified = ROOT / "cache" / "target" / "ironbank-assets" / "code"
+    verified = ROOT / "cache" / "target" / "tests" / "ironbank" / "code"
 
     assert f"--assets-dir {verified / 'assets'}" in rendered
     assert f"--config-root {verified / 'config'}" in rendered

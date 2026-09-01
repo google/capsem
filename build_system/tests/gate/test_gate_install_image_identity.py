@@ -24,7 +24,7 @@ def test_the_observer_knows_the_exact_source_replica_root() -> None:
 def _source(tmp_path: Path):
     """A tiny real Git subject using the gate's authoritative digest script."""
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
-    (tmp_path / ".gitignore").write_text("cache/target/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("cache/\n", encoding="utf-8")
     script = tmp_path / CONFIG.candidate.source_digest_script
     script.parent.mkdir(parents=True)
     script.write_bytes((PROJECT_ROOT / CONFIG.candidate.source_digest_script).read_bytes())

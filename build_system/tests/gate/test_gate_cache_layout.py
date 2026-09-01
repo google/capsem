@@ -12,7 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
-def test_checked_in_shared_roots_are_inside_repository_cache() -> None:
+def test_checked_in_shared_roots_are_inside_repository_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
     resolved = {
         cachelayout.shared_path(CONFIG, value)
         for value in (
@@ -44,7 +47,10 @@ def test_absolute_test_override_remains_explicit(tmp_path: Path) -> None:
     assert cachelayout.shared_path(CONFIG, override) == override
 
 
-def test_uv_generation_is_keyed_by_the_locked_python_project() -> None:
+def test_uv_generation_is_keyed_by_the_locked_python_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
     generation = cachelayout.keyed_stage_path(
         CONFIG, "python-uv", *CONFIG.toolchain.uv_identity_inputs
     )

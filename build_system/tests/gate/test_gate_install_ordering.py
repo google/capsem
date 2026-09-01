@@ -138,6 +138,9 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     packages = tmp_path / CONFIG.outputs.packages
     packages.mkdir(parents=True)
     (packages / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
@@ -548,6 +551,9 @@ def _checkout_without_package(tmp_path: Path) -> Path:
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
     )
     return tmp_path
 

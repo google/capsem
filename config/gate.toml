@@ -859,7 +859,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 236
+noqa = 235
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1

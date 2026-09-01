@@ -162,7 +162,7 @@ def test_stale_rootfs_dir_removed(tmp_path: Path):
     rootfs_rel = release / "rootfs.xyz"
     rootfs_rel.mkdir()
 
-    llvm_debug = tmp_path / "cache" / "target" / "llvm-cov-target" / "debug"
+    llvm_debug = tmp_path / "cache" / "target" / "cargo" / "coverage" / "debug"
     llvm_debug.mkdir(parents=True)
     rootfs_llvm = llvm_debug / "rootfs.q"
     rootfs_llvm.mkdir()
@@ -475,7 +475,7 @@ def test_target_transient_cleanup_removes_only_old_reproducible_outputs(
     """Old proof/debug staging is disposable; canonical asset caches are not."""
     monkeypatch.setattr(clean_stale, "TARGET_TRANSIENT_MAX_AGE_S", 60)
     target = tmp_path / "cache" / "target"
-    target.mkdir()
+    target.mkdir(parents=True)
     old_time = time.time() - 3600
 
     stale_names = (
@@ -542,7 +542,7 @@ def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
     # Ensure release/ mtime itself is old so the heuristic triggers.
     os.utime(release, (old_time, old_time))
 
-    doc = tmp_path / "cache" / "target" / "doc"
+    doc = tmp_path / "cache" / "target" / "cargo" / "doc"
     doc.mkdir(parents=True)
     (doc / "page.html").write_text("x")
     os.utime(doc / "page.html", (old_time, old_time))

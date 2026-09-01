@@ -126,7 +126,6 @@ def _run_lane(rail):
     The phases are plan steps now, so a test that wants the whole lane says
     so -- and a test that wants one phase can finally ask for one.
     """
-    rail.release_rails()
     rail.reserve()
     rail.sync_clock()
     rail.require_content()
@@ -1266,7 +1265,7 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     # The lane's first phase depends on the image; the rest chain from there.
     # It was one step, so the edge landed on the whole lane -- which is also
     # why nothing could be ordered against a phase inside it.
-    assert (hostimage.STEP, f"package.{TARGET.name}.storage-release") in plan.edges
+    assert (hostimage.STEP, f"package.{TARGET.name}.materialize") in plan.edges
 
 
 def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None:

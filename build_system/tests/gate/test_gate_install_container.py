@@ -334,8 +334,9 @@ def test_only_the_target_directory_entry_is_granted_not_its_contents(
 
     container.start(options=[])
 
-    assert runner.ran(r"chown capsem:capsem /src/cache/target$")
-    assert not runner.ran(r"chown -R capsem:capsem /src/cache/target$")
+    parent = Path(CONFIG.install.layout.assets).parent
+    assert runner.ran(rf"chown capsem:capsem /src/{parent}$")
+    assert not runner.ran(rf"chown -R capsem:capsem /src/{parent}$")
 
 
 def test_writes_are_handed_back_to_the_host_user(

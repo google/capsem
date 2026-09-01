@@ -180,7 +180,7 @@ def test_every_shell_astro_build_takes_the_cross_process_lock() -> None:
 def test_shell_and_python_builders_lock_the_same_repository_path() -> None:
     shell = _shell_lock_parts(SHELL_OWNER.read_text(encoding="utf-8"))
     python = _python_lock_parts(OWNER.read_text(encoding="utf-8"))
-    assert shell == python == ("target", "capsem-release-site-build.lock")
+    assert shell == python == ("cache", "target", "capsem-release-site-build.lock")
 
 
 def test_the_shell_lock_guard_rejects_an_unwrapped_build() -> None:
