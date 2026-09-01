@@ -344,28 +344,46 @@ fn observed_mcp_http_request_for_body(
     if body.len() > MCP_BODY_CAPTURE_LIMIT {
         return None;
     }
-    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let obj = json.as_object()?;
-    if obj.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
+    // Targeted deserialization instead of a full serde_json::Value tree: the
+    // body can carry a multi-megabyte `params.arguments` blob that we never
+    // read here. Keeping `params` as a borrowed RawValue means serde never
+    // allocates that subtree; only tools/call re-parses it for `name`.
+    #[derive(serde::Deserialize)]
+    struct McpRequestSniff<'a> {
+        #[serde(default)]
+        jsonrpc: Option<String>,
+        #[serde(default)]
+        method: Option<String>,
+        #[serde(default)]
+        id: Option<serde_json::Value>,
+        #[serde(borrow, default)]
+        params: Option<&'a serde_json::value::RawValue>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ToolNameSniff {
+        name: Option<String>,
+    }
+
+    let sniff: McpRequestSniff = serde_json::from_slice(body).ok()?;
+    if sniff.jsonrpc.as_deref() != Some("2.0") {
         return None;
     }
-    let method = obj.get("method").and_then(|value| value.as_str())?;
-    if !is_mcp_json_rpc_method(method) {
+    let method = sniff.method?;
+    if !is_mcp_json_rpc_method(&method) {
         return None;
     }
-    let request_id = obj.get("id").and_then(json_rpc_id_to_log_string);
-    let params = obj.get("params").and_then(|value| value.as_object());
+    let request_id = sniff.id.as_ref().and_then(json_rpc_id_to_log_string);
     let tool_name = if method == "tools/call" {
-        params
-            .and_then(|params| params.get("name"))
-            .and_then(|value| value.as_str())
-            .map(str::to_string)
+        sniff
+            .params
+            .and_then(|params| serde_json::from_str::<ToolNameSniff>(params.get()).ok())
+            .and_then(|params| params.name)
     } else {
         None
     };
     Some(ObservedMcpHttpRequest {
-        method: method.to_string(),
         server_name: observed_mcp_server_name(domain, upstream_port, path),
+        method,
         tool_name,
         request_id,
         // Cap the stored preview like the framed MCP path: the body can be up

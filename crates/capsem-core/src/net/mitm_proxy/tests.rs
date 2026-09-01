@@ -284,6 +284,20 @@ fn observed_mcp_http_request_requires_mcp_json_rpc_shape() {
 }
 
 #[test]
+fn observed_mcp_http_request_extracts_tool_name_past_large_arguments() {
+    // The targeted deserializer must still read tools/call `name` even when
+    // params carries a large `arguments` blob (which it must not DOM-parse).
+    let big = "z".repeat(300_000);
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":"abc","method":"tools/call","params":{{"name":"do_it","arguments":{{"blob":"{big}"}}}}}}"#
+    );
+    let observed = observed_mcp_http_request_for_body(body.as_bytes(), "mcp.example.test", 443, "/mcp").unwrap();
+    assert_eq!(observed.method, "tools/call");
+    assert_eq!(observed.tool_name.as_deref(), Some("do_it"));
+    assert_eq!(observed.request_id.as_deref(), Some("abc"));
+}
+
+#[test]
 fn observed_mcp_http_request_preview_is_capped() {
     // A guest can send a valid MCP JSON-RPC request with a huge params blob (up
     // to MCP_BODY_CAPTURE_LIMIT). The stored preview must be bounded like the
