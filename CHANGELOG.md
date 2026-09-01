@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy-owned cache stages. Python and uv reuse whole ABI/source or lockfile
   generations, pnpm workspaces share one content store, Cargo internals are
   never selectively pruned, and gate attempts record typed hit/miss/size data.
+- VM kernels, root filesystems, initrds, guest binaries, host packages, and
+  release staging views now reuse digest-verified immutable objects through
+  component-specific input identities. Hardlinks avoid duplicate multi-gigabyte
+  copies, strict receipts make every reused byte auditable, and runtime boot
+  evidence remains fresh rather than being mistaken for construction output.
 - Complete local tests now refuse low-impact repeats until ten commits have
   accumulated since the latest successful proof and print the exact focused
   owners to run instead. High-impact and unknown changes remain eligible;

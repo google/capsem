@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
+
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.views import ReceiptLocation, copy_view
+
+from . import repository_root
+
+PROJECT_ROOT = repository_root()
+CACHE_PATHS = CachePaths(repository_root=PROJECT_ROOT, policy=load_policy(PROJECT_ROOT))
 
 
 def _safe_source(root: Path, relative: str) -> Path:
@@ -75,11 +83,21 @@ def stage_profile_publication(
                             f"profile publication has conflicting bytes for {destination_name}"
                         )
                     continue
-                shutil.copy2(source, destination)
+                copy_view(
+                    CACHE_PATHS,
+                    source,
+                    destination,
+                    receipt_location=ReceiptLocation.INVENTORY,
+                )
                 staged.add(destination)
     source_name = f"channel-source-{manifest.get('channel')}.json"
     source_destination = release_dir / source_name
-    shutil.copy2(manifest_path, source_destination)
+    copy_view(
+        CACHE_PATHS,
+        manifest_path,
+        source_destination,
+        receipt_location=ReceiptLocation.INVENTORY,
+    )
     staged.add(source_destination)
     return staged
 

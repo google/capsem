@@ -107,6 +107,7 @@ def _build(**kw):
             dockerfile="build_system/docker/Dockerfile.guest-rust-builder",
             tag_template="capsem-guest-rust-{arch}:{digest}",
             identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+            source_roots=("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates"),
             cross_packages=("clang21=21.1.2-r2",),
             runtime_network=ContainerNetwork.NONE,
         ),

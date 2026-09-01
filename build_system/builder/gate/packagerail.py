@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import cachetooling, debproof, host, packagebuilder
 from . import config as gate_config
-from . import debproof, host, packagebuilder
 from .config import Arch
 from .content import ProfileContent
 from .docker import Docker
@@ -236,6 +236,7 @@ class PackageRail:
         package = self._packages / name
         if not package.is_file():
             raise GateError(f"recorded Debian package is missing: {package}")
+        cachetooling.canonicalize_package(self._config, package)
         return package
 
     # -- after the build ---------------------------------------------------

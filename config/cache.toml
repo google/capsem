@@ -108,6 +108,14 @@ prune = "generational"
 maximum_age_hours = 336
 maximum_count = 5
 
+[stages.objects]
+path = "objects"
+warning_bytes = 68719476736
+soft_bytes = 85899345920
+hard_bytes = 103079215104
+prune = "none"
+maximum_age_hours = 2160
+
 [stages.prefix-products]
 path = "target/prefix-products"
 warning_bytes = 34359738368

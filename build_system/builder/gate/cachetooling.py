@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ..cache.telemetry import CacheUse, record_use
+from ..cache.views import ViewReceipt, canonicalize
 from . import cachelayout
 from .config import GateConfig
 
@@ -35,3 +38,8 @@ def environment(config: GateConfig, *, key: str) -> dict[str, str]:
         ),
         config.environment.pnpm_store: str(cachelayout.stage_path(config, "node-pnpm")),
     }
+
+
+def canonicalize_package(config: GateConfig, package: Path) -> ViewReceipt:
+    """Bind one named package to its immutable cache object and receipt."""
+    return canonicalize(cachelayout.cache_paths(config), package)

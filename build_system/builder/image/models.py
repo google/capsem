@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .schema import McpTransport
@@ -74,13 +74,23 @@ class GuestRustBuilderConfig(BaseModel):
     dockerfile: str
     tag_template: str
     identity_inputs: tuple[str, ...]
+    source_roots: tuple[str, ...]
     cross_packages: tuple[str, ...]
     runtime_network: Literal[ContainerNetwork.NONE]
 
+    @field_validator("identity_inputs", "source_roots")
+    @classmethod
+    def _inputs_are_canonical_relative_paths(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        for value in values:
+            path = PurePosixPath(value)
+            if path.is_absolute() or ".." in path.parts or str(path) != value:
+                raise ValueError(f"guest Rust builder input is not a canonical relative path: {value}")
+        return values
+
     @model_validator(mode="after")
     def _identity_is_complete(self):
-        if not self.identity_inputs:
-            raise ValueError("identity_inputs must have at least one entry")
+        if not self.identity_inputs or not self.source_roots:
+            raise ValueError("identity_inputs and source_roots must each have at least one entry")
         if not self.cross_packages:
             raise ValueError("cross_packages must have at least one exact package")
         if any(

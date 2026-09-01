@@ -21,6 +21,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.objects import object_path
+from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import crosscompile
 from capsem_builder.gate.content import ProfileContent
@@ -62,6 +66,9 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
     )
     for name in CONFIG.package.builder.identity_inputs:
         destination = tmp_path / name
@@ -1323,7 +1330,14 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     (packages / "Capsem_0.0.1_arm64.deb").write_text("stale")
     runner = Building(root, replies={"select-linux": "skip"})
 
-    assert _run_lane(_rail(runner)) == packages / PACKAGE
+    package = _run_lane(_rail(runner))
+
+    assert package == packages / PACKAGE
+    receipt = ViewReceipt.model_validate_json(
+        package.with_name(f"{package.name}.object.json").read_text(encoding="utf-8")
+    )
+    paths = CachePaths(repository_root=root, policy=load_policy(root))
+    assert package.stat().st_ino == object_path(paths, receipt.object).stat().st_ino
 
 
 def test_a_build_that_recorded_nothing_fails(

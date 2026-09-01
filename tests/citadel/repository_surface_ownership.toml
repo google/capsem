@@ -7,7 +7,7 @@ version = 1
 [[surface]]
 id = "repository-metadata"
 state = "retained"
-current = [".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md", "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock", "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE", "MIGRATION_HANDOFF.md", "README.md", "RELEASE.md", "SECURITY.md", "bootstrap.sh", "codecov.yml", "justfile", "rust-toolchain.toml"]
+current = [".dockerignore", ".gitignore", ".npmrc", "AGENTS.md", "CHANGELOG.md", "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock", "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE", "MIGRATION_HANDOFF.md", "README.md", "RELEASE.md", "SECURITY.md", "bootstrap.sh", "codecov.yml", "justfile", "rust-toolchain.toml", "uv.toml"]
 targets = ["<root-files>"]
 lint = ["fast.audit.source-syntax", "fast.audit.markdown", "fast.audit.shell", "fast.citadel"]
 tests = ["tests/citadel/test_repository_root_ownership.py", "build_system/tests/release/test_release_contract_architecture.py"]

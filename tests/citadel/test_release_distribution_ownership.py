@@ -13,6 +13,7 @@ UNIT_TEST = ROOT / "build_system" / "tests" / "release_site" / "release-data.tes
 SHARED_DIST = Path("build_system", "release_site", "dist").as_posix()
 EXPECTED = {
     ".gitignore",
+    ".npmrc",
     "astro.config.mjs",
     "package.json",
     "pnpm-lock.yaml",
