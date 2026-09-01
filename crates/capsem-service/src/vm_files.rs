@@ -1521,7 +1521,24 @@ pub(super) async fn handle_info(
             info.resume_blocked_reason = blocked_reason;
         }
         info.refresh_available_actions();
-        info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
+        // Disk usage is a recursive walk of the session dir (including every
+        // snapshot clone). Run it off the async worker so it does not stall the
+        // axum runtime, and log rather than silently swallow a failure.
+        let session_dir = entry.session_dir.clone();
+        info.size_bytes =
+            match tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::sandbox_disk_usage(&session_dir))
+                .await
+            {
+                Ok(Ok(bytes)) => Some(bytes),
+                Ok(Err(error)) => {
+                    tracing::debug!(error = %error, "sandbox disk usage computation failed");
+                    None
+                }
+                Err(error) => {
+                    tracing::debug!(error = %error, "sandbox disk usage task failed");
+                    None
+                }
+            };
         apply_session_db_status(&state, &mut info, &entry.session_dir).await;
         info.storage = state.storage_diagnostics_cached(&entry.session_dir);
         return Ok(Json(info));
