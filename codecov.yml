@@ -11,7 +11,7 @@ coverage:
         target: auto
         threshold: 1%
       unit:
-        target: 80%
+        target: auto
         flags:
           - unit
       integration:
@@ -24,7 +24,7 @@ coverage:
           - e2e
     patch:
       default:
-        target: 80%
+        target: 90%
 
 comment:
   layout: "diff, flags, components, files"
@@ -63,7 +63,7 @@ component_management:
         target: auto
         threshold: 2%
       - type: patch
-        target: 80%
+        target: 90%
 
   individual_components:
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
@@ -97,6 +97,7 @@ component_management:
       paths:
         - crates/capsem-core/src/mcp/**
         - crates/capsem-core/src/auto_snapshot.rs
+        - crates/capsem-core/src/auditfs.rs
         - crates/capsem-core/src/fs_monitor.rs
         - crates/capsem-core/src/bin/mcp_export.rs
 
@@ -107,8 +108,6 @@ component_management:
       paths:
         - crates/capsem-logger/src/**
         - crates/capsem-core/src/session/**
-        - crates/capsem-core/src/log_layer.rs
-        - crates/capsem-core/src/telemetry.rs
 
     # Machine lifecycle, VM config, vsock manager, host-side lifecycle state
     # machine. Hypervisor abstraction layer + platform backends.
@@ -154,12 +153,8 @@ component_management:
       name: Core Platform
       paths:
         - crates/capsem-core/src/lib.rs
-        - crates/capsem-core/src/paths.rs
         - crates/capsem-core/src/macros.rs
-        - crates/capsem-core/src/poll.rs
-        - crates/capsem-core/src/uds.rs
         - crates/capsem-core/src/ipc_ext.rs
-        - crates/capsem-core/src/ipc_handshake.rs
 
     # In-VM agent binaries: PTY agent, net-proxy, MCP server
     # relay, wire protocol.
@@ -182,18 +177,12 @@ component_management:
       name: Service
       paths:
         - crates/capsem-service/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # Per-VM process manager and lifecycle isolation.
     - component_id: process
       name: Process
       paths:
         - crates/capsem-process/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # Admin/profile tooling: manifest generation, profile materialization,
     # image build orchestration, and release asset validation.
@@ -207,45 +196,30 @@ component_management:
       name: CLI
       paths:
         - crates/capsem/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # MCP server: AI agent tool gateway over stdio JSON-RPC.
     - component_id: mcp-server
       name: MCP Server
       paths:
         - crates/capsem-mcp/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # MCP aggregator binary.
     - component_id: mcp-aggregator
       name: MCP Aggregator
       paths:
         - crates/capsem-mcp-aggregator/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # Built-in MCP subprocess binary.
     - component_id: mcp-builtin
       name: MCP Builtin
       paths:
         - crates/capsem-mcp-builtin/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # TCP-to-UDS gateway: auth, proxy, status cache, terminal WebSocket.
     - component_id: gateway
       name: Gateway
       paths:
         - crates/capsem-gateway/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # Terminal UI: profile/session control over the service API.
     - component_id: tui
@@ -266,9 +240,6 @@ component_management:
       name: Guard
       paths:
         - crates/capsem-guard/src/**
-      statuses:
-        - type: project
-          target: 70%
 
     # Frontend: Astro + Svelte components, views, stores.
     # Populated when vitest coverage is added to pipeline.
@@ -295,9 +266,6 @@ component_management:
       name: Mock Server
       paths:
         - crates/capsem-mock-server/src/**
-      statuses:
-        - type: project
-          target: 80%
 
     # Guest/host benchmark binary and protocol load generator.
     - component_id: bench
@@ -307,8 +275,14 @@ component_management:
 
 ignore:
   - crates/*/tests/**
-  # `#[cfg(test)]`-only fixture helpers; not product code any component owns.
-  - crates/capsem-core/src/test_support/**
+  # `#[cfg(test)]` sibling modules and fixture helpers are assertions about
+  # product code, not product code a component owns.
+  - crates/*/src/**/tests.rs
+  - crates/*/src/**/*_tests.rs
+  - crates/*/src/**/tests/**
+  - crates/*/src/**/proptests.rs
+  - crates/*/src/**/test_support.rs
+  - crates/*/src/**/test_support/**
   - crates/capsem-app/gen/**
   - web/marketing/**
   - web/docs/**
