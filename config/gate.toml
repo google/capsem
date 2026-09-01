@@ -2103,7 +2103,12 @@ base_flags = ["-v", "--tb=short"]
 # every remaining test the same way and spends an hour restating it. Five is
 # enough to show a pattern and few enough to stop a cascade.
 stop_at_first = "--maxfail=5"
-parallel_flags = ["-n", "4", "--dist=loadfile"]
+# Structured rather than an argv blob so the work graph records the real load
+# of every xdist-backed step. Four remains the multi-VM dogfooding contract;
+# the source-only Citadel reuses it and cuts its measured wall time by more
+# than half without adding a second concurrency policy.
+parallel_workers = 4
+parallel_distribution = "loadfile"
 coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 # A composed qualification executes source contracts before it builds anything,
 # then appends the VM-owned cohort without executing those files again.  The

@@ -77,7 +77,11 @@ class Suite:
         if self.stop_at_first_failure:
             argv.append(settings.stop_at_first)
         if self.parallel:
-            argv += settings.parallel_flags
+            argv += [
+                "-n",
+                str(settings.parallel_workers),
+                f"--dist={settings.parallel_distribution}",
+            ]
         coverage_flags = {
             CoverageMode.NONE: (),
             CoverageMode.SINGLE: settings.coverage_flags,
@@ -123,6 +127,7 @@ class Suite:
             kind=Kind.UNIT_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.SLOW,
+            concurrency=(config.suites.pytest.parallel_workers if self.parallel else 1),
         )
 
 
@@ -146,6 +151,7 @@ def citadel(config: GateConfig) -> Suite:
     return Suite(
         label="citadel",
         paths=(config.suites.pytest.citadel,),
+        parallel=True,
         stop_at_first_failure=False,
         require_artifacts=False,
     )

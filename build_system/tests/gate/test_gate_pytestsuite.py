@@ -93,6 +93,21 @@ def test_the_broad_suite_runs_four_at_a_time_by_file() -> None:
 
     assert "-n" in argv
     assert "--dist=loadfile" in argv
+    assert pytestsuite.broad(CONFIG, profile="code").as_step(CONFIG).concurrency == (
+        CONFIG.suites.pytest.parallel_workers
+    )
+
+
+def test_the_citadel_uses_the_configured_source_parallelism() -> None:
+    """Source-only guards are independent by file and should not spend the
+    fast lane on one Python process while the host has idle cores."""
+    suite = pytestsuite.citadel(CONFIG)
+    argv = _argv(suite)
+
+    assert suite.parallel
+    assert argv[argv.index("-n") + 1] == str(CONFIG.suites.pytest.parallel_workers)
+    assert f"--dist={CONFIG.suites.pytest.parallel_distribution}" in argv
+    assert suite.as_step(CONFIG).concurrency == CONFIG.suites.pytest.parallel_workers
 
 
 def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:

@@ -219,7 +219,8 @@ class PytestConfig(Strict):
     collection_flags: tuple[str, ...]
     base_flags: tuple[str, ...]
     stop_at_first: str
-    parallel_flags: tuple[str, ...]
+    parallel_workers: PositiveInt
+    parallel_distribution: Literal["loadfile"]
     coverage_flags: tuple[str, ...]
     coverage_seed_flags: tuple[str, ...]
     coverage_append_flags: tuple[str, ...]
