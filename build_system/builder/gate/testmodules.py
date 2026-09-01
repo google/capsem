@@ -130,9 +130,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # that cannot be collected is a suite the gate would otherwise discover it
     # was not running an hour later.
     collected = phase.add(pytestsuite.collection(config), after=(syntax,))
-    build_system_collected = phase.add(
-        pytestsuite.build_system_collection(config), after=(syntax,)
-    )
     # The Citadel belongs here and not in the broad suite. Source-level guards
     # answering in seconds have no business waiting on an asset build, and the
     # point of recording a mistake is to catch it before the expensive work
@@ -177,7 +174,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *audited,
         *checked,
         collected,
-        build_system_collected,
         guarded,
         digest,
         *(surface for surface in surfaces if surface is not blocking),

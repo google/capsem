@@ -209,7 +209,7 @@ def test_strict_pytest_collection_is_a_fast_leaf() -> None:
     labels = {label for wave in _waves(FastModule) for label in wave}
 
     assert "fast.pytest.collection" in labels
-    assert "fast.pytest.build-system-collection" in labels
+    assert "fast.pytest.build-system-collection" not in labels
 
 
 def test_the_fast_module_works_in_an_isolated_home() -> None:

@@ -61,7 +61,14 @@ def _once(*paths: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+def release_contracts(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...] = (),
+    node: Step | None = None,
+    seed_coverage: bool = False,
+) -> Step:
     """The release and composition contracts, without artifacts."""
     phase = plan.phase("contracts")
     settings = config.modules
@@ -85,12 +92,10 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
     # gitignored -- so on a warm machine an earlier build had installed it and
     # on a clean one the suite died with `sh: astro: command not found`.
     #
-    # In the candidate plan this makes `pnpm install --frozen-lockfile` run
-    # twice; it is idempotent, both steps declare the `node_modules` exclusive
-    # so they cannot overlap, and the second is a no-op against a warm tree.
-    # That is a cheaper answer than a module whose independence depends on
-    # having been run after another one.
-    installed = phase.add(toolchain.node(config), after=after)
+    # A composed candidate hands over its already-complete node step. The
+    # standalone command still owns this prerequisite, so independence does
+    # not require paying for the same workspace install twice in one plan.
+    installed = node or phase.add(toolchain.node(config), after=after)
 
     build_root = config.suites.pytest.build_system_root.rstrip("/") + "/"
     root_contracts = tuple(
@@ -102,6 +107,7 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
         )
         if not path.startswith(build_root)
     )
+    prerequisites = (*after, installed) if node is not None else (installed,)
     root = phase.add(
         pytestsuite.Suite(
             label="release",
@@ -116,6 +122,11 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
             # one worker, so the fixtures that build at fixed paths stay inside
             # the file that builds them.
             parallel=True,
+            coverage=(
+                pytestsuite.CoverageMode.SEED
+                if seed_coverage
+                else pytestsuite.CoverageMode.NONE
+            ),
             # It builds release-site fixtures at fixed paths and installs the
             # workspace's node modules. As its own command a machine lock made
             # that safe by accident; in a shared plan it has to be declared.
@@ -124,7 +135,7 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
                 config.exclusive("node_modules"),
             ),
         ).as_step(config),
-        after=(installed,),
+        after=prerequisites,
     )
     return phase.add(
         pytestsuite.Suite(
@@ -134,10 +145,15 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
             stop_at_first_failure=False,
             require_artifacts=False,
             parallel=True,
+            coverage=(
+                pytestsuite.CoverageMode.APPEND
+                if seed_coverage
+                else pytestsuite.CoverageMode.NONE
+            ),
             contends=(
                 config.exclusive("astro_build"),
                 config.exclusive("node_modules"),
             ),
         ).as_step(config),
-        after=(installed, root),
+        after=(*prerequisites, root),
     )

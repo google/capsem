@@ -1883,6 +1883,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_release_source_commit.py",
     "build_system/tests/gate/test_gate_qualification_evidence.py",
     "build_system/tests/gate/test_gate_qualification_flow.py",
+    "build_system/tests/gate/test_gate_qualification_reuse.py",
     "build_system/tests/gate/test_gate_sandbox.py",
     "build_system/tests/gate/test_gate_sandbox_report.py",
     "build_system/tests/gate/test_gate_git_worktree_mount.py",
@@ -2043,6 +2044,12 @@ base_flags = ["-v", "--tb=short"]
 stop_at_first = "--maxfail=5"
 parallel_flags = ["-n", "4", "--dist=loadfile"]
 coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
+# A composed qualification executes source contracts before it builds anything,
+# then appends the VM-owned cohort without executing those files again.  The
+# partial sessions cannot judge the complete floor; the finishing session does.
+coverage_seed_flags = ["--cov=build_system/builder", "--cov-report=", "--cov-fail-under=0"]
+coverage_append_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=", "--cov-fail-under=0"]
+coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 
 # Directories the broad suite never collects, each for its own reason.
 #
@@ -2565,15 +2572,6 @@ max_undeclared = 0
 # of them are composed into one run. `generate-settings.sh` ran three times in
 # a single candidate plan, seventy-five seconds each, for the same file in the
 # same prefix.
-[[boundary.repeated_actions]]
-subject = "pnpm install --frozen-lockfile"
-reason = """
-Idempotent, and a no-op against a warm tree. Each module that renders a web
-surface installs its own node_modules so it can run alone; the alternative is a
-module whose independence depends on having been run after another one, which
-is more expensive to reason about than a second install that does nothing.
-"""
-
 [[boundary.repeated_actions]]
 subject = "codesign --sign - --entitlements"
 platforms = ["Darwin"]

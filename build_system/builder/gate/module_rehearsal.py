@@ -16,17 +16,15 @@ last one found before this module existed was worse still -- the two glow-up
 steps passed none of the script's three required arguments, so they could not
 have started at all.
 
-So the cohort is fabricated from what the local lane built, and then everything
-downstream is the release lane itself: the same `pulled_artifacts` verify step,
-the same `functional` suites, and the same `pulled_package` sequence, from the
-same functions, differing only in the directories they scratch in.
+So the cohort is fabricated from what the local lane built, verified by the
+release lane's digest checker, checked at the staged path boundary, and handed
+to the same `pulled_package` sequence. The candidate's immediately preceding
+functional phase already booted and tested those exact bytes. Repeating every
+suite after copying them was a warm second run, not independent evidence.
 
-`functional` was added last and was the expensive omission. Covering only the
-five steps that had no local counterpart still left the phase where four of the
-next eight dispatch failures happened -- the suites themselves, run against a
-pulled cohort instead of the layout the build left behind. Every one died within
-four seconds on a precondition, which is the cheapest kind of failure to find
-and was being bought at two hours apiece.
+Hosted release lanes still execute `functional` themselves because they do not
+inherit local evidence. This module shares only inside one source run, after a
+fresh behavioral result and a manifest-digest proof are both dependencies.
 
 This is not a shortcut around the release, and it does not become one. It runs
 only in the local lane -- a release *is* the pulled path, and rehearsing it
@@ -46,9 +44,9 @@ from .config import GateConfig
 from .content import ProfileContent
 from .execution import Kind, Needs, Speed, Step, step
 from .module_artifacts import pulled_artifacts
-from .module_functional import functional
 from .module_glowup import pulled_package
 from .plan import Plan
+from .profileaxis import AxisAgrees
 from .qualification import Qualification
 from .testmodules import InWorkspace
 from .versions import workspace_version
@@ -89,15 +87,13 @@ def rehearsal(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
-    generated: Step | None = None,
-    node: Step | None = None,
 ) -> Step:
     """Replay the release lane's pulled steps against a local cohort.
 
-    `generated` is handed over for the reason `functional` documents: a
-    composed run has already built the gitignored mock the suites check, and
-    building it a second time is work the plan cannot justify. Absent when this
-    module runs alone, where nothing has made it yet.
+    The candidate's functional phase has already proved these exact bytes. The
+    release-input verifier below binds the restaged paths to their digests, so
+    repeating pytest, injection, integration, and timing against the copy would
+    be a warm second measurement rather than another behavioral cohort.
     """
     if qualification.pulled:
         # Already the subject. A release proves this path for real, and a
@@ -163,32 +159,19 @@ def rehearsal(
     )
     staged = ProfileContent.staged(config, config.path(settings.rehearsal_content_root))
 
-    # The VM suites, against the pulled cohort rather than the layout the build
-    # left behind. This was the gap that made the release lane discoverable only
-    # by dispatching it: the five steps below are the ones nobody could run
-    # locally, but `functional` is where four of the eight pairing failures
-    # actually happened -- a profile axis reading the checkout, suites handed no
-    # content selection, a gitignored generated file, and host binaries resolved
-    # from `cache/target/cargo/debug` in a prefix that carries only tracked files. Each cost
-    # a dispatch to see and four seconds to fail.
-    #
-    # The base profile only. The pulled path is the same for every profile, and
-    # repeating it per profile would buy nothing while doubling the slowest
-    # phase the gate has; the compatibility axis is what the candidate's own
-    # `functional` phase is for.
-    proved = functional(
-        plan,
-        config,
-        qualification=rehearsed,
+    # Path selection is still proved after staging: this is the cheap boundary
+    # that caught checkout-relative release defects, without rebooting bytes
+    # whose manifest digest and fresh behavioral result are already in this
+    # plan's dependency chain.
+    proved = phase.add(
+        step(
+            "axis",
+            AxisAgrees(assets=staged.assets, profiles_dir=staged.profiles(config)),
+            kind=Kind.UNIT_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
         after=(verified,),
-        staged=staged,
-        generated=generated,
-        node=node,
-        phase_name=PHASE,
-        axis=(config.suites.pytest.base_profile,),
-        # The one suite here that would be a second recording rather than a
-        # second proof. See `functional`.
-        benchmark=False,
     )
     return pulled_package(
         phase,

@@ -92,8 +92,21 @@ def compose(
     # `fast` also opens with `toolchain.sync`, so running it first means the
     # contracts suite is no longer the step that discovers the environment.
     fast = testmodules.fast(plan, config, after=(recorded,))
-    contracts = module_contracts.release_contracts(plan, config, after=fast)
-    modules = compose_modules(plan, config, qualification=qualification, after=(contracts,))
+    node = _already_issuing(plan, toolchain.node(config))
+    contracts = module_contracts.release_contracts(
+        plan,
+        config,
+        after=fast,
+        node=node,
+        seed_coverage=True,
+    )
+    modules = compose_modules(
+        plan,
+        config,
+        qualification=qualification,
+        after=(contracts,),
+        source_contracts_proved=True,
+    )
 
     return plan.add(
         verify_step(EnforceTimingRegression(TimingBoundary.QUALIFICATION)),
@@ -107,6 +120,7 @@ def compose_modules(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    source_contracts_proved: bool = False,
 ) -> Step:
     """Everything after the fast phase: the artifacts, the VMs, the install.
 
@@ -120,9 +134,16 @@ def compose_modules(
     # module still makes its own.
     generated = _already_issuing(plan, audits.generated_settings(config))
     bundled = _already_issuing(plan, audits.frontend_bundle(config))
+    node = _already_issuing(plan, toolchain.node(config))
     static = staticmodule.static(
-        plan, config, after=(prepared,), generated=generated, bundled=bundled
+        plan,
+        config,
+        after=(prepared,),
+        generated=generated,
+        bundled=bundled,
+        node=node,
     )
+    signed = next(step for step in static if step.label == "static.sign")
     artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
     functional = vmmodules.functional(
         plan,
@@ -130,6 +151,9 @@ def compose_modules(
         qualification=qualification,
         after=(artifacts,),
         generated=generated,
+        node=node,
+        signed=signed,
+        source_contracts_proved=source_contracts_proved,
         isolated_assets=not qualification.pulled,
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
@@ -138,14 +162,11 @@ def compose_modules(
     # path a release lane takes, against a cohort resolved by digest.
     # A release lane skips it -- there it is not a rehearsal, it is the lane.
     # Asked after `functional`, because that is when the step it finds exists.
-    installed = _already_issuing(plan, toolchain.node(config, config.functional.node_workspaces))
     rehearsed = module_rehearsal.rehearsal(
         plan,
         config,
         qualification=qualification,
         after=(glowup,),
-        generated=generated,
-        node=installed,
     )
 
     return plan.add(

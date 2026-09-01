@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owners to run instead. High-impact and unknown changes remain eligible;
   exceptional forced attempts require a journaled reason and cannot occur
   twice consecutively.
+- One complete local qualification now executes each behavioral cohort once:
+  Node workspaces and Python collection are prepared once, source-contract
+  coverage is appended into the later functional result without recollection,
+  and digest-verified release staging reuses the fresh VM result instead of
+  rerunning the same pytest, injection, and integration work. Hosted binary and
+  profile release lanes still run their complete independent qualification.
 - Complete local verification is `just test` again and reuses valid
   content-addressed build output between source commits. The cold-only
   `test-full` public command is removed without a compatibility alias. Release

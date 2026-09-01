@@ -69,6 +69,7 @@ def static(
     after: tuple[Step, ...] = (),
     generated: Step | None = None,
     bundled: Step | None = None,
+    node: Step | None = None,
 ) -> tuple[Step, ...]:
     """What can be proved from source, in the order the proofs depend on.
 
@@ -83,7 +84,7 @@ def static(
     settings = config.modules
     leaves: list[Step] = []
     ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.STATIC), after=after)
-    node = phase.add(toolchain.node(config), after=after)
+    node = node or phase.add(toolchain.node(config), after=after)
     # Generated once per run. Standalone, this module makes it; composed, it
     # is handed the one the fast phase already made, because the script
     # takes seventy-five seconds and the source it reads has not moved.

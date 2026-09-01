@@ -214,6 +214,9 @@ class PytestConfig(Strict):
     stop_at_first: str
     parallel_flags: tuple[str, ...]
     coverage_flags: tuple[str, ...]
+    coverage_seed_flags: tuple[str, ...]
+    coverage_append_flags: tuple[str, ...]
+    coverage_finish_flags: tuple[str, ...]
     broad_ignores: tuple[str, ...]
     host_snapshot_serial: tuple[str, ...]
     serial_paths: tuple[str, ...]

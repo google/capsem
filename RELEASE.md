@@ -502,6 +502,17 @@ including:
 The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
 
+Within one complete source run, an identical behavioral cohort MUST execute
+once. A later phase MAY consume its fresh result only when the graph makes that
+result an ancestor and an intervening content-addressed verifier proves the
+consumer sees the same bytes. Source-contract coverage MAY likewise seed one
+coverage ledger that the later functional cohort finishes, provided already
+proved files are excluded from that later collection. This is intra-run proof
+composition, never cross-source behavioral caching: VM, runtime, install,
+security, benchmark, and update behavior still execute fresh for changed
+source. Hosted release qualification cannot consume local proof and MUST run
+its own complete artifact-family pairing.
+
 `just test <source-commit>` selects one canonical full lowercase commit that is
 already prepared, committed, and reachable from local `main`. It MUST
 materialize and diagnose an independent detached repository at a prefix named
