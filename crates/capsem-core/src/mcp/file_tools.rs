@@ -349,6 +349,59 @@ fn checked_child_path(root: &Path, relative_path: &str, label: &str) -> Result<s
     Ok(root.join(rel))
 }
 
+/// Mode bits of a trusted snapshot file, defaulting to 0644 if unreadable.
+fn snapshot_file_mode(path: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .map(|m| m.permissions().mode())
+            .unwrap_or(0o644)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        0o644
+    }
+}
+
+/// Write `data` to a fresh regular file at `path` without following symlinks.
+///
+/// Uses O_CREAT|O_EXCL (`create_new`) plus O_NOFOLLOW so the write refuses if
+/// anything already exists at the path -- including a symlink a guest raced into
+/// the VirtioFS-shared workspace between the containment check and here. The
+/// mode is set at creation, so there is no follow-prone `set_permissions`
+/// afterward. This closes the revert TOCTOU that let a guest redirect a restore
+/// to an arbitrary host file.
+#[cfg(unix)]
+fn write_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(mode)
+        .open(path)
+        .map_err(|e| format!("failed to create restored file without following symlinks: {e}"))?;
+    file.write_all(data).map_err(|e| format!("failed to write restored file: {e}"))?;
+    file.sync_all().map_err(|e| format!("failed to fsync restored file: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_regular_file_no_follow(path: &Path, data: &[u8], _mode: u32) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| format!("failed to create restored file: {e}"))?;
+    file.write_all(data).map_err(|e| format!("failed to write restored file: {e}"))?;
+    let _ = file.sync_all();
+    Ok(())
+}
+
 fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
     if meta.file_type().is_symlink() {
@@ -869,34 +922,22 @@ pub fn handle_revert_file_with_security_event(
                     );
                 }
             };
-            {
-                use std::io::Write;
-                let mut f = match std::fs::File::create(&current_file) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        return (
-                            JsonRpcResponse::err(request_id, -32603, format!("failed to create restored file: {e}")),
-                            None,
-                        );
-                    }
-                };
-                if let Err(e) = f.write_all(&snap_data) {
-                    return (
-                        JsonRpcResponse::err(request_id, -32603, format!("failed to write restored file: {e}")),
-                        None,
-                    );
-                }
-                let _ = f.sync_all();
+            // Permissions come from the trusted snapshot side (outside the guest
+            // share). Default to 0644 if unreadable.
+            let mode = snapshot_file_mode(&snap_file);
+            // Write through a no-follow, exclusive create so a guest cannot race
+            // a symlink into the just-removed target and redirect the restore.
+            if let Err(e) = write_regular_file_no_follow(&current_file, &snap_data, mode) {
+                return (
+                    JsonRpcResponse::err(request_id, -32603, format!("failed to restore file safely: {e}")),
+                    None,
+                );
             }
             // Fsync parent dir to flush dentry metadata.
             if let Some(parent) = current_file.parent() {
                 if let Ok(dir) = std::fs::File::open(parent) {
                     let _ = dir.sync_all();
                 }
-            }
-            // Restore permissions from snapshot.
-            if let Ok(snap_meta) = snap_file.metadata() {
-                let _ = std::fs::set_permissions(&current_file, snap_meta.permissions());
             }
         }
     } else {

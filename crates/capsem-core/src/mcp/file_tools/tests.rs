@@ -1109,3 +1109,37 @@ fn truncate_path_max_zero_does_not_panic() {
     let _ = truncate_path("abcdef", 0);
     let _ = truncate_path("日本語", 0);
 }
+
+// -- no-follow write path (revert TOCTOU) --
+
+#[cfg(unix)]
+#[test]
+fn write_regular_file_no_follow_refuses_existing_symlink() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("outside.txt");
+    std::fs::write(&target, b"original").unwrap();
+    let link = dir.path().join("workspace_file");
+    symlink(&target, &link).unwrap();
+
+    // A guest raced a symlink into the workspace target between the containment
+    // check and the write. The write must refuse, never follow it.
+    let result = write_regular_file_no_follow(&link, b"attacker", 0o644);
+    assert!(result.is_err(), "must refuse to write through a pre-existing symlink");
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"original",
+        "the symlink target outside the workspace must be untouched"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_regular_file_no_follow_creates_fresh_file_with_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("restored");
+    write_regular_file_no_follow(&path, b"hi", 0o600).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"hi");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+}
