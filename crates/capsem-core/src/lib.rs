@@ -8,6 +8,7 @@ pub mod hypervisor;
 pub mod ipc_handshake;
 pub mod log_layer;
 pub mod poll;
+pub mod proctable;
 #[macro_use]
 pub mod macros;
 pub mod manifest_compat;

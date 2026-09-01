@@ -814,6 +814,7 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "capsem-core",
    "clap",
    "futures",
    "reqwest",

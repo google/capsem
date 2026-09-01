@@ -1,4 +1,13 @@
 use super::{assess, Objection};
+use capsem_core::proctable::Process;
+
+fn process(pid: u32, parent_pid: u32, arguments: &str) -> Process {
+    Process {
+        pid,
+        parent_pid,
+        arguments: arguments.to_string(),
+    }
+}
 
 fn reasons(objections: &[Objection]) -> Vec<&str> {
     objections.iter().map(|o| o.what.as_str()).collect()
@@ -77,41 +86,38 @@ fn an_objection_explains_itself_in_the_message() {
 
 #[test]
 fn the_doctor_does_not_report_itself_as_contention() {
-    // `capsem-bench-rs` matches `^capsem`, so without this it would find
-    // itself and declare every machine unfit.
-    let listing = "111 capsem-service\n222 capsem-bench-rs\n333 capsem-gateway\n";
-    let strays = super::strays_from_pgrep(listing, &["222".to_string()]);
+    let processes = [
+        process(111, 1, "/usr/bin/capsem-service"),
+        process(222, 1, "/tmp/capsem-bench-rs doctor"),
+        process(333, 1, "/usr/bin/capsem-gateway"),
+    ];
+    let strays = super::strays_from_processes(&processes, 222);
     assert_eq!(strays, ["capsem-service", "capsem-gateway"]);
 }
 
 #[test]
 fn an_empty_listing_finds_nothing() {
-    assert!(super::strays_from_pgrep("", &["222".to_string()]).is_empty());
-}
-
-#[test]
-fn a_malformed_line_is_skipped_rather_than_panicking() {
-    let strays = super::strays_from_pgrep("garbage\n111 capsem-service\n", &["999".to_string()]);
-    assert_eq!(strays, ["capsem-service"]);
+    assert!(super::strays_from_processes(&[], 222).is_empty());
 }
 
 #[test]
 fn the_doctor_ignores_its_gate_ancestry_but_not_an_unrelated_gate() {
-    let processes = "100 1\n200 100\n300 200\n400 1\n";
-    let ancestry = super::ancestry_from_ps(processes, "300");
-    let listing = "100 capsem-gate\n300 capsem-bench-rs\n400 capsem-gate\n";
+    let processes = [
+        process(100, 1, "/tmp/capsem-gate candidate"),
+        process(200, 100, "/usr/bin/python worker"),
+        process(300, 200, "/tmp/capsem-bench-rs doctor"),
+        process(400, 1, "/other/capsem-gate candidate"),
+    ];
 
-    assert_eq!(ancestry, ["300", "200", "100", "1"]);
+    assert_eq!(super::ancestry(&processes, 300), [300, 200, 100, 1]);
     assert_eq!(
-        super::strays_from_pgrep(listing, &ancestry),
+        super::strays_from_processes(&processes, 300),
         ["capsem-gate"]
     );
 }
 
 #[test]
 fn a_cyclic_process_snapshot_cannot_loop_forever() {
-    assert_eq!(
-        super::ancestry_from_ps("100 200\n200 100\n", "100"),
-        ["100", "200"]
-    );
+    let processes = [process(100, 200, "worker-a"), process(200, 100, "worker-b")];
+    assert_eq!(super::ancestry(&processes, 100), [100, 200]);
 }
