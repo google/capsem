@@ -75,6 +75,14 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
 
 
+def test_bootstrap_consumes_the_validated_cache_policy() -> None:
+    bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text(encoding="utf-8")
+
+    assert 'capsem-cache --repository "$SCRIPT_DIR" policy' in bootstrap
+    assert '["control"]["docker"]["recommended_disk_bytes"]' in bootstrap
+    assert "awk -F=" not in bootstrap
+
+
 def test_runtime_policy_references_owned_receipt_and_log_stages() -> None:
     base = stage(path="containers/receipts")
     docker = DockerRuntimePolicy(

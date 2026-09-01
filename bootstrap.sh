@@ -7,20 +7,6 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DOCKER_DISK_BYTES=$(awk -F= '
-    /^\[control\.docker\]$/ { in_docker=1; next }
-    /^\[/ { in_docker=0 }
-    in_docker && $1 ~ /^[[:space:]]*recommended_disk_bytes[[:space:]]*$/ {
-        gsub(/[[:space:]]/, "", $2); print $2; exit
-    }
-' "$SCRIPT_DIR/config/cache.toml")
-case "$DOCKER_DISK_BYTES" in
-    ''|*[!0-9]*)
-        printf "invalid control.docker.recommended_disk_bytes in config/cache.toml\n" >&2
-        exit 2
-        ;;
-esac
-DOCKER_DISK_GIB=$((DOCKER_DISK_BYTES / 1073741824))
 
 ASSUME_YES=0
 for arg in "$@"; do
@@ -278,6 +264,21 @@ fi
 #          current-session access, and verified Buildx before dependency work.
 case "$(uname -s)" in
     Darwin)
+        # Cache policy is strict Pydantic-owned TOML. Consume its validated JSON
+        # instead of maintaining a second partial TOML parser in this script.
+        DOCKER_DISK_BYTES=$(
+            uv run --project "$SCRIPT_DIR/build_system" --frozen \
+                capsem-cache --repository "$SCRIPT_DIR" policy \
+                | uv run --project "$SCRIPT_DIR/build_system" --frozen python -c \
+                    'import json, sys; print(json.load(sys.stdin)["control"]["docker"]["recommended_disk_bytes"])'
+        )
+        case "$DOCKER_DISK_BYTES" in
+            ''|*[!0-9]*)
+                printf "invalid control.docker.recommended_disk_bytes in validated cache policy\n" >&2
+                exit 2
+                ;;
+        esac
+        DOCKER_DISK_GIB=$((DOCKER_DISK_BYTES / 1073741824))
         if ! command -v brew >/dev/null 2>&1; then
             printf "  [SKIP] container runtime (Homebrew not installed)\n"
         else
