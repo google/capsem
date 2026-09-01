@@ -762,3 +762,42 @@ fn write_to_read_only_register_ignored() {
     write_u32(&t, MAGIC_VALUE, 0xDEAD); // magic is read-only
     assert_eq!(read_u32(&t, MAGIC_VALUE), VIRTIO_MMIO_MAGIC); // unchanged
 }
+
+#[test]
+fn cold_activation_rejects_oversized_queue() {
+    use std::sync::atomic::Ordering;
+    let (t, activated, _) = make_transport();
+    // Guest declares a queue larger than the device maximum (256) on the cold
+    // DRIVER_OK path. The device must refuse to activate rather than hand the
+    // unclamped size to the ring accessors.
+    write_u32(&t, QUEUE_SEL, 0);
+    write_u32(&t, QUEUE_NUM, 512);
+    write_u32(&t, QUEUE_READY, 1);
+    write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+    assert!(
+        !activated.load(Ordering::SeqCst),
+        "device must not activate with a guest queue size exceeding the maximum"
+    );
+}
+
+#[test]
+fn cold_activation_accepts_a_valid_ready_queue() {
+    use std::sync::atomic::Ordering;
+    let (t, activated, _) = make_transport();
+    // A well-formed queue (power-of-two size within max, rings inside RAM) must
+    // still activate -- the validation must not break real guest boots.
+    write_u32(&t, QUEUE_SEL, 0);
+    write_u32(&t, QUEUE_NUM, 8);
+    write_u32(&t, QUEUE_DESC_LOW, (RAM_BASE) as u32);
+    write_u32(&t, QUEUE_DESC_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_DRIVER_LOW, (RAM_BASE + 256) as u32);
+    write_u32(&t, QUEUE_DRIVER_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_DEVICE_LOW, (RAM_BASE + 512) as u32);
+    write_u32(&t, QUEUE_DEVICE_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_READY, 1);
+    write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+    assert!(
+        activated.load(Ordering::SeqCst),
+        "a valid ready queue must still activate the device"
+    );
+}
