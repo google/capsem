@@ -366,3 +366,28 @@ fn frame_and_json_rpc_notification_shapes_must_agree() {
         .to_string()
         .contains("carried"));
 }
+
+// -- frame body read deadline (slowloris) --
+
+#[tokio::test(start_paused = true)]
+async fn read_next_frame_times_out_when_body_stalls_after_length_prefix() {
+    use tokio::io::AsyncWriteExt;
+    let (client, mut server_writer) = tokio::io::duplex(1024);
+    // Announce a valid frame length, then never send the body.
+    let declared = (capsem_proto::MCP_FRAME_HEADER_LEN as usize) + 32;
+    server_writer
+        .write_all(&(declared as u32).to_be_bytes())
+        .await
+        .unwrap();
+
+    let mut client = client;
+    let handle = tokio::spawn(async move { read_next_frame(&mut client).await });
+    tokio::time::advance(std::time::Duration::from_secs(FRAME_BODY_TIMEOUT.as_secs() + 1)).await;
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_err(),
+        "a stalled frame body must time out, not hold the read loop forever"
+    );
+    let _ = server_writer; // keep the pipe open until here
+}

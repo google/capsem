@@ -30,6 +30,10 @@ use super::McpEndpointState;
 const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
 pub(super) const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
 
+/// Deadline for a framed-MCP body once its length prefix has been read. Bounds a
+/// guest that announces a frame and then stalls mid-body (slowloris).
+const FRAME_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub(super) async fn serve(
     initial_buf: Vec<u8>,
     vsock_stream: AsyncFdStream,
@@ -782,8 +786,15 @@ async fn read_next_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<FrameRe
         bail!("invalid MCP frame length: {total_len}");
     }
 
+    // The length prefix is committed, so the body must arrive promptly. A guest
+    // that announces a length and then stalls would otherwise hold this read
+    // loop (and the connection) forever. The idle wait between requests happens
+    // on the length read above and is deliberately not bounded here.
     let mut body = vec![0u8; total_len];
-    reader.read_exact(&mut body).await.context("read MCP frame body")?;
+    match tokio::time::timeout(FRAME_BODY_TIMEOUT, reader.read_exact(&mut body)).await {
+        Ok(result) => result.context("read MCP frame body")?,
+        Err(_) => bail!("MCP frame body did not arrive within {:?}", FRAME_BODY_TIMEOUT),
+    };
     match capsem_proto::decode_mcp_frame_body(&body) {
         Ok(frame) => Ok(FrameRead::Frame(frame)),
         Err(e) => Ok(FrameRead::InvalidFrame {
