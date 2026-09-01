@@ -36,8 +36,8 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-#: Set once the interpreter is running under an isolated cache. Its presence is
-#: how the re-exec knows not to happen twice.
+#: Set to the exact source-keyed generation. Equality with the current tree,
+#: environment, and interpreter is how the re-exec knows not to happen twice.
 MARKER = "CAPSEM_GATE_PYCACHE"
 
 #: The variable CPython itself reads. Exported rather than only passed as `-X`,
@@ -45,6 +45,8 @@ MARKER = "CAPSEM_GATE_PYCACHE"
 PYCACHE = "PYTHONPYCACHEPREFIX"
 
 FALLBACK_STAGE = Path("cache/tools/python/pycache")
+GATE_POLICY = Path("config/gate.toml")
+CACHE_POLICY = Path("config/cache.toml")
 
 
 def checkout() -> Path:
@@ -57,12 +59,24 @@ def checkout() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _stage(root: Path) -> Path:
-    policy = root / "config/cache.toml"
+def _cache_authority(root: Path) -> Path:
+    """Keep private-checkout bytecode in the outer repository cache."""
+    policy = root / GATE_POLICY
     if not policy.is_file():
-        return root / FALLBACK_STAGE
+        return root
     raw = tomllib.loads(policy.read_text(encoding="utf-8"))
-    return root / raw["root"] / raw["stages"]["python-pycache"]["path"]
+    variable = raw.get("environment", {}).get("source_checkout")
+    selected = os.environ.get(variable, "") if isinstance(variable, str) else ""
+    return Path(selected).resolve() if selected else root
+
+
+def _stage(root: Path) -> Path:
+    authority = _cache_authority(root)
+    policy = root / CACHE_POLICY
+    if not policy.is_file():
+        return authority / FALLBACK_STAGE
+    raw = tomllib.loads(policy.read_text(encoding="utf-8"))
+    return authority / raw["root"] / raw["stages"]["python-pycache"]["path"]
 
 
 def _python_sources(root: Path) -> tuple[Path, ...]:
@@ -101,22 +115,28 @@ def isolated_environment(root: Path | None = None) -> dict[str, str]:
 
 
 def main() -> int:
-    """Re-exec under an isolated cache, then be the gate."""
-    if os.environ.get(MARKER):
+    """Re-exec unless this interpreter matches the current source generation."""
+    environment = isolated_environment()
+    isolated = (
+        os.environ.get(MARKER) == environment[MARKER]
+        and os.environ.get(PYCACHE) == environment[PYCACHE]
+        and sys.pycache_prefix == environment[PYCACHE]
+    )
+    if isolated:
         from .gate.cli import main as gate
 
         return gate()
 
-    return _reexec()
+    return _reexec(environment)
 
 
-def _reexec() -> NoReturn:
+def _reexec(environment: dict[str, str] | None = None) -> NoReturn:
     """Become the same command on an interpreter with a private cache.
 
     `execv`, not a subprocess: a wrapper process would sit between the terminal
     and the gate for the whole run, taking the signals the gate has to handle
     itself.
     """
-    os.environ.update(isolated_environment())
+    os.environ.update(environment or isolated_environment())
     os.execv(sys.executable, [sys.executable, "-m", "capsem_builder.gate", *sys.argv[1:]])
     raise AssertionError("execv returned")  # pragma: no cover - execv does not
