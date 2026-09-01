@@ -374,11 +374,14 @@ fn mark_credential_observation_logged(
         source: observation.source.clone(),
         event_type: observation.event_type.clone(),
     };
-    LOGGED_CREDENTIAL_OBSERVATIONS
+    // Recover the set on lock poison rather than defaulting to "first seen":
+    // returning true on every poisoned call would re-emit duplicate credential
+    // ledger rows. into_inner() keeps the dedup set intact.
+    let mut logged = LOGGED_CREDENTIAL_OBSERVATIONS
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
-        .map(|mut logged| logged.insert(key))
-        .unwrap_or(true)
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    logged.insert(key)
 }
 
 pub async fn log_brokered_injections(db: &DbWriter, rules: &SecurityRuleSet, injections: Vec<CredentialInjection>) {
