@@ -175,17 +175,6 @@ fn tool_call_without_a_name_carries_no_attribution() {
     assert!(summary.server_name.is_none());
 }
 
-#[test]
-fn identical_params_hash_identically_and_differing_params_do_not() {
-    let a = interpret_mcp_method(&request("tools/call", json!({"name": "s__t"})));
-    let b = interpret_mcp_method(&request("tools/call", json!({"name": "s__t"})));
-    let c = interpret_mcp_method(&request("tools/call", json!({"name": "s__u"})));
-
-    assert_eq!(a.request_hash, b.request_hash);
-    assert_ne!(a.request_hash, c.request_hash);
-    assert!(!a.request_hash.is_empty());
-}
-
 // ── Response text extraction ───────────────────────────────────────
 //
 // Server responses are attacker-influenced too. Extraction walks arbitrary

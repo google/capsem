@@ -433,7 +433,6 @@ impl StreamTracker {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct McpMethodSummary {
     kind: McpMethodKind,
@@ -441,11 +440,7 @@ struct McpMethodSummary {
     request_id: Option<String>,
     server_name: Option<String>,
     tool_name: Option<String>,
-    resource_uri: Option<String>,
-    prompt_name: Option<String>,
     request_preview: Option<String>,
-    request_hash: String,
-    has_request_id: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -860,8 +855,6 @@ fn validate_frame_request_pair(frame: &capsem_proto::McpFrame, req: &JsonRpcRequ
 fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
     let mut server_name = None;
     let mut tool_name = None;
-    let mut resource_uri = None;
-    let mut prompt_name = None;
 
     let kind = match req.method.as_str() {
         "initialize" => McpMethodKind::Initialize,
@@ -888,7 +881,6 @@ fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
                 server_name = parse_resource_uri(uri)
                     .map(|(server, _)| server.to_string())
                     .or_else(|| Some(String::new()));
-                resource_uri = Some(uri.to_string());
             }
             McpMethodKind::ResourcesRead
         }
@@ -901,19 +893,12 @@ fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
                 server_name = parse_namespaced(name)
                     .map(|(server, _)| server.to_string())
                     .or_else(|| Some(String::new()));
-                prompt_name = Some(name.to_string());
             }
             McpMethodKind::PromptsGet
         }
         _ => McpMethodKind::Unknown,
     };
 
-    let request_bytes = req
-        .params
-        .as_ref()
-        .and_then(|params| serde_json::to_vec(params).ok())
-        .unwrap_or_default();
-    let request_hash = blake3::hash(&request_bytes).to_hex().to_string();
     let request_preview = req
         .params
         .as_ref()
@@ -926,11 +911,7 @@ fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
         request_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
         server_name,
         tool_name,
-        resource_uri,
-        prompt_name,
         request_preview,
-        request_hash,
-        has_request_id: req.id.is_some(),
     }
 }
 
