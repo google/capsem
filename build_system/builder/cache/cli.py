@@ -11,7 +11,7 @@ import click
 from .config import load_policy
 from .health import assess
 from .health import render as health_text
-from .inventory import scan_inventory
+from .inventory import scan_inventory, scan_retention_inventory
 from .operations import apply_prune
 from .paths import CachePaths
 from .planner import plan_clean, plan_prune
@@ -21,15 +21,27 @@ from .runtimeoperations import apply_runtime_prune
 from .runtimeplanner import plan_runtime_clean, plan_runtime_prune
 
 
-def _state(context: click.Context, *, native: bool = False):
+def _policy_paths(context: click.Context):
     repository = context.obj["repository"]
     policy_repository = context.obj["policy_repository"]
     root = repository.resolve()
     policy = load_policy(policy_repository)
     paths = CachePaths(repository_root=root, policy=policy)
+    return policy, paths
+
+
+def _state(context: click.Context, *, native: bool = False):
+    policy, paths = _policy_paths(context)
     report = scan_inventory(paths, policy)
     snapshot = scan_runtimes(policy, offline=not native)
     report = report.model_copy(update={"runtimes": snapshot.runtimes})
+    return policy, paths, report, snapshot
+
+
+def _retention_state(context: click.Context):
+    policy, paths = _policy_paths(context)
+    report = scan_retention_inventory(paths, policy)
+    snapshot = scan_runtimes(policy, offline=False)
     return policy, paths, report, snapshot
 
 
@@ -103,7 +115,7 @@ def health(context: click.Context, as_json: bool, offline: bool) -> None:
 @click.pass_context
 def prune(context: click.Context, apply: bool, reason: str, as_json: bool) -> None:
     """Plan deterministic policy pruning; preview unless --apply is present."""
-    policy, paths, report, snapshot = _state(context, native=True)
+    policy, paths, report, snapshot = _retention_state(context)
     plan = plan_prune(report, policy)
     runtime_plan = plan_runtime_prune(snapshot, policy)
     if apply:
@@ -181,7 +193,8 @@ def clean(context: click.Context, stage_id: str, apply: bool, reason: str, as_js
 @click.pass_context
 def snapshot(context: click.Context, as_json: bool) -> None:
     """Persist exact Docker/BuildKit/Tart inventory receipts."""
-    policy, paths, _, report = _state(context, native=True)
+    policy, paths = _policy_paths(context)
+    report = scan_runtimes(policy)
     receipts = write_receipts(paths, policy, report)
     if as_json:
         click.echo(report.model_dump_json(indent=2))

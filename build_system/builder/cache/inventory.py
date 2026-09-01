@@ -6,10 +6,12 @@ import fcntl
 import fnmatch
 import os
 import shutil
+import stat
 import time
 from pathlib import Path
 
-from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
+from .inventorymodels import RetentionInventory
+from .models import CacheEntry, CacheInventory, CachePolicy, PruneMethod, StageInventory
 from .paths import CachePaths
 
 
@@ -34,19 +36,20 @@ def _entry_size(path: Path, allocated_seen: set[tuple[int, int]]) -> tuple[int, 
     stack = [path]
     while stack:
         current = stack.pop()
-        stat = current.lstat()
-        if current.is_symlink():
+        metadata = current.lstat()
+        mode = metadata.st_mode
+        if stat.S_ISLNK(mode):
             continue
-        inode = (stat.st_dev, stat.st_ino)
-        if current.is_dir():
+        inode = (metadata.st_dev, metadata.st_ino)
+        if stat.S_ISDIR(mode):
             with os.scandir(current) as children:
                 stack.extend(Path(child.path) for child in children)
             continue
-        if current.is_file():
-            logical += stat.st_size
+        if stat.S_ISREG(mode):
+            logical += metadata.st_size
             if inode not in allocated_seen:
                 allocated_seen.add(inode)
-                allocated += getattr(stat, "st_blocks", 0) * 512
+                allocated += getattr(metadata, "st_blocks", 0) * 512
     return logical, allocated
 
 
@@ -148,4 +151,26 @@ def scan_inventory(
         + sum(entry.allocated_bytes for entry in unclassified),
         stages=stages,
         unclassified=unclassified,
+    )
+
+
+def scan_retention_inventory(
+    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None
+) -> RetentionInventory:
+    """Scan only stages whose configured retention policy permits deletion."""
+    allocated_seen: set[tuple[int, int]] = set()
+    stage_ids = sorted(
+        stage_id
+        for stage_id, stage in policy.stages.items()
+        if stage.prune not in {PruneMethod.NONE, PruneMethod.EXTERNAL}
+    )
+
+    stages = tuple(
+        _stage_inventory(stage_id, paths, policy, allocated_seen) for stage_id in stage_ids
+    )
+    return RetentionInventory(
+        root=paths.root,
+        generated_ns=time.time_ns() if now_ns is None else now_ns,
+        filesystem_free_bytes=shutil.disk_usage(paths.root.parent).free,
+        stages=stages,
     )

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from .inventorymodels import RetentionInventory
 from .models import CacheInventory, CachePolicy, PruneAction, PruneMethod, PrunePlan
 
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
 
 
-def plan_prune(inventory: CacheInventory, policy: CachePolicy) -> PrunePlan:
+def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
     """Select expired, surplus, and pressure candidates without touching pinned state."""
     actions: list[PruneAction] = []
     violations: list[str] = []

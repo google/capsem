@@ -4,7 +4,7 @@ import fcntl
 import os
 from pathlib import Path
 
-from capsem_builder.cache.inventory import scan_inventory
+from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 
@@ -111,3 +111,23 @@ def test_inventory_separates_metadata_and_protects_active_leases(tmp_path: Path)
     entries = {entry.key: entry for entry in report.stages[0].entries}
     assert entries["generation"].managed and entries["generation"].protected
     assert not entries[".generation.lock"].managed
+
+
+def test_retention_inventory_skips_policy_protected_stages(tmp_path: Path) -> None:
+    retained = policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
+    reclaimable = retained.model_copy(
+        update={"path": Path("target/reclaimable"), "prune": PruneMethod.LRU}
+    )
+    configured = policy().model_copy(
+        update={"stages": {"objects": retained, "reclaimable": reclaimable}}
+    )
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    for stage_id in configured.stages:
+        entry = paths.stage(stage_id) / "entry"
+        entry.mkdir(parents=True)
+        (entry / "payload").write_bytes(stage_id.encode())
+
+    report = scan_retention_inventory(paths, configured, now_ns=10)
+
+    assert [stage.stage_id for stage in report.stages] == ["reclaimable"]
+    assert report.stages[0].logical_bytes == len(b"reclaimable")

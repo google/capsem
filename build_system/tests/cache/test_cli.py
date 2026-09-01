@@ -87,6 +87,35 @@ def test_prune_previews_then_applies_only_with_flag(tmp_path: Path) -> None:
     assert not entry.exists()
 
 
+def test_prune_does_not_request_a_complete_inventory(tmp_path: Path, monkeypatch) -> None:
+    root = repository(tmp_path)
+
+    def fail_complete_inventory(*_args, **_kwargs):
+        raise AssertionError("routine prune must not scan non-prunable stages")
+
+    monkeypatch.setattr("capsem_builder.cache.cli.scan_inventory", fail_complete_inventory)
+
+    result = invoke(root, "prune", "--json")
+
+    assert result.exit_code == 0, result.output
+
+
+def test_runtime_snapshot_does_not_request_a_filesystem_inventory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = repository(tmp_path)
+
+    def fail_complete_inventory(*_args, **_kwargs):
+        raise AssertionError("runtime snapshot must not scan filesystem cache stages")
+
+    monkeypatch.setattr("capsem_builder.cache.cli.scan_inventory", fail_complete_inventory)
+
+    result = invoke(root, "snapshot", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["runtimes"] == []
+
+
 def test_clean_all_requires_a_reason_when_applied(tmp_path: Path) -> None:
     root = repository(tmp_path)
 
