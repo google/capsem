@@ -263,7 +263,13 @@ impl FsMonitor {
     ) {
         let mut queue: Vec<QueuedEvent> = Vec::new();
         let mut dropped: u64 = 0;
-        let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
+        // A fixed-cadence interval, not a `sleep` recreated each iteration: the
+        // select! restarts on every event, so a fresh per-iteration sleep would
+        // have its deadline reset by each arrival and never fire under a
+        // sustained event stream, starving the flush until MAX_QUEUE_SIZE drops
+        // events. `interval` ticks on wall-cadence regardless of arrivals.
+        let mut flush_ticker = tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
+        flush_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -310,7 +316,7 @@ impl FsMonitor {
                         }
                     }
                 }
-                _ = tokio::time::sleep(flush_interval) => {
+                _ = flush_ticker.tick() => {
                     Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
                 }
             }

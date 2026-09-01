@@ -508,3 +508,53 @@ match = 'file.write.path == "blocked.txt"'
         "fs_monitor audit events must not masquerade as boundary gates"
     );
 }
+
+// -- flush cadence under load --
+
+#[tokio::test(start_paused = true)]
+async fn flush_fires_on_interval_under_continuous_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = std::sync::Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
+    let (_shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+    let workspace = WorkspaceState {
+        watch_dir: dir.path().to_path_buf(),
+        strip_prefix: dir.path().to_path_buf(),
+        snapshot: HashMap::new(),
+    };
+    let loop_task = tokio::spawn(FsMonitor::event_loop(
+        event_rx,
+        shutdown_rx,
+        workspace,
+        std::sync::Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    ));
+
+    // Feed events every 60ms -- faster than the 100ms flush interval. With the
+    // old per-iteration `sleep`, each event reset the timer so no flush fired
+    // mid-stream and the events sat in the loop's local queue. An interval ticks
+    // on a fixed cadence regardless of event arrivals.
+    for i in 0..6 {
+        let p = dir.path().join(format!("f{i}.txt"));
+        std::fs::write(&p, b"x").unwrap();
+        let ev = Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(p);
+        event_tx.send(ev).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(60)).await;
+        tokio::task::yield_now().await;
+    }
+
+    // Make what the loop persisted visible WITHOUT shutting it down -- shutdown
+    // flushes unconditionally and would hide the bug.
+    db.flush().await;
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fs_events", [], |r| r.get(0))
+        .unwrap();
+    assert!(count > 0, "interval flush must persist events mid-stream, not only at shutdown");
+
+    drop(event_tx);
+    let _ = loop_task.await;
+}
