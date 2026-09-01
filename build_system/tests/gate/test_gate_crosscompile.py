@@ -21,12 +21,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from capsem_builder.cache.config import load_policy
-from capsem_builder.cache.objects import object_path
-from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.objects import digest_file, verify
 from capsem_builder.cache.views import ViewReceipt
+from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import crosscompile
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
@@ -1335,8 +1333,10 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     receipt = ViewReceipt.model_validate_json(
         package.with_name(f"{package.name}.object.json").read_text(encoding="utf-8")
     )
-    paths = CachePaths(repository_root=root, policy=load_policy(root))
-    assert package.stat().st_ino == object_path(paths, receipt.object).stat().st_ino
+    paths = cachelayout.cache_paths(gate_config.load(root))
+    cached = verify(paths, receipt.object)
+    assert digest_file(package) == receipt.object.digest
+    assert package.read_bytes() == cached.read_bytes()
 
 
 def test_a_build_that_recorded_nothing_fails(
