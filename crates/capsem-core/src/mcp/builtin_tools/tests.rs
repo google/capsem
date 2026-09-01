@@ -1717,3 +1717,30 @@ async fn integration_fetch_http_local_wiki_unicode_multibyte() {
     let text = extract_tool_text(&resp);
     assert!(text.contains("Unicode"), "must contain 'Unicode'");
 }
+
+// -- grep match collection --
+
+#[test]
+fn collect_grep_matches_reports_true_total_and_caps_shown_blocks() {
+    let re = regex::Regex::new("hit").unwrap();
+    let lines = ["hit", "x", "hit", "hit", "y", "hit", "hit"]; // 5 matches
+    let refs: Vec<&str> = lines.to_vec();
+
+    let (blocks, total) = collect_grep_matches(&refs, &re, 0, 2);
+
+    // The count must be the true number of matches (5), not max_matches+1 (3),
+    // which is what the old early-break left in the counter.
+    assert_eq!(total, 5, "reported total must count all matches, not stop at the cap");
+    assert_eq!(blocks.len(), 2, "only the first max_matches blocks are built");
+    assert!(blocks[0].contains(">>> 1: hit"));
+    assert!(blocks[1].contains(">>> 3: hit"));
+}
+
+#[test]
+fn collect_grep_matches_below_cap_returns_all() {
+    let re = regex::Regex::new("hit").unwrap();
+    let refs = vec!["hit", "no", "hit"];
+    let (blocks, total) = collect_grep_matches(&refs, &re, 0, 10);
+    assert_eq!(total, 2);
+    assert_eq!(blocks.len(), 2);
+}

@@ -378,6 +378,41 @@ async fn handle_fetch_http(
 // grep_http
 // ---------------------------------------------------------------------------
 
+/// Collect grep match blocks and the true total match count.
+///
+/// Counts *every* matching line so the caller can report an accurate total,
+/// but builds a context block only for the first `max_matches` -- the earlier
+/// `break`-after-increment left `match_count` at `max_matches + 1`, which
+/// misreported the total whenever more than one match was truncated.
+fn collect_grep_matches(
+    lines: &[&str],
+    re: &regex::Regex,
+    context_lines: usize,
+    max_matches: usize,
+) -> (Vec<String>, usize) {
+    let mut blocks = Vec::new();
+    let mut total = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if !re.is_match(line) {
+            continue;
+        }
+        total += 1;
+        if total > max_matches {
+            continue;
+        }
+        let start = i.saturating_sub(context_lines);
+        let end = (i + context_lines + 1).min(lines.len());
+        let mut block = String::new();
+        for (offset, line) in lines[start..end].iter().enumerate() {
+            let j = start + offset;
+            let marker = if j == i { ">>>" } else { "   " };
+            block.push_str(&format!("{marker} {}: {}\n", j + 1, line));
+        }
+        blocks.push(block);
+    }
+    (blocks, total)
+}
+
 async fn handle_grep_http(
     args: &Value,
     client: &Client,
@@ -489,26 +524,7 @@ async fn handle_grep_http(
     let text = if raw { body } else { extract_text_from_html(&body) };
 
     let lines: Vec<&str> = text.lines().collect();
-    let mut matches = Vec::new();
-    let mut match_count = 0;
-
-    for (i, line) in lines.iter().enumerate() {
-        if re.is_match(line) {
-            match_count += 1;
-            if match_count > max_matches {
-                break;
-            }
-            let start = i.saturating_sub(context_lines);
-            let end = (i + context_lines + 1).min(lines.len());
-            let mut block = String::new();
-            for (offset, line) in lines[start..end].iter().enumerate() {
-                let j = start + offset;
-                let marker = if j == i { ">>>" } else { "   " };
-                block.push_str(&format!("{marker} {}: {}\n", j + 1, line));
-            }
-            matches.push(block);
-        }
-    }
+    let (matches, match_count) = collect_grep_matches(&lines, &re, context_lines, max_matches);
 
     let mut output = format!("URL: {url}\nPattern: {pattern_str}\nMatches found: {match_count}\n");
     if match_count > max_matches {
