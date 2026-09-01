@@ -31,6 +31,7 @@ def test_guest_binary_identity_names_only_its_output_inputs() -> None:
         "rust-toolchain.toml",
         "crates/capsem-agent",
         "crates/capsem-bench",
+        "crates/capsem-foundation",
         "crates/capsem-proto",
         "build_system/builder/image/docker.py",
         "build_system/builder/image/guestbinarycache.py",
