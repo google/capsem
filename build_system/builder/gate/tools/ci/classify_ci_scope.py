@@ -50,12 +50,12 @@ KNOWN_DIRECTORIES = frozenset(
 RETIRED_BUILD_SYSTEM_FILES = frozenset({"test-dev-null.sh"})
 KNOWN_ROOT_FILES = frozenset(
     {
-        ".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md",
+        ".dockerignore", ".gitignore", ".npmrc", "AGENTS.md", "CHANGELOG.md",
         "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock",
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
         "MIGRATION_HANDOFF.md", "README.md", "RELEASE.md", "SECURITY.md",
         "bootstrap.sh", "codecov.yml", "justfile",
-        "rust-toolchain.toml",
+        "rust-toolchain.toml", "uv.toml",
     }
 ) | RETIRED_BUILD_SYSTEM_FILES
 BUILD_SYSTEM_ROOTS = frozenset({"src", "scripts", "docker"})
