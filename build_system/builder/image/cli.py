@@ -108,9 +108,17 @@ def agent(
 
     out = Path(output_dir) / arch_name
 
-    from .docker import cross_compile_agent
+    from . import guestbinarycache
+    from .docker import GUEST_BINARIES, cross_compile_agent
     try:
-        cross_compile_agent(config.build, arch_name, repo_root, out)
+        guestbinarycache.materialize(
+            config.build,
+            arch_name,
+            repo_root,
+            out,
+            tuple(GUEST_BINARIES),
+            cross_compile_agent,
+        )
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         raise SystemExit(1) from e

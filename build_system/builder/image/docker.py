@@ -31,7 +31,7 @@ from ..policy.dockerpolicy import (
     require_container_network,
 )
 from ..release.obom import validate_exported_rootfs_obom
-from . import assetdependencies, componentcache, guestbuilder
+from . import assetdependencies, componentcache, guestbinarycache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
 from .doctor import check_container_runtime
 from .guestbuilder import image_tag
@@ -747,7 +747,7 @@ def container_compile_agent(
 
     # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
-        f"cp cache/target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
+        f"cp /build/target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
         for b in GUEST_BINARIES
     )
     rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
@@ -1986,25 +1986,14 @@ def build_image(
         elif template == "rootfs":
             # Cross-compile agent binaries
             print(f"Cross-compiling guest binaries for {arch.rust_target}...")
-            guest_identity = componentcache.input_digest(
-                {
-                    "arch": arch_name,
-                    "builder": image_tag(config.build, arch_name, repo_root),
-                    "source": componentcache.source_digest(
-                        repo_root, config.build.guest_rust_builder.source_roots
-                    ),
-                }
+            binaries = guestbinarycache.materialize(
+                config.build,
+                arch_name,
+                repo_root,
+                context_dir,
+                tuple(GUEST_BINARIES),
+                cross_compile_agent,
             )
-            cached_binaries = componentcache.restore(
-                repo_root, "guest-binaries", guest_identity, context_dir
-            )
-            if cached_binaries is None:
-                binaries = cross_compile_agent(config.build, arch_name, repo_root, context_dir)
-                componentcache.store(
-                    repo_root, "guest-binaries", guest_identity, context_dir, tuple(GUEST_BINARIES)
-                )
-            else:
-                binaries = list(cached_binaries)
             for b in binaries:
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 

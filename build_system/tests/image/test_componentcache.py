@@ -1,6 +1,8 @@
 """VM components reuse exact input-keyed object receipts."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from capsem_builder.image.componentcache import (
     build_identity,
@@ -9,6 +11,7 @@ from capsem_builder.image.componentcache import (
     source_digest,
     store,
 )
+from capsem_builder.image.guestbinarycache import materialize
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -75,3 +78,39 @@ def test_source_digest_changes_with_source_bytes_and_names(tmp_path: Path) -> No
     third = source_digest(tmp_path, ("crates",))
 
     assert len({first, second, third}) == 3
+
+
+def test_guest_binary_generation_is_compiled_once_for_two_consumers(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    source = repo / "guest-input"
+    source.write_text("source", encoding="utf-8")
+    build = SimpleNamespace(
+        guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))
+    )
+    names = ("capsem-agent", "capsem-bench")
+    calls = 0
+
+    def compile_binaries(_build, _arch, _repo, output):
+        nonlocal calls
+        calls += 1
+        output.mkdir(parents=True, exist_ok=True)
+        binaries = tuple(output / name for name in names)
+        for binary in binaries:
+            binary.write_bytes(binary.name.encode())
+            binary.chmod(0o555)
+        return list(binaries)
+
+    with patch(
+        "capsem_builder.image.guestbinarycache.guestbuilder.image_tag",
+        return_value="sealed-builder:one",
+    ):
+        first = materialize(
+            build, "x86_64", repo, repo / "cache/target/rootfs", names, compile_binaries
+        )
+        second = materialize(
+            build, "x86_64", repo, repo / "cache/target/initrd", names, compile_binaries
+        )
+
+    assert calls == 1
+    assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
+    assert all(path.stat().st_mode & 0o777 == 0o555 for path in second)

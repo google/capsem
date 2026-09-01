@@ -1397,6 +1397,7 @@ freshness_inputs = [
     "build_system/builder/image/models.py",
     "build_system/builder/image/cli.py",
     "build_system/builder/image/docker.py",
+    "build_system/builder/image/guestbinarycache.py",
     "build_system/builder/image/guestbuilder.py",
     "config/docker/image/build.toml",
     "build_system/docker/Dockerfile.guest-rust-builder",

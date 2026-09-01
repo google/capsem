@@ -2938,7 +2938,8 @@ class TestContainerCompileAgentShellScript:
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         for binary in GUEST_BINARIES:
             assert (
-                f"cp cache/target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
+                f"cp /build/target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}"
+                in script
             )
 
     @patch("capsem_builder.image.docker.run_cmd")

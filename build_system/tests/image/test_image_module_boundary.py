@@ -21,6 +21,7 @@ EXPECTED_MODULES = {
     "config.py",
     "docker.py",
     "doctor.py",
+    "guestbinarycache.py",
     "guestbuilder.py",
     "image_build_backend.py",
     "manifest.py",

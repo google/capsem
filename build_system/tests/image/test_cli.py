@@ -163,14 +163,14 @@ def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
     runner = CliRunner()
     with (
         patch("capsem_builder.image.cli.load_guest_config", return_value=config) as load_config,
-        patch("capsem_builder.image.docker.cross_compile_agent") as cross_compile,
+        patch("capsem_builder.image.guestbinarycache.materialize") as materialize,
     ):
         result = runner.invoke(cli, ["agent", str(guest), "--arch", "arm64"])
 
     assert result.exit_code == 0
     load_config.assert_called_once_with(guest)
-    cross_compile.assert_called_once()
-    assert cross_compile.call_args.args[:2] == (config.build, "arm64")
+    materialize.assert_called_once()
+    assert materialize.call_args.args[:2] == (config.build, "arm64")
 
 
 def test_agent_defaults_to_current_image_config() -> None:
@@ -180,15 +180,15 @@ def test_agent_defaults_to_current_image_config() -> None:
     runner = CliRunner()
     with (
         patch("capsem_builder.image.cli.load_guest_config", return_value=config) as load_config,
-        patch("capsem_builder.image.docker.cross_compile_agent") as cross_compile,
+        patch("capsem_builder.image.guestbinarycache.materialize") as materialize,
         patch("os.uname", return_value=SimpleNamespace(machine="arm64")),
     ):
         result = runner.invoke(cli, ["agent", "--arch", "arm64"])
 
     assert result.exit_code == 0
     load_config.assert_called_once_with(Path("config/docker/image"))
-    cross_compile.assert_called_once()
-    assert cross_compile.call_args.args[:2] == (config.build, "arm64")
+    materialize.assert_called_once()
+    assert materialize.call_args.args[:2] == (config.build, "arm64")
 
 
 def test_agent_fails_when_guest_dir_is_missing(tmp_path: Path) -> None:
@@ -225,7 +225,7 @@ def test_agent_reports_cross_compile_error(tmp_path: Path) -> None:
     with (
         patch("capsem_builder.image.cli.load_guest_config", return_value=config),
         patch(
-            "capsem_builder.image.docker.cross_compile_agent",
+            "capsem_builder.image.guestbinarycache.materialize",
             side_effect=RuntimeError("toolchain exploded"),
         ),
     ):
