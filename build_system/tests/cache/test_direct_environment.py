@@ -24,6 +24,7 @@ def test_cache_authority():
     assert Path(sys.pycache_prefix).is_relative_to(root)
     assert str(root / "tools/python/pytest") in os.environ["PYTEST_ADDOPTS"]
     assert Path(os.environ["UV_CACHE_DIR"]).is_relative_to(root)
+    assert Path(os.environ["RUFF_CACHE_DIR"]) == root / "tools/python/ruff"
     assert Path(os.environ["npm_config_store_dir"]).is_relative_to(root)
     assert Path(os.environ["CARGO_TARGET_DIR"]).is_relative_to(root)
 """.strip(),
@@ -53,3 +54,31 @@ def test_cache_authority():
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / ".pytest_cache").exists()
     assert not (tmp_path / "__pycache__").exists()
+
+
+def test_bounded_ruff_leaves_no_cache_beside_source(tmp_path: Path) -> None:
+    source = tmp_path / "probe.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BOUNDED),
+            "--timeout-seconds",
+            "30",
+            "--",
+            "ruff",
+            "check",
+            "--config",
+            str(ROOT / "build_system/pyproject.toml"),
+            str(source),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=40,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (tmp_path / ".ruff_cache").exists()

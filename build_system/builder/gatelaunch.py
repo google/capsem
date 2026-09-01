@@ -48,6 +48,7 @@ MARKER = "CAPSEM_GATE_PYCACHE"
 PYCACHE = "PYTHONPYCACHEPREFIX"
 PYTEST_ADDOPTS = "PYTEST_ADDOPTS"
 UV_CACHE = "UV_CACHE_DIR"
+RUFF_CACHE = "RUFF_CACHE_DIR"
 PNPM_STORE = "npm_config_store_dir"
 CARGO_TARGET = "CARGO_TARGET_DIR"
 RUSTC_WRAPPER = "RUSTC_WRAPPER"
@@ -174,12 +175,14 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     gate = _gate_policy(source)
     toolchain = gate["toolchain"]
     uv = _policy_stage(source, authority, "python-uv")
+    ruff = _policy_stage(source, authority, "python-ruff")
     rust = _policy_stage(source, authority, "rust-sccache")
     cache = _policy(source)
     environment = {
         **python,
         PYTEST_ADDOPTS: _pytest_addopts(pytest),
         UV_CACHE: str(uv),
+        RUFF_CACHE: str(ruff),
         PNPM_STORE: str(_policy_stage(source, authority, "node-pnpm")),
         CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
         SCCACHE_DIR: str(rust),

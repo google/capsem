@@ -238,6 +238,14 @@ hard_bytes = 12884901888
 prune = "lru"
 maximum_age_hours = 720
 
+[stages.python-ruff]
+path = "tools/python/ruff"
+warning_bytes = 268435456
+soft_bytes = 536870912
+hard_bytes = 1073741824
+prune = "lru"
+maximum_age_hours = 168
+
 [stages.python-pycache]
 path = "tools/python/pycache"
 warning_bytes = 1073741824

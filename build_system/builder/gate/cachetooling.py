@@ -34,6 +34,7 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
     """Select keyed tool stages and record their pre-run reuse state."""
     paths = cachelayout.cache_paths(config)
     uv = cachelayout.stage_path(config, "python-uv")
+    ruff = cachelayout.stage_path(config, "python-ruff")
     pycache = Path(
         gatelaunch.isolated_environment(
             source_root or config.root, authority=cachelayout.authority(config)
@@ -43,6 +44,7 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
     retain_generation(paths, "python-pycache", pycache.name)
     retain_generation(paths, "python-pytest", python.pytest_cache.name)
     record_use(paths, "python-uv", tool="uv", key=key, scope=CacheScope.SHARED, probe=uv)
+    record_use(paths, "python-ruff", tool="ruff", key=key, scope=CacheScope.SHARED, probe=ruff)
     record_use(
         paths,
         "python-pycache",
@@ -71,6 +73,7 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
     return {
         **python.variables(),
         config.environment.uv_cache: str(uv),
+        gatelaunch.RUFF_CACHE: str(ruff),
         config.environment.pnpm_store: str(cachelayout.stage_path(config, "node-pnpm")),
     }
 

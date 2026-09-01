@@ -36,6 +36,7 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     environment = cachetooling.environment(CONFIG, key="source")
 
     assert environment[CONFIG.environment.uv_cache] == str(ROOT / "cache/tools/python/uv")
+    assert environment[gatelaunch.RUFF_CACHE] == str(ROOT / "cache/tools/python/ruff")
     assert environment[CONFIG.environment.pnpm_store] == str(ROOT / "cache/tools/node/pnpm")
     assert Path(environment[cachetooling.PYTHONPYCACHEPREFIX]).parent == (
         ROOT / "cache/tools/python/pycache"
@@ -53,12 +54,14 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     by_stage = {stage_id: (scope, probe, ignored) for stage_id, scope, probe, ignored in observed}
     assert [stage_id for stage_id, *_ in observed] == [
         "python-uv",
+        "python-ruff",
         "python-pycache",
         "python-pytest",
         "node-pnpm",
         "rust-sccache",
     ]
     assert by_stage["python-uv"][0] is CacheScope.SHARED
+    assert by_stage["python-ruff"][0] is CacheScope.SHARED
     assert by_stage["python-pycache"][0] is CacheScope.GENERATION
     assert by_stage["python-pytest"][0] is CacheScope.GENERATION
     python_probe = by_stage["python-pycache"][1]
@@ -92,4 +95,5 @@ def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch)
     assert bootstrap[gatelaunch.PYCACHE] == typed[cachetooling.PYTHONPYCACHEPREFIX]
     assert bootstrap[gatelaunch.PYTEST_ADDOPTS] == typed[cachetooling.PYTEST_ADDOPTS]
     assert bootstrap[gatelaunch.UV_CACHE] == typed[CONFIG.environment.uv_cache]
+    assert bootstrap[gatelaunch.RUFF_CACHE] == typed[gatelaunch.RUFF_CACHE]
     assert bootstrap[gatelaunch.PNPM_STORE] == typed[CONFIG.environment.pnpm_store]
