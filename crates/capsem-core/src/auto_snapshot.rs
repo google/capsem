@@ -55,7 +55,6 @@ pub struct AutoSnapshotScheduler {
     max_manual: usize,
     interval: Duration,
     next_auto_slot: usize,
-    next_manual_slot: usize,
 }
 
 impl AutoSnapshotScheduler {
@@ -66,7 +65,6 @@ impl AutoSnapshotScheduler {
             max_manual,
             interval,
             next_auto_slot: 0,
-            next_manual_slot: 0,
         }
     }
 
@@ -149,6 +147,13 @@ impl AutoSnapshotScheduler {
         self.max_auto + idx
     }
 
+    /// First manual slot with no snapshot on disk, or None if all are occupied.
+    fn first_free_manual_slot(&self) -> Option<usize> {
+        (0..self.max_manual)
+            .map(|i| self.manual_slot(i))
+            .find(|&s| !self.slot_dir(s).join("metadata.json").exists())
+    }
+
     /// Total slots (auto + manual).
     fn total_slots(&self) -> usize {
         self.max_auto + self.max_manual
@@ -170,11 +175,14 @@ impl AutoSnapshotScheduler {
             "no manual snapshot slots available (max {})",
             self.max_manual
         );
-        let slot = self.manual_slot(self.next_manual_slot);
-        // Find next free manual slot (or overwrite oldest if all full).
-        // Since we check available_manual_slots > 0, there's always a free one.
+        // Land in the first *free* manual slot, never the round-robin pointer's
+        // slot, which may hold a user's named checkpoint. A blind pointer write
+        // destroyed it -- guaranteed after a session restart, when the in-memory
+        // pointer restarts at 0 while slot 0 is still occupied on disk.
+        let slot = self
+            .first_free_manual_slot()
+            .context("no manual snapshot slots available")?;
         let result = self.snapshot_into_slot(slot, SnapshotOrigin::Manual, Some(name.to_string()))?;
-        self.next_manual_slot = (self.next_manual_slot + 1) % self.max_manual;
         info!(
             slot,
             origin = "manual",
@@ -449,9 +457,8 @@ impl AutoSnapshotScheduler {
         }
 
         // Find an available manual slot.
-        let target_slot = (0..self.max_manual)
-            .map(|i| self.manual_slot(i))
-            .find(|&s| !self.slot_dir(s).join("metadata.json").exists())
+        let target_slot = self
+            .first_free_manual_slot()
             .ok_or_else(|| anyhow::anyhow!("no manual snapshot slots available"))?;
 
         // Create the new snapshot slot.

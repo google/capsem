@@ -1117,3 +1117,29 @@ fn clone_sandbox_state_snapshots_wal_backed_session_db() {
         .unwrap();
     assert_eq!(quick_check, "ok");
 }
+
+#[test]
+fn take_named_snapshot_never_overwrites_an_existing_manual_slot() {
+    let (_tmp, session) = setup_session_dir();
+    let workspace = session.join("workspace");
+    let mut s = sched(&session); // max_manual = 4
+
+    std::fs::write(workspace.join("f.txt"), "x").unwrap();
+    s.take_named_snapshot("a").unwrap();
+    let b = s.take_named_snapshot("b").unwrap();
+    s.take_named_snapshot("c").unwrap();
+    s.take_named_snapshot("d").unwrap(); // all 4 manual slots occupied
+
+    // Free a slot that is NOT where the round-robin pointer now points (it has
+    // wrapped back to 'a'). The next create must land on the freed slot, not
+    // destroy the oldest named snapshot.
+    s.delete_snapshot(b.slot).unwrap();
+    s.take_named_snapshot("e").unwrap();
+
+    let names: Vec<String> = s.list_snapshots().iter().filter_map(|snap| snap.name.clone()).collect();
+    assert!(
+        names.contains(&"a".to_string()),
+        "creating 'e' overwrote the oldest named snapshot 'a'; names = {names:?}"
+    );
+    assert!(names.contains(&"e".to_string()), "new snapshot 'e' should exist; names = {names:?}");
+}
