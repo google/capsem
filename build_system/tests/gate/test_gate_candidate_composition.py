@@ -189,6 +189,18 @@ def test_the_fast_phase_precedes_everything_expensive() -> None:
     assert _at(labels, "fast.") < _at(labels, "prepare")
 
 
+def test_benchmark_fitness_precedes_expensive_assets_and_timing() -> None:
+    """An unfit host must not spend an hour before the benchmark refuses it."""
+    plan = _plan()
+    labels = list(plan.labels)
+    harness = labels.index("prepare.benchmark-harness")
+    fitness = labels.index("prepare.benchmark-fitness")
+
+    assert harness < fitness
+    assert fitness < labels.index("assets.build.arm64")
+    assert fitness < labels.index("functional.pytest.timing.code")
+
+
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:
     """A phase is finished when every independent branch of it is finished.
 

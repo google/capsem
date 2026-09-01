@@ -92,14 +92,14 @@ def test_hot_route_cpu_budget_scales_with_the_measurement_window() -> None:
 def test_hot_route_latency_uses_the_configured_relative_factor() -> None:
     samples = [2.41] * HOT_ROUTE_WINDOW_SAMPLES
     timing = RouteTiming(
-        label="service /profiles/list",
+        label="service /profiles/code/plugins/list",
         samples_ms=samples,
         service_cpu_s=0.1,
         gateway_cpu_s=None,
     )
 
     with pytest.raises(AssertionError, match="p95"):
-        _assert_hot_route_budget(timing, path="/profiles/list")
+        _assert_hot_route_budget(timing, path="/profiles/code/plugins/list")
 
 
 def test_hot_route_uses_the_least_contended_independent_window() -> None:
@@ -163,4 +163,4 @@ def test_reference_route_budget_uses_the_configured_regression_factor() -> None:
         samples=HOT_ROUTE_REFERENCE_SAMPLES,
     )
 
-    assert cpu_s == pytest.approx(0.14 * route_health.HOT_ROUTE_REGRESSION_FACTOR)
+    assert cpu_s == pytest.approx(0.19 * route_health.HOT_ROUTE_REGRESSION_FACTOR)

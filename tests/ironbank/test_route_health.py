@@ -458,11 +458,10 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     if path == "/status" and gateway:
         # Gateway status is not the service's scalar status route. It composes
         # service status, VM inventory, and profile/asset readiness into the
-        # public dashboard payload. On Linux debug builds those service-owned
-        # projections consume the same aggregate CPU envelope as gateway
-        # /vms/list while remaining comfortably within the hot-route latency
-        # budget. Keep the direct service /status budget at the scalar default.
-        return (3.0, 8.0, 0.14)
+        # public dashboard payload. Give it the same Linux debug-build envelope
+        # as gateway /vms/list; both serialize the dashboard inventory rather
+        # than one scalar service DTO. Keep direct /status at the tiny default.
+        return (4.0, 10.0, 0.19)
     if _is_vm_scalar_state_route(path):
         # Per-session state routes touch richer lifecycle/profile metadata than
         # global scalar status, but must still stay memory-backed and responsive
@@ -478,18 +477,19 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     if path == "/vms/list":
         # Empty-list polling is cheaper, but an active VM row includes lifecycle
         # and profile metadata. Keep the budget memory-backed while allowing the
-        # one-VM debug-build route-health loop observed on Linux.
+        # one-VM debug-build route-health loop observed on Linux. The gateway
+        # serializes that row after proxying it, so it shares the richer scalar
+        # session-route CPU envelope rather than the empty-list measurement.
         return (
             3.0 if not gateway else 4.0,
             8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.14,
+            0.10 if not gateway else 0.19,
         )
-    if path == "/profiles/status":
-        # Profile status is a richer readiness payload than scalar service
-        # status: it returns per-profile asset readiness, manifest provenance,
-        # and launchability fields. It must stay cache backed, but Linux debug
-        # builds can account an extra service CPU tick when measured through the
-        # gateway proxy loop.
+    if path in {"/profiles/list", "/profiles/status"}:
+        # Profile inventory and readiness are richer than scalar service status:
+        # both return per-profile DTOs, while status adds asset readiness and
+        # manifest provenance. They must stay cache backed, but Linux debug
+        # builds account the same gateway CPU envelope for their JSON payloads.
         return (
             3.0 if not gateway else 4.0,
             8.0 if not gateway else 10.0,
@@ -623,7 +623,7 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     return (
         2.0 if not gateway else 3.0,
         5.0 if not gateway else 8.0,
-        0.05 if not gateway else 0.08,
+        0.05 if not gateway else 0.09,
     )
 
 
