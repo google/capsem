@@ -1233,3 +1233,26 @@ fn block_read_only_enforced_even_with_rw_feature() {
     let file_data = std::fs::read(&path).unwrap();
     assert_eq!(file_data, original);
 }
+
+#[test]
+fn oversized_descriptor_lengths_do_not_panic_the_host() {
+    // A guest chain whose data descriptor lengths sum past u32::MAX must not
+    // panic the host (a u32 `.sum()` overflows in debug builds). The request is
+    // rejected, but the device keeps running and completes the descriptor.
+    let path = temp_disk("blk-overflow.img", 512);
+    let h = TestHarness::new(&path, false);
+    let header_offset = DATA_AREA_OFFSET;
+    let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+    h.write_header(header_offset, VIRTIO_BLK_T_IN, 0);
+
+    // header -> data(0xFFFFFFFF) -> data(0xFFFFFFFF) -> status
+    h.write_desc(0, RAM_BASE + header_offset, REQ_HEADER_SIZE as u32, VRING_DESC_F_NEXT, 1);
+    h.write_desc(1, RAM_BASE + data_offset, 0xFFFF_FFFF, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 2);
+    h.write_desc(2, RAM_BASE + data_offset, 0xFFFF_FFFF, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 3);
+    h.write_desc(3, RAM_BASE + data_offset, 1, VRING_DESC_F_WRITE, 0);
+    h.push_avail(0, 0, 1);
+
+    let mut h = h;
+    h.dev.queue_notify(0); // must not panic on the length sum
+    assert_eq!(h.read_used_idx(), 1, "the request must be completed, not crash the device");
+}

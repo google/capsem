@@ -753,7 +753,16 @@ impl VirtioBlockDevice {
             }
 
             let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1].iter().map(|d| (d.addr, d.len)).collect();
-            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+            // Sum guest-declared lengths in u64 then saturate to u32: a chain
+            // can declare more than u32::MAX total, which overflows (panics in
+            // debug) if summed directly as u32. A valid request is far under the
+            // cap; the saturated value only ever bounds a request that fails
+            // validation anyway.
+            let total_data: u32 = data_descs
+                .iter()
+                .map(|&(_, l)| u64::from(l))
+                .sum::<u64>()
+                .min(u64::from(u32::MAX)) as u32;
 
             let status = match type_ {
                 VIRTIO_BLK_T_IN => timed_request(type_, total_data, || {
@@ -799,7 +808,7 @@ impl VirtioBlockDevice {
             Self::write_status(mem, status_desc.addr, status);
 
             let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
-                total_data + 1
+                total_data.saturating_add(1)
             } else {
                 1
             };
@@ -898,7 +907,16 @@ impl VirtioBlockDevice {
             }
 
             let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1].iter().map(|d| (d.addr, d.len)).collect();
-            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+            // Sum guest-declared lengths in u64 then saturate to u32: a chain
+            // can declare more than u32::MAX total, which overflows (panics in
+            // debug) if summed directly as u32. A valid request is far under the
+            // cap; the saturated value only ever bounds a request that fails
+            // validation anyway.
+            let total_data: u32 = data_descs
+                .iter()
+                .map(|&(_, l)| u64::from(l))
+                .sum::<u64>()
+                .min(u64::from(u32::MAX)) as u32;
 
             match type_ {
                 VIRTIO_BLK_T_IN | VIRTIO_BLK_T_OUT => {
@@ -957,7 +975,7 @@ impl VirtioBlockDevice {
                     };
                     Self::write_status(mem, status_desc.addr, status);
                     let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
-                        total_data + 1
+                        total_data.saturating_add(1)
                     } else {
                         1
                     };
@@ -1174,7 +1192,7 @@ impl BlockIoUring {
             .increment(1);
             VirtioBlockDevice::write_status(mem, request.status_addr, status);
             let used_len = if status == VIRTIO_BLK_S_OK && request.type_ == VIRTIO_BLK_T_IN {
-                request.total_data + 1
+                request.total_data.saturating_add(1)
             } else {
                 1
             };
