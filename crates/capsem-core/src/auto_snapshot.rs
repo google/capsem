@@ -228,6 +228,9 @@ impl AutoSnapshotScheduler {
         let sys_src = self.system_dir();
         let sys_dst = slot_dir.join("system");
         if sys_src.exists() {
+            // Same rule as clone_sandbox_state: flush rootfs.img before a
+            // metadata-only clone or the snapshot captures stale guest writes.
+            fsync_rootfs_before_clone(&sys_src)?;
             clone_directory(&sys_src, &sys_dst)?;
         }
         let clone_sys_ms = t0.elapsed().as_millis() - clone_ws_ms;
@@ -1032,20 +1035,28 @@ pub fn sandbox_disk_usage(session_dir: &Path) -> anyhow::Result<u64> {
 /// cache, ensuring the APFS clone captures all guest writes.
 ///
 /// Returns the disk usage of the destination directory in bytes.
-pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
-    let sys_src = src_session_dir.join("system");
-    let ws_src = src_session_dir.join("workspace");
-
-    // Flush the host page cache for rootfs.img before cloning.
-    // Guest writes arrive via VirtioFS and land in the macOS page cache.
-    // Without fsync, clonefile() captures stale APFS data, missing
-    // recently written overlay changes (e.g. installed packages).
-    let rootfs_path = sys_src.join("rootfs.img");
+/// Flush rootfs.img's host page cache before a clone.
+///
+/// Guest writes arrive via VirtioFS and land in the host page cache; without
+/// this fsync a metadata-only clone (APFS clonefile) captures stale data and
+/// loses recent overlay changes (e.g. installed packages). One rule, one
+/// function -- every path that clones the system dir calls it.
+fn fsync_rootfs_before_clone(sys_dir: &Path) -> anyhow::Result<()> {
+    let rootfs_path = sys_dir.join("rootfs.img");
     if rootfs_path.exists() {
         if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&rootfs_path) {
             f.sync_all().context("failed to fsync rootfs.img before clone")?;
         }
     }
+    Ok(())
+}
+
+pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
+    let sys_src = src_session_dir.join("system");
+    let ws_src = src_session_dir.join("workspace");
+
+    fsync_rootfs_before_clone(&sys_src)?;
+    let rootfs_path = sys_src.join("rootfs.img");
 
     // Clone into guest/ subdirectories matching VirtioFS share layout.
     let guest_dir = dst_session_dir.join("guest");
