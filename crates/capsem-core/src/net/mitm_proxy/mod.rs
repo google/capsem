@@ -598,6 +598,27 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
 
 /// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
 /// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
+/// Deadline for each pre-classification read from a freshly-accepted guest
+/// connection. The guest is the adversary here: one that connects and then
+/// stalls without sending a ClientHello must not pin the handler task and its
+/// ACTIVE_CONNECTIONS slot indefinitely (slowloris).
+const CLASSIFY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Read from a guest stream with a deadline, mapping a timeout to a TimedOut
+/// io error so the caller tears the connection down instead of blocking.
+async fn classify_read<S>(stream: &mut S, buf: &mut [u8], timeout: std::time::Duration) -> std::io::Result<usize>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
+    match tokio::time::timeout(timeout, tokio::io::AsyncReadExt::read(stream, buf)).await {
+        Ok(result) => result,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "guest did not send classification bytes before the deadline",
+        )),
+    }
+}
+
 async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     // Wrap vsock fd in a non-owning async stream.
     let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
@@ -618,7 +639,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
 
     // 1. Read initial bytes (TLS ClientHello + potential metadata).
     let mut initial_buf = vec![0u8; MAX_HELLO_SIZE];
-    let n = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut initial_buf)
+    let n = classify_read(&mut vsock_stream, &mut initial_buf, CLASSIFY_READ_TIMEOUT)
         .instrument(classify_span.clone())
         .await
         .map_err(|e| {
@@ -649,7 +670,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
                 return Err((String::new(), Decision::Error, "metadata exceeded 4KB limit".into()));
             }
             let mut more = vec![0u8; 1024];
-            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut more)
+            let n2 = classify_read(&mut vsock_stream, &mut more, CLASSIFY_READ_TIMEOUT)
                 .instrument(classify_span.clone())
                 .await
                 .map_err(|e| {
@@ -667,7 +688,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
         // the wire payload (TLS ClientHello or HTTP request line).
         if initial_buf.is_empty() {
             let mut hello_buf = vec![0u8; MAX_HELLO_SIZE];
-            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut hello_buf)
+            let n2 = classify_read(&mut vsock_stream, &mut hello_buf, CLASSIFY_READ_TIMEOUT)
                 .instrument(classify_span.clone())
                 .await
                 .map_err(|e| {

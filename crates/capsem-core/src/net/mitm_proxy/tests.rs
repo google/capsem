@@ -416,3 +416,28 @@ fn http_upstream_port_gate_ignores_tls_and_empty_allowlist() {
     // Empty allowlist means "no restriction configured".
     assert!(http_upstream_port_allowed(&open, Protocol::Http, 22));
 }
+
+// -- classification read deadline (slowloris) --
+
+#[tokio::test(start_paused = true)]
+async fn classify_read_times_out_on_a_stalled_client() {
+    // A guest that connects and never sends must not pin the handler forever.
+    let (mut reader, _writer) = tokio::io::duplex(64); // keep _writer open so read pends (no EOF)
+    let handle = tokio::spawn(async move {
+        let mut buf = [0u8; 16];
+        classify_read(&mut reader, &mut buf, std::time::Duration::from_secs(5)).await
+    });
+    tokio::time::advance(std::time::Duration::from_secs(6)).await;
+    let result = handle.await.unwrap();
+    let err = result.expect_err("a stalled classification read must time out");
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+}
+
+#[tokio::test]
+async fn classify_read_returns_data_that_arrives_in_time() {
+    let (mut reader, mut writer) = tokio::io::duplex(64);
+    tokio::io::AsyncWriteExt::write_all(&mut writer, b"hello").await.unwrap();
+    let mut buf = [0u8; 16];
+    let n = classify_read(&mut reader, &mut buf, std::time::Duration::from_secs(5)).await.unwrap();
+    assert_eq!(&buf[..n], b"hello");
+}
