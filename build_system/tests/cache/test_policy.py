@@ -73,6 +73,9 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
     assert policy.stages["buildkit-exports"].external is False
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
+    assert policy.control is not None
+    assert policy.control.docker.rails["default"].minimum_free_bytes == 60 * 1024**3
+    assert policy.control.docker.rails["assets"].minimum_free_bytes == 60 * 1024**3
 
 
 def test_bootstrap_consumes_the_validated_cache_policy() -> None:
