@@ -28,7 +28,7 @@ use super::metrics;
 use super::McpEndpointState;
 
 const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
-const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
+pub(super) const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
 
 pub(super) async fn serve(
     initial_buf: Vec<u8>,
@@ -971,7 +971,7 @@ fn mcp_log_attribution(req: &JsonRpcRequest) -> (String, Option<String>) {
     }
 }
 
-fn truncate_preview(input: &str, max_bytes: usize) -> String {
+pub(super) fn truncate_preview(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
         return input.to_string();
     }

@@ -368,7 +368,13 @@ fn observed_mcp_http_request_for_body(
         server_name: observed_mcp_server_name(domain, upstream_port, path),
         tool_name,
         request_id,
-        request_preview: Some(String::from_utf8_lossy(body).to_string()),
+        // Cap the stored preview like the framed MCP path: the body can be up
+        // to MCP_BODY_CAPTURE_LIMIT (10 MB) of guest-controlled JSON, which must
+        // not be pushed wholesale into the ledger row.
+        request_preview: Some(mcp_frame::truncate_preview(
+            &String::from_utf8_lossy(body),
+            mcp_frame::MCP_REQUEST_PREVIEW_BYTES,
+        )),
         bytes_sent: body.len() as u64,
     })
 }

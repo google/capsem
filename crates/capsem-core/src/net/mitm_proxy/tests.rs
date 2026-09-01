@@ -284,6 +284,25 @@ fn observed_mcp_http_request_requires_mcp_json_rpc_shape() {
 }
 
 #[test]
+fn observed_mcp_http_request_preview_is_capped() {
+    // A guest can send a valid MCP JSON-RPC request with a huge params blob (up
+    // to MCP_BODY_CAPTURE_LIMIT). The stored preview must be bounded like the
+    // framed path, not the whole multi-megabyte body pushed into the ledger.
+    let filler = "a".repeat(200_000);
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"x","pad":"{filler}"}}}}"#
+    );
+    let observed = observed_mcp_http_request_for_body(body.as_bytes(), "mcp.example.test", 443, "/mcp").unwrap();
+    let preview = observed.request_preview.expect("preview present");
+    assert!(
+        preview.len() <= mcp_frame::MCP_REQUEST_PREVIEW_BYTES,
+        "observed-MCP preview must be capped at {} bytes, got {}",
+        mcp_frame::MCP_REQUEST_PREVIEW_BYTES,
+        preview.len()
+    );
+}
+
+#[test]
 fn body_capture_limit_captures_oauth_broker_candidates_without_body_logging() {
     assert_eq!(
         body_capture_limit(None, "oauth2.googleapis.com", "/token", false, 0),
