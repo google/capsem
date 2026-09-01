@@ -10,6 +10,7 @@ from .dockeradapter import categories
 from .models import CachePolicy
 from .paths import CachePaths
 from .runtimeexec import CommandRunner, execute
+from .runtimeinventory import scan_runtimes
 from .runtimemodels import (
     DockerRuntimePolicy,
     RuntimeOperation,
@@ -17,6 +18,7 @@ from .runtimemodels import (
     RuntimePrunePlan,
 )
 from .runtimeoperations import apply_runtime_prune
+from .runtimeplanner import plan_runtime_prune
 
 
 def _docker(policy: CachePolicy) -> tuple[DockerRuntimePolicy, str]:
@@ -60,6 +62,36 @@ def probe_capacity(
     )
 
 
+def _apply_retention(
+    paths: CachePaths,
+    policy: CachePolicy,
+    runtime_id: str,
+    *,
+    reason: str,
+    runner: CommandRunner,
+) -> tuple[bool, tuple[str, ...]]:
+    """Retire superseded owned resources before sacrificing reusable layers."""
+    snapshot = scan_runtimes(
+        policy,
+        runner=runner,
+        runtime_ids=frozenset({runtime_id}),
+    )
+    plan = plan_runtime_prune(snapshot, policy)
+    if plan.violations:
+        return False, tuple(
+            f"Docker retention inventory failed: {item}" for item in plan.violations
+        )
+    if not plan.actions:
+        return False, ()
+    applied = apply_runtime_prune(paths, policy, plan, reason=reason, runner=runner)
+    failures = tuple(
+        f"Docker retention failed: {item.output}"
+        for item in applied.results
+        if item.returncode != 0
+    )
+    return True, failures
+
+
 def ensure_capacity(
     paths: CachePaths,
     policy: CachePolicy,
@@ -68,7 +100,7 @@ def ensure_capacity(
     reason: str,
     runner: CommandRunner = execute,
 ) -> CapacityDecision:
-    """Prune only BuildKit when necessary, then prove the configured floor."""
+    """Retire superseded resources, then trim BuildKit and prove the floor."""
     if policy.control is None:
         raise ValueError("cache policy has no runtime control section")
     control = policy.control.docker
@@ -86,8 +118,21 @@ def ensure_capacity(
             pruned=False,
             violations=(f"Docker capacity unavailable: {before.error}",),
         )
-    pruned = before.free_bytes < rail.minimum_free_bytes
-    if pruned:
+    pressured = before.free_bytes < rail.minimum_free_bytes
+    pruned = False
+    failures: tuple[str, ...] = ()
+    after = before
+    if pressured:
+        pruned, failures = _apply_retention(
+            paths,
+            policy,
+            control.runtime_id,
+            reason=reason,
+            runner=runner,
+        )
+        if pruned and not failures:
+            after = probe_capacity(policy, runner=runner)
+    if pressured and not failures and after.free_bytes < rail.minimum_free_bytes:
         try:
             storage = categories(runtime, runner=runner)
             build_cache = next(row for row in storage if row.name == "Build Cache")
@@ -95,11 +140,11 @@ def ensure_capacity(
             return CapacityDecision(
                 rail=rail_id,
                 before=before,
-                after=before,
-                pruned=False,
+                after=after,
+                pruned=pruned,
                 violations=(f"BuildKit capacity inventory failed: {error}",),
             )
-        required = rail.minimum_free_bytes - before.free_bytes
+        required = rail.minimum_free_bytes - after.free_bytes
         pressure = required + rail.reclaim_headroom_bytes
         keep_bytes = min(
             rail.build_cache_keep_bytes,
@@ -125,14 +170,14 @@ def ensure_capacity(
             violations=(),
         )
         applied = apply_runtime_prune(paths, policy, plan, reason=reason, runner=runner)
-        failures = tuple(
+        failures = failures + tuple(
             f"BuildKit pressure prune failed: {item.output}"
             for item in applied.results
             if item.returncode != 0
         )
-    else:
-        failures = ()
-    after = probe_capacity(policy, runner=runner) if pruned and not failures else before
+        pruned = True
+        if not failures:
+            after = probe_capacity(policy, runner=runner)
     violations = list(failures)
     if after.available and after.total_bytes < control.minimum_disk_bytes:
         violations.append(
