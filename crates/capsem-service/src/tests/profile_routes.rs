@@ -692,7 +692,6 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    // This settings-owned MCP server must not contribute to
     // /profiles/{id}/mcp. Profile MCP routes reflect profile.toml only.
     let settings = capsem_core::net::policy_config::SettingsFile {
         mcp: Some(capsem_core::mcp::policy::McpProfileConfig {

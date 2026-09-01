@@ -8,11 +8,11 @@ silently disagree with the gate.
 from __future__ import annotations
 
 import re
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_MANIFEST = PROJECT_ROOT / "Cargo.toml"

@@ -168,9 +168,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
-    // -----------------------------------------------------------------------
     // 1. Stable Terminal Bridge (Read + Write)
-    // -----------------------------------------------------------------------
     let term_out = Arc::clone(&terminal_output);
     let serial_log_path = session_dir.join("serial.log");
     let pty_log_out = pty_log.clone();
@@ -258,9 +256,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         term_out.close();
     });
 
-    // -----------------------------------------------------------------------
     // 2. Stable Control Bridge (Read + Write)
-    // -----------------------------------------------------------------------
     let (ctrl_out_tx, mut ctrl_out_rx) = mpsc::channel::<HostToGuest>(128);
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
@@ -273,7 +269,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let ready_path_for_reader = ready_path;
 
     // Pending-ack map lives on `JobStore` (see job_store.rs::pending_acks)
-    // so IPC handlers can remove entries once no caller is still waiting
     // and the bridge end here can replay-on-rekey. See the field doc on
     // `JobStore::pending_acks` for the full reasoning.
     let pending_for_bridge = Arc::clone(&job_store);
@@ -408,9 +403,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         }
     });
 
-    // -----------------------------------------------------------------------
     // 3. Command Multiplexer (IPC -> Hub)
-    // -----------------------------------------------------------------------
     let hub_tx = ctrl_out_tx;
     let js_for_cmd = Arc::clone(&job_store);
     let ipc_tx_for_cmd = ipc_tx.clone();

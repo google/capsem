@@ -588,9 +588,7 @@ fn provision_rejects_source_with_different_profile() {
     );
 }
 
-// -----------------------------------------------------------------------
 // Suspend/resume registry fixes (issues #4-8)
-// -----------------------------------------------------------------------
 
 #[tokio::test]
 async fn handle_list_shows_suspended_status() {
@@ -1218,9 +1216,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
     drop(reg);
 }
 
-// -----------------------------------------------------------------------
 // main_db_path
-// -----------------------------------------------------------------------
 
 #[test]
 fn main_db_path_resolves_to_sessions_dir() {

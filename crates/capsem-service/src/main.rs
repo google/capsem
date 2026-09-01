@@ -197,8 +197,7 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "TMPDIR",
     "CAPSEM_HOME",
     "CAPSEM_CORP_CONFIG",
-    // Hermetic integration/Ironbank rail: keeps credential broker tests out of
-    // the developer's normal credential file while exercising the real broker path.
+    // Ironbank uses an isolated credential store while exercising the real broker.
     "CAPSEM_CREDENTIAL_STORE_PATH",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
@@ -208,17 +207,14 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
-    // Experimental rootfs benchmark lane: capsem-process appends
-    // capsem.rootfs=erofs-dax when booting a .erofs rootfs.
+    // Experimental benchmark lane: capsem-process enables EROFS DAX at boot.
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
 
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
-// ---------------------------------------------------------------------------
 // Service state
-// ---------------------------------------------------------------------------
 
 struct ServiceState {
     /// Map of instance ID to Process Info

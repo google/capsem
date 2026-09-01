@@ -1,8 +1,6 @@
 use super::*;
 
-// ---------------------------------------------------------------------------
 // History endpoints
-// ---------------------------------------------------------------------------
 
 /// Helper: resolve session_dir from instance ID (running or persistent).
 pub(super) fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
@@ -298,18 +296,12 @@ pub(super) async fn shutdown_vm_process(
     id: &str,
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
-    // Teardown must not overlap save_state/restore_state, but it does not
-    // need to block independent cold starts. Take the shared lifecycle rail
-    // before shutdown bookkeeping so save/restore still gets a clean edge.
+    // Teardown must not overlap save/restore, but independent cold starts may.
     let _vz_guard = state.save_restore_lock.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
 
-    // Serialize VM teardown across the service. Concurrent deletes under
-    // load starve each other: VZ guest teardown + DbWriter WAL checkpoint +
-    // socket cleanup all compete, and a single shutdown can exceed the 1s
-    // fast-path exit budget, which SIGKILLs capsem-process mid-checkpoint
-    // and leaves a non-empty session.db-wal on disk (see
-    // tests/capsem-session-lifecycle/test_wal_cleanup.py).
+    // Serialize teardown: VZ, WAL checkpoint, and socket cleanup contend; a
+    // timeout can SIGKILL capsem-process mid-checkpoint and leave a WAL behind.
     // See web/docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
     let _shutdown_guard = state.shutdown_lock.lock().await;
 
@@ -427,13 +419,10 @@ pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Apple VZ corrupts the VirtioFS-backed overlay of a sibling VM if two
-    // save_state / restore_state calls overlap. Serialize across all VMs
-    // managed by this service. Held for the whole handler; released when
-    // the child has exited and the checkpoint is durable.
+    // Apple VZ can corrupt a sibling VirtioFS overlay when save/restore calls
+    // overlap. Hold the service-wide lock until exit and checkpoint durability.
     let _vz_guard = state.save_restore_lock.write().await;
-    // Plus a host-wide flock so serialization survives pytest-xdist's
-    // per-worker `capsem-service` processes. See `VzHostLock`.
+    // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let (uds_path, pid) = {

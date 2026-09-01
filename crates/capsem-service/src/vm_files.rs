@@ -2256,20 +2256,23 @@ pub(super) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::
     }
 }
 
+fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    let path = instances
+        .get(id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        .uds_path
+        .clone();
+    drop(instances);
+    Ok(path)
+}
+
 pub(super) async fn handle_exec(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        let uds_path = i.uds_path.clone();
-        drop(instances);
-        uds_path
-    };
+    let uds_path = running_uds_path(&state, &id)?;
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
         .await
@@ -2313,15 +2316,7 @@ pub(super) async fn handle_write_file(
     Path(id): Path<String>,
     Json(payload): Json<WriteFileRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        let uds_path = i.uds_path.clone();
-        drop(instances);
-        uds_path
-    };
+    let uds_path = running_uds_path(&state, &id)?;
 
     let mut data = payload.content.into_bytes();
     let path = payload.path;
@@ -2382,15 +2377,7 @@ pub(super) async fn handle_read_file(
     Json(payload): Json<ReadFileRequest>,
 ) -> Result<Json<ReadFileResponse>, AppError> {
     let path = &payload.path;
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        let uds_path = i.uds_path.clone();
-        drop(instances);
-        uds_path
-    };
+    let uds_path = running_uds_path(&state, &id)?;
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
         .await

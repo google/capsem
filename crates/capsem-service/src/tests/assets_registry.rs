@@ -713,9 +713,7 @@ async fn ensure_assets_rejects_concurrent_reconcile() {
     state.asset_reconcile_inflight.store(false, Ordering::Release);
 }
 
-// -----------------------------------------------------------------------
 // next_job_id
-// -----------------------------------------------------------------------
 
 #[test]
 fn next_job_id_starts_at_1() {
@@ -741,9 +739,7 @@ fn next_job_id_unique_across_many() {
     assert_eq!(unique.len(), 1000);
 }
 
-// -----------------------------------------------------------------------
 // Instance map CRUD
-// -----------------------------------------------------------------------
 
 #[test]
 fn instance_insert_and_lookup() {

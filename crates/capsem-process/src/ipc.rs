@@ -17,8 +17,7 @@ use crate::terminal::TerminalRelay;
 type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
-/// Per-attempt timeout the host watchdog waits before re-sending a quick
-/// request/response HostToGuest payload.
+/// Timeout before the host watchdog re-sends a quick HostToGuest payload.
 ///
 /// With the control bridge's pending-ack map (see
 /// `JobStore::pending_acks` and `vsock.rs::setup_vsock`), silent
@@ -37,8 +36,7 @@ type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 /// for 3s of dead time.
 const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
-/// replay layer takes care of forward-path losses regardless of this
-/// number; the watchdog's job is just to cover return-path losses.
+/// replay layer handles forward-path losses; this covers return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
 
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker

@@ -68,9 +68,7 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
     assert_ne!(*writer_thread.lock().unwrap(), Some(caller_thread));
 }
 
-// -----------------------------------------------------------------------
 // Vsock port classification
-// -----------------------------------------------------------------------
 
 #[test]
 fn classify_terminal_port() {
