@@ -1,5 +1,35 @@
 use super::*;
 
+async fn routed(
+    method: Method,
+    path: &str,
+    query: Option<&str>,
+    headers: HeaderMap,
+    body: Value,
+) -> (StatusCode, HeaderMap, Bytes) {
+    let response = route(
+        &method,
+        path,
+        query,
+        &headers,
+        Bytes::from(serde_json::to_vec(&body).unwrap()),
+        false,
+    )
+    .await;
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, body)
+}
+
+async fn routed_json(method: Method, path: &str, body: Value) -> Value {
+    let (status, _, bytes) = routed(method, path, None, HeaderMap::new(), body).await;
+    assert_eq!(status, StatusCode::OK, "unexpected response for {path}");
+    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        panic!("{path} returned non-JSON {bytes:?}: {error}");
+    })
+}
+
 #[test]
 fn parent_watch_is_optional_but_parsed_when_a_launcher_owns_the_server() {
     let standalone = Args::try_parse_from(["capsem-mock-server"]).expect("standalone mock server arguments");
@@ -196,4 +226,184 @@ fn header_lookup_is_case_insensitive_and_rejects_non_utf8_values() {
         None,
         "a non-UTF-8 header value reads as absent rather than panicking"
     );
+}
+
+#[tokio::test]
+async fn static_get_routes_return_their_contract_markers() {
+    for (path, marker) in [
+        ("/tiny", "capsem-mock-server:tiny"),
+        ("/html/about", "Capsem mock server about page"),
+        ("/html/large", "capsem-large-html"),
+        ("/sse/model", "event: model.tool_call"),
+        ("/model/response", "mock-model-response"),
+        ("/oauth/authorize", "synthetic_oauth_authorization_fixture"),
+        ("/credential/response", "synthetic_credential_fixture"),
+        ("/api/tags", "gemma4:latest"),
+        ("/deny-target", "deny-target"),
+        ("/chunked", "chunk-3"),
+    ] {
+        let (status, _, body) = routed(Method::GET, path, None, HeaderMap::new(), json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(String::from_utf8_lossy(&body).contains(marker), "{path}: {body:?}");
+    }
+
+    let (status, _, body) = routed(Method::GET, "/absent", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn generated_byte_routes_report_sizes_and_encoding() {
+    let (status, headers, body) = routed(Method::GET, "/bytes/128", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.len(), 128);
+    assert_eq!(&body[..26], b"abcdefghijklmnopqrstuvwxyz");
+    assert_eq!(headers[CONTENT_LENGTH], "128");
+
+    let (status, headers, body) = routed(Method::GET, "/gzip/10kb", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[CONTENT_ENCODING], "gzip");
+    assert!(!body.is_empty());
+
+    let (status, _, _) = routed(Method::GET, "/bytes/not-a-size", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn provider_json_routes_preserve_requested_models_and_shapes() {
+    let openai = routed_json(
+        Method::POST,
+        "/v1/chat/completions",
+        json!({"model": "gpt-fixture", "messages": []}),
+    )
+    .await;
+    assert_eq!(openai["model"], "gpt-fixture");
+    assert_eq!(openai["choices"][0]["finish_reason"], "stop");
+
+    let anthropic = routed_json(
+        Method::POST,
+        "/v1/messages",
+        json!({"model": "claude-fixture", "messages": []}),
+    )
+    .await;
+    assert_eq!(anthropic["model"], "claude-fixture");
+
+    let ollama = routed_json(Method::POST, "/api/chat", json!({"model": "local-fixture"})).await;
+    assert_eq!(ollama["model"], "local-fixture");
+
+    let gemini = routed_json(
+        Method::POST,
+        "/v1/models/gemini-fixture:generateContent",
+        json!({"contents": []}),
+    )
+    .await;
+    assert_eq!(gemini["modelVersion"], "gemini-fixture");
+}
+
+#[tokio::test]
+async fn provider_stream_routes_emit_protocol_terminators() {
+    for (path, payload, marker) in [
+        (
+            "/v1/chat/completions",
+            json!({"model": "gpt-fixture", "stream": true}),
+            "data: [DONE]",
+        ),
+        (
+            "/v1/responses",
+            json!({"model": "gpt-fixture", "stream": true}),
+            "response.completed",
+        ),
+        (
+            "/v1/messages",
+            json!({"model": "claude-fixture", "stream": true}),
+            "message_stop",
+        ),
+        (
+            "/v1/models/gemini-fixture:streamGenerateContent",
+            json!({"contents": []}),
+            "candidates",
+        ),
+    ] {
+        let (status, headers, bytes) = routed(Method::POST, path, None, HeaderMap::new(), payload).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(String::from_utf8_lossy(&bytes).contains(marker), "{path}: {bytes:?}");
+        assert!(headers[CONTENT_TYPE].to_str().unwrap().contains("event-stream"));
+    }
+}
+
+#[tokio::test]
+async fn auxiliary_post_routes_cover_openai_google_ollama_and_oauth_shapes() {
+    for (path, marker) in [
+        ("/v1/embeddings", "embedding"),
+        ("/v1/images/generations", "b64_json"),
+        ("/model/shape", "chatcmpl_shape_fixture"),
+        ("/model/no-tool-call", "chatcmpl_no_tool_fixture"),
+        ("/api/show", "modelfile"),
+        ("/oauth/token", "access_token"),
+        ("/api/client/features", "features"),
+        ("/v1internal:fetchUserInfo", "userSettings"),
+        ("/v1internal:fetchAvailableModels", "models"),
+    ] {
+        let value = routed_json(Method::POST, path, json!({"model": "fixture"})).await;
+        assert!(
+            value.get(marker).is_some() || value.to_string().contains(marker),
+            "{path}: {value}"
+        );
+    }
+
+    let (status, _, body) = routed(Method::POST, "/log", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn echo_route_reports_sensitive_header_shapes_without_echoing_values() {
+    let mut headers = HeaderMap::new();
+    headers.insert("authorization", "Bearer credential:blake3:abc".parse().unwrap());
+    headers.insert("cookie", "session=secret".parse().unwrap());
+    headers.insert("x-api-key", "secret".parse().unwrap());
+    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    let value = {
+        let (status, _, bytes) = routed(
+            Method::POST,
+            "/echo",
+            Some("access_token=credential%3Ablake3%3Adef"),
+            headers,
+            json!({"hello": "world"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_slice::<Value>(&bytes).unwrap()
+    };
+    assert_eq!(value["has_authorization"], true);
+    assert_eq!(value["authorization_is_broker_ref"], true);
+    assert_eq!(value["query_has_access_token"], true);
+    assert_eq!(value["has_cookie"], true);
+    assert_eq!(value["has_x_api_key"], true);
+    assert!(!value.to_string().contains("session=secret"));
+}
+
+#[tokio::test]
+async fn mcp_route_handles_initialize_list_call_and_unknown_methods() {
+    for (method, expected) in [
+        ("initialize", "protocolVersion"),
+        ("tools/list", "tools"),
+        ("tools/call", "content"),
+        ("resources/list", "resources"),
+        ("resources/read", "contents"),
+        ("prompts/list", "error"),
+        ("unknown/method", "error"),
+    ] {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": {"name": "echo", "arguments": {"text": "hello"}}
+        });
+        let value = routed_json(Method::POST, "/mcp", payload).await;
+        assert!(
+            value.get(expected).is_some() || value.get("result").and_then(|v| v.get(expected)).is_some(),
+            "{method}: {value}"
+        );
+    }
 }

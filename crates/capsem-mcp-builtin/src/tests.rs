@@ -1,6 +1,17 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn handler_without_snapshots() -> BuiltinHandler {
+    BuiltinHandler {
+        http_client: reqwest::Client::new(),
+        db: Arc::new(DbWriter::open_in_memory(8).expect("in-memory DB")),
+        security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
+        plugin_policy: Arc::new(BTreeMap::new()),
+        scheduler: None,
+        workspace_dir: None,
+    }
+}
+
 #[test]
 fn snapshot_pagination_params_preserve_include_changes() {
     let params: SnapshotPaginationParams = serde_json::from_value(serde_json::json!({
@@ -12,6 +23,76 @@ fn snapshot_pagination_params_preserve_include_changes() {
     let args = to_args(&params);
     assert_eq!(args["format"], "json");
     assert_eq!(args["include_changes"], true);
+}
+
+#[test]
+fn router_and_server_info_expose_the_complete_builtin_surface() {
+    let tools = BuiltinHandler::tool_router();
+    let names = tools
+        .list_all()
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .collect::<Vec<_>>();
+    for expected in [
+        "echo",
+        "fetch_http",
+        "grep_http",
+        "http_headers",
+        "snapshots_changes",
+        "snapshots_list",
+        "snapshots_revert",
+        "snapshots_create",
+        "snapshots_delete",
+        "snapshots_history",
+        "snapshots_compact",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "missing builtin tool {expected}"
+        );
+    }
+
+    let info = handler_without_snapshots().get_info();
+    assert_eq!(info.server_info.name, "capsem-local");
+    assert!(!info.server_info.version.is_empty());
+}
+
+#[tokio::test]
+async fn echo_handler_returns_input_without_touching_io() {
+    let handler = handler_without_snapshots();
+    let value = handler
+        .echo(Parameters(EchoParams {
+            text: "transport fixture".to_string(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(value, "transport fixture");
+}
+
+#[test]
+fn snapshot_tools_fail_closed_when_session_state_is_absent() {
+    let handler = handler_without_snapshots();
+    let error = match handler.snapshot_state() {
+        Ok(_) => panic!("snapshot state unexpectedly available"),
+        Err(error) => error,
+    };
+    assert!(error.contains("no session directory"));
+
+    let session = tempfile::tempdir().unwrap();
+    let handler = BuiltinHandler {
+        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
+            session.path().to_path_buf(),
+            1,
+            1,
+            Duration::from_secs(60),
+        )))),
+        ..handler_without_snapshots()
+    };
+    let error = match handler.snapshot_state() {
+        Ok(_) => panic!("snapshot state unexpectedly available"),
+        Err(error) => error,
+    };
+    assert!(error.contains("no workspace directory"));
 }
 
 async fn spawn_one_response_http_server() -> String {
