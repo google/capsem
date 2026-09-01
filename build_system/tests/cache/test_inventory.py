@@ -52,3 +52,26 @@ def test_missing_stage_directory_is_an_empty_inventory(tmp_path: Path) -> None:
 
     assert report.stages[0].entry_count == 0
     assert report.stages[0].logical_bytes == 0
+
+
+def test_allocated_bytes_count_cross_stage_hardlinks_once(tmp_path: Path) -> None:
+    object_stage = policy().stages["objects"].model_copy(update={"path": Path("objects")})
+    package_stage = object_stage.model_copy(update={"path": Path("target/packages")})
+    configured = policy().model_copy(
+        update={"stages": {"objects": object_stage, "packages": package_stage}}
+    )
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    payload = paths.stage("objects") / "payload"
+    payload.parent.mkdir(parents=True)
+    payload.write_bytes(b"same bytes")
+    package = paths.stage("packages") / "Capsem.deb"
+    package.parent.mkdir(parents=True)
+    os.link(payload, package)
+
+    report = scan_inventory(paths, configured, now_ns=10)
+    stages = {stage.stage_id: stage for stage in report.stages}
+
+    assert report.logical_bytes == 2 * len(b"same bytes")
+    assert report.allocated_bytes == payload.stat().st_blocks * 512
+    assert stages["objects"].allocated_bytes == report.allocated_bytes
+    assert stages["packages"].allocated_bytes == 0

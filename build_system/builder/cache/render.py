@@ -17,7 +17,8 @@ def bytes_label(value: int) -> str:
 def inventory_text(report: CacheInventory) -> str:
     lines = [
         f"Cache: {report.root}",
-        f"Total: {bytes_label(report.logical_bytes)}; free: "
+        f"Total: {bytes_label(report.logical_bytes)} logical, "
+        f"{bytes_label(report.allocated_bytes)} allocated; free: "
         f"{bytes_label(report.filesystem_free_bytes)}",
     ]
     for stage in report.stages:
@@ -25,6 +26,12 @@ def inventory_text(report: CacheInventory) -> str:
         lines.append(
             f"  {stage.stage_id}: {bytes_label(stage.logical_bytes)} "
             f"({stage.entry_count} entries, {kind})"
+        )
+    for runtime in report.runtimes:
+        state = "available" if runtime.available else f"unavailable: {runtime.error}"
+        lines.append(
+            f"  runtime/{runtime.runtime_id}: native {bytes_label(runtime.native_bytes)}, "
+            f"owned {bytes_label(runtime.owned_bytes)} ({len(runtime.resources)} resources; {state})"
         )
     return "\n".join(lines)
 

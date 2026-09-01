@@ -221,14 +221,17 @@ hard_bytes = 34359738368
 prune = "lru"
 maximum_age_hours = 336
 
-[stages.buildkit]
+[stages.buildkit-exports]
+# Transportable BuildKit cache exports live here when a hosted lane needs to
+# hand layers to another runner. Local builds keep the hotter native daemon
+# cache instead of duplicating it on the same disk; the Docker runtime adapter
+# inventories and bounds that native cache separately below.
 path = "containers/buildkit"
 warning_bytes = 68719476736
 soft_bytes = 85899345920
 hard_bytes = 103079215104
-prune = "external"
+prune = "lru"
 maximum_age_hours = 72
-external = true
 
 [stages.container-receipts]
 path = "containers/receipts"
@@ -271,3 +274,26 @@ hard_bytes = 25769803776
 prune = "ephemeral"
 maximum_age_hours = 24
 maximum_count = 8
+
+[runtimes.docker]
+kind = "docker"
+command = "docker"
+timeout_seconds = 30
+receipt_stage = "container-receipts"
+log_stage = "container-logs"
+image_prefixes = ["capsem-"]
+container_prefixes = ["capsem-"]
+build_cache_owned = true
+maximum_age_hours = 72
+keep_image_generations = 2
+build_cache_keep_bytes = 85899345920
+
+[runtimes.tart]
+kind = "tart"
+command = "tart"
+timeout_seconds = 30
+receipt_stage = "container-receipts"
+log_stage = "container-logs"
+vm_prefixes = ["capsem-glowup-"]
+base_images = ["ghcr.io/cirruslabs/macos-sequoia-base@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"]
+home = "~/.tart"

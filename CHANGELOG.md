@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   component-specific input identities. Hardlinks avoid duplicate multi-gigabyte
   copies, strict receipts make every reused byte auditable, and runtime boot
   evidence remains fresh rather than being mistaken for construction output.
+- `just cache` now reconciles repository usage with owned Docker images,
+  containers, BuildKit data, and Tart VMs through bounded typed adapters.
+  Snapshots write strict receipts under `cache/containers`, prune previews
+  protect active and foreign resources, and applied native cleanup is exact,
+  reasoned, and journaled alongside its runtime output.
 - Complete local tests now refuse low-impact repeats until ten commits have
   accumulated since the latest successful proof and print the exact focused
   owners to run instead. High-impact and unknown changes remain eligible;

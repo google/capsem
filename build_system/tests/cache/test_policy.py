@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy, TartRuntimePolicy
 from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -69,4 +70,32 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
     assert policy.minimum_free_bytes == 40 * 1024**3
     assert policy.stages["cargo-debug"].path == Path("target/cargo/debug")
     assert policy.stages["python-pycache"].path == Path("tools/python/pycache")
-    assert policy.stages["buildkit"].external is True
+    assert policy.stages["buildkit-exports"].external is False
+    assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
+    assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
+
+
+def test_runtime_policy_references_owned_receipt_and_log_stages() -> None:
+    base = stage(path="containers/receipts")
+    docker = DockerRuntimePolicy(
+        kind="docker",
+        command="docker",
+        timeout_seconds=30,
+        receipt_stage="receipts",
+        log_stage="missing",
+        image_prefixes=("capsem-",),
+        container_prefixes=("capsem-",),
+        build_cache_owned=True,
+        maximum_age_hours=72,
+        keep_image_generations=2,
+        build_cache_keep_bytes=80,
+    )
+
+    with pytest.raises(ValidationError, match="unknown stage 'missing'"):
+        CachePolicy(
+            version=1,
+            root=Path("cache"),
+            minimum_free_bytes=1,
+            stages={"receipts": base},
+            runtimes={"docker": docker},
+        )

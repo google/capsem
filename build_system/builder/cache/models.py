@@ -9,6 +9,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
+from .runtimemodels import RuntimeInventory, RuntimePolicy
+
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 STAGE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -141,6 +143,7 @@ class CachePolicy(BaseModel):
         routes=(),
     )
     stages: dict[str, StagePolicy]
+    runtimes: dict[str, RuntimePolicy] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_policy(self) -> CachePolicy:
@@ -152,6 +155,14 @@ class CachePolicy(BaseModel):
         for stage_id in self.stages:
             if not STAGE_ID.fullmatch(stage_id):
                 raise ValueError(f"invalid cache stage id: {stage_id!r}")
+        for runtime_id, runtime in self.runtimes.items():
+            if not STAGE_ID.fullmatch(runtime_id):
+                raise ValueError(f"invalid cache runtime id: {runtime_id!r}")
+            for stage_id in (runtime.receipt_stage, runtime.log_stage):
+                if stage_id not in self.stages:
+                    raise ValueError(
+                        f"cache runtime {runtime_id!r} references unknown stage {stage_id!r}"
+                    )
         items = sorted(self.stages.items())
         for index, (left_id, left) in enumerate(items):
             for right_id, right in items[index + 1 :]:
@@ -206,6 +217,7 @@ class CacheInventory(BaseModel):
     logical_bytes: Annotated[StrictInt, Field(ge=0)]
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     stages: tuple[StageInventory, ...]
+    runtimes: tuple[RuntimeInventory, ...] = ()
 
 
 class PruneAction(BaseModel):
