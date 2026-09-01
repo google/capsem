@@ -438,20 +438,23 @@ impl AutoSnapshotScheduler {
                     Err(_) => continue,
                 };
                 let dst = merged_ws.join(rel);
+                // Propagate merge errors: a swallowed create_dir_all/symlink
+                // leaves the merged checkpoint incomplete, yet the code below
+                // still hashes it and deletes the source snapshots -- a corrupt
+                // checkpoint that self-certifies while the originals are gone.
+                // remove_file stays best-effort (a missing dst is expected).
                 if entry.file_type().is_dir() {
-                    let _ = std::fs::create_dir_all(&dst);
+                    std::fs::create_dir_all(&dst).context("compact: create merged directory")?;
                 } else if entry.file_type().is_symlink() {
-                    // Preserve symlinks as symlinks.
                     if let Some(parent) = dst.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        std::fs::create_dir_all(parent).context("compact: create symlink parent")?;
                     }
                     let _ = std::fs::remove_file(&dst);
-                    if let Ok(link_target) = std::fs::read_link(entry.path()) {
-                        let _ = std::os::unix::fs::symlink(&link_target, &dst);
-                    }
+                    let link_target = std::fs::read_link(entry.path()).context("compact: read source symlink")?;
+                    std::os::unix::fs::symlink(&link_target, &dst).context("compact: recreate symlink")?;
                 } else if entry.file_type().is_file() {
                     if let Some(parent) = dst.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        std::fs::create_dir_all(parent).context("compact: create file parent")?;
                     }
                     let _ = std::fs::remove_file(&dst);
                     clone_file(entry.path(), &dst)?;
