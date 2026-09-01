@@ -22,8 +22,8 @@ PUBLIC_INSTALLERS = frozenset(
 )
 FAST_AND_FINAL = frozenset({"fast-gate", "pr-gate"})
 PRODUCT_JOBS = frozenset({"test-linux", "test", "test-install"})
-ALL_JOBS = FAST_AND_FINAL | PRODUCT_JOBS | frozenset(
-    {"docs-build", "site-build", "release-site-build"}
+ALL_JOBS = (
+    FAST_AND_FINAL | PRODUCT_JOBS | frozenset({"docs-build", "site-build", "release-site-build"})
 )
 SCOPE_JOBS = {
     "build_system": PRODUCT_JOBS,
@@ -38,33 +38,74 @@ SCOPE_JOBS = {
 }
 KNOWN_DIRECTORIES = frozenset(
     {
-        ".agents", ".cargo", ".claude", ".codex", ".config", ".cursor",
-        ".gemini", ".github", "bench", "benchmarks",
-        "build_system", "config", "crates", "data", "docker",
+        ".agents",
+        ".cargo",
+        ".claude",
+        ".codex",
+        ".config",
+        ".cursor",
+        ".gemini",
+        ".github",
+        "bench",
+        "benchmarks",
+        "build_system",
+        "config",
+        "crates",
+        "data",
+        "docker",
         "guest",
-        "scripts", "sdk", "security", "skills",
-        "sprints", "src", "tests", "tmp",
+        "scripts",
+        "sdk",
+        "security",
+        "skills",
+        "sprints",
+        "src",
+        "tests",
+        "tmp",
         "web",
     }
 )
 RETIRED_BUILD_SYSTEM_FILES = frozenset({"test-dev-null.sh"})
-KNOWN_ROOT_FILES = frozenset(
-    {
-        ".dockerignore", ".gitignore", ".npmrc", "AGENTS.md", "CHANGELOG.md",
-        "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock",
-        "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
-        "MIGRATION_HANDOFF.md", "README.md", "RELEASE.md", "SECURITY.md",
-        "bootstrap.sh", "codecov.yml", "justfile",
-        "rust-toolchain.toml", "uv.toml",
-    }
-) | RETIRED_BUILD_SYSTEM_FILES
+KNOWN_ROOT_FILES = (
+    frozenset(
+        {
+            ".dockerignore",
+            ".gitignore",
+            ".npmrc",
+            "AGENTS.md",
+            "CHANGELOG.md",
+            "CITATION.cff",
+            "CLAUDE.md",
+            "CONTRIBUTING.md",
+            "Cargo.lock",
+            "Cargo.toml",
+            "GEMINI.md",
+            "LATEST_RELEASE.md",
+            "LICENSE",
+            "MIGRATION_HANDOFF.md",
+            "README.md",
+            "RELEASE.md",
+            "SECURITY.md",
+            "bootstrap.sh",
+            "codecov.yml",
+            "justfile",
+            "rust-toolchain.toml",
+            "rustfmt.toml",
+            "uv.toml",
+        }
+    )
+    | RETIRED_BUILD_SYSTEM_FILES
+)
 BUILD_SYSTEM_ROOTS = frozenset({"src", "scripts", "docker"})
-BUILD_SYSTEM_FILES = frozenset(
-    {
-        ".dockerignore",
-        "bootstrap.sh",
-    }
-) | RETIRED_BUILD_SYSTEM_FILES
+BUILD_SYSTEM_FILES = (
+    frozenset(
+        {
+            ".dockerignore",
+            "bootstrap.sh",
+        }
+    )
+    | RETIRED_BUILD_SYSTEM_FILES
+)
 RUST_GUEST_CONFIG_ROOTS = frozenset(
     {
         ".cargo",
@@ -75,7 +116,9 @@ RUST_GUEST_CONFIG_ROOTS = frozenset(
         "security",
     }
 )
-RUST_GUEST_CONFIG_FILES = frozenset({"Cargo.lock", "Cargo.toml", "rust-toolchain.toml"})
+RUST_GUEST_CONFIG_FILES = frozenset(
+    {"Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "rustfmt.toml"}
+)
 SHARED_ROOTS = frozenset(
     {
         ".agents",
@@ -109,9 +152,7 @@ SHARED_CONTROL_FILES = frozenset(
     }
 )
 MULTI_OWNER_FILES = {
-    "build_system/builder/gate/releasegraph.py": frozenset(
-        {"build_system", "release_site"}
-    ),
+    "build_system/builder/gate/releasegraph.py": frozenset({"build_system", "release_site"}),
     "build_system/builder/gate/tools/web/check_docs_holding_build.py": frozenset(
         {"build_system", "docs"}
     ),
