@@ -246,6 +246,8 @@ hard_bytes = 4294967296
 prune = "lru"
 maximum_age_hours = 168
 maximum_count = 20
+managed_globs = ["cpython-*"]
+lease_template = ".{key}.lock"
 
 [stages.node-pnpm]
 path = "tools/node/pnpm"

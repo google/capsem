@@ -70,6 +70,8 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
     assert policy.minimum_free_bytes == 40 * 1024**3
     assert policy.stages["cargo"].path == Path("target/cargo")
     assert policy.stages["python-pycache"].path == Path("tools/python/pycache")
+    assert policy.stages["python-pycache"].managed_globs == ("cpython-*",)
+    assert policy.stages["python-pycache"].lease_template == ".{key}.lock"
     assert policy.stages["buildkit-exports"].external is False
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)

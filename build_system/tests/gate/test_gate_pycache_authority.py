@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from capsem_builder.cache.inventory import scan_inventory
+from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.paths import CachePaths
 
 
 def _source(root: Path, value: str) -> None:
@@ -70,3 +73,39 @@ def test_private_source_generation_uses_outer_cache_authority(
     generation = Path(isolated_environment(source)[PYCACHE])
 
     assert generation.parent == authority / "cache/tools/python/pycache"
+
+
+def test_live_gate_generation_holds_a_prune_lease(tmp_path: Path) -> None:
+    import capsem_builder.gatelaunch as launcher
+
+    source = tmp_path / "source"
+    authority = tmp_path / "authority"
+    _source(source, "source")
+    generation = Path(launcher.isolated_environment(source, authority=authority)[launcher.PYCACHE])
+    stage = StagePolicy(
+        path=Path("tools/python/pycache"),
+        warning_bytes=1,
+        soft_bytes=2,
+        hard_bytes=3,
+        prune=PruneMethod.LRU,
+        maximum_age_hours=1,
+        managed_globs=("cpython-*",),
+        lease_template=".{key}.lock",
+    )
+    policy = CachePolicy(
+        version=1,
+        root=Path("cache"),
+        minimum_free_bytes=1,
+        stages={"python-pycache": stage},
+    )
+
+    lease = launcher._hold_generation(generation)
+    try:
+        inventory = scan_inventory(CachePaths(repository_root=authority, policy=policy), policy)
+    finally:
+        lease.close()
+        launcher._LEASES.pop(generation, None)
+
+    entries = {entry.key: entry for entry in inventory.stages[0].entries}
+    assert entries[generation.name].protected
+    assert not entries[f".{generation.name}.lock"].managed

@@ -28,13 +28,14 @@ that never changes.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import NoReturn
+from typing import BinaryIO, NoReturn
 
 #: Set to the exact source-keyed generation. Equality with the current tree,
 #: environment, and interpreter is how the re-exec knows not to happen twice.
@@ -47,6 +48,7 @@ PYCACHE = "PYTHONPYCACHEPREFIX"
 FALLBACK_STAGE = Path("cache/tools/python/pycache")
 GATE_POLICY = Path("config/gate.toml")
 CACHE_POLICY = Path("config/cache.toml")
+_LEASES: dict[Path, BinaryIO] = {}
 
 
 def checkout() -> Path:
@@ -116,6 +118,22 @@ def isolated_environment(
     return {MARKER: str(generation), PYCACHE: str(generation)}
 
 
+def _hold_generation(generation: Path) -> BinaryIO:
+    """Hold a shared lifetime lease that makes routine pruning skip this generation."""
+    existing = _LEASES.get(generation)
+    if existing is not None and not existing.closed:
+        return existing
+    lease = generation.with_name(f".{generation.name}.lock")
+    descriptor = lease.open("a+b")
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BaseException:
+        descriptor.close()
+        raise
+    _LEASES[generation] = descriptor
+    return descriptor
+
+
 def main() -> int:
     """Re-exec unless this interpreter matches the current source generation."""
     environment = isolated_environment()
@@ -125,6 +143,7 @@ def main() -> int:
         and sys.pycache_prefix == environment[PYCACHE]
     )
     if isolated:
+        _hold_generation(Path(environment[PYCACHE]))
         from .gate.cli import main as gate
 
         return gate()
