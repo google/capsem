@@ -327,7 +327,7 @@ fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
         context_json: None,
     };
     let brokered = broker_observed_credential(&obs).unwrap();
-    let reference = brokered.credential_ref.clone();
+    let reference = brokered.credential_ref;
 
     // A guest sends the Anthropic reference to an unrelated destination. The
     // destination binds to no provider, so the host must NOT dereference the

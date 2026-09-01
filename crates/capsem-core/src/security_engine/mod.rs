@@ -1371,19 +1371,6 @@ pub async fn emit_security_rule_match(
     Ok(())
 }
 
-pub fn emit_security_rule_match_blocking(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rule: &CompiledSecurityRule,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<(), String> {
-    let rule_event = security_rule_event(event_id, event_type, rule, event, timestamp_unix_ms)?;
-    trace_security_rule_match(&rule_event, rule);
-    emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event));
-    Ok(())
-}
 
 pub fn security_rule_event(
     event_id: SecurityEventId,
@@ -2964,21 +2951,6 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
             .emit(event.clone())
             .map_err(|error| SecurityActionError::new(error.to_string()))?;
         Ok(event)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct TracingSecurityEventEmitter;
-
-impl SecurityEventEmitter for TracingSecurityEventEmitter {
-    fn emit(&self, event: SecurityEvent) -> Result<(), SecurityEmitError> {
-        tracing::debug!(
-            event_type = event.event_type.as_str(),
-            credential_ref = event.credential_ref.as_deref(),
-            action_count = event.action_trace.len(),
-            "security event emitted"
-        );
-        Ok(())
     }
 }
 
