@@ -544,6 +544,10 @@ fn collect_query_brokered_references(
 }
 
 fn credential_provider_for_request(domain: &str, ai_provider: Option<ProviderKind>) -> Option<CredentialProvider> {
+    // Domains are case-insensitive; lowercase before the suffix checks so a
+    // mixed-case host does not evade provider detection (capture/brokering).
+    let domain = domain.to_ascii_lowercase();
+    let domain = domain.as_str();
     match ai_provider {
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),

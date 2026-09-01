@@ -607,3 +607,21 @@ fn replay_availability_requires_resolvable_broker_secret() {
         &brokered.credential_ref
     ));
 }
+
+#[test]
+fn credential_provider_detection_is_case_insensitive() {
+    // Domains are case-insensitive; a mixed-case host must still map to its
+    // provider so credential capture/brokering is not silently skipped.
+    assert_eq!(
+        credential_provider_for_request("API.ANTHROPIC.COM", None),
+        Some(CredentialProvider::Anthropic)
+    );
+    assert_eq!(
+        credential_provider_for_request("Api.GitHub.Com", None),
+        Some(CredentialProvider::Github)
+    );
+    assert_eq!(
+        credential_provider_for_request("oauth2.GOOGLEAPIS.com", None),
+        Some(CredentialProvider::Google)
+    );
+}
