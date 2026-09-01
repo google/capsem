@@ -432,6 +432,10 @@ coverage_file = "COVERAGE_FILE"
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
 # Where cargo compiles, shared by every run; see `[prefix] cargo_target`.
 cargo_target = "CARGO_TARGET_DIR"
+# Standard tool variables whose values are resolved from config/cache.toml by
+# the gate before it enters a private source checkout.
+uv_cache = "UV_CACHE_DIR"
+pnpm_store = "npm_config_store_dir"
 # Full immutable release source selected by the parent. Unlike
 # source_checkout, this says the outer working tree is not the subject.
 source_commit = "CAPSEM_GATE_SOURCE_COMMIT"
@@ -1170,6 +1174,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
+uv_identity_inputs = ["build_system/uv.lock", "build_system/pyproject.toml"]
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
@@ -1908,6 +1913,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_typecheck.py",
     "build_system/tests/gate/test_gate_candidate.py",
     "build_system/tests/gate/test_gate_cache_layout.py",
+    "build_system/tests/gate/test_gate_cache_tooling.py",
     "build_system/tests/gate/test_gate_cli.py",
     "build_system/tests/gate/test_gate_command.py",
     "build_system/tests/gate/test_gate_config.py",

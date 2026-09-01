@@ -744,6 +744,14 @@ def _own_checkout(tmp_path: Path) -> Path:
     """
     checkout = tmp_path / "checkout"
     checkout.mkdir(exist_ok=True)
+    for relative in (
+        "config/cache.toml",
+        "build_system/uv.lock",
+        "build_system/pyproject.toml",
+    ):
+        destination = checkout / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((PROJECT_ROOT / relative).read_bytes())
     return checkout
 
 

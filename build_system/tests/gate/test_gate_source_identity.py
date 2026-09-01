@@ -85,17 +85,27 @@ def test_the_launcher_environment_runs_the_current_source(tmp_path: Path) -> Non
     assert _observed(tmp_path, isolated_environment(tmp_path)) == AFTER
 
 
-def test_each_invocation_gets_its_own_prefix(tmp_path: Path) -> None:
-    """Reusing one alternate prefix recreates the same timestamp problem."""
+def test_unchanged_source_reuses_one_abi_keyed_generation(tmp_path: Path) -> None:
     from capsem_builder.gatelaunch import MARKER, PYCACHE, isolated_environment
 
     first = isolated_environment(tmp_path)
     second = isolated_environment(tmp_path)
 
-    assert first[PYCACHE] != second[PYCACHE]
+    assert first[PYCACHE] == second[PYCACHE]
     assert first[MARKER] == first[PYCACHE]
     for environment in (first, second):
         assert Path(environment[PYCACHE]).is_dir()
+
+
+def test_changed_source_selects_a_new_generation(tmp_path: Path) -> None:
+    from capsem_builder.gatelaunch import PYCACHE, isolated_environment
+
+    module = _probe(tmp_path, BEFORE)
+    first = isolated_environment(tmp_path)
+    _rewrite_preserving_timestamp(module, AFTER)
+    second = isolated_environment(tmp_path)
+
+    assert first[PYCACHE] != second[PYCACHE]
 
 
 def test_children_inherit_the_isolation(tmp_path: Path) -> None:

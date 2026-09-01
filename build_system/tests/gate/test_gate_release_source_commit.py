@@ -180,7 +180,7 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem_builder.gate import buildcache, cargotarget, prefix
+    from capsem_builder.gate import buildcache, cachetooling, cargotarget, prefix
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.sourcecommit import SourceCommit
 
@@ -208,6 +208,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     monkeypatch.setattr(prefix, "sweep", lambda _config: [])
     monkeypatch.setattr(prefix.snapshot, "populate_commit", populate)
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
+    monkeypatch.setattr(cachetooling, "record_use", lambda *args, **kwargs: None)
 
     assert (
         prefix.run_from_private_copy(
@@ -225,6 +226,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
             # environment. A release prefix that did not carry it would take a
             # cold build on every dispatch.
             config.environment.cargo_target: str(cargotarget.path(config)),
+            **cachetooling.environment(config, key=str(commit)),
         }
     ]
 

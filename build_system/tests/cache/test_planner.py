@@ -82,3 +82,20 @@ def test_protected_entries_are_never_selected_and_report_violations() -> None:
 
     assert [action.key for action in plan.actions] == ["old"]
     assert plan.violations == ("objects remains 40 bytes above soft cap 20",)
+
+
+def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:
+    locked = policy().model_copy(
+        update={
+            "stages": {
+                "objects": policy().stages["objects"].model_copy(
+                    update={"prune": PruneMethod.NONE}
+                )
+            }
+        }
+    )
+
+    plan = plan_prune(inventory(entry("fingerprint", 40, 1)), locked)
+
+    assert plan.actions == ()
+    assert plan.violations == ("objects remains 40 bytes above soft cap 20",)

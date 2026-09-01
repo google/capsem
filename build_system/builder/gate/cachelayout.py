@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -25,8 +26,33 @@ def shared_path(config: GateConfig, configured: str | Path) -> Path:
     path = Path(configured).expanduser()
     if path.is_absolute():
         return path
-    paths = CachePaths(repository_root=authority(config), policy=load_policy(config.root))
+    paths = cache_paths(config)
     try:
         return paths.resolve(path)
     except ValueError as error:
         raise GateError(str(error)) from error
+
+
+def stage_path(config: GateConfig, stage_id: str) -> Path:
+    """Resolve a policy stage against the outer cache authority."""
+    paths = cache_paths(config)
+    try:
+        return paths.stage(stage_id)
+    except KeyError as error:
+        raise GateError(str(error)) from error
+
+
+def cache_paths(config: GateConfig) -> CachePaths:
+    """Return the typed path authority shared by gate cache adapters."""
+    return CachePaths(repository_root=authority(config), policy=load_policy(config.root))
+
+
+def keyed_stage_path(config: GateConfig, stage_id: str, *inputs: str) -> Path:
+    """Resolve a whole removable generation keyed by exact input bytes."""
+    digest = hashlib.sha256()
+    for relative in inputs:
+        digest.update(relative.encode())
+        digest.update(b"\0")
+        digest.update((config.root / relative).read_bytes())
+        digest.update(b"\0")
+    return stage_path(config, stage_id) / digest.hexdigest()

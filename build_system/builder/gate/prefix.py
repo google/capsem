@@ -31,7 +31,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import buildcache, cargotarget, snapshot
+from . import buildcache, cachetooling, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .prefixlease import lease, parent_dir, reclaim_orphan_leases
@@ -205,6 +205,11 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
                 else ""
             )
         )
+        cachetooling.record_cargo(
+            config,
+            key=str(commit or "working-tree"),
+            logical_bytes=int(held.gb * 1024**3),
+        )
     retained_commit = commit is not None and path.exists()
     if reuse is not None and commit is not None:
         if path.stat().st_uid != os.getuid():
@@ -239,6 +244,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.cargo_target: str(cargotarget.path(config)),
+        **cachetooling.environment(config, key=str(commit or path.name)),
     }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)

@@ -28,6 +28,13 @@ ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD = b"an image that takes twenty minutes to build"
 
 
+def _seed_cache_inputs(checkout: Path) -> None:
+    for relative in ("config/cache.toml", "build_system/uv.lock", "build_system/pyproject.toml"):
+        destination = checkout / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+
+
 def _relocated(tmp_path: Path):
     """The real configuration, pointed at trees this test may destroy."""
     config = gate_config.load(ROOT)
@@ -195,6 +202,7 @@ def _owning_its_checkout(config, tmp_path: Path):
     """
     empty = tmp_path / "checkout"
     empty.mkdir(exist_ok=True)
+    _seed_cache_inputs(empty)
     return config.model_copy(update={"root": empty})
 
 
@@ -303,6 +311,7 @@ def test_the_very_first_run_is_lent_what_the_checkout_exported(tmp_path, monkeyp
         built = exported / relative / "x86_64"
         built.mkdir(parents=True)
         (built / "rootfs.erofs").write_bytes(PAYLOAD)
+    _seed_cache_inputs(exported)
     config = config.model_copy(update={"root": exported})
 
     runner = _sequenced(monkeypatch, config, tmp_path)

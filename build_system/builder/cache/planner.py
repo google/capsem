@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .models import CacheInventory, CachePolicy, PruneAction, PrunePlan
+from .models import CacheInventory, CachePolicy, PruneAction, PruneMethod, PrunePlan
 
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
 
@@ -14,6 +14,13 @@ def plan_prune(inventory: CacheInventory, policy: CachePolicy) -> PrunePlan:
     for stage in inventory.stages:
         stage_policy = policy.stages[stage.stage_id]
         remaining = stage.logical_bytes
+        if stage_policy.prune in {PruneMethod.NONE, PruneMethod.EXTERNAL}:
+            if remaining > stage_policy.soft_bytes:
+                violations.append(
+                    f"{stage.stage_id} remains {remaining} bytes above soft cap "
+                    f"{stage_policy.soft_bytes}"
+                )
+            continue
         selected: set[str] = set()
         ordered = sorted(stage.entries, key=lambda entry: (entry.last_used_ns, entry.key))
         maximum_age = stage_policy.maximum_age_hours * NANOSECONDS_PER_HOUR
