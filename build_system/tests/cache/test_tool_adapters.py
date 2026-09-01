@@ -22,7 +22,9 @@ def test_cargo_live_profiles_are_observed_but_not_selectively_pruned() -> None:
     assert policy["stages"]["cargo"]["prune"] == "none"
 
 
-def test_bootstrap_uv_cache_is_inside_the_owned_stage() -> None:
+def test_bootstrap_and_gate_share_one_uv_content_store() -> None:
+    policy = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
     configured = tomllib.loads((ROOT / "uv.toml").read_text(encoding="utf-8"))["cache-dir"]
+    expected = ROOT / policy["root"] / policy["stages"]["python-uv"]["path"]
 
-    assert (ROOT / configured).is_relative_to(ROOT / "cache/tools/python/uv")
+    assert (ROOT / configured).resolve() == expected
