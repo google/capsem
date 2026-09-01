@@ -24,10 +24,11 @@
 
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 
-# Inventory and control the repository cache. The variadic is deliberately one
-# quoted command string; capsem-cache parses it as data and never as shell.
+# Inventory and control the repository cache. Positional arguments preserve
+# every caller-owned argv boundary, including multiword option values.
+[positional-arguments]
 cache *command:
-    uv run --project build_system --frozen capsem-cache dispatch {{quote(command)}}
+    uv run --project build_system --frozen capsem-cache dispatch "$@"
 
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:

@@ -22,6 +22,7 @@ satisfied by quoting the wrong half of the line.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -79,6 +80,9 @@ def _parameters(kinds: set[str]) -> list[tuple[str, tuple[str, ...]]]:
 
 SINGULAR = _parameters({"singular"})
 VARIADIC = _parameters({"star", "plus"})
+JOINED_VARIADIC = [
+    item for item in VARIADIC if "positional-arguments" not in RECIPES[item[0]]["attributes"]
+]
 
 
 def _rendered(recipe: str, arguments: list[str], cwd: Path | None = None) -> str:
@@ -199,7 +203,9 @@ def test_every_metacharacter_class_survives_as_data(payload: str, receiver: Path
         )
 
 
-@pytest.mark.parametrize(("recipe", "parameters"), VARIADIC, ids=[n for n, _ in VARIADIC])
+@pytest.mark.parametrize(
+    ("recipe", "parameters"), JOINED_VARIADIC, ids=[n for n, _ in JOINED_VARIADIC]
+)
 def test_a_variadic_recipe_hands_over_one_joined_argument(
     recipe: str, parameters: tuple[str, ...], receiver: Path
 ) -> None:
@@ -214,13 +220,34 @@ def test_a_variadic_recipe_hands_over_one_joined_argument(
     _assert_one_argument(_rendered(recipe, parts), " ".join(parts), f"`just {recipe}`", receiver)
 
 
-def test_no_recipe_takes_an_unquotable_variadic_passthrough() -> None:
-    """A variadic that is forwarded raw has no safe spelling.
+def test_cache_preserves_each_variadic_argument(receiver: Path, tmp_path: Path) -> None:
+    """The cache CLI accepts arbitrary options, including multiword values."""
+    path = tmp_path / "path"
+    path.mkdir()
+    path.joinpath("uv").symlink_to(receiver / "uv")
+    result = subprocess.run(
+        [shutil.which("just") or "just", "cache", "prune", "--reason", HOSTILE],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={"PATH": f"{path}:{os.environ['PATH']}", "HOME": str(receiver)},
+        check=True,
+    )
+    arguments = [
+        entry.removeprefix("ARG:")
+        for entry in result.stdout.splitlines()
+        if entry.startswith("ARG:")
+    ]
+    assert arguments[-4:] == ["dispatch", "prune", "--reason", HOSTILE]
 
-    `quote()` collapses it to one argument and no quoting preserves the
-    original boundaries, so a recipe that means "pass these through
-    individually" cannot be written in `just` at all. Callers that need it
-    reach `uv run --project build_system --frozen capsem-gate` directly.
+
+def test_no_recipe_takes_an_unquotable_variadic_passthrough() -> None:
+    """A variadic interpolated into source has no safe spelling.
+
+    `quote()` collapses it to one argument and source quoting cannot preserve
+    the original boundaries. A true passthrough uses the recipe's
+    `positional-arguments` attribute and shell `"$@"`, as `cache` does.
     """
     body = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
 

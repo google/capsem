@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 from pathlib import Path
 
 import click
@@ -205,16 +204,16 @@ def snapshot(context: click.Context, as_json: bool) -> None:
         )
 
 
-@main.command(hidden=True)
-@click.argument("command", default="")
+@main.command(hidden=True, context_settings={"ignore_unknown_options": True})
+@click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def dispatch(context: click.Context, command: str) -> None:
-    """Parse the one safely quoted command string supplied by Just."""
-    arguments = shlex.split(command) or ["status"]
-    if arguments[0] == "dispatch":
+def dispatch(context: click.Context, arguments: tuple[str, ...]) -> None:
+    """Forward the exact argument vector supplied by Just."""
+    selected = list(arguments) or ["status"]
+    if selected[0] == "dispatch":
         raise click.UsageError("nested cache dispatch is not allowed")
     main.main(
-        args=["--repository", str(context.obj["repository"]), *arguments],
+        args=["--repository", str(context.obj["repository"]), *selected],
         prog_name="capsem-cache",
         standalone_mode=False,
     )

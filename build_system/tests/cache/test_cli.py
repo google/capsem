@@ -125,13 +125,22 @@ def test_clean_all_requires_a_reason_when_applied(tmp_path: Path) -> None:
     assert "--reason" in result.output
 
 
-def test_dispatch_safely_parses_the_joined_just_command(tmp_path: Path) -> None:
+def test_dispatch_preserves_just_argument_boundaries(tmp_path: Path) -> None:
     root = repository(tmp_path)
 
-    result = invoke(root, "dispatch", "status --json")
+    result = invoke(root, "dispatch", "health", "--offline", "--json")
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["stages"][0]["stage_id"] == "objects"
+
+
+def test_dispatch_keeps_a_multiword_reason_as_one_value(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+
+    result = invoke(root, "dispatch", "prune", "--apply", "--reason", "two words")
+
+    assert result.exit_code == 0, result.output
+    assert "APPLIED" in result.output
 
 
 def test_verify_rejects_unclassified_cache_paths(tmp_path: Path) -> None:
