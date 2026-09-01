@@ -27,7 +27,6 @@ pub mod sse_parser_hook;
 pub mod telemetry_hook;
 mod util;
 
-use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::net::IpAddr;
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -61,7 +60,11 @@ use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
-use util::{format_headers, format_headers_for_domain, is_llm_api_path, parse_http_host_target, split_path_query};
+use util::{
+    current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
+    is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
+    parse_http_host_target, provider_label, request_can_replay_empty_body, split_path_query,
+};
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
 pub use mcp_frame::dispatch_logged_mcp_request;
@@ -75,21 +78,6 @@ const HTTP_BODY_CAPTURE_LIMIT: usize = 10 * 1024 * 1024;
 const AI_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 const MCP_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
-
-fn request_can_replay_empty_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
-    let no_declared_length = headers
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.trim() == "0")
-        .unwrap_or(true);
-    let no_chunked_body = !headers.contains_key(http::header::TRANSFER_ENCODING);
-    no_declared_length
-        && no_chunked_body
-        && matches!(
-            *method,
-            http::Method::GET | http::Method::HEAD | http::Method::OPTIONS | http::Method::DELETE
-        )
-}
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
@@ -420,28 +408,6 @@ fn json_rpc_id_to_log_string(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn is_openai_model_name(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.starts_with("gpt-")
-        || model.starts_with("o1")
-        || model.starts_with("o3")
-        || model.starts_with("o4")
-        || model.starts_with("chatgpt-")
-}
-
-fn is_anthropic_model_name(model: &str) -> bool {
-    model.to_ascii_lowercase().starts_with("claude-")
-}
-
-fn is_google_model_name(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.starts_with("gemini-") || model.starts_with("models/gemini-")
-}
-
-fn provider_label(provider: Option<ProviderKind>) -> &'static str {
-    provider.map(|provider| provider.as_str()).unwrap_or("none")
-}
-
 fn body_capture_limit(
     ai_provider: Option<ProviderKind>,
     domain: &str,
@@ -520,28 +486,11 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
     if !is_gzip {
         return Ok(body);
     }
-    let mut decoder = flate2::read::GzDecoder::new(&body[..]);
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)?;
+    // Bounded: a hostile upstream can send a small gzip body that decompresses
+    // to tens of GB. Reject past the cap rather than OOM the host.
+    let decompressed =
+        crate::net::decompress::decompress_gzip_capped(&body, crate::net::decompress::MAX_DECOMPRESSED_BODY)?;
     Ok(Bytes::from(decompressed))
-}
-
-fn materialize_collected_response_headers(headers: &mut http::HeaderMap, body_len: usize, is_gzip: bool) {
-    if is_gzip {
-        headers.remove(http::header::CONTENT_ENCODING);
-    }
-    headers.remove(http::header::CONTENT_LENGTH);
-    headers.remove(http::header::TRANSFER_ENCODING);
-    if let Ok(value) = http::HeaderValue::from_str(&body_len.to_string()) {
-        headers.insert(http::header::CONTENT_LENGTH, value);
-    }
-}
-
-fn current_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
 }
 
 /// Build the upstream TLS client config (trusts standard webpki roots).
@@ -1561,6 +1510,49 @@ async fn handle_request(
             status_code: Some(403),
             decision: Decision::Denied,
             matched_rule: http_evaluation.enforcement.rule_id.clone(),
+            request_headers: Some(req_hdrs.clone()),
+            response_headers: None,
+            start_time,
+            request_body_stats: collected_request_body_stats(&request_body_source, max_body),
+            max_response_body_capture: max_body,
+            port: upstream_port,
+            conn_type,
+            policy_mode: request_security_decision.policy_mode.clone(),
+            policy_action: request_security_decision.policy_action.clone(),
+            policy_rule: request_security_decision.policy_rule.clone(),
+            policy_reason: request_security_decision.policy_reason.clone(),
+            credential_ref: credential_ref.clone(),
+            credential_observations: credential_observations.clone(),
+            credential_injections: credential_injections.clone(),
+        };
+        let deny_body = Full::new(Bytes::from(body_text))
+            .map_err(|never| match never {})
+            .boxed();
+        return Ok(hyper::Response::builder()
+            .status(403)
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider, ai_protocol))
+            .unwrap());
+    }
+    // Host-side plain-HTTP port allowlist. The port came from the guest's Host
+    // header; enforce it before any upstream dial so a guest reaching the proxy
+    // directly cannot make the host connect to an arbitrary port.
+    if !http_upstream_port_allowed(&policy, protocol, upstream_port) {
+        actions_span.record("decision", "deny");
+        actions_span.record("status", "ok");
+        let matched = "security.web.http_upstream_ports";
+        let body_text = format!("capsem: HTTP upstream port {upstream_port} blocked by {matched}\n");
+        let req_ctx = TelemetryRequestContext {
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            ai_protocol,
+            model_traffic: false,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            status_code: Some(403),
+            decision: Decision::Denied,
+            matched_rule: Some(matched.to_string()),
             request_headers: Some(req_hdrs.clone()),
             response_headers: None,
             start_time,

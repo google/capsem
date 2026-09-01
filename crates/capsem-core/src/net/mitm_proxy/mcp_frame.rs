@@ -487,42 +487,6 @@ fn response_content(response: &JsonRpcResponse) -> Option<String> {
         .and_then(|result| serde_json::to_string(result).ok())
 }
 
-fn response_text(response: &JsonRpcResponse) -> Option<String> {
-    if let Some(error) = &response.error {
-        return Some(error.message.clone());
-    }
-    let mut values = Vec::new();
-    if let Some(result) = &response.result {
-        collect_text_fields(result, &mut values);
-    }
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.join("\n"))
-    }
-}
-
-fn collect_text_fields(value: &serde_json::Value, values: &mut Vec<String>) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, value) in map {
-                if key == "text" {
-                    if let Some(text) = value.as_str() {
-                        values.push(text.to_string());
-                    }
-                }
-                collect_text_fields(value, values);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_text_fields(item, values);
-            }
-        }
-        _ => {}
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct McpCallPolicyFields {
     policy_mode: Option<String>,

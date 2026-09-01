@@ -351,3 +351,35 @@ fn body_capture_limit_keeps_ai_capture_independent_from_body_logging() {
         AI_BODY_CAPTURE_LIMIT
     );
 }
+
+// -----------------------------------------------------------------------
+// Plain-HTTP upstream port allowlist. The port comes from the guest's Host
+// header, so a guest reaching the proxy directly must not be able to make the
+// host dial an arbitrary port. TLS and an empty allowlist are unrestricted.
+// -----------------------------------------------------------------------
+
+#[test]
+fn http_upstream_port_gate_denies_port_off_allowlist() {
+    let policy = NetworkMechanics::default(); // default allowlist: 80, 3128, 3713, 8080, 11434
+    assert!(!http_upstream_port_allowed(&policy, Protocol::Http, 22));
+    assert!(!http_upstream_port_allowed(&policy, Protocol::Http, 443));
+}
+
+#[test]
+fn http_upstream_port_gate_allows_listed_ports() {
+    let policy = NetworkMechanics::default();
+    assert!(http_upstream_port_allowed(&policy, Protocol::Http, 80));
+    assert!(http_upstream_port_allowed(&policy, Protocol::Http, 8080));
+}
+
+#[test]
+fn http_upstream_port_gate_ignores_tls_and_empty_allowlist() {
+    let policy = NetworkMechanics::default();
+    // TLS terminates at 443 and is not gated by the plain-HTTP allowlist.
+    assert!(http_upstream_port_allowed(&policy, Protocol::Tls, 22));
+
+    let mut open = NetworkMechanics::default();
+    open.http_upstream_ports.clear();
+    // Empty allowlist means "no restriction configured".
+    assert!(http_upstream_port_allowed(&open, Protocol::Http, 22));
+}

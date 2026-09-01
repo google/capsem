@@ -11,6 +11,9 @@ pub const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 
 static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn backend_name() -> &'static str {
     if store_path_override().is_some() {
         return "disk_override";
@@ -70,8 +73,7 @@ fn disk_store_write(
     }
     let json =
         serde_json::to_string_pretty(&map).map_err(|error| format!("serialize credential disk store: {error}"))?;
-    std::fs::write(path, json).map_err(|error| format!("write credential disk store: {error}"))?;
-    restrict_secret_file(path)
+    write_secret_file(path, json.as_bytes())
 }
 
 fn disk_store_read(path: &Path, provider: CredentialProvider, credential_ref: &str) -> Result<String, String> {
@@ -121,14 +123,51 @@ fn parse_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
     Some((credential_provider_from_str(provider)?, credential_ref))
 }
 
+/// Write the plaintext credential store owner-only and atomically.
+///
+/// The store holds every provider's raw secret, so it must never exist even
+/// briefly as a world-readable file. The previous `fs::write` + `chmod` left a
+/// 0644 window under the default umask. Here the bytes go into a sibling temp
+/// created 0600, then a rename swings it into place -- the target is never
+/// observable at looser permissions or as a partial file.
 #[cfg(unix)]
-fn restrict_secret_file(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("restrict credential disk store permissions: {error}"))
+fn write_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "credential store path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("credential-store.json");
+    let tmp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|error| format!("create credential store temp: {error}"))?;
+    // `.mode()` applies only when the temp is freshly created; a pre-existing
+    // temp keeps its old mode, so force 0600 before any secret is written.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("restrict credential store temp: {error}"))?;
+    file.write_all(data)
+        .map_err(|error| format!("write credential store temp: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync credential store temp: {error}"))?;
+    drop(file);
+
+    std::fs::rename(&tmp, path).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename credential store into place: {error}")
+    })
 }
 
 #[cfg(not(unix))]
-fn restrict_secret_file(_path: &Path) -> Result<(), String> {
-    Ok(())
+fn write_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    std::fs::write(path, data).map_err(|error| format!("write credential disk store: {error}"))
 }

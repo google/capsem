@@ -342,13 +342,10 @@ fn parse_response_json(body: &[u8]) -> Option<serde_json::Value> {
         return Some(v);
     }
     if body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b {
-        use flate2::read::GzDecoder;
-        use std::io::Read;
-        let mut decoder = GzDecoder::new(body);
-        let mut decompressed = Vec::new();
-        if decoder.read_to_end(&mut decompressed).is_err() {
-            return None;
-        }
+        // Bounded decompression: a compression bomb must not inflate host RAM
+        // just to parse response JSON. On cap-exceeded or decode error, skip.
+        let decompressed =
+            crate::net::decompress::decompress_gzip_capped(body, crate::net::decompress::MAX_DECOMPRESSED_BODY).ok()?;
         return serde_json::from_slice(&decompressed).ok();
     }
     None

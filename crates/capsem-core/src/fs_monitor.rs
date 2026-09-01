@@ -447,11 +447,6 @@ impl FsMonitor {
         }
         broker_and_log_observations(db, rules, observations).await
     }
-
-    /// Signal the monitor to stop.
-    pub async fn stop(&self) {
-        let _ = self.shutdown_tx.send(()).await;
-    }
 }
 
 fn is_env_candidate(path: &str) -> bool {

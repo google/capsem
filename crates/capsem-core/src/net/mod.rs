@@ -1,5 +1,6 @@
 pub mod ai_traffic;
 pub mod cert_authority;
+pub(crate) mod decompress;
 pub mod dns;
 pub mod interpreters;
 pub mod mitm_proxy;
