@@ -794,7 +794,7 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         _required_artifacts_for_run,
     )
 
-    source_agent = tmp_path / "cache/target/linux-agent/x86_64"
+    source_agent = tmp_path / "cache/target/build/linux-agent/x86_64"
     release_inputs = tmp_path / "verified-profile-inputs"
     release_package = tmp_path / "Capsem_1.5_amd64.deb"
     release_binary = tmp_path / "cache/target/cargo/debug/capsem"
@@ -806,11 +806,11 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         },
         {
             "assets/manifest.json": tmp_path / "assets/manifest.json",
-            "cache/target/linux-agent/<arch>": source_agent,
+            "cache/target/build/linux-agent/<arch>": source_agent,
         },
     )
 
-    assert "cache/target/linux-agent/<arch>" not in required
+    assert "cache/target/build/linux-agent/<arch>" not in required
     assert required["verified release input report"] == release_inputs / "release-inputs.json"
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
@@ -826,9 +826,9 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
 
     source_required = _required_artifacts_for_run(
         {},
-        {"cache/target/linux-agent/<arch>": source_agent},
+        {"cache/target/build/linux-agent/<arch>": source_agent},
     )
-    assert source_required == {"cache/target/linux-agent/<arch>": source_agent}
+    assert source_required == {"cache/target/build/linux-agent/<arch>": source_agent}
 
 
 def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:

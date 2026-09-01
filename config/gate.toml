@@ -1376,7 +1376,7 @@ binaries = [
     "capsem-pty-agent", "capsem-net-proxy", "capsem-dns-proxy",
     "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
 ]
-staging = "cache/target/linux-agent"
+staging = "cache/target/build/linux-agent"
 # Rebuilt when a staged binary is missing, or older than anything the build
 # reads. Cheaper than an unconditional cross-compile -- but only correct if
 # "anything the build reads" is honest, and `*.rs` under these crates is not:

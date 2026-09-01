@@ -468,7 +468,7 @@ def materialize_asset_dependencies(
         return require_asset_dependencies(runtime, config, arch_name, template)
 
     arch = config.build.architectures[arch_name]
-    build_tmp = repo_root / "cache" / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)
     with tempfile.TemporaryDirectory(
@@ -1211,7 +1211,7 @@ def generate_cyclonedx_obom(
     network_value = require_container_network(runtime_network)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_parent = repo_root / "cache" / "target" / "tmp"
+    tmp_parent = repo_root / "cache" / "tmp"
     tmp_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
         rootfs_dir = Path(tmp) / "rootfs"
@@ -1889,9 +1889,9 @@ def build_image(
     template_name = f"Dockerfile.{template}.j2"
     tag = f"capsem-{template}-{arch_name}"
 
-    # Use a temporary directory inside the project root's cache/target/ folder.
+    # Keep Docker-mountable scratch under the policy-owned temporary stage.
     # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
-    build_tmp = repo_root / "cache" / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:

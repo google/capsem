@@ -16,6 +16,12 @@ RETIRED_CONTROL = (
     "docker_storage_policy.py",
     "ensure-docker-space.sh",
 )
+RETIRED_LAYOUT = (
+    "cache/target/capsem-release-site-build.lock",
+    "cache/target/image-workspace",
+    "cache/target/linux-agent",
+    "cache/target/tmp",
+)
 EXCLUDED = (
     "CHANGELOG.md",
     "build_system/tests/cache/",
@@ -99,6 +105,22 @@ def test_retired_cache_controllers_cannot_return() -> None:
             if path not in {"CHANGELOG.md", "LATEST_RELEASE.md"}
             if path != "tests/citadel/test_cache_root_boundary.py"
             for token in RETIRED_CONTROL
+            if token in text
+        )
+    )
+
+    assert not records, RATIONALE + "\n" + "\n".join(records)
+
+
+def test_generated_state_stays_in_its_policy_owned_stage() -> None:
+    sources = _tracked_text()
+    records = tuple(
+        sorted(
+            f"{path}:{token}"
+            for path, text in sources.items()
+            if path != "CHANGELOG.md"
+            if path != "tests/citadel/test_cache_root_boundary.py"
+            for token in RETIRED_LAYOUT
             if token in text
         )
     )

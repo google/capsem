@@ -197,7 +197,12 @@ _REQUIRED_ARTIFACTS = {
     "build_system/packaging/macos/entitlements.plist": (
         _PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
     ),
-    "cache/target/linux-agent/<arch>": _PROJECT_ROOT / "cache" / "target" / "linux-agent" / _ARCH,
+    "cache/target/build/linux-agent/<arch>": _PROJECT_ROOT
+    / "cache"
+    / "target"
+    / "build"
+    / "linux-agent"
+    / _ARCH,
     # Seven checked-in tests read this directly rather than through
     # `CAPSEM_PROFILES_DIR`, and they are not wrong to: a test should not have
     # to know whether this run materialized its profiles or was handed them.
@@ -239,7 +244,7 @@ def _required_artifacts_for_run(
     """Return the artifacts that this exact test composition must prove.
 
     Local ``just test`` owns source-build intermediates such as
-    ``cache/target/linux-agent``. A release functional lane instead consumes an
+    ``cache/target/build/linux-agent``. A release functional lane instead consumes an
     already-verified package and profile input cohort. Requiring the source
     intermediate there would force an unrelated rebuild and would not prove
     the pulled package. Keep the manifest-derived release inputs and exact
@@ -250,7 +255,7 @@ def _required_artifacts_for_run(
     if not release_inputs:
         return selected
 
-    selected.pop("cache/target/linux-agent/<arch>", None)
+    selected.pop("cache/target/build/linux-agent/<arch>", None)
 
     def release_path(variable: str) -> Path:
         value = env.get(variable, "").strip()
@@ -345,7 +350,7 @@ def pytest_sessionstart(session):
             guidance = (
                 "Run `just build-assets code` (for assets/) and "
                 "`uv run --project build_system --frozen capsem-builder agent` "
-                "(for cache/target/linux-agent/) "
+                "(for cache/target/build/linux-agent/) "
                 "before invoking pytest. Locally, unset the env var to let "
                 "tests skip on missing artifacts."
             )

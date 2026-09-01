@@ -56,10 +56,10 @@ DECLARED_ABSENT = {
     # importing test helpers, so their cache/target/assets fallback is deliberately
     # absent from the private prefix.
     "assets",
-    # `conftest._required_artifacts_for_run` drops this for a release lane: it
-    # is a source-build intermediate, and requiring it there would force a
-    # rebuild that proves nothing about the pulled package.
-    "linux-agent",
+    # `conftest._required_artifacts_for_run` drops build/linux-agent for a
+    # release lane: build/ contains source-build intermediates, and requiring
+    # it there would force a rebuild that proves nothing about the package.
+    "build",
 }
 
 #: Read through the AST rather than by pattern. The first version matched the

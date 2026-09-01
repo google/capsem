@@ -189,6 +189,7 @@ def test_agent_defaults_to_current_image_config() -> None:
     load_config.assert_called_once_with(Path("config/docker/image"))
     materialize.assert_called_once()
     assert materialize.call_args.args[:2] == (config.build, "arm64")
+    assert materialize.call_args.args[3] == Path("cache/target/build/linux-agent/arm64")
 
 
 def test_agent_fails_when_guest_dir_is_missing(tmp_path: Path) -> None:
