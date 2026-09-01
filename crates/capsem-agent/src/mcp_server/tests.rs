@@ -83,8 +83,9 @@ fn write_then_read_binary_data() {
 
     let file = unsafe { std::fs::File::from_raw_fd(reader.into_raw_fd()) };
     let buf = io::BufReader::new(file);
-    let lines: Vec<String> = buf.lines().map(|l| l.unwrap()).collect();
-    assert_eq!(lines.len(), 1);
+    let mut lines = buf.lines();
+    assert!(lines.next().unwrap().is_ok());
+    assert!(lines.next().is_none());
 }
 
 #[test]

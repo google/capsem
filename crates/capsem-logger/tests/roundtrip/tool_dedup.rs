@@ -191,18 +191,18 @@ async fn tool_unified_no_duplicates() {
     assert_eq!(fetch_rows[0]["source"], "mcp");
 
     // "mcp__capsem__fetch_http" should NOT appear (filtered out by origin='native')
-    let mcp_proxy_rows: Vec<_> = rows
+    let mcp_proxy_rows = rows
         .iter()
         .filter(|r| r["tool_name"].as_str() == Some("mcp__capsem__fetch_http"))
-        .collect();
-    assert_eq!(mcp_proxy_rows.len(), 0, "mcp_proxy tool_call should be filtered out");
+        .count();
+    assert_eq!(mcp_proxy_rows, 0, "mcp_proxy tool_call should be filtered out");
 
     // tools/list is protocol discovery, not a user tool call.
-    let list_rows: Vec<_> = rows
+    let list_rows = rows
         .iter()
         .filter(|r| r["method"].as_str() == Some("tools/list"))
-        .collect();
-    assert_eq!(list_rows.len(), 0, "tools/list must not appear as a tool call");
+        .count();
+    assert_eq!(list_rows, 0, "tools/list must not appear as a tool call");
 }
 
 #[tokio::test]

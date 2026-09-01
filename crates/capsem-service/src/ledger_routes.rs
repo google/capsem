@@ -1412,7 +1412,7 @@ pub(super) async fn security_stats_for_vm(
     Ok(
         read_security_session_ledger(state, vm_id, &session_dir.join("session.db"))
             .await?
-            .map(|session| session.stats.clone())
+            .map(|session| session.stats)
             .unwrap_or_else(empty_security_rule_stats),
     )
 }

@@ -568,6 +568,7 @@ fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
         !format!("{emitted:?}").contains(raw),
         "logging-plugin output must not contain raw credential material"
     );
+    drop(events);
 }
 
 #[test]

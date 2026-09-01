@@ -339,7 +339,7 @@ fn image_workspace_removes_stale_profile_root_payloads_before_materializing() {
         profile: repo_root.join("config/profiles/code/profile.toml"),
         config_root: repo_root.join("config"),
         guest_dir: repo_root.join("guest"),
-        output: output.clone(),
+        output,
         arch: Some("arm64".to_string()),
         json: true,
     };
@@ -369,7 +369,7 @@ fn profile_materialize_writes_generated_config_from_manifest() {
         profile: source_profile.clone(),
         config_root: repo_root.join("config"),
         manifest: file_url(&manifest_path),
-        assets_dir: assets_dir.clone(),
+        assets_dir,
         output_root: output_root.clone(),
         arch: Some("arm64".to_string()),
         clean: true,

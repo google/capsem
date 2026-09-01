@@ -1042,7 +1042,7 @@ impl Profile {
                     Ok((hash, size)) => ProfileFileStatus {
                         kind: kind.to_string(),
                         path,
-                        expected_hash: expected_hash.clone(),
+                        expected_hash,
                         expected_size,
                         actual_hash: Some(format!("blake3:{hash}")),
                         actual_size: Some(size),
@@ -1084,7 +1084,7 @@ impl Profile {
                         arch: arch.to_string(),
                         kind: kind.to_string(),
                         path,
-                        expected_hash: expected_hash.clone(),
+                        expected_hash,
                         expected_size,
                         actual_hash: Some(format!("blake3:{hash}")),
                         actual_size: Some(size),

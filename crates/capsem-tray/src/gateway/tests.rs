@@ -217,14 +217,17 @@ async fn spawn_http_probe_sequence(
 
 fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
     let g = captures.lock().unwrap();
-    let req = g.first()?;
-    req.lines().find_map(|l| {
-        let lower = l.to_ascii_lowercase();
-        lower.strip_prefix("authorization: ").map(|_| {
-            // Return the ORIGINAL header value, not the lowercased one.
-            l["authorization: ".len()..].to_string()
+    let auth = g.first().and_then(|req| {
+        req.lines().find_map(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.strip_prefix("authorization: ").map(|_| {
+                // Return the ORIGINAL header value, not the lowercased one.
+                l["authorization: ".len()..].to_string()
+            })
         })
-    })
+    });
+    drop(g);
+    auth
 }
 
 #[tokio::test]
@@ -304,6 +307,7 @@ async fn status_attaches_update_status_when_available() {
     let captures = captures.lock().unwrap();
     assert!(captures[0].starts_with("GET /status "));
     assert!(captures[1].starts_with("GET /update/status "));
+    drop(captures);
 }
 
 #[tokio::test]

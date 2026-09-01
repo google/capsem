@@ -86,6 +86,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
     assert_eq!(entry.base_version, "0.0.0");
+    drop(registry);
 }
 
 #[tokio::test]
@@ -215,6 +216,7 @@ async fn handle_fork_from_persistent_registry() {
     assert_eq!(entry.profile_revision, test_profile_revision());
     assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
+    drop(registry);
 }
 
 #[tokio::test]
@@ -273,6 +275,7 @@ async fn handle_persist_preserves_profile_identity() {
     assert_eq!(info.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(info.asset_pins, test_asset_pins());
     assert!(info.persistent);
+    drop(instances);
 }
 
 #[test]
@@ -1142,7 +1145,7 @@ fn existing_resume_checkpoint_requires_completion_marker() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
-                session_dir: session_dir.clone(),
+                session_dir,
                 forked_from: None,
                 description: None,
                 suspended: true,
@@ -1212,6 +1215,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
     let entry = reg.get("resume-vm").unwrap();
     assert!(!entry.suspended);
     assert!(entry.checkpoint_path.is_none());
+    drop(reg);
 }
 
 // -----------------------------------------------------------------------

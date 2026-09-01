@@ -36,20 +36,24 @@ impl GatewayProvider {
     }
 
     fn store_auth_token(&self, token: String) -> Result<String> {
-        let mut cached = self
-            .token
-            .lock()
-            .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
-        *cached = Some(token.clone());
+        {
+            let mut cached = self
+                .token
+                .lock()
+                .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
+            *cached = Some(token.clone());
+        }
         Ok(token)
     }
 
     fn clear_auth_token(&self) -> Result<()> {
-        let mut cached = self
-            .token
-            .lock()
-            .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
-        *cached = None;
+        {
+            let mut cached = self
+                .token
+                .lock()
+                .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
+            *cached = None;
+        }
         Ok(())
     }
 

@@ -845,7 +845,7 @@ fn profile_mcp_tool_permission_requires_pinned_enforcement_file() {
     let fixture = ProfileFixture::new();
     let mut config = Profile::load_from_dir(fixture.profile_dir()).unwrap().config().clone();
     config.files.enforcement = None;
-    let mut profile = Profile::from_config(fixture.config_root(), fixture.profile_dir().to_path_buf(), config)
+    let mut profile = Profile::from_config(fixture.config_root(), fixture.profile_dir(), config)
         .expect("profile without enforcement pin can still parse before mutation");
 
     let error = profile

@@ -205,7 +205,7 @@ fn insert_fake_instance_with_session_dir_and_pins(
             asset_pins,
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
-            session_dir: session_dir.clone(),
+            session_dir,
             ram_mb: 2048,
             cpus: 2,
             start_time: std::time::Instant::now(),

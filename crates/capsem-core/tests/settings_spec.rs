@@ -275,16 +275,14 @@ fn action_settings_have_action_kind() {
 fn profile_mcp_tools_are_not_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let tools: Vec<_> = settings.iter().filter(|s| s.setting_type == "mcp_tool").collect();
-    assert!(tools.is_empty());
+    assert!(!settings.iter().any(|s| s.setting_type == "mcp_tool"));
 }
 
 #[test]
 fn no_profile_provider_file_payloads_in_settings() {
     let root = parse_golden();
     let settings = extract_settings(&root.settings);
-    let files: Vec<_> = settings.iter().filter(|s| s.setting_type == "file").collect();
-    assert!(files.is_empty());
+    assert!(!settings.iter().any(|s| s.setting_type == "file"));
     assert!(settings.iter().all(|s| !s.key.contains("provider")));
     assert!(settings.iter().all(|s| !s.key.contains("credential")));
 }

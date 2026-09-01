@@ -331,7 +331,7 @@ async fn frame_reader_rejects_impossible_lengths_and_truncated_bodies() {
     assert!(error.contains("invalid MCP frame length"), "unexpected error: {error}");
 
     let (mut peer, mut reader) = tokio::io::duplex(128);
-    peer.write_all(&(capsem_proto::MCP_FRAME_HEADER_LEN as u32).to_be_bytes())
+    peer.write_all(&u32::from(capsem_proto::MCP_FRAME_HEADER_LEN).to_be_bytes())
         .await
         .unwrap();
     peer.write_all(&[0_u8; 3]).await.unwrap();

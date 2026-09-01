@@ -426,6 +426,7 @@ impl VirtioMmioTransport {
         state.restore_prepared = true;
         state.restore_activation_pending = snapshot.activated;
 
+        drop(state);
         Ok(())
     }
 
@@ -670,10 +671,12 @@ impl MmioDevice for VirtioMmioTransport {
                 let len = data.len().min(4);
                 state.device.read_config(config_offset, &mut config_data[..len]);
                 data[..len].copy_from_slice(&config_data[..len]);
+                drop(state);
                 return;
             }
             _ => 0,
         };
+        drop(state);
 
         if matches!(
             offset,

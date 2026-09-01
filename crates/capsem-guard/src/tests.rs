@@ -451,7 +451,7 @@ fn singleton_fails_when_path_is_an_existing_directory() {
         "expected Io error for directory-as-lockfile"
     );
     // Registry must not still have a reservation for this path.
-    let canonical = std::fs::canonicalize(&as_lock).unwrap_or(as_lock.clone());
+    let canonical = std::fs::canonicalize(&as_lock).unwrap_or(as_lock);
     assert!(
         !held_locks().lock().unwrap().contains(&canonical),
         "lock reservation leaked into the registry on IO error"

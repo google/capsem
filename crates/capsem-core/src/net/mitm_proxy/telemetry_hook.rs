@@ -300,9 +300,9 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
-        let rules = self.deps.security_rules.read().unwrap().clone();
+        let rules = Arc::clone(&self.deps.security_rules.read().unwrap());
         let plugin_policy = snapshot_plugin_policy(&self.deps.plugin_policy);
-        let credential_injections = req_ctx.credential_injections.clone();
+        let credential_injections = req_ctx.credential_injections;
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 
         let stage_started = Instant::now();

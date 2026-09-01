@@ -297,7 +297,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             }
         }))
         .setup(move |app| {
-            if let Some(id) = connect_id.clone() {
+            if let Some(id) = connect_id {
                 let action = initial_action.clone();
                 let window = app.get_webview_window("main").expect("main window must exist");
                 tauri::async_runtime::spawn(async move {

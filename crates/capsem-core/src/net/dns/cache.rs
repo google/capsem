@@ -126,11 +126,15 @@ impl DnsAnswerCache {
         };
         let now = Instant::now();
         let mut guard = self.inner.lock().unwrap();
-        let entry = guard.get(&key)?;
+        let Some(entry) = guard.get(&key) else {
+            drop(guard);
+            return None;
+        };
         if entry.expires_at <= now {
             // Lazy expiry: drop the stale entry so the next
             // lookup is a clean miss without re-checking expiry.
             guard.pop(&key);
+            drop(guard);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(qname, qtype, "dns cache: expired entry evicted");
             return None;
@@ -140,11 +144,13 @@ impl DnsAnswerCache {
         // cache layer does not own allow/block decisions.
         if policy.find_dns_redirect(qname, qtype).is_some() {
             guard.pop(&key);
+            drop(guard);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(qname, qtype, "dns cache: entry invalidated by redirect change");
             return None;
         }
         let mut bytes = entry.bytes.clone();
+        drop(guard);
         // Patch the current query's transaction id into bytes 0-1
         // (RFC 1035 sec 4.1.1: the ID field is the first 16 bits of
         // the DNS header, big-endian). The cached answer was stored
@@ -179,6 +185,7 @@ impl DnsAnswerCache {
         };
         let mut guard = self.inner.lock().unwrap();
         let evicted = guard.push(key, entry);
+        drop(guard);
         if evicted.is_some() {
             ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
         }

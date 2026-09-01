@@ -1197,8 +1197,8 @@ mod retention_tests {
         assert_eq!(n, 1, "should terminate oldest to approach cap, but protect 4");
 
         let sessions = idx.recent(100).unwrap();
-        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
-        assert_eq!(active.len(), 4, "min_content_keep overrides max_sessions");
+        let active = sessions.iter().filter(|s| s.status != "terminated").count();
+        assert_eq!(active, 4, "min_content_keep overrides max_sessions");
     }
 
     #[test]

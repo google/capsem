@@ -278,16 +278,12 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     let rules = profile
         .compile_rule_set(SecurityRuleSource::User)
         .expect("provider rules compile");
-    let ids = rules
-        .rules()
-        .iter()
-        .map(|rule| (rule.rule_id.as_str(), rule.action, rule.detection_level, rule.priority))
-        .collect::<Vec<_>>();
+    let includes_openai_rule = rules.rules().iter().any(|rule| {
+        rule.rule_id == "profiles.rules.ai_openai_detect_http"
+            && rule.action == SecurityRuleAction::Allow
+            && rule.detection_level == Some(DetectionLevel::Informational)
+            && rule.priority == 10
+    });
 
-    assert!(ids.contains(&(
-        "profiles.rules.ai_openai_detect_http",
-        SecurityRuleAction::Allow,
-        Some(DetectionLevel::Informational),
-        10,
-    )));
+    assert!(includes_openai_rule);
 }

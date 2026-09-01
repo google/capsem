@@ -108,7 +108,7 @@ impl RecordingMcpHandler {
             .expect("MCP tool recorder poisoned")
             .push(RecordedMcpToolCall {
                 tool: "echo".to_string(),
-                arguments: serde_json::json!({ "message": message.clone() }),
+                arguments: serde_json::json!({ "message": message }),
             });
         format!("echo:{message}")
     }

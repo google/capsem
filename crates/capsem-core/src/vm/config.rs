@@ -365,7 +365,7 @@ impl VmConfigBuilder {
             .kernel_path
             .ok_or_else(|| ConfigError::MissingKernel(PathBuf::from("<not set>")))?;
         if !kernel_path.exists() {
-            return Err(ConfigError::MissingKernel(kernel_path.clone()));
+            return Err(ConfigError::MissingKernel(kernel_path));
         }
         Self::validate_kernel_arch(&kernel_path)?;
         if let Some(ref expected) = self.expected_kernel_hash {

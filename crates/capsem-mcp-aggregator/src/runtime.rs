@@ -214,6 +214,7 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
                     prompt_count: mgr.prompt_catalog().iter().filter(|p| p.server_name == d.name).count(),
                 })
                 .collect();
+            drop(mgr);
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Servers { servers },

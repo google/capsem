@@ -1500,7 +1500,7 @@ pub(super) fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<I
     let plan = image_build_plan(&ImageBuildArgs {
         profile: workspace_profile_path.clone(),
         config_root: workspace_config_root.clone(),
-        guest_dir: workspace_guest_dir.clone(),
+        guest_dir: workspace_guest_dir,
         output: workspace.join("assets"),
         arch: args.arch.clone(),
         template: ImageBuildTemplate::All,

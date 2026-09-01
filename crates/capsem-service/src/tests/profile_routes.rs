@@ -2592,6 +2592,7 @@ async fn handle_enforcement_evaluate_reuses_cached_raw_body_response() {
         let mut last = state.evaluate_last_response_cache.lock().unwrap();
         let cached = last.as_mut().expect("last cached evaluate body");
         cached.response_body = Bytes::from_static(br#"{"event":{"event_type":"cached-sentinel"}}"#);
+        drop(last);
     }
 
     let second_response = handle_enforcement_evaluate(State(state), Path("code".to_string()), body)

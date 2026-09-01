@@ -108,6 +108,7 @@ fn recent_process_cache_is_bounded_and_mru_ordered() {
     assert_eq!(recent_pids.len(), RECENT_PID_CAPACITY);
     assert_eq!(recent_pids.front(), Some(&10));
     assert!(!recent_pids.contains(&1));
+    drop(recent_pids);
 }
 
 #[tokio::test]

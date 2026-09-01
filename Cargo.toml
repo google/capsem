@@ -138,6 +138,16 @@ zero_sized_map_values = "deny"
 format_collect = "deny"
 option_option = "deny"
 range_plus_one = "deny"
+# Keep lock lifetimes visible and bounded. This catches guards that silently
+# span logging, filesystem work, another lock, or an await point.
+significant_drop_tightening = "deny"
+# Ownership mistakes that compile but hide unnecessary allocation or retain
+# data longer than its intended handoff boundary.
+redundant_clone = "deny"
+needless_collect = "deny"
+# Async state machines run beside VM workloads; an accidentally captured large
+# value must be reviewed instead of becoming permanent stack pressure.
+large_futures = "deny"
 
 [workspace.dependencies]
 anyhow = "1"

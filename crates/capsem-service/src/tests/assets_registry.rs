@@ -752,6 +752,7 @@ fn instance_insert_and_lookup() {
     let instances = state.instances.lock().unwrap();
     assert!(instances.contains_key("test-vm"));
     assert_eq!(instances["test-vm"].ram_mb, 2048);
+    drop(instances);
 }
 
 #[test]
@@ -809,6 +810,7 @@ fn cleanup_mixed_live_and_dead() {
     let instances = state.instances.lock().unwrap();
     assert_eq!(instances.len(), 1);
     assert!(instances.contains_key("live"));
+    drop(instances);
 }
 
 // -----------------------------------------------------------------------
@@ -831,6 +833,7 @@ fn drain_dead_instances_returns_only_dead_entries() {
     let map = state.instances.lock().unwrap();
     assert!(map.contains_key("live"));
     assert!(!map.contains_key("dead"));
+    drop(map);
 }
 
 #[test]
@@ -1527,6 +1530,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
     let registry = state.persistent_registry.lock().unwrap();
     assert!(registry.get("defunct-vm").is_none());
     assert!(registry.get("healthy-vm").is_some());
+    drop(registry);
     assert!(!defunct_dir.exists());
     assert!(healthy_dir.exists());
 }

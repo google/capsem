@@ -161,6 +161,7 @@ async fn snapshot_retains_previous_data_for_event_diffing() {
         let cached = guard.as_ref().unwrap();
         assert_eq!(cached.service, "running");
         assert_eq!(cached.vm_count, 1);
+        drop(guard);
     }
 }
 
@@ -169,6 +170,7 @@ async fn previous_status_snapshot_starts_empty() {
     let cache = StatusCache::new();
     let guard = cache.inner.read().await;
     assert!(guard.is_none());
+    drop(guard);
 }
 
 // --- fetch_status with mock UDS ---

@@ -53,6 +53,7 @@ impl MmioBus {
         }
 
         devices.push(DeviceEntry { base, size, device });
+        drop(devices);
         Ok(())
     }
 
@@ -60,12 +61,14 @@ impl MmioBus {
     /// If no device is registered at this address, data is filled with 0xFF.
     pub fn read(&self, addr: u64, data: &mut [u8]) {
         let devices = self.devices.read().unwrap();
-        for entry in devices.iter() {
-            if addr >= entry.base && addr < entry.base + entry.size {
-                let offset = addr - entry.base;
-                entry.device.read(offset, data);
-                return;
-            }
+        let target = devices
+            .iter()
+            .find(|entry| addr >= entry.base && addr < entry.base + entry.size)
+            .map(|entry| (Arc::clone(&entry.device), addr - entry.base));
+        drop(devices);
+        if let Some((device, offset)) = target {
+            device.read(offset, data);
+            return;
         }
         // No device at this address -- return all 1s (bus float)
         data.fill(0xFF);
@@ -75,12 +78,13 @@ impl MmioBus {
     /// If no device is registered, the write is silently ignored.
     pub fn write(&self, addr: u64, data: &[u8]) {
         let devices = self.devices.read().unwrap();
-        for entry in devices.iter() {
-            if addr >= entry.base && addr < entry.base + entry.size {
-                let offset = addr - entry.base;
-                entry.device.write(offset, data);
-                return;
-            }
+        let target = devices
+            .iter()
+            .find(|entry| addr >= entry.base && addr < entry.base + entry.size)
+            .map(|entry| (Arc::clone(&entry.device), addr - entry.base));
+        drop(devices);
+        if let Some((device, offset)) = target {
+            device.write(offset, data);
         }
         // No device -- silently ignore
     }

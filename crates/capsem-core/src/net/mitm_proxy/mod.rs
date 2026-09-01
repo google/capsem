@@ -1839,7 +1839,7 @@ async fn handle_request(
             let model_event = model_security_event(
                 RuntimeSecurityEventType::ModelCall,
                 provider,
-                request_meta.model.clone(),
+                request_meta.model,
                 Some(&body_bytes),
                 None,
             )
@@ -1894,7 +1894,7 @@ async fn handle_request(
                     query: query.clone(),
                     status_code: Some(403),
                     decision: Decision::Denied,
-                    matched_rule: model_evaluation.enforcement.rule_id.clone(),
+                    matched_rule: model_evaluation.enforcement.rule_id,
                     request_headers: Some(req_hdrs.clone()),
                     response_headers: None,
                     start_time,
@@ -2554,7 +2554,7 @@ async fn handle_request(
                     query,
                     status_code: Some(403),
                     decision: Decision::Denied,
-                    matched_rule: model_evaluation.enforcement.rule_id.clone(),
+                    matched_rule: model_evaluation.enforcement.rule_id,
                     request_headers: Some(req_hdrs),
                     response_headers: None,
                     start_time,

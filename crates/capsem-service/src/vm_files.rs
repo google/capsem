@@ -944,6 +944,7 @@ pub(super) async fn handle_fork(
                 env: None,
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        drop(registry);
     }
 
     Ok(Json(ForkResponse {
@@ -1371,6 +1372,8 @@ pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
                 persistent_resume_state_fingerprint(state, entry)
             );
         }
+        drop(instances);
+        drop(registry);
     }
     fingerprint
 }
@@ -2263,7 +2266,9 @@ pub(super) async fn handle_exec(
         let i = instances
             .get(&id)
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.uds_path.clone()
+        let uds_path = i.uds_path.clone();
+        drop(instances);
+        uds_path
     };
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
@@ -2313,7 +2318,9 @@ pub(super) async fn handle_write_file(
         let i = instances
             .get(&id)
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.uds_path.clone()
+        let uds_path = i.uds_path.clone();
+        drop(instances);
+        uds_path
     };
 
     let mut data = payload.content.into_bytes();
@@ -2380,7 +2387,9 @@ pub(super) async fn handle_read_file(
         let i = instances
             .get(&id)
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.uds_path.clone()
+        let uds_path = i.uds_path.clone();
+        drop(instances);
+        uds_path
     };
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))

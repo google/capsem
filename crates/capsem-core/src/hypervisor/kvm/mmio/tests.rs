@@ -86,8 +86,8 @@ fn multiple_devices() {
     let dev_a = Arc::new(MockDevice::new(0xAA));
     let dev_b = Arc::new(MockDevice::new(0xBB));
 
-    bus.register(0x1000, 0x100, dev_a.clone()).unwrap();
-    bus.register(0x2000, 0x100, dev_b.clone()).unwrap();
+    bus.register(0x1000, 0x100, dev_a).unwrap();
+    bus.register(0x2000, 0x100, dev_b).unwrap();
 
     let mut data = [0u8; 1];
     bus.read(0x1000, &mut data);
@@ -110,7 +110,7 @@ fn overlap_rejected() {
     // Partial overlap (end inside existing)
     assert!(bus.register(0x0F50, 0x100, dev.clone()).is_err());
     // Enclosing
-    assert!(bus.register(0x0F00, 0x300, dev.clone()).is_err());
+    assert!(bus.register(0x0F00, 0x300, dev).is_err());
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn adjacent_regions_ok() {
     let dev = Arc::new(MockDevice::new(0));
     bus.register(0x1000, 0x100, dev.clone()).unwrap();
     // Adjacent (no overlap)
-    bus.register(0x1100, 0x100, dev.clone()).unwrap();
+    bus.register(0x1100, 0x100, dev).unwrap();
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn read_at_last_byte_of_region() {
 fn read_past_region_returns_ff() {
     let bus = MmioBus::new();
     let dev = Arc::new(MockDevice::new(0x55));
-    bus.register(0x1000, 0x100, dev.clone()).unwrap();
+    bus.register(0x1000, 0x100, dev).unwrap();
 
     let mut data = [0u8; 1];
     bus.read(0x1100, &mut data); // first address past region

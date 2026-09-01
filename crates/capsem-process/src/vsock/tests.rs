@@ -455,7 +455,9 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
                 .get_mut(&id)
                 .expect("ExecDone must not discard the capture slot before deposit");
             active.captured = b"/run/capsem-venv\n".to_vec();
-            Arc::clone(&active.deposited)
+            let deposited = Arc::clone(&active.deposited);
+            drop(guard);
+            deposited
         };
         notify.notify_one();
     });

@@ -42,6 +42,7 @@ fn job_store_active_exec_set_and_clear() {
         let guard = store.active_execs.lock().unwrap();
         let active = guard.get(&42).unwrap();
         assert!(active.captured.is_empty());
+        drop(guard);
     }
 
     store.active_execs.lock().unwrap().remove(&42);

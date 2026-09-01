@@ -1591,6 +1591,7 @@ fn control_loop_ack_reply_removes_pending_entry() {
     assert_eq!(p.len(), 1);
     assert!(!p.contains_key(&42));
     assert!(p.contains_key(&43));
+    drop(p);
 }
 
 #[test]

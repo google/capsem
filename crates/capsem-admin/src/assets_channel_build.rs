@@ -167,7 +167,7 @@ pub(super) fn build_assets_channel_with_policy(
         channel,
         generated_at,
         &graph_manifest_blake3,
-        publishable_profiles.summary.clone(),
+        publishable_profiles.summary,
         asset_base,
     );
     fs::write(

@@ -511,7 +511,7 @@ fn tool_use_chains_traces_across_requests() {
     assert_eq!(mc1.stop_reason.as_deref(), Some("tool_use"));
     assert_eq!(mc1.tool_calls.len(), 1);
     assert_eq!(mc1.tool_calls[0].call_id, "call_x");
-    let trace_a = mc1.trace_id.clone().expect("trace assigned");
+    let trace_a = mc1.trace_id.expect("trace assigned");
 
     // Second call: client sends back a tool_response for 'call_x'.
     // Body parsed from `request_body_stats.preview`; we craft an Anthropic

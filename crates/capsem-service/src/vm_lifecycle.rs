@@ -84,7 +84,7 @@ pub(super) fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<Path
     }
     drop(instances);
     if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
-        return Ok(entry.session_dir.clone());
+        return Ok(entry.session_dir);
     }
     Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
@@ -318,7 +318,9 @@ pub(super) async fn shutdown_vm_process(
         let Some(i) = instances.get(id) else {
             return Ok(None);
         };
-        (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent)
+        let result = (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent);
+        drop(instances);
+        result
     };
 
     // Claim before signalling. The watcher may already have claimed a process
@@ -391,6 +393,7 @@ pub(super) async fn shutdown_vm_process(
             )
         })?;
 
+    drop(_shutdown_guard);
     Ok(Some((session_dir, persistent, pid)))
 }
 
@@ -444,7 +447,9 @@ pub(super) async fn handle_suspend(
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
         }
-        (i.uds_path.clone(), i.pid)
+        let result = (i.uds_path.clone(), i.pid);
+        drop(instances);
+        result
     };
 
     let stream = tokio::net::UnixStream::connect(&uds_path).await.map_err(|e| {
@@ -718,7 +723,7 @@ pub(super) fn provision_response_for_running(
         )
     })?;
     let status = VmLifecycleState::Running;
-    Ok(ProvisionResponse {
+    let response = ProvisionResponse {
         name: instance.name.clone(),
         id,
         profile_id: instance.profile_id.clone(),
@@ -727,7 +732,9 @@ pub(super) fn provision_response_for_running(
         can_resume: false,
         available_actions: status.available_actions(false),
         uds_path: Some(uds_path),
-    })
+    };
+    drop(instances);
+    Ok(response)
 }
 
 pub(super) async fn handle_persist(
@@ -772,7 +779,7 @@ pub(super) async fn handle_persist(
                 format!("VM \"{}\" is already persistent", id),
             ));
         }
-        (
+        let result = (
             i.session_dir.clone(),
             i.profile_id.clone(),
             i.profile_revision.clone(),
@@ -783,7 +790,9 @@ pub(super) async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
-        )
+        );
+        drop(instances);
+        result
     };
     let profile = state
         .profile_config(&profile_id)
@@ -815,7 +824,7 @@ pub(super) async fn handle_persist(
                 asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
-                base_version: base_version.clone(),
+                base_version,
                 created_at: format!(
                     "{}",
                     std::time::SystemTime::now()
@@ -830,9 +839,10 @@ pub(super) async fn handle_persist(
                 defunct: false,
                 last_error: None,
                 checkpoint_path: None,
-                env: env.clone(),
+                env,
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        drop(registry);
     }
 
     // Update instance info in-place
@@ -947,6 +957,7 @@ pub(super) async fn handle_purge(
         }
         let mut registry = state.persistent_registry.lock().unwrap();
         let _ = registry.unregister(name);
+        drop(registry);
         persistent_purged += 1;
     }
 

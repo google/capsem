@@ -499,7 +499,7 @@ fn assets_channel_record_binary_rejects_legacy_manifest_without_package_provenan
         "1.4.1234567890",
         &source_commit(),
         None,
-        &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
+        &[pkg_path, deb_path, sbom_path],
         "2030-02-03",
     )
     .expect_err("legacy manifests cannot record per-package source provenance");
@@ -536,7 +536,7 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
         "1.4.1234567890",
         &source_commit(),
         None,
-        &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
+        &[pkg_path.clone(), deb_path, sbom_path],
         "2030-02-03",
     )
     .expect("record graph binary release");

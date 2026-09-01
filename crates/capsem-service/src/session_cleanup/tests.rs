@@ -13,7 +13,9 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     let shutdown_snapshot = {
         let instances = state.instances.lock().unwrap();
         let info = instances.get("code-1").unwrap();
-        (info.session_dir.clone(), info.persistent, info.pid)
+        let snapshot = (info.session_dir.clone(), info.persistent, info.pid);
+        drop(instances);
+        snapshot
     };
     let watcher_state = Arc::clone(&state);
     let watcher_result = tokio::task::spawn_blocking(move || {

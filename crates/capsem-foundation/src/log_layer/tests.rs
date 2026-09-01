@@ -90,6 +90,7 @@ fn log_handle_set_emitter_drains_buffer() {
     let events = received.lock().unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].message, "buffered");
+    drop(events);
 }
 
 #[test]

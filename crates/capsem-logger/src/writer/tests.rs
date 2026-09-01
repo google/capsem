@@ -260,8 +260,8 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
     assert_eq!(
         rows,
         vec![
-            (process_event_id.clone(), "curl".to_string(), "/deny-target".to_string()),
-            (builtin_event_id.clone(), "mcp_builtin".to_string(), "/tiny".to_string()),
+            (process_event_id, "curl".to_string(), "/deny-target".to_string()),
+            (builtin_event_id, "mcp_builtin".to_string(), "/tiny".to_string()),
         ]
     );
 

@@ -538,7 +538,7 @@ impl DbHandle {
     /// New async route code should use `query(sql, params).await`. This method
     /// must not grow route-specific behavior or missing-schema compatibility.
     pub fn query_raw_blocking(&self, sql: &str) -> Result<String, String> {
-        self.with_reader_string(|reader| reader.query_raw(sql).map_err(|error| error.to_string()))
+        self.with_reader_string(|reader| reader.query_raw(sql))
     }
 
     /// Transitional blocking reader bridge for legacy typed reader methods.

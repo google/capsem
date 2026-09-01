@@ -234,7 +234,7 @@ fn public_release_graph_requires_one_exact_image_revision_for_every_architecture
 
     let missing = graph(serde_json::json!([{
         "architecture": "arm64",
-        "images": images.clone()
+        "images": images
     }]));
     let error = ManifestV2::from_json(&missing.to_string()).unwrap_err();
     assert!(format!("{error:#}").contains("missing image_revision"));

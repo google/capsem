@@ -270,7 +270,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     let js_for_teardown = Arc::clone(&job_store);
     let vm_ready_for_reader = Arc::clone(&vm_ready);
-    let ready_path_for_reader = ready_path.clone();
+    let ready_path_for_reader = ready_path;
 
     // Pending-ack map lives on `JobStore` (see job_store.rs::pending_acks)
     // so IPC handlers can remove entries once no caller is still waiting
@@ -411,7 +411,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // -----------------------------------------------------------------------
     // 3. Command Multiplexer (IPC -> Hub)
     // -----------------------------------------------------------------------
-    let hub_tx = ctrl_out_tx.clone();
+    let hub_tx = ctrl_out_tx;
     let js_for_cmd = Arc::clone(&job_store);
     let ipc_tx_for_cmd = ipc_tx.clone();
     let vm_id_for_cmd = vm_id_original;
@@ -589,6 +589,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     info!(target: "suspend", op = "apple_vz_pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
                                     let t1 = std::time::Instant::now();
                                     v.save_state(&checkpoint_path_for_save)?;
+                                    drop(v);
                                     info!(target: "suspend", op = "apple_vz_save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
                                     Ok(())
                                 })?;
@@ -600,6 +601,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     info!(target: "suspend", op = "pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
                                     let t1 = std::time::Instant::now();
                                     v.save_state(&checkpoint_path_for_save)?;
+                                    drop(v);
                                     info!(target: "suspend", op = "save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
                                 }
                                 Ok(())
@@ -1408,10 +1410,15 @@ fn deposit_exec_output(
     total_bytes: u64,
 ) -> Option<Arc<tokio::sync::Notify>> {
     let mut guard = job_store.active_execs.lock().unwrap();
-    let active = guard.get_mut(&id)?;
+    let Some(active) = guard.get_mut(&id) else {
+        drop(guard);
+        return None;
+    };
     active.captured = captured;
     active.total_bytes = total_bytes;
-    Some(Arc::clone(&active.deposited))
+    let deposited = Arc::clone(&active.deposited);
+    drop(guard);
+    Some(deposited)
 }
 
 async fn handle_guest_msg(

@@ -123,6 +123,7 @@ impl VcpuControl {
                 bail!("timed out pausing KVM VM: {}/{} vCPUs parked", *paused, self.vcpu_count);
             }
         }
+        drop(paused);
         self.lifecycle.store(VCPU_PAUSED, Ordering::SeqCst);
         self.pause_cv.notify_all();
         Ok(())
@@ -148,6 +149,7 @@ impl VcpuControl {
             .get_mut(vcpu_id as usize)
             .ok_or_else(|| anyhow::anyhow!("vCPU id {vcpu_id} outside thread table"))?;
         *slot = Some(VcpuThread(unsafe { libc::pthread_self() }));
+        drop(threads);
         Ok(VcpuThreadRegistration { control: self, vcpu_id })
     }
 
@@ -173,13 +175,14 @@ impl VcpuControl {
                 debug!(errno = ret, "failed to kick KVM vCPU thread");
             }
         }
+        drop(threads);
         kicked
     }
 
     #[cfg(target_arch = "x86_64")]
     pub fn snapshots(&self) -> Result<Vec<checkpoint::VcpuSnapshot>> {
         let snapshots = self.snapshots.lock().expect("snapshot mutex poisoned");
-        snapshots
+        let result = snapshots
             .iter()
             .enumerate()
             .map(|(idx, snapshot)| {
@@ -187,7 +190,9 @@ impl VcpuControl {
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("missing KVM vCPU snapshot for vCPU {idx}"))
             })
-            .collect()
+            .collect();
+        drop(snapshots);
+        result
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -211,6 +216,7 @@ impl VcpuControl {
                 .get_mut(vcpu_id as usize)
                 .ok_or_else(|| anyhow::anyhow!("vCPU id {vcpu_id} outside snapshot table"))?;
             *slot = Some(snapshot);
+            drop(snapshots);
         }
         self.wait_parked();
         Ok(())
@@ -233,6 +239,7 @@ impl VcpuControl {
             paused = self.pause_cv.wait(paused).expect("pause condvar poisoned");
         }
         *paused = paused.saturating_sub(1);
+        drop(paused);
         self.pause_cv.notify_all();
     }
 }

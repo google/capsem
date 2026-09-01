@@ -282,8 +282,8 @@ fn main() -> Result<()> {
 
     let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
 
-    let trace_id_for_loop = trace_id.clone();
-    let session_dir_for_loop = session_dir.clone();
+    let trace_id_for_loop = trace_id;
+    let session_dir_for_loop = session_dir;
     let shutdown_for_loop = Arc::clone(&shutdown);
     let shutdown_for_loop_error = Arc::clone(&shutdown);
     let vm_for_signal = Arc::clone(&vm_arc);

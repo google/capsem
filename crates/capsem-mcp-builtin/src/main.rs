@@ -255,6 +255,7 @@ impl BuiltinHandler {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_list_changed_files(&to_args(&params), &sched, &ws, None);
+        drop(sched);
         extract_text(resp)
     }
 
@@ -266,6 +267,7 @@ impl BuiltinHandler {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_list_snapshots(&to_args(&params), &sched, &ws, None);
+        drop(sched);
         extract_text(resp)
     }
 
@@ -277,7 +279,9 @@ impl BuiltinHandler {
         let (sched, ws) = self.snapshot_state()?;
         let (resp, file_event) = {
             let sched = sched.lock().await;
-            file_tools::handle_revert_file_with_security_event(&to_args(&params), &sched, &ws, None)
+            let result = file_tools::handle_revert_file_with_security_event(&to_args(&params), &sched, &ws, None);
+            drop(sched);
+            result
         };
         if let Some(file_event) = file_event {
             capsem_core::security_engine::emit_file_security_write_and_rules(
@@ -298,6 +302,7 @@ impl BuiltinHandler {
         let (sched, _ws) = self.snapshot_state()?;
         let mut sched = sched.lock().await;
         let resp = file_tools::handle_snapshot(&to_args(&params), &mut sched, None);
+        drop(sched);
         extract_text(resp)
     }
 
@@ -309,6 +314,7 @@ impl BuiltinHandler {
         let (sched, _ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_delete_snapshot(&to_args(&params), &sched, None);
+        drop(sched);
         extract_text(resp)
     }
 
@@ -317,6 +323,7 @@ impl BuiltinHandler {
         let (sched, ws) = self.snapshot_state()?;
         let sched = sched.lock().await;
         let resp = file_tools::handle_snapshots_history(&to_args(&params), &sched, &ws, None);
+        drop(sched);
         extract_text(resp)
     }
 
@@ -328,6 +335,7 @@ impl BuiltinHandler {
         let (sched, _ws) = self.snapshot_state()?;
         let mut sched = sched.lock().await;
         let resp = file_tools::handle_snapshots_compact(&to_args(&params), &mut sched, None);
+        drop(sched);
         extract_text(resp)
     }
 }

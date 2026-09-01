@@ -1525,7 +1525,7 @@ pub(super) async fn handle_profile_obom(
         None
     };
     Ok(Json(api::ProfileObomResponse {
-        profile_id: profile.id.clone(),
+        profile_id: profile.id,
         current_arch: obom.current_arch.clone(),
         obom,
         document,

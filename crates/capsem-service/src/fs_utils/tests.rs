@@ -112,6 +112,7 @@ fn extract_magika_info_smoke() {
     assert!(!mime.is_empty());
     assert!(!group.is_empty());
     assert!(is_text, "ASCII text should be recognized as text, got label={label}");
+    drop(s);
 }
 
 #[test]

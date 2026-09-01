@@ -968,7 +968,7 @@ impl ServiceState {
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
-        let mut handles = self.session_db_handles.lock().unwrap();
+        let handles = self.session_db_handles.lock().unwrap();
         if let Some(handle) = handles.get(vm_id) {
             if handle.path() == db_path.as_path() {
                 tracing::debug!(
@@ -988,6 +988,7 @@ impl ServiceState {
                 "replacing session DB handle for rebound session path"
             );
         }
+        drop(handles);
         let handle = match capsem_logger::DbHandle::open_external_reader(&db_path) {
             Ok(handle) => Arc::new(handle),
             Err(error) => {
@@ -1005,7 +1006,9 @@ impl ServiceState {
                 ));
             }
         };
+        let mut handles = self.session_db_handles.lock().unwrap();
         handles.insert(vm_id.to_string(), Arc::clone(&handle));
+        drop(handles);
         info!(
             vm_id,
             db_path = %db_path.display(),
@@ -1032,6 +1035,7 @@ impl ServiceState {
         let mut handles = self.session_db_handles.lock().unwrap();
         if let Some(handle) = handles.remove(old_vm_id) {
             handles.insert(new_vm_id.to_string(), handle);
+            drop(handles);
             info!(
                 old_vm_id,
                 new_vm_id,
@@ -1109,18 +1113,15 @@ impl ServiceState {
     #[must_use = "evicted entries still have filesystem artifacts; pass each to ServiceState::scrub_evicted_instance"]
     fn drain_dead_instances(&self) -> Vec<(String, InstanceInfo)> {
         let mut instances = self.instances.lock().unwrap();
-        let dead_ids: Vec<String> = instances
-            .iter()
-            .filter(|(_, info)| unsafe { nix::libc::kill(info.pid as i32, 0) } != 0)
-            .map(|(id, _)| id.clone())
-            .collect();
-        dead_ids
-            .into_iter()
-            .filter_map(|id| {
+        let dead = instances
+            .extract_if(|_, info| unsafe { nix::libc::kill(info.pid as i32, 0) } != 0)
+            .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
-                instances.remove(&id).map(|info| (id, info))
+                (id, info)
             })
-            .collect()
+            .collect();
+        drop(instances);
+        dead
     }
 
     /// Scrub filesystem artifacts for a dead-process instance: preserve
@@ -1208,6 +1209,7 @@ impl ServiceState {
                 }
             }
         }
+        drop(instances);
         if changed {
             if let Err(error) = registry.save() {
                 error!(error = %error, "failed to save persistent registry after defunct reconciliation");
@@ -1497,6 +1499,7 @@ impl ServiceState {
                 .get(from_name)
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
                 .clone();
+            drop(registry);
             if entry.profile_id != profile_id {
                 return Err(anyhow!(
                     "source sandbox '{}' uses profile '{}', not '{}'",
@@ -1694,7 +1697,7 @@ impl ServiceState {
                 ),
                 session_dir: session_dir.clone(),
                 forked_from: from.clone(),
-                description: description.clone(),
+                description,
                 suspended: false,
                 defunct: false,
                 last_error: None,
@@ -1737,10 +1740,10 @@ impl ServiceState {
                 ram_mb,
                 cpus,
                 start_time: std::time::Instant::now(),
-                base_version: version.clone(),
+                base_version: version,
                 persistent,
                 env,
-                forked_from: from.clone(),
+                forked_from: from,
             },
         );
         drop(instances);
@@ -1969,7 +1972,7 @@ impl ServiceState {
                 base_version: version,
                 persistent: true,
                 env: None,
-                forked_from: entry.forked_from.clone(),
+                forked_from: entry.forked_from,
             },
         );
         drop(instances);
@@ -1990,9 +1993,9 @@ impl ServiceState {
 
     fn archive_failed_restore_checkpoint(&self, id: &str) -> Option<PathBuf> {
         let entry = find_persistent_entry_by_route_id(self, id)?;
-        let name = entry.name.clone();
-        let checkpoint_name = entry.checkpoint_path.clone()?;
-        let session_dir = entry.session_dir.clone();
+        let name = entry.name;
+        let checkpoint_name = entry.checkpoint_path?;
+        let session_dir = entry.session_dir;
 
         let checkpoint_path = session_dir.join(&checkpoint_name);
         if !checkpoint_path.exists() {
@@ -2257,6 +2260,7 @@ impl ServiceState {
                 cache.insert(profile_id, plugins);
             }
         }
+        drop(cache);
         self.profile_plugin_response_cache.lock().unwrap().clear();
         self.evaluate_response_cache.lock().unwrap().clear();
         *self.evaluate_last_response_cache.lock().unwrap() = None;

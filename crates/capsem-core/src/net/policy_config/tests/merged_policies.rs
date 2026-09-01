@@ -735,7 +735,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 
     let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
         &ProviderRuleProfile::default(),
-        &ProviderRuleProfile { ai: corp.ai.clone() },
+        &ProviderRuleProfile { ai: corp.ai },
     )
     .expect("provider rules merge");
     let rules = merged

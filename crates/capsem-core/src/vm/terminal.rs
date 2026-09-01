@@ -80,10 +80,12 @@ impl TerminalOutputQueue {
                         );
                     }
 
+                    drop(queue);
                     return Some(coalesced);
                 }
                 // Queue is empty. If closed, we're done.
                 if self.closed.load(Ordering::Acquire) {
+                    drop(queue);
                     return None;
                 }
             }
@@ -103,6 +105,7 @@ impl TerminalOutputQueue {
     pub fn reset(&self) {
         let mut queue = self.data.lock().unwrap();
         queue.clear();
+        drop(queue);
         self.closed.store(false, Ordering::Release);
     }
 }

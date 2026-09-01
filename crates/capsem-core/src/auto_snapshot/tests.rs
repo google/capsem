@@ -252,7 +252,7 @@ fn separate_pools_dont_collide() {
 #[test]
 fn auto_cull_does_not_touch_manual() {
     let (_tmp, session) = setup_session_dir();
-    let mut s = AutoSnapshotScheduler::new(session.clone(), 2, 2, Duration::from_secs(300));
+    let mut s = AutoSnapshotScheduler::new(session, 2, 2, Duration::from_secs(300));
 
     s.take_snapshot().unwrap();
     std::thread::sleep(Duration::from_millis(10));
@@ -293,7 +293,7 @@ fn available_manual_slots_decreases() {
 #[test]
 fn manual_pool_full_returns_error() {
     let (_tmp, session) = setup_session_dir();
-    let mut s = AutoSnapshotScheduler::new(session.clone(), 2, 1, Duration::from_secs(300));
+    let mut s = AutoSnapshotScheduler::new(session, 2, 1, Duration::from_secs(300));
 
     s.take_named_snapshot("first").unwrap();
     let err = s.take_named_snapshot("second").unwrap_err();
@@ -424,9 +424,8 @@ fn compact_deletes_originals() {
 fn compact_requires_manual_slot() {
     let (_tmp, session) = setup_session_dir();
     // max_manual = 1 so only 1 manual slot available.
-    let mut s = AutoSnapshotScheduler::new(session.to_path_buf(), 3, 1, Duration::from_secs(300));
-
     std::fs::write(session.join("workspace/f.txt"), "data").unwrap();
+    let mut s = AutoSnapshotScheduler::new(session, 3, 1, Duration::from_secs(300));
     let _snap1 = s.take_named_snapshot("fill").unwrap();
     // Manual pool is now full (1/1).
     // Create an auto snapshot to compact.

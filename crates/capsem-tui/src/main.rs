@@ -168,7 +168,7 @@ fn run_loop(
     let mut connected_terminal = None;
     let mut needs_draw = true;
     let input_events = spawn_input_reader();
-    let refresh_bridge = live_provider.clone().map(RefreshBridge::spawn);
+    let refresh_bridge = live_provider.map(RefreshBridge::spawn);
     loop {
         if let Some(bridge) = &refresh_bridge {
             for event in bridge.drain_events() {

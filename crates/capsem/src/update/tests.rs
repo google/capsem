@@ -1994,7 +1994,7 @@ fn binary_installer_cache_is_manifest_digest_addressed_and_channel_independent()
     nightly.url = "https://corp.example/releases/Capsem.pkg".to_string();
     let corporate_path = binary_installer_cache_path_at(home.path(), &nightly).unwrap();
 
-    let mut replacement = nightly.clone();
+    let mut replacement = nightly;
     replacement.sha256 = "f".repeat(64);
     replacement.blake3 = "e".repeat(64);
     let replacement_path = binary_installer_cache_path_at(home.path(), &replacement).unwrap();
