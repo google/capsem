@@ -1314,10 +1314,15 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
     every binary had built and installed.
     """
-    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate import cachelayout, cargotarget
 
     checkout = tmp_path / "checkout"
     (checkout / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    (checkout / "config").mkdir()
+    (checkout / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     config = _shared_target_config(tmp_path, warning_gb=1.0).model_copy(
         update={"root": checkout}
     )
@@ -1334,13 +1339,16 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
 
     assert (prefix_path / "cache" / "target" / "config" / "profiles" / "code").is_dir()
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == binaries
+    assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
+        config, "objects"
+    )
 
 
 def test_an_ordinary_run_still_compiles_into_the_shared_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No release variables means the build root, exactly as before."""
-    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate import cachelayout, cargotarget
 
     config = _shared_target_config(tmp_path, warning_gb=1.0)
     monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
@@ -1349,7 +1357,23 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     cargotarget.link_prefix_trees(config, prefix_path)
 
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == cargotarget.path(config) / "debug"
+    assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
+        config, "objects"
+    )
     assert not (prefix_path / "cache" / "target" / "config").exists()
+
+
+def test_a_private_prefix_object_store_is_refused(tmp_path: Path) -> None:
+    """A local store would make identical exact-source rounds compile twice."""
+    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate.errors import GateError
+
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    prefix_path = tmp_path / "prefixes" / ("e" * 8)
+    (prefix_path / "cache" / "objects").mkdir(parents=True)
+
+    with pytest.raises(GateError, match="private object store"):
+        cargotarget.link_object_store(config, prefix_path)
 
 
 def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) -> None:

@@ -12,10 +12,29 @@ from capsem_builder.image.componentcache import (
     source_digest,
     store,
 )
+from capsem_builder.image.config import load_guest_config
 from capsem_builder.image.guestbinarycache import materialize
 from capsem_builder.image.models import BuildConfig
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_guest_binary_identity_names_only_its_output_inputs() -> None:
+    roots = set(
+        load_guest_config(ROOT / "config/docker/image")
+        .build.guest_rust_builder.source_roots
+    )
+
+    assert roots == {
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "crates/capsem-agent",
+        "crates/capsem-bench",
+        "crates/capsem-proto",
+        "build_system/builder/image/docker.py",
+        "build_system/builder/image/guestbinarycache.py",
+    }
 
 
 def repository(tmp_path: Path) -> Path:
@@ -82,10 +101,33 @@ def test_source_digest_changes_with_source_bytes_and_names(tmp_path: Path) -> No
     assert len({first, second, third}) == 3
 
 
-def test_guest_binary_generation_is_compiled_once_for_two_consumers(tmp_path: Path) -> None:
+def test_source_digest_ignores_undeclared_crates(tmp_path: Path) -> None:
+    agent = tmp_path / "crates/agent"
+    agent.mkdir(parents=True)
+    agent.joinpath("main.rs").write_text("fn main() {}", encoding="utf-8")
+    first = source_digest(tmp_path, ("crates/agent",))
+
+    admin = tmp_path / "crates/admin"
+    admin.mkdir()
+    admin.joinpath("main.rs").write_text("fn unrelated() {}", encoding="utf-8")
+
+    assert source_digest(tmp_path, ("crates/agent",)) == first
+
+
+def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
+    tmp_path: Path,
+) -> None:
     repo = repository(tmp_path)
     source = repo / "guest-input"
     source.write_text("source", encoding="utf-8")
+    prefix_root = tmp_path / "prefix"
+    prefix_root.mkdir()
+    prefix = repository(prefix_root)
+    prefix.joinpath("guest-input").write_text("source", encoding="utf-8")
+    prefix.joinpath("cache").mkdir()
+    prefix.joinpath("cache/objects").symlink_to(
+        repo / "cache/objects", target_is_directory=True
+    )
     build = cast(
         BuildConfig,
         SimpleNamespace(guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))),
@@ -111,7 +153,12 @@ def test_guest_binary_generation_is_compiled_once_for_two_consumers(tmp_path: Pa
             build, "x86_64", repo, repo / "cache/target/rootfs", names, compile_binaries
         )
         second = materialize(
-            build, "x86_64", repo, repo / "cache/target/initrd", names, compile_binaries
+            build,
+            "x86_64",
+            prefix,
+            prefix / "cache/target/initrd",
+            names,
+            compile_binaries,
         )
 
     assert calls == 1

@@ -98,7 +98,9 @@ source_roots = [
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
-    "crates",
+    "crates/capsem-agent",
+    "crates/capsem-bench",
+    "crates/capsem-proto",
     "build_system/builder/image/docker.py",
     "build_system/builder/image/guestbinarycache.py",
 ]

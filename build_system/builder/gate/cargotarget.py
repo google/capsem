@@ -1,4 +1,4 @@
-"""What a prefix's `cache/target/` points at: the shared build root, or a pulled tree.
+"""Project shared compiler and immutable object views into a private prefix.
 
 Split out of `prefix`, which had grown past the module ceiling this project
 holds itself to -- and the seam is a real one rather than a line count.
@@ -13,6 +13,10 @@ the prefix that produced them and the next run is a different prefix -- Tauri's
 permission files hit exactly that. At one absolute path the baked-in paths stay
 true, and cargo's fingerprints decide what is stale, which is the same judgement
 a developer relies on when switching branches in one checkout.
+
+The immutable object store is also machine-owned. Linking it here lets focused
+builds and exact-source prefixes exchange verified component generations while
+every mutable build, test, and runtime tree remains private to its run.
 
 One writer, because one gate runs per machine under `flock`.
 """
@@ -110,6 +114,26 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
         link.symlink_to(shared / profile, target_is_directory=True)
 
 
+def link_object_store(config: GateConfig, prefix: Path) -> None:
+    """Give one private prefix the machine's immutable object authority."""
+    paths = cachelayout.cache_paths(config)
+    shared = paths.stage("objects")
+    relative = paths.policy.root / paths.policy.stages["objects"].path
+    link = prefix / relative
+    shared.mkdir(parents=True, exist_ok=True)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.readlink() == shared:
+            return
+        link.unlink()
+    elif link.exists():
+        raise GateError(
+            f"{link} is a private object store, so this run would rebuild "
+            "verified components instead of using the shared authority"
+        )
+    link.symlink_to(shared, target_is_directory=True)
+
+
 def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     """Decide what this prefix's `cache/target/` points at, once, in one place.
 
@@ -119,6 +143,7 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     `PROJECT_ROOT/cache/target/...` and are right to, so the prefix is what makes that
     resolve to the correct tree.
     """
+    link_object_store(config, prefix)
     pulled = os.environ.get(config.modules.release_bin_dir)
     if not pulled:
         link_profiles(config, prefix)

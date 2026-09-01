@@ -6921,7 +6921,7 @@ fn escape_html(value: &str) -> String {
 }
 
 fn image_build_workspace_path(source_profile: &ProfileConfigFile, arch: Option<&str>) -> PathBuf {
-    PathBuf::from("cache/target")
+    PathBuf::from("cache/target/build")
         .join("image-workspace")
         .join(&source_profile.id)
         .join(arch.unwrap_or("all"))
