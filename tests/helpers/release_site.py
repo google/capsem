@@ -59,7 +59,7 @@ _ASTRO_DIST = PROJECT_ROOT / "build_system" / "release_site" / "dist"
 #
 # The resource is `_ASTRO_DIST`, so the lock is derived from the same
 # repository every caller is building in.
-_LOCK_PATH = PROJECT_ROOT / "target" / "capsem-release-site-build.lock"
+_LOCK_PATH = PROJECT_ROOT / "cache" / "target" / "capsem-release-site-build.lock"
 
 _SNAPSHOT_ROOT = Path(tempfile.mkdtemp(prefix="capsem-release-site-"))
 atexit.register(shutil.rmtree, _SNAPSHOT_ROOT, True)

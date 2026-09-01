@@ -116,12 +116,12 @@ def _proof(
 def test_only_a_package_this_checkout_built_is_accepted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Anything outside target/packages/ has no package-build provenance."""
+    """Anything outside cache/target/packages/ has no package-build provenance."""
     root = _checkout(tmp_path)
     elsewhere = tmp_path / "elsewhere.deb"
     elsewhere.write_text("bytes")
 
-    with pytest.raises(GateError, match="only accepts target/packages/"):
+    with pytest.raises(GateError, match="only accepts cache/target/packages/"):
         DebProof(
             RecordingRunner(root),
             package=elsewhere,

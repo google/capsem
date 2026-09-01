@@ -245,7 +245,7 @@ Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
 install/glow-up must derive both paths from that one value and validate it
 before Docker or Colima. Release CI stages raw manifest inputs into the paired
 root on the host; the sealed proof never rematerializes them or falls back to
-checkout `assets`/`target/config` selectors.
+checkout `assets`/`cache/target/config` selectors.
 
 Before public activation, the resulting pairing must pass manifest/artifact
 integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,
@@ -262,6 +262,15 @@ Before dispatching a real release, use whatever focused or complete local proof
 is useful for the change. `just test <source-commit>` is optional and never a
 release prerequisite. Run the actual public release command, never a
 hand-written workflow dispatch; it is the supported bridge into qualifying CI.
+
+Complete local admission is impact-aware, but its proof is never partial. A
+valid identical-source journal returns immediately. Otherwise unknown and
+high-impact paths remain eligible, while explicitly low-impact paths under the
+ten-commit cadence are refused with their exact `focus-test` owners. The
+exceptional `just test <source-commit> force "<reason>"` records its reason
+before work and cannot be used twice consecutively; only a successful normal
+complete run resets it. None of this state authorizes release publication or
+reuses a behavioral verdict across source identities.
 
 ## `--force`: the commit that is not the product
 

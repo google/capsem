@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn image_build_workspace_path(source_profile: &ProfileConfigFile, arch: Option<&str>) -> PathBuf {
-    PathBuf::from("target")
+    PathBuf::from("cache/target")
         .join("image-workspace")
         .join(&source_profile.id)
         .join(arch.unwrap_or("all"))

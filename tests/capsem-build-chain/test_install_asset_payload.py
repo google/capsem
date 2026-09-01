@@ -83,7 +83,7 @@ def _resolvable_package():
     `_planned` runs the plan against a recording runner to capture real argv,
     so every runtime precondition has to hold or the plan stops at the step
     that needs one. `install` resolves
-    `target/packages/Capsem_<version>_<arch>.deb` and
+    `cache/target/packages/Capsem_<version>_<arch>.deb` and
     refuses without it, which meant these contracts silently asserted against
     a two-step transcript -- `contextlib.suppress` swallows the refusal, and
     the failure surfaces later as `'chown -R' not in <almost nothing>`.
@@ -95,7 +95,7 @@ def _resolvable_package():
 
     Created only when genuinely absent, and removed again, so a real package is
     never touched and an empty placeholder never outlives the test that needed
-    it -- an empty `.deb` left in `target/packages/` is something a later lane
+    it -- an empty `.deb` left in `cache/target/packages/` is something a later lane
     would try to install.
     """
     from capsem_builder.gate import config as gate_config
@@ -876,8 +876,8 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
     graph = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text(encoding="utf-8")
 
-    assert layout.assets == "target/install-test-assets"
-    assert layout.config == "target/install-test-config"
+    assert layout.assets == "cache/target/install-test-assets"
+    assert layout.config == "cache/target/install-test-config"
     assert config.install.generated_inputs == (config.outputs.packages,)
     assert config.install.suite.serve_script == "build_system/release_site/scripts/serve-release-test-root.py"
     assert "stage_content" in proof
@@ -906,7 +906,7 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
 def test_install_test_consumes_exact_publishable_package_without_rebuild() -> None:
     """The package is selected by this checkout's version, not globbed.
 
-    `target/packages/` accumulates, so a glob would let a package built from a
+    `cache/target/packages/` accumulates, so a glob would let a package built from a
     different commit be installed and proved. Selecting by version and
     refusing an empty or missing file is what makes "the exact publishable
     package" true.
@@ -1141,8 +1141,8 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
 
     assert "PREACTIVATION_MANIFEST=file://" in macos
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in macos
-    assert "target/package-content/assets/manifest.json" in linux
-    assert "--content-root target/package-content" in linux
+    assert "cache/target/package-content/assets/manifest.json" in linux
+    assert "--content-root cache/target/package-content" in linux
     assert "CAPSEM_INSTALL_MANIFEST_URL:" in linux
 
     assert macos.count('--manifest "$ASSET_MANIFEST_URL"') == 1
@@ -2980,9 +2980,9 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: profiles" in workflow
-    assert "output: target/binary-public-before/profiles" in workflow
-    assert "output: target/candidate-profile-inputs" in workflow
-    assert "--input-dir target/candidate-profile-inputs" in workflow
+    assert "output: cache/target/binary-public-before/profiles" in workflow
+    assert "output: cache/target/candidate-profile-inputs" in workflow
+    assert "--input-dir cache/target/candidate-profile-inputs" in workflow
     assert "just qualify-binaries" in workflow
     assert "just qualify-binaries" in workflow
     assert "just _build-kernel" not in workflow
@@ -3091,8 +3091,8 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in install_job
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
-    assert "output: target/ci-install-content/inputs" in install_job
-    assert "--input-dir target/ci-install-content/inputs" in install_job
+    assert "output: cache/target/ci-install-content/inputs" in install_job
+    assert "--input-dir cache/target/ci-install-content/inputs" in install_job
     assert "Build exact native release package" in install_job
     assert install_job.count("steps.install-manifest.outputs.manifest-url") == 2
     assert "--classify-only" in install_job
@@ -3100,7 +3100,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert "retired)" in install_job
     assert "--require-profile-membership" in install_job
     assert (
-        'output="$PWD/target/ci-install-selection/assets/stable/manifest.json"'
+        'output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"'
         in install_job
     ), "the retired first-party fixture must retain public stable channel identity"
     assert "file://$output" in install_job
@@ -3111,13 +3111,13 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert "just _build-host-image" not in install_job
     assert "actions/cache/restore@" in fetch_action
     assert "actions/cache/save@" in fetch_action
-    assert "--cache-dir target/release-input-cache" in fetch_action
+    assert "--cache-dir cache/target/release-input-cache" in fetch_action
     assert "--prune-cache" not in fetch_action
     assert "steps.fetch.outputs.cache-misses != '0'" in fetch_action
     assert "inputs.manifest-url" not in fetch_action.split("key:", 1)[1].splitlines()[0]
     assert "inputs.channel" not in fetch_action
-    assert install_job.count("--content-root target/ci-install-content") == 1
-    assert install_job.count("--selected-content-root target/ci-install-content") == 1
+    assert install_job.count("--content-root cache/target/ci-install-content") == 1
+    assert install_job.count("--selected-content-root cache/target/ci-install-content") == 1
     assert "CAPSEM_INSTALL_PROFILE_INPUTS" not in install_job
     assert "build_system/scripts/test/prepare-install-test-assets.sh" not in install_job
 
@@ -3150,8 +3150,8 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
     assert upload["if"] == "failure()"
     assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     assert set(upload["with"]["path"].splitlines()) == {
-        "target/gate-runs/",
-        "target/local-release-glowup-evidence/",
+        "cache/target/gate-runs/",
+        "cache/target/local-release-glowup-evidence/",
     }
     assert upload["with"]["if-no-files-found"] == (
         "${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}"

@@ -18,7 +18,14 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 
 
 def _config(tmp_path: Path):
-    prefix = CONFIG.prefix.model_copy(update={"parent": str(tmp_path / "prefixes")})
+    prefix = CONFIG.prefix.model_copy(
+        update={
+            "parent": str(tmp_path / "prefixes"),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
+        }
+    )
     return CONFIG.model_copy(update={"root": tmp_path, "prefix": prefix})
 
 
@@ -155,13 +162,13 @@ def test_install_image_receipt_survives_a_successful_prefix(
     installimage.build_source_image(runner, first, identity=helper, source=source)
     builds = len(runner.matching(r"docker build .*Dockerfile.install-test"))
 
-    assert "target/install-image" in buildcache.salvage(first, first_root)
+    assert "cache/target/install-image" in buildcache.salvage(first, first_root)
     retained_receipt = first_root / first.install.builder.source_identity_file
     shared_receipt = buildcache.root(first) / first.install.builder.source_identity_file
     assert retained_receipt.is_file()
     assert shared_receipt.read_bytes() == retained_receipt.read_bytes()
     second_root.mkdir()
-    assert "target/install-image" in buildcache.lend(first, second_root)
+    assert "cache/target/install-image" in buildcache.lend(first, second_root)
     assert retained_receipt.is_file(), "lending erased a resumable prefix's Docker pins"
     second = first.model_copy(update={"root": second_root})
     installimage.build_source_image(runner, second, identity=helper, source=source)
@@ -173,7 +180,7 @@ def test_only_configured_tiny_authorities_are_duplicated_for_resume(tmp_path: Pa
     from capsem_builder.gate import buildcache
 
     config = _config(tmp_path)
-    assert config.prefix.resumable == ("target/install-image",)
+    assert config.prefix.resumable == ("cache/target/install-image",)
     assert set(config.prefix.resumable) <= set(config.prefix.lent)
     assert set(config.prefix.resumable) <= set(config.prefix.produced)
 
@@ -214,7 +221,7 @@ def test_vm_cache_roots_and_identities_cannot_escape_their_owned_sibling(
     config = _config(tmp_path)
     fields = config.prefix.model_dump()
     fields["vm_image_cache"] = "{parent}-images/../.."
-    with pytest.raises(ValueError, match="direct sibling"):
+    with pytest.raises(ValueError, match="repository cache"):
         PrefixConfig.model_validate(fields)
 
     with pytest.raises(GateError, match="canonical digest"):

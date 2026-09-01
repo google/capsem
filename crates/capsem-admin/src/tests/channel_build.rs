@@ -7,7 +7,7 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     let report = build_assets_channel(
         &manifest_url,
@@ -240,7 +240,7 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
 fn release_graph_manifest_version_is_independent_from_package_and_assets() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &file_url(&manifest_path),
@@ -307,7 +307,7 @@ fn assets_channel_build_preserves_existing_channels_when_adding_nightly() {
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &manifest_url,
@@ -381,7 +381,7 @@ fn assets_channel_build_bootstraps_without_binary_files() {
         serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
     )
     .expect("write manifest");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &file_url(&manifest_path),

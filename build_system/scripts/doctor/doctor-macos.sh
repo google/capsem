@@ -76,13 +76,13 @@ check_platform() {
             skip "Tart boot readiness (CAPSEM_SKIP_TART_CHECK set)"
         elif command -v sshpass &>/dev/null; then
             if [[ "${CAPSEM_BOOTSTRAP_TART_PROVEN:-0}" = "1" ]] \
-                && python3 -c 'import json; p=json.load(open("target/tart-readiness/report.json")); assert p["booted"] and p["ssh_ready"]' 2>/dev/null; then
+                && python3 -c 'import json; p=json.load(open("cache/target/tart-readiness/report.json")); assert p["booted"] and p["ssh_ready"]' 2>/dev/null; then
                 pass "Tart base image cached, cloned, booted, and SSH-ready (bootstrap proof)"
             elif uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py" \
                 --require-cache >/dev/null; then
                 pass "Tart base image cached, cloned, booted, and SSH-ready"
             else
-                fail "Tart base image did not boot -- rerun bootstrap, then inspect target/tart-readiness/tart-run.log"
+                fail "Tart base image did not boot -- rerun bootstrap, then inspect cache/target/tart-readiness/tart-run.log"
             fi
         fi
     fi

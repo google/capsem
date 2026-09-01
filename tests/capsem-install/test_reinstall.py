@@ -43,7 +43,7 @@ class TestReinstall:
     def test_reinstall_replaces_binaries(self, clean_state, _needs_cargo):
         """Compile v1, install, recompile v2, install -- verify v2."""
         capsem_bin = INSTALL_DIR / "capsem"
-        bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
+        bin_src = os.environ.get("CAPSEM_BIN_SRC", "cache/target/cargo/debug")
         assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
 
         # Build 1: compile and install

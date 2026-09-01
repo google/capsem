@@ -502,6 +502,17 @@ including:
 The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
 
+Within one complete source run, an identical behavioral cohort MUST execute
+once. A later phase MAY consume its fresh result only when the graph makes that
+result an ancestor and an intervening content-addressed verifier proves the
+consumer sees the same bytes. Source-contract coverage MAY likewise seed one
+coverage ledger that the later functional cohort finishes, provided already
+proved files are excluded from that later collection. This is intra-run proof
+composition, never cross-source behavioral caching: VM, runtime, install,
+security, benchmark, and update behavior still execute fresh for changed
+source. Hosted release qualification cannot consume local proof and MUST run
+its own complete artifact-family pairing.
+
 `just test <source-commit>` selects one canonical full lowercase commit that is
 already prepared, committed, and reachable from local `main`. It MUST
 materialize and diagnose an independent detached repository at a prefix named
@@ -525,6 +536,20 @@ ancestors are covered by that exact journal. The new attempt MUST record a
 content-addressed parent and every carried step. Recursive coverage of every
 declared step is required before the chain becomes complete. A reuse-only run,
 manual marker, skill, or guessed continuation MUST NOT become evidence.
+
+When no complete exact-source journal exists, admission MUST compare the
+requested source with the newest valid complete local proof. Unknown or
+high-impact paths MUST fail closed into allowing complete verification.
+Explicitly low-impact paths are declared with their existing `focus-test`
+owners in `config/cache.toml`; before ten commits have accumulated, `just test`
+MUST refuse and print those exact owners instead of spending the complete
+runtime. At ten commits the complete proof is eligible again.
+
+The exceptional spelling is
+`just test <source-commit> force "<reason>"`. Its non-empty reason MUST be
+recorded before work starts, and a second consecutive forced attempt MUST be
+refused. Only a successful non-forced complete run resets that rail. Admission
+state is cache control evidence, never a cross-source behavioral verdict.
 
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same

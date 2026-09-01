@@ -1,7 +1,7 @@
 # Capsem Config Layout
 
 `config/` contains source contracts and templates. Generated runtime config
-belongs under `target/config/` and must be produced by `capsem-admin`.
+belongs under `cache/target/config/` and must be produced by `capsem-admin`.
 
 There are exactly five top-level config directories:
 
@@ -42,11 +42,11 @@ it.
 
 Checked-in `config/profiles/<profile_id>/profile.toml` is source. It must not
 contain asset or sibling-file `hash` or `size` pins. `capsem-admin` validates
-source profiles, materializes hashes and sizes into `target/config/`, and uses
+source profiles, materializes hashes and sizes into `cache/target/config/`, and uses
 that same materialized output for local builds, CI, packages, and installed
 runtime config.
 
-Do not hand-edit generated `target/config` output. Do not hand-edit profile
+Do not hand-edit generated `cache/target/config` output. Do not hand-edit profile
 hashes. If a source payload changes, fix the admin materialization rail and its
 tests.
 

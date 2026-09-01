@@ -208,7 +208,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     # from this flag, rather than two `if:`-guarded step pairs whose halves
     # could drift apart.
     assert "just qualify-assets" in qualify
-    assert '"$PWD/target/candidate-profile-inputs"' in qualify
+    assert '"$PWD/cache/target/candidate-profile-inputs"' in qualify
     assert "inputs.profile" in qualify
     assert "outputs.activation_ready" in qualify
     assert "needs.author-profile-release.outputs.activation_ready" in qualify
@@ -244,7 +244,7 @@ def test_cold_channel_pairing_branches_before_package_selection() -> None:
 
     assert script.index("build_system/scripts/release/verify-release-inputs.py") < branch
     assert script.index("build_system/scripts/release/fetch-release-artifacts.py") < branch
-    assert branch < script.index("--binary-dir target/debug")
+    assert branch < script.index("--binary-dir cache/target/cargo/debug")
     assert branch < script.index("--print-package-path")
     assert branch < script.index(
         "build_system/packaging/linux/install-deb-runtime-dependencies.py"
@@ -259,7 +259,7 @@ def test_cold_channel_pairing_executes_no_package_action(
     github_env = tmp_path / "github-env"
     github_env.touch()
     for family in ("packages", "profiles"):
-        destination = tmp_path / "target" / "profile-public-before" / family
+        destination = tmp_path / "cache" / "target" / "profile-public-before" / family
         destination.mkdir(parents=True)
         (destination / "manifest.json").write_text("{}\n", encoding="utf-8")
 
@@ -381,7 +381,7 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
 
     assert "name: authored-profile-channel-source" in publish
     assert "name: authored-profile-candidate" in publish
-    assert "--profile-source-root target/profile-candidate" in publish
+    assert "--profile-source-root cache/target/profile-candidate" in publish
     assert "just _build-kernel" not in publish
     assert "just _build-rootfs" not in publish
     assert "cargo run -p capsem-admin -- release" not in publish

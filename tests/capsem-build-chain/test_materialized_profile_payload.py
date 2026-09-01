@@ -4,7 +4,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
-MATERIALIZED_PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
+MATERIALIZED_PROFILES_DIR = PROJECT_ROOT / "cache" / "target" / "config" / "profiles"
 
 
 def test_materialized_profile_root_payload_matches_source_profile_root() -> None:

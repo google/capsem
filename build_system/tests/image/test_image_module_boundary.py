@@ -17,6 +17,7 @@ EXPECTED_MODULES = {
     "assettools.py",
     "audit.py",
     "cli.py",
+    "componentcache.py",
     "config.py",
     "docker.py",
     "doctor.py",

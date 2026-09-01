@@ -472,7 +472,7 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {content.root}:{content.root}:ro" in started
 
 
@@ -486,7 +486,7 @@ def test_local_install_mounts_only_the_selected_content_pair(
     canonical_assets = root / CONFIG.outputs.assets
     canonical_assets.parent.mkdir(parents=True, exist_ok=True)
     canonical_assets.symlink_to(selected.relative_to(canonical_assets.parent))
-    canonical = root / "target/config"
+    canonical = root / "cache/target/config"
     canonical.mkdir(parents=True)
     sentinel = canonical / "stale"
     sentinel.write_text("untouched")
@@ -501,9 +501,9 @@ def test_local_install_mounts_only_the_selected_content_pair(
 
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {canonical_assets}:/src/{CONFIG.outputs.assets}:ro" not in started
-    assert f"-v {canonical}:/src/target/config:ro" not in started
+    assert f"-v {canonical}:/src/cache/target/config:ro" not in started
     assert canonical_assets.is_symlink()
     assert canonical_assets.readlink() == selected.relative_to(canonical_assets.parent)
     assert sentinel.read_text() == "untouched"
@@ -555,7 +555,7 @@ def _checkout_without_package(tmp_path: Path) -> Path:
 def test_a_package_from_another_version_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stale `target/packages/` entry must not replace this checkout's candidate."""
+    """A stale `cache/target/packages/` entry must not replace this checkout's candidate."""
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = RecordingRunner(
         root,

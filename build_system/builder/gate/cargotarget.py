@@ -1,4 +1,4 @@
-"""What a prefix's `target/` points at: the shared build root, or a pulled tree.
+"""What a prefix's `cache/target/` points at: the shared build root, or a pulled tree.
 
 Split out of `prefix`, which had grown past the module ceiling this project
 holds itself to -- and the seam is a real one rather than a line count.
@@ -20,10 +20,10 @@ One writer, because one gate runs per machine under `flock`.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 from typing import NamedTuple
 
+from . import cachelayout
 from .config import GateConfig
 from .errors import GateError
 
@@ -32,15 +32,18 @@ _GIB = 1024**3
 
 
 class Size(NamedTuple):
-    """How large the shared build directory was, and whether it survived."""
+    """How large the shared build directory was."""
 
     gb: float
-    discarded: bool
 
 
 def path(config: GateConfig) -> Path:
     """The one build directory every run compiles into."""
-    return Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser()
+    return cachelayout.shared_path(config, config.prefix.cargo_target)
+
+
+def _generated_root(prefix: Path) -> Path:
+    return prefix / "cache" / "target"
 
 
 def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> None:
@@ -48,7 +51,7 @@ def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> Non
 
     A pulled lane's binaries are staged outside the prefix, and roughly
     twenty-five checked-in test modules resolve a host binary as
-    `PROJECT_ROOT/target/debug/<name>`. Those paths are not wrong -- a test
+    `PROJECT_ROOT/cache/target/cargo/debug/<name>`. Those paths are not wrong -- a test
     should not have to know that this run was handed its binaries instead of
     building them -- but in a prefix carrying only tracked files they name a
     directory nothing ever wrote.
@@ -59,7 +62,7 @@ def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> Non
     fix applied twenty-five times and forgotten on the twenty-sixth; a link is
     the mechanism, and it is the same one the compiler output already uses.
     """
-    root = prefix / "target"
+    root = _generated_root(prefix) / "cargo"
     root.mkdir(parents=True, exist_ok=True)
     link = root / config.modules.default_bin_dir.rsplit("/", 1)[-1]
     if link.is_symlink():
@@ -78,23 +81,23 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
     """Point this prefix's profile directories at the shared build root.
 
     Cargo is told where to write by `CARGO_TARGET_DIR`; these symlinks are for
-    everything else. Roughly thirty checked-in paths name `target/debug/...` or
-    `target/release/...` relative to the tree a step runs in, and they are
+    everything else. Roughly thirty checked-in paths name `cache/target/cargo/debug/...` or
+    `cache/target/cargo/release/...` relative to the tree a step runs in, and they are
     correct -- a step should not have to know that compiler output is a
     property of the machine rather than of the run.
 
-    Only the profile directories. The rest of `target/` is the run's own: the
+    Only the profile directories. The rest of `cache/target/` is the run's own: the
     journal it is writing, the config it materialized, the homes its VMs boot
     from. Sharing those would make two runs one run.
     """
     shared = path(config)
-    root = prefix / "target"
+    root = _generated_root(prefix) / "cargo"
     root.mkdir(parents=True, exist_ok=True)
     for profile in config.prefix.cargo_profiles:
         (shared / profile).mkdir(parents=True, exist_ok=True)
         link = root / profile
         # A resumed prefix already has the link, and a populated one cannot:
-        # `snapshot` copies tracked files, and `target/` is gitignored.
+        # `snapshot` copies tracked files, and `cache/target/` is gitignored.
         if link.is_symlink():
             if link.readlink() == shared / profile:
                 continue
@@ -108,12 +111,12 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
 
 
 def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
-    """Decide what this prefix's `target/` points at, once, in one place.
+    """Decide what this prefix's `cache/target/` points at, once, in one place.
 
     Two lanes and one answer. Ordinary runs compile into the shared build root;
     a release lane reads binaries and config a manifest selected and something
     else staged. Either way the checked-in tests resolve
-    `PROJECT_ROOT/target/...` and are right to, so the prefix is what makes that
+    `PROJECT_ROOT/cache/target/...` and are right to, so the prefix is what makes that
     resolve to the correct tree.
     """
     pulled = os.environ.get(config.modules.release_bin_dir)
@@ -127,24 +130,24 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     # set when the prefix is built -- keying on it meant this never fired, and
     # a test that set it first agreed with the assumption instead of checking
     # it.
-    staged = config.root / "target" / "config"
+    staged = _generated_root(config.root) / "config"
     if staged.is_dir():
         link_pulled_tree(config, prefix, "config", staged.resolve())
 
 
 def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:
-    """Point one path under the prefix's `target/` at a tree staged outside it.
+    """Point one path under the prefix's `cache/target/` at a tree staged outside it.
 
     The same fix as the binaries and for the same reason. A release lane
     qualifies from a prefix carrying only tracked files, while the checked-in
-    tests resolve `PROJECT_ROOT/target/<something>` because a test should not
+    tests resolve `PROJECT_ROOT/cache/target/<something>` because a test should not
     have to know whether this run built its inputs or was handed them. Linking
     is what makes both true at once.
 
     Refuses a real directory rather than preferring it: a lane that exists to
     prove manifest-selected content must not quietly read content it made.
     """
-    link = prefix / "target" / relative
+    link = _generated_root(prefix) / relative
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
         if link.readlink() == target:
@@ -184,8 +187,8 @@ def _tree_bytes(root: Path) -> int:
     return total
 
 
-def bound(config: GateConfig) -> Size:
-    """Measure the shared build directory, and discard it if it is over cap.
+def measure(config: GateConfig) -> Size:
+    """Measure the shared build directory without changing it.
 
     The one part of this system nothing reclaimed. Prefixes are swept to
     `[prefix] keep` on the way into every run and the build cache is a rename
@@ -193,31 +196,14 @@ def bound(config: GateConfig) -> Size:
     dependency bump and deleted crate leaves output here forever. It reached
     8 GB in three days.
 
-    `[disk] required_free_gb` does not bound it and was never going to. That is
-    a floor on the whole filesystem: it reports that something has *already*
-    eaten the disk, and it stops whoever runs next rather than whatever grew. A
-    cap on the directory is what keeps the floor from ever being the mechanism.
-
-    Whole-directory, never selective. Cargo decides what is stale, by
-    fingerprint, and deleting chosen files underneath it corrupts exactly that
-    judgement -- the same reason `[prefix] lent` may only carry
-    content-addressed output. So the price of the cap is one cold build,
-    charged at a predictable size instead of at a full disk.
+    That growth is reported against an advisory threshold, but a normal gate
+    never reclaims it. Selective deletion underneath Cargo corrupts its
+    fingerprint judgement, while whole-directory deletion silently turns the
+    expensive public qualification into a cold build. The operator may still
+    request that deliberately with `--clean-build`; `[disk] required_free_gb`
+    remains the fail-closed filesystem backstop.
     """
     shared = path(config)
     if not shared.is_dir():
-        return Size(0.0, False)
-    gb = _tree_bytes(shared) / _GIB
-    if gb <= config.prefix.cargo_target_max_gb:
-        return Size(gb, False)
-    # The same shape as `prefix.reclaim`: a recursive delete of a path
-    # assembled in Python states out loud what it is allowed to be. Here that
-    # is the configured build root and nothing else -- not the prefix parent
-    # beside it, not a filesystem root, not the checkout.
-    resolved = Path(os.path.abspath(shared))
-    if resolved.parent == resolved or resolved == config.root.resolve():
-        raise GateError(f"refusing to discard {resolved}: that is not a build directory")
-    shutil.rmtree(resolved, ignore_errors=True)
-    if resolved.exists():
-        raise GateError(f"could not discard {resolved}; it is still on disk")
-    return Size(gb, True)
+        return Size(0.0)
+    return Size(_tree_bytes(shared) / _GIB)

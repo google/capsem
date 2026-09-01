@@ -224,29 +224,25 @@ def test_every_declared_console_script_is_runnable() -> None:
     declared = tomllib.loads(
         (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
     )["project"]["scripts"]
-    assert set(declared) == {"capsem-builder", "capsem-gate"}
+    assert set(declared) == {"capsem-builder", "capsem-cache", "capsem-gate"}
 
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--project",
-            "build_system",
-            "--frozen",
-            "capsem-gate",
-            "--help",
-        ],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
+    results = {
+        executable: subprocess.run(
+            ["uv", "run", "--project", "build_system", "--frozen", executable, "--help"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        for executable in declared
+    }
 
-    assert result.returncode == 0, result.stderr
-    assert "capsem-gate" in result.stdout
+    for executable, result in results.items():
+        assert result.returncode == 0, result.stderr
+        assert executable in result.stdout
     # It got past the launcher: the subcommands only exist once `capsem_builder.gate`
     # has been imported, which happens on the far side of the re-exec.
-    assert "candidate" in result.stdout
+    assert "candidate" in results["capsem-gate"].stdout
 
 
 def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> None:

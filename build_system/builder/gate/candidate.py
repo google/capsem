@@ -32,7 +32,7 @@ import os
 import shutil
 import sys
 
-from . import candidateplan, host, sandbox
+from . import candidateplan, host, sandbox, testadmission
 from . import config as gate_config
 from .command import GateCommand
 from .errors import GateError
@@ -100,7 +100,7 @@ class CompleteGate:
     commands that spend the multi-hour proof -- which is the same set long
     enough for someone to edit the tree while it runs.
 
-    It is not free: a private copy starts with no `target/`, and `test-fast`
+    It is not free: a private copy starts with no `cache/target/`, and `test-fast`
     measures 89s from a prefix against 28s in a warm checkout. That ratio is
     the price of a qualification whose subject cannot move while it runs, and
     only a command that already costs an hour should pay it.
@@ -193,9 +193,17 @@ class CandidateCommand(
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("source_commit", nargs="?", type=optional_source_commit)
+        parser.add_argument("mode", nargs="?", default="normal", choices=("normal", "force"))
+        parser.add_argument("reason", nargs="?", default="")
 
     def source_commit(self) -> SourceCommit | None:
         return getattr(self._args, "source_commit", None)
+
+    def admit(self, commit: SourceCommit | None) -> None:
+        testadmission.admit(self, commit)
+
+    def completed(self, commit: SourceCommit | None) -> None:
+        testadmission.complete(self, commit)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

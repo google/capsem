@@ -7,7 +7,7 @@ it is a distinct step in the caller's `except` rather than tidy-up in a
 
 Host-side diagnostics only. `guest/` and `auto_snapshots/` duplicate the
 guest's own workspace once per generation, and the same filter keeps the VM
-disk image and `session.db` out of `target/`.
+disk image and `session.db` out of `cache/target/`.
 """
 
 from __future__ import annotations

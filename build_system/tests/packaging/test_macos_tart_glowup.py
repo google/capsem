@@ -829,7 +829,7 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert '"--content-root"' in source
     assert '"--assets-dir"' in source and '"--config-root"' in source
     assert '"$ROOT/assets"' not in build
-    assert '"$ROOT/target/config"' not in build
+    assert '"$ROOT/cache/target/config"' not in build
     assert '"$ROOT/assets"' not in physical
 
 
@@ -855,7 +855,7 @@ def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() 
     assert "APPLE_INSTALLER_SIGNING_IDENTITY" in release
     assert "notarytool submit" in release
     assert "stapler staple" in release
-    assert 'pkgutil --check-signature "target/packages/Capsem-$VERSION.pkg"' in release
+    assert 'pkgutil --check-signature "cache/target/packages/Capsem-$VERSION.pkg"' in release
 
 
 def test_public_release_dispatch_recipe_is_gone() -> None:

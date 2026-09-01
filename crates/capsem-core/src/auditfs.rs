@@ -83,7 +83,7 @@ fn is_build_output(source: &Path, root: &Path) -> bool {
     };
     matches!(
         relative.components().next().and_then(|c| c.as_os_str().to_str()),
-        Some("target") | Some("packages") | Some("assets")
+        Some("cache")
     )
 }
 

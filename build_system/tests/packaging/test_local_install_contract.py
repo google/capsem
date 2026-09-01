@@ -53,19 +53,19 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
         "workspace"
     ]["package"]["version"]
-    assert f"target/packages/Capsem-{version}.pkg" in rendered
+    assert f"cache/target/packages/Capsem-{version}.pkg" in rendered
 
 
 def test_local_install_packages_the_verified_base_profile_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rendered = _plan(monkeypatch).describe()
-    verified = ROOT / "target" / "ironbank-assets" / "code"
+    verified = ROOT / "cache" / "target" / "ironbank-assets" / "code"
 
     assert f"--assets-dir {verified / 'assets'}" in rendered
     assert f"--config-root {verified / 'config'}" in rendered
     assert f"--assets-dir {ROOT / 'assets'}" not in rendered
-    assert f"--config-root {ROOT / 'target/config'}" not in rendered
+    assert f"--config-root {ROOT / 'cache/target/config'}" not in rendered
 
 
 def test_public_install_warns_then_only_dispatches_local_install() -> None:

@@ -20,6 +20,6 @@ def test_checked_in_source_profiles_do_not_carry_generated_pins() -> None:
 
     assert not offenders, (
         "source profiles must not carry generated hash/size pins; "
-        "materialize pins into target/config with capsem-admin: "
+        "materialize pins into cache/target/config with capsem-admin: "
         + ", ".join(offenders)
     )

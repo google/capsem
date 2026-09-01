@@ -1,7 +1,7 @@
 """The package rail builds one architecture, and proves which package it built.
 
 The rail's sharpest rule is that it publishes the package *this run* produced.
-`target/packages/` accumulates, so globbing it would let a package built from a
+`cache/target/packages/` accumulates, so globbing it would let a package built from a
 different commit be proved, installed, and shipped -- which is why the builder
 writes the basename it created and this reads it back rather than looking around.
 """
@@ -21,6 +21,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.objects import object_path
+from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import crosscompile
 from capsem_builder.gate.content import ProfileContent
@@ -62,6 +66,9 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
     )
     for name in CONFIG.package.builder.identity_inputs:
         destination = tmp_path / name
@@ -278,7 +285,7 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
-    isolated = root / "target" / "ironbank-assets" / "code"
+    isolated = root / "cache" / "target" / "ironbank-assets" / "code"
     content = ProfileContent.isolated(config, isolated)
     content.assets.mkdir(parents=True)
     content.config.mkdir(parents=True)
@@ -313,9 +320,9 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
 
     create = runner.matching(r"docker create")[0]
     assert f"{content.assets}:/src/{CONFIG.outputs.assets}:ro" in create
-    assert f"{content.config}:/src/target/config:ro" in create
+    assert f"{content.config}:/src/cache/target/config:ro" in create
     assert f"{canonical_assets}:/src/{CONFIG.outputs.assets}" not in create
-    assert f"{root / 'target' / 'config'}:/src/target/config" not in create
+    assert f"{root / 'target' / 'config'}:/src/cache/target/config" not in create
     assert canonical_assets.lstat().st_ino == selector_inode
     assert canonical_assets.readlink() == selector_target
     assert sentinel.read_bytes() == b"canonical config must survive"
@@ -1275,7 +1282,7 @@ def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None
         graph=False,
         timing=False,
         arch=TARGET.name,
-        content_root="target/package-content",
+        content_root="cache/target/package-content",
         defer_proof=True,
     )
     plan = GateCommand.registry["cross-compile"](RecordingRunner(PROJECT_ROOT), args)._describe()
@@ -1317,13 +1324,20 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
-    # A package from an earlier build of a different commit, still in target/packages/.
+    # A package from an earlier build of a different commit, still in cache/target/packages/.
     packages = root / PACKAGE_ROOT
     packages.mkdir(parents=True)
     (packages / "Capsem_0.0.1_arm64.deb").write_text("stale")
     runner = Building(root, replies={"select-linux": "skip"})
 
-    assert _run_lane(_rail(runner)) == packages / PACKAGE
+    package = _run_lane(_rail(runner))
+
+    assert package == packages / PACKAGE
+    receipt = ViewReceipt.model_validate_json(
+        package.with_name(f"{package.name}.object.json").read_text(encoding="utf-8")
+    )
+    paths = CachePaths(repository_root=root, policy=load_policy(root))
+    assert package.stat().st_ino == object_path(paths, receipt.object).stat().st_ino
 
 
 def test_a_build_that_recorded_nothing_fails(
@@ -1341,7 +1355,7 @@ def test_a_build_that_recorded_nothing_fails(
     "recorded, reason",
     [
         ("capsem.tar.gz", "invalid Debian package record"),
-        ("../outside/capsem.deb", "escaped target/packages/"),
+        ("../outside/capsem.deb", "escaped cache/target/packages/"),
     ],
 )
 def test_a_nonsense_package_record_is_refused(

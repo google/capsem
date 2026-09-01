@@ -689,7 +689,7 @@ impl UdsClient {
         // Direct-spawning when a unit exists would create an unmanaged duplicate.
         // Isolation-mode guard skips this path: when CAPSEM_HOME is set the
         // caller runs against a non-default layout (e.g. `just test` under
-        // target/test-home). The installed LaunchAgent / systemd unit was
+        // cache/target/test-home). The installed LaunchAgent / systemd unit was
         // registered against $HOME/.capsem, so kickstarting it would bind a
         // socket under the real home while this client polls the test home --
         // a guaranteed 5s timeout. Direct-spawn instead; the child inherits

@@ -1,5 +1,5 @@
 #!/bin/bash
-# sync-dev-assets.sh -- Mirror target/assets/ into ~/.capsem/assets/.
+# sync-dev-assets.sh -- Mirror cache/target/assets/ into ~/.capsem/assets/.
 #
 # Usage: sync-dev-assets.sh <src_assets_dir> <dst_assets_dir>
 #

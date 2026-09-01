@@ -147,7 +147,7 @@ def resolve_winterfell_artifact_roots(
     profiles_dir = configured_path("profiles_dir")
     source_roots = (
         (binary_dir, host_bin_root(environment).resolve(), "binary"),
-        (assets_dir, (PROJECT_ROOT / "target" / "assets").resolve(), "asset"),
+        (assets_dir, (PROJECT_ROOT / "cache" / "target" / "assets").resolve(), "asset"),
         (profiles_dir, PROFILES_DIR.resolve(), "profile"),
     )
     for selected, source, family in source_roots:
@@ -250,7 +250,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
 
     Checked-in profiles are source contracts and intentionally do not contain
     asset hashes. VM-booting tests must use the materialized profiles generated
-    under target/config/profiles, matching the service/runtime rail.
+    under cache/target/config/profiles, matching the service/runtime rail.
     """
     profiles_dir = tmp_dir / "config" / "profiles"
     if profiles_dir.exists():
@@ -277,7 +277,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
 def preserve_tmp_dir_on_failure(
     tmp_dir, *, force: bool = False, any_worker_failure: bool = False
 ):
-    """Copy tmp_dir to target/test-artifacts/ when this worker saw any failure.
+    """Copy tmp_dir to cache/target/test-artifacts/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
     tmp dir, so service.log, sessions/<vm>/process.log, sessions/<vm>/serial.log,
@@ -297,7 +297,7 @@ def preserve_tmp_dir_on_failure(
     concurrently during teardown. A per-file try/except isolates those
     transient errors so one flaky file doesn't vanish the entire subtree.
 
-    Also rotates `target/test-artifacts/` after each preserve, keeping only the
+    Also rotates `cache/target/test-artifacts/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:

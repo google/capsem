@@ -1,13 +1,13 @@
 """A plan is built from source, not from whatever the last run left behind.
 
 `module_functional` asked `profiles.selected(config)` for its axis while the
-plan was being *constructed*, and that reads `target/config/profiles` -- build
+plan was being *constructed*, and that reads `cache/target/config/profiles` -- build
 output. So the same commit produced one plan on a warm tree and a different
 one on a cold checkout.
 
 That is not a theoretical hazard. `just release-profile nightly code` passed a
 57-minute gate locally, pushed, dispatched, and CI failed with 94 tests all
-reporting `no materialized profiles found under target/config/profiles`. The
+reporting `no materialized profiles found under cache/target/config/profiles`. The
 local run had been green partly on leftovers, and `source.record` /
 `source.verify` could not have caught it: they digest tracked source, and this
 input is not tracked source.
@@ -148,7 +148,7 @@ def test_the_release_plan_is_byte_identical_without_build_output(name: str, tmp_
     A release lane that merely plans on a cold tree could still plan something
     different -- fewer profiles, a skipped lane -- and publish on the strength
     of a proof that never ran. Verified once by cloning to a directory with no
-    `target/` and diffing the dry run (zero lines); asserted here so it stays
+    `cache/target/` and diffing the dry run (zero lines); asserted here so it stays
     true without a clone.
     """
     from helpers.gate import RecordingRunner

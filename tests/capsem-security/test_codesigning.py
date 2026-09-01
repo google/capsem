@@ -14,7 +14,7 @@ pytestmark = pytest.mark.security
 @pytest.fixture
 def signed_process():
     """Path to capsem-process if it exists and is signed."""
-    binary = PROJECT_ROOT / "target/debug/capsem-process"
+    binary = PROJECT_ROOT / "cache/target/cargo/debug/capsem-process"
     if not binary.exists():
         pytest.skip("capsem-process not built")
     return binary

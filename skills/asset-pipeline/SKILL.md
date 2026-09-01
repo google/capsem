@@ -59,20 +59,20 @@ rerun the failing recipe.
 |------|-------|
 | Profile source config | `config/profiles/<id>/` |
 | Guest artifacts | `guest/artifacts/` |
-| Built assets (dev) | `target/assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
+| Built assets (dev) | `cache/target/assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
-| Manifest | `target/assets/manifest.json` |
-| Asset channel deploy root | `target/distribution/` |
-| Asset channel manifest | `target/distribution/assets/<channel>/manifest.json` |
-| Asset channel human site | `build_system/release_site/` Astro app, built from `target/distribution/` JSON |
-| Checksums | `target/assets/B3SUMS` |
+| Manifest | `cache/target/assets/manifest.json` |
+| Asset channel deploy root | `cache/target/distribution/` |
+| Asset channel manifest | `cache/target/distribution/assets/<channel>/manifest.json` |
+| Asset channel human site | `build_system/release_site/` Astro app, built from `cache/target/distribution/` JSON |
+| Checksums | `cache/target/assets/B3SUMS` |
 | Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
 | Hash extraction for build.rs | `crates/capsem-core/src/manifest_compat.rs` |
 
 ## Boot-Time Resolution
 
-1. **Dev mode**: Service detects arch subdirs, passes `--kernel target/assets/{arch}/vmlinuz` etc. to capsem-process
+1. **Dev mode**: Service detects arch subdirs, passes `--kernel cache/target/assets/{arch}/vmlinuz` etc. to capsem-process
 2. **Installed mode**: Service reads v2 manifest, resolves `ManifestV2::resolve(binary_version, arch, base_dir)` to get hash-based file paths, passes `--kernel`, `--initrd`, `--rootfs` individually to capsem-process
 3. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 against compile-time hashes if available
 

@@ -99,7 +99,7 @@ def copy_tree(source: Path, target: Path) -> None:
     The write-through defect cannot happen here -- the target is removed first,
     so there is no destination link left to write through -- but *dereferencing
     the source* is its own hazard: it silently turns a link into a full copy.
-    `target/assets/current` is a relative selector into a multi-gigabyte architecture,
+    `cache/target/assets/current` is a relative selector into a multi-gigabyte architecture,
     and materializing it copies the whole thing for no new bytes.
 
     This was a `symlinks=` argument defaulting to `False`, which every informed
@@ -123,7 +123,7 @@ def merge_tree(source: Path, target: Path) -> None:
     destination entry of that name is itself a symlink, the write goes through
     it into whatever it points at.
 
-    Both halves were live in the prefix export. `target/gate-runs/latest`
+    Both halves were live in the prefix export. `cache/target/gate-runs/latest`
     points at the newest run, on the host and inside the private tree alike, so
     exporting a run read the private tree's `latest` as a directory of files
     and wrote them through the host's `latest` into an unrelated older run,

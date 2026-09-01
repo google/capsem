@@ -46,6 +46,7 @@ APPROVED_ROOT_FILES = frozenset(
     {
         ".dockerignore",
         ".gitignore",
+        ".npmrc",
         "AGENTS.md",
         "CHANGELOG.md",
         "CITATION.cff",
@@ -65,6 +66,7 @@ APPROVED_ROOT_FILES = frozenset(
         "justfile",
         "rust-toolchain.toml",
         "rustfmt.toml",
+        "uv.toml",
     }
 )
 

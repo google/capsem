@@ -50,7 +50,7 @@ hypervisor, security-engine, and host network runtime in `capsem-core`.
 | `build_system/builder/` | Python builder and gate package | `/build-images`, `/dev-gate` |
 | `build_system/scripts/` | Thin functional command boundaries | `/dev-gate`, `/release-process` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
-| `target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
+| `cache/target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `web/graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |

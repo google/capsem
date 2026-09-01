@@ -61,12 +61,12 @@ alone does not mint a new asset version; only BLAKE3/size identity changes do.
 
 ## Disk Layouts
 
-**Dev** (repo `target/assets/` dir -- logical names, per-arch subdirs):
+**Dev** (repo `cache/target/assets/` dir -- logical names, per-arch subdirs):
 ```
-target/assets/arm64/vmlinuz
-target/assets/arm64/initrd.img
-target/assets/arm64/rootfs.erofs
-target/assets/manifest.json
+cache/target/assets/arm64/vmlinuz
+cache/target/assets/arm64/initrd.img
+cache/target/assets/arm64/rootfs.erofs
+cache/target/assets/manifest.json
 ```
 
 **Installed** (`~/.capsem/assets/` -- flat, hash-based filenames):
@@ -78,7 +78,7 @@ initrd-e5e910e9ab38b873.img
 rootfs-89eb92b83534d9d0.erofs
 ```
 
-Native packages do not carry the repository's `target/assets/manifest.json`. They carry
+Native packages do not carry the repository's `cache/target/assets/manifest.json`. They carry
 `manifest-metadata.json` with the selected channel or corp manifest URL, and
 postinstall runs `capsem update --assets --manifest <URL>` to write the live
 installed manifest plus any missing profile image assets.

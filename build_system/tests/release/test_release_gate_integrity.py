@@ -189,7 +189,7 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     assert "environment.benchmark_root" in _read("build_system/builder/gate/workspace.py") or (
         "names.benchmark_root" in _read("build_system/builder/gate/workspace.py")
     )
-    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    assert config.workspace.benchmark_root == "cache/target/test-benchmarks"
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
@@ -235,7 +235,7 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     labels = list(_gate_plan().labels)
     workspace = (root / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
 
-    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    assert config.workspace.benchmark_root == "cache/target/test-benchmarks"
     # The workspace deliberately does not clear it on acquire: one gate runs
     # several modules through one workspace.
     assert "Deliberately not the benchmark root" in workspace

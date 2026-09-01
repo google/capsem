@@ -38,7 +38,11 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")
     (tmp_path / "config").mkdir()
     gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
-        gate.replace('parent = "~/.cg"', f'parent = "{tmp_path / "prefixes"}"')
+        gate.replace('parent = "cache/worktrees"', f'parent = "{tmp_path / "prefixes"}"')
+    )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
     )
     for name in profiles:
         directory = tmp_path / "config" / "profiles" / name

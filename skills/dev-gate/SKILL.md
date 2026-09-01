@@ -239,7 +239,7 @@ repoint `latest` at the question.
 
 ## The private copy is cloned, not copied
 
-Commands with `private_checkout` work from a copy under `~/.cg/<hash>`. The
+Commands with `private_checkout` work from a copy under `cache/worktrees/<hash>`. The
 working tree is copied; the *repository* is cloned with `git clone --local
 --no-checkout`, then `read-tree HEAD` fills the index.
 
@@ -290,7 +290,7 @@ Three rules when adding a step:
 
 `keep_runs` is twenty, so every longitudinal question -- is this getting
 slower, does that keep failing, did the change help -- used to be answerable
-only across whatever rotation had not reached. `target/gate-runs/ledger.jsonl`
+only across whatever rotation had not reached. `cache/target/gate-runs/ledger.jsonl`
 keeps one distilled row per finished run instead: identity, plan-shape digest,
 and each step's duration and status. A couple of kilobytes, kept for months.
 
@@ -347,7 +347,7 @@ a HEAD change on a tree nobody had touched.
 
 The same rule applies to any contract that builds a plan from the real config
 and runs it: pass `observing=True`. `tests/conftest.py` fails the test that
-rewrites `target/gate-source-state.json`, so the next one to forget finds out
+rewrites `cache/target/gate-source-state.json`, so the next one to forget finds out
 in seconds rather than at `source.verify`.
 
 | | |

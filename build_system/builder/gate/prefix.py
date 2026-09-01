@@ -31,7 +31,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import buildcache, cargotarget, snapshot
+from . import buildcache, cachetooling, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .prefixlease import lease, parent_dir, reclaim_orphan_leases
@@ -40,7 +40,7 @@ from .sourcecommit import SourceCommit, require_detached_checkout
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
-#: and 186 MB, against 84s and 164 GB for a copy that also took `target/`.
+#: and 186 MB, against 84s and 164 GB for a copy that also took `cache/target/`.
 #:
 #: It also has to be copy-on-write rather than a hardlink. A hardlinked copy
 #: satisfies every other property here and still lets an outside edit reach
@@ -73,7 +73,7 @@ def socket_root(config: GateConfig) -> Path:
     into a prefix cannot lengthen a socket path by even one byte. That is the
     property worth holding, and it is not obvious: the workspace run dir is
     relative to the root and would grow with it, and at
-    `<root>/target/test-home/.capsem/run` it is already past `SUN_LEN` once
+    `<root>/cache/target/test-home/.capsem/run` it is already past `SUN_LEN` once
     the gateway's 54-byte suffix is added. The asset lane exists at
     `/tmp/capsem-a.XXXXXX` precisely so that number is never the binding one.
     """
@@ -192,13 +192,23 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"reclaimed stale prefix {stale}")
         for orphan in reclaim_orphan_leases(config):
             runner.note(f"reclaimed orphan lease {orphan.name}")
-        # Reported every run, not only when it fires. A cap nobody sees the
-        # approach to is a cold build that arrives without warning.
-        held = cargotarget.bound(config)
+        # Reported every run. Crossing the advisory threshold must never turn
+        # a public qualification cold; only the explicit `--clean-build` path
+        # may discard compiler output.
+        held = cargotarget.measure(config)
         runner.note(
             f"shared build directory {held.gb:.1f} GB "
-            f"of {config.prefix.cargo_target_max_gb:.0f} GB"
-            + (" -- over cap, discarded; this run compiles from nothing" if held.discarded else "")
+            f"(advisory threshold {config.prefix.cargo_target_warning_gb:.0f} GB)"
+            + (
+                " -- above threshold, retained for warm reuse"
+                if held.gb > config.prefix.cargo_target_warning_gb
+                else ""
+            )
+        )
+        cachetooling.record_cargo(
+            config,
+            key=str(commit or "working-tree"),
+            logical_bytes=int(held.gb * 1024**3),
         )
     retained_commit = commit is not None and path.exists()
     if reuse is not None and commit is not None:
@@ -213,7 +223,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     elif reuse is not None:
         # Refreshed, not rebuilt. The source has to become what the checkout
         # says now -- that is the point of resuming after a fix -- while
-        # `target/` and everything else the last run built stays put, which is
+        # `cache/target/` and everything else the last run built stays put, which is
         # what makes the next attempt cheap.
         snapshot.refresh(config.root, path, config)
     elif commit is not None:
@@ -234,6 +244,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.cargo_target: str(cargotarget.path(config)),
+        **cachetooling.environment(config, key=str(commit or path.name)),
     }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
@@ -277,7 +288,7 @@ def reclaim(config: GateConfig, path: Path) -> None:
     # back here rather than at the three call sites that would each have to
     # remember. A failed or explicitly reused prefix has not left: moving its
     # selected asset tree into the shared cache strips the exact profile path
-    # that its continuation consumes. Deleting 42 GiB of `target/` was the
+    # that its continuation consumes. Deleting 42 GiB of `cache/target/` was the
     # whole reason a new commit qualified cold; see `buildcache`.
     buildcache.salvage(config, resolved)
     shutil.rmtree(resolved, ignore_errors=True)

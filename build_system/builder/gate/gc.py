@@ -135,7 +135,7 @@ def _measure(config) -> str:
 
 def _trees(context: Context) -> None:
     # Not the run log: this step writes into it. `gc` reclaims
-    # `target/gate-runs` and records there, which were compatible only while
+    # `cache/target/gate-runs` and records there, which were compatible only while
     # `gc` recorded nothing -- and a reclaim that deletes whole trees is
     # exactly the operation whose evidence is worth keeping. Retention bounds
     # the run history; the blunt reclaimer has no business in it while a run

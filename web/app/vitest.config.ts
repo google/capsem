@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     coverage: {
-      reportsDirectory: '../../target/coverage/web-app',
+      reportsDirectory: '../../cache/target/coverage/web-app',
     },
     include: ['src/lib/__tests__/**/*.test.ts', 'src/lib/models/__tests__/**/*.test.ts'],
   },

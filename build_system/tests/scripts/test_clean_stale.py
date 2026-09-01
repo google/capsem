@@ -151,23 +151,23 @@ def test_perf_many_orphan_sockets(short_sock_dir: Path):
 
 
 def test_stale_rootfs_dir_removed(tmp_path: Path):
-    debug = tmp_path / "target" / "debug"
+    debug = tmp_path / "cache" / "target" / "cargo" / "debug"
     debug.mkdir(parents=True)
     rootfs = debug / "rootfs.abc123"
     rootfs.mkdir()
     (rootfs / "marker").write_text("x")
 
-    release = tmp_path / "target" / "release"
+    release = tmp_path / "cache" / "target" / "cargo" / "release"
     release.mkdir(parents=True)
     rootfs_rel = release / "rootfs.xyz"
     rootfs_rel.mkdir()
 
-    llvm_debug = tmp_path / "target" / "llvm-cov-target" / "debug"
+    llvm_debug = tmp_path / "cache" / "target" / "llvm-cov-target" / "debug"
     llvm_debug.mkdir(parents=True)
     rootfs_llvm = llvm_debug / "rootfs.q"
     rootfs_llvm.mkdir()
 
-    up_dir = tmp_path / "target" / "debug" / "something" / "_up_"
+    up_dir = tmp_path / "cache" / "target" / "cargo" / "debug" / "something" / "_up_"
     up_dir.mkdir(parents=True)
     (up_dir / "marker").write_text("y")
 
@@ -184,9 +184,9 @@ def test_live_rootfs_artifact_untouched(tmp_path: Path):
     """A file named rootfs.xyz that's a real build product (file) must be kept.
 
     Our matcher requires a directory named rootfs.*; a plain file should not
-    match. Also verify unrelated binaries in target/debug/ are untouched.
+    match. Also verify unrelated binaries in cache/target/cargo/debug/ are untouched.
     """
-    debug = tmp_path / "target" / "debug"
+    debug = tmp_path / "cache" / "target" / "cargo" / "debug"
     debug.mkdir(parents=True)
 
     # Real build artifact (not a dir, not under a matching parent pattern).
@@ -328,7 +328,7 @@ def test_tmp_fixture_non_matching_name_kept(tmp_path: Path):
 def test_cargo_prune_respects_threshold(tmp_path: Path):
     """Old deps files and old build/fingerprint/incremental dirs removed;
     recent ones kept. Use the moderate path (no release dir)."""
-    debug = tmp_path / "target" / "debug"
+    debug = tmp_path / "cache" / "target" / "cargo" / "debug"
     (debug / "deps").mkdir(parents=True)
     old_dep = debug / "deps" / "libold.rlib"
     new_dep = debug / "deps" / "libnew.rlib"
@@ -375,7 +375,7 @@ def test_cargo_budget_evicts_oldest_incremental_over_cap(
     """
     # Shrink the budget so a realistic fixture exceeds it without needing GBs.
     monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)  # ~10 KB
-    incremental = tmp_path / "target" / "debug" / "incremental"
+    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
     incremental.mkdir(parents=True)
     # Three session dirs, each 8 KB. Combined 24 KB > 10 KB budget.
     for idx, age_days in enumerate([5, 2, 0]):  # oldest ... newest
@@ -401,7 +401,7 @@ def test_cargo_budget_evicts_oldest_incremental_over_cap(
 def test_cargo_budget_no_op_when_under_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """With plenty of slack under the budget, the prune does nothing."""
     monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 1.0)  # 1 GB cap
-    incremental = tmp_path / "target" / "debug" / "incremental"
+    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
     incremental.mkdir(parents=True)
     sess = incremental / "fresh"
     sess.mkdir()
@@ -421,7 +421,7 @@ def test_cargo_budget_deps_only_counts_cargo_extensions(
     manage) must survive even if the dir exceeds budget overall.
     """
     monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "deps", 0.000_01)  # ~10 KB
-    deps = tmp_path / "target" / "debug" / "deps"
+    deps = tmp_path / "cache" / "target" / "cargo" / "debug" / "deps"
     deps.mkdir(parents=True)
 
     old_rlib = deps / "libcrate-aaa.rlib"
@@ -449,7 +449,7 @@ def test_cargo_budget_evicts_oldest_linked_test_binaries(
 ):
     """Bound linked tests separately while retaining the newest focused cache."""
     monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "linked", 0.000_01)
-    deps = tmp_path / "target" / "debug" / "deps"
+    deps = tmp_path / "cache" / "target" / "cargo" / "debug" / "deps"
     deps.mkdir(parents=True)
 
     old_binary = deps / "test_old-aaa111"
@@ -474,7 +474,7 @@ def test_target_transient_cleanup_removes_only_old_reproducible_outputs(
 ):
     """Old proof/debug staging is disposable; canonical asset caches are not."""
     monkeypatch.setattr(clean_stale, "TARGET_TRANSIENT_MAX_AGE_S", 60)
-    target = tmp_path / "target"
+    target = tmp_path / "cache" / "target"
     target.mkdir()
     old_time = time.time() - 3600
 
@@ -513,7 +513,7 @@ def test_target_tmp_cleanup_removes_old_scratch_but_preserves_fresh_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(clean_stale, "TARGET_TRANSIENT_MAX_AGE_S", 60)
-    scratch = tmp_path / "target" / "tmp"
+    scratch = tmp_path / "cache" / "target" / "tmp"
     scratch.mkdir(parents=True)
     old = scratch / "obom-debug-rootfs"
     old.mkdir()
@@ -531,9 +531,9 @@ def test_target_tmp_cleanup_removes_old_scratch_but_preserves_fresh_work(
 
 
 def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
-    """When target/release has old content, aggressive mode is used and target/doc
+    """When cache/target/release has old content, aggressive mode is used and cache/target/doc
     is dropped if nothing recent lives inside it."""
-    release = tmp_path / "target" / "release"
+    release = tmp_path / "cache" / "target" / "cargo" / "release"
     release.mkdir(parents=True)
     old_bin = release / "capsem"
     old_bin.write_text("x")
@@ -542,7 +542,7 @@ def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
     # Ensure release/ mtime itself is old so the heuristic triggers.
     os.utime(release, (old_time, old_time))
 
-    doc = tmp_path / "target" / "doc"
+    doc = tmp_path / "cache" / "target" / "doc"
     doc.mkdir(parents=True)
     (doc / "page.html").write_text("x")
     os.utime(doc / "page.html", (old_time, old_time))
@@ -555,7 +555,7 @@ def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
 
 
 def test_dry_run_removes_nothing(tmp_path: Path, short_sock_dir: Path):
-    debug = tmp_path / "target" / "debug"
+    debug = tmp_path / "cache" / "target" / "cargo" / "debug"
     debug.mkdir(parents=True)
     rootfs = debug / "rootfs.abc"
     rootfs.mkdir()
@@ -589,7 +589,7 @@ def test_sockets_dir_missing(tmp_path: Path):
 
 
 def test_target_missing(tmp_path: Path):
-    """Missing target/ dir is not an error for either stage."""
+    """Missing cache/target/ dir is not an error for either stage."""
     ra = clean_stale.clean_rootfs_scratch(tmp_path, dry_run=False, verbose=False)
     rd = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
     assert ra.removed == 0
@@ -600,7 +600,7 @@ def test_cargo_cleanup_reports_real_before_after_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)
-    incremental = tmp_path / "target" / "debug" / "incremental"
+    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
     old = incremental / "old"
     new = incremental / "new"
     old.mkdir(parents=True)

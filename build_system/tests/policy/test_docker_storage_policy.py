@@ -446,7 +446,7 @@ def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup(
 
 def test_failure_capture_has_a_side_effect_free_offline_mode(tmp_path: Path) -> None:
     policy_text = POLICY_PATH.read_text().replace(
-        'root = "target/test-artifacts"', f'root = "{tmp_path.as_posix()}"'
+        'root = "cache/target/test-artifacts"', f'root = "{tmp_path.as_posix()}"'
     )
     policy_path = tmp_path / "policy.toml"
     policy_path.write_text(policy_text)
@@ -522,7 +522,7 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
     policy_script.write_bytes(POLICY_IMPLEMENTATION.read_bytes())
 
     policy_text = POLICY_PATH.read_text().replace(
-        'root = "target/test-artifacts"', f'root = "{tmp_path.as_posix()}"'
+        'root = "cache/target/test-artifacts"', f'root = "{tmp_path.as_posix()}"'
     )
     policy_path = tmp_path / "policy.toml"
     policy_path.write_text(policy_text)

@@ -25,9 +25,9 @@ def build_step(config: GateConfig, *, label: str = "build-binaries"):
     """Build the binaries `sign_step` is about to sign.
 
     They had no producer. Signing has always been `codesign ... --force
-    target/debug/capsem` against whatever an earlier `just build` left in the
+    cache/target/cargo/debug/capsem` against whatever an earlier `just build` left in the
     tree, which works on a machine that has built before and fails with
-    `target/debug/capsem: No such file or directory` on one that has not --
+    `cache/target/cargo/debug/capsem: No such file or directory` on one that has not --
     including, now, every run that gets a checkout of its own.
 
     The bin names come off `[signing] binaries` rather than a second list, so
@@ -134,7 +134,7 @@ def _artifacts(config: GateConfig) -> list[str]:
     """Every publishable host package for the current version.
 
     Exactly two `.deb`s, one per architecture. Fewer means a build did not
-    happen; more means an older version is still in `target/packages/` and the
+    happen; more means an older version is still in `cache/target/packages/` and the
     SBOM would describe a cohort nobody is shipping.
     """
     from .versions import workspace_version

@@ -1,5 +1,5 @@
 # cargo-fuzz build outputs (libFuzzer-instrumented binaries)
-target/
+cache/target/
 # Crash dumps -- regenerate locally; check in only the minimized
 # reproducer when triaging.
 artifacts/

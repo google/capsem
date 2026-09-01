@@ -27,7 +27,7 @@ allowlist update in the same change.
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
 | `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: `assets`, `binaries`, `benchmark`, `functional`, `install`, `release-system`, or affected `rust`. `release-system` is source-only; `rust` derives changed crates and reverse dependents from Cargo manifests. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
-| `just test [source-commit]` | Reusable complete local verification; optional before release. |
+| `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Optional before release. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
 

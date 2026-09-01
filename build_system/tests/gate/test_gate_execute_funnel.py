@@ -88,7 +88,7 @@ class _Probe(GateCommand, name="funnel-probe", help="a command a test builds"):
 
 @pytest.fixture
 def journal(monkeypatch) -> RecordingJournal:
-    """A run log that keeps events in memory instead of under `target/`."""
+    """A run log that keeps events in memory instead of under `cache/target/`."""
     recording = RecordingJournal()
 
     @classmethod

@@ -25,8 +25,8 @@ fn image_build_workspaces_are_isolated_by_profile_and_architecture() {
     let x86_64 = image_build_workspace_path(&profile, Some("x86_64"));
 
     assert_ne!(arm64, x86_64);
-    assert_eq!(arm64, PathBuf::from("target/image-workspace/code/arm64"));
-    assert_eq!(x86_64, PathBuf::from("target/image-workspace/code/x86_64"));
+    assert_eq!(arm64, PathBuf::from("cache/target/image-workspace/code/arm64"));
+    assert_eq!(x86_64, PathBuf::from("cache/target/image-workspace/code/x86_64"));
 }
 
 #[test]
@@ -361,7 +361,7 @@ fn profile_materialize_writes_generated_config_from_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let source_profile = repo_root.join("config/profiles/code/profile.toml");
     let original_source = fs::read_to_string(&source_profile).expect("read source profile");
 
@@ -437,7 +437,7 @@ fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_json = fs::read_to_string(&manifest_path).expect("manifest");
     let manifest_url = serve_manifest_once(manifest_json);
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
 
     materialize_profile_config(&ProfileMaterializeArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
@@ -481,7 +481,7 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let local_obom = temp.path().join("resolved-obom.cdx.json");
     fs::write(&local_obom, test_obom_json()).expect("write resolved OBOM");
     let local_obom_url = file_url(&local_obom);
@@ -643,7 +643,7 @@ fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let config_root = repo_root.join("config");
 
     materialize_profile_config(&ProfileMaterializeArgs {
@@ -709,7 +709,7 @@ fn profile_materialize_rejects_arch_missing_from_manifest() {
         config_root: repo_root.join("config"),
         manifest: file_url(&manifest_path),
         assets_dir: temp.path().join("assets"),
-        output_root: temp.path().join("target/config"),
+        output_root: temp.path().join("cache/target/config"),
         arch: Some("x86_64".to_string()),
         clean: true,
         json: false,
@@ -734,7 +734,7 @@ fn profile_materialize_manifest_source_must_be_url() {
         config_root: repo_root.join("config"),
         manifest: manifest_path.display().to_string(),
         assets_dir: temp.path().join("assets"),
-        output_root: temp.path().join("target/config"),
+        output_root: temp.path().join("cache/target/config"),
         arch: Some("arm64".to_string()),
         clean: true,
         json: false,

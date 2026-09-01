@@ -39,7 +39,7 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     //
     // Scope the match to this binary's install dir so `capsem uninstall`
     // from ~/.capsem/bin never touches unrelated capsem-* processes running
-    // from other locations (for example dev services under target/debug/, or
+    // from other locations (for example dev services under cache/target/cargo/debug/, or
     // parallel pytest workers). Users uninstalling the installation should
     // only affect the installation -- `-x <name>` matches too broadly.
     let install_dir = std::env::current_exe()

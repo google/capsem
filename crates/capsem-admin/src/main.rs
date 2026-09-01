@@ -191,7 +191,7 @@ struct ProfileMaterializeArgs {
     #[arg(long, default_value = "assets")]
     assets_dir: PathBuf,
     /// Generated runtime config output root.
-    #[arg(long, default_value = "target/config")]
+    #[arg(long, default_value = "cache/target/config")]
     output_root: PathBuf,
     /// Restrict materialization to one architecture.
     #[arg(long)]
@@ -390,7 +390,7 @@ struct AssetsChannelBuildArgs {
     #[arg(long, default_value = "1.0.0")]
     manifest_version: String,
     /// Static output directory for Cloudflare Pages.
-    #[arg(long, default_value = "target/distribution")]
+    #[arg(long, default_value = "cache/target/distribution")]
     out_dir: PathBuf,
     /// Channel generation timestamp. Defaults to current UTC time.
     #[arg(long)]
@@ -403,7 +403,7 @@ struct AssetsChannelBuildArgs {
 #[derive(Debug, Parser)]
 struct AssetsChannelCheckArgs {
     /// Static output directory to validate.
-    #[arg(long, default_value = "target/distribution")]
+    #[arg(long, default_value = "cache/target/distribution")]
     dist: PathBuf,
     /// Channel name expected under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]

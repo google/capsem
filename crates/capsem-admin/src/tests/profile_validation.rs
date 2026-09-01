@@ -41,9 +41,9 @@ fn cli_accepts_materialized_profile_validation() {
         "capsem-admin",
         "profile",
         "validate",
-        "target/config/profiles/co-work/profile.toml",
+        "cache/target/config/profiles/co-work/profile.toml",
         "--config-root",
-        "target/config",
+        "cache/target/config",
         "--materialized",
     ]);
     match cli.command {

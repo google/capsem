@@ -86,7 +86,7 @@ class TestServiceInstall:
         assert install.returncode == 0, f"install failed: {install.stderr}"
 
         # Kill the installed service only -- matching the binary path keeps
-        # this from stomping on parallel test workers running target/debug
+        # this from stomping on parallel test workers running cache/target/cargo/debug
         # binaries.
         subprocess.run(
             ["pkill", "-f", f"{INSTALL_DIR}/capsem-service"],

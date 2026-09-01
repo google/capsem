@@ -49,7 +49,7 @@ environment edge when `builder/gate/` lands; do not add a compatibility package.
 ## Coverage
 
 - Floor: 85% enforced by `--cov-fail-under=85` in `just test`
-- Report: `target/coverage/python/codecov.xml` (XML for CI upload)
+- Report: `cache/target/coverage/python/codecov.xml` (XML for CI upload)
 - `codecov.yml`: builder component includes `build_system/builder/**`
 - Current image package: 91.12% (551 tests, measured during the repository move)
 

@@ -1037,6 +1037,72 @@ fn cull_ignores_non_failed_dirs() {
     assert!(sessions.join("vm-alive").exists(), "active VM dir must not be culled");
 }
 
+#[test]
+fn session_delete_retries_a_late_linux_directory_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("session.db"), b"ledger").unwrap();
+    let mut attempts = 0;
+    let mut waits = 0;
+    remove_quiesced_session_dir_with(
+        &session_dir,
+        |path| {
+            attempts += 1;
+            if attempts == 1 {
+                return Err(std::io::ErrorKind::DirectoryNotEmpty.into());
+            }
+            std::fs::remove_dir_all(path)
+        },
+        || waits += 1,
+    )
+    .unwrap();
+    assert_eq!(attempts, 2);
+    assert_eq!(waits, 1);
+    assert!(
+        !session_dir.exists(),
+        "a transient late writer must not make DELETE fail under host load"
+    );
+}
+
+#[test]
+fn session_delete_does_not_retry_an_unrelated_filesystem_error() {
+    let mut attempts = 0;
+    let mut waits = 0;
+    let error = remove_quiesced_session_dir_with(
+        StdPath::new("unused"),
+        |_| {
+            attempts += 1;
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        },
+        || waits += 1,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(attempts, 1);
+    assert_eq!(waits, 0);
+}
+
+#[test]
+fn session_delete_bounds_a_persistent_directory_not_empty_error() {
+    let mut attempts = 0;
+    let mut waits = 0;
+    let error = remove_quiesced_session_dir_with(
+        StdPath::new("unused"),
+        |_| {
+            attempts += 1;
+            Err(std::io::ErrorKind::DirectoryNotEmpty.into())
+        },
+        || waits += 1,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::DirectoryNotEmpty);
+    assert_eq!(attempts, SESSION_DELETE_MAX_ATTEMPTS);
+    assert_eq!(waits, SESSION_DELETE_MAX_ATTEMPTS - 1);
+}
+
 #[tokio::test]
 async fn delete_route_destroys_retained_state_before_success() {
     let dir = tempfile::tempdir().unwrap();

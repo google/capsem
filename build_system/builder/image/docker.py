@@ -31,7 +31,7 @@ from ..policy.dockerpolicy import (
     require_container_network,
 )
 from ..release.obom import validate_exported_rootfs_obom
-from . import assetdependencies, guestbuilder
+from . import assetdependencies, componentcache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
 from .doctor import check_container_runtime
 from .guestbuilder import image_tag
@@ -468,7 +468,7 @@ def materialize_asset_dependencies(
         return require_asset_dependencies(runtime, config, arch_name, template)
 
     arch = config.build.architectures[arch_name]
-    build_tmp = repo_root / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "target" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)
     with tempfile.TemporaryDirectory(
@@ -747,7 +747,7 @@ def container_compile_agent(
 
     # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
-        f"cp target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
+        f"cp cache/target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
         for b in GUEST_BINARIES
     )
     rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
@@ -1211,7 +1211,7 @@ def generate_cyclonedx_obom(
     network_value = require_container_network(runtime_network)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_parent = repo_root / "target" / "tmp"
+    tmp_parent = repo_root / "cache" / "target" / "tmp"
     tmp_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
         rootfs_dir = Path(tmp) / "rootfs"
@@ -1736,8 +1736,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    # Create target/assets/current symlink pointing to the most recently built arch.
-    # Tauri bundle resources reference target/assets/current/ so they resolve on any platform.
+    # Create cache/target/assets/current symlink pointing to the most recently built arch.
+    # Tauri bundle resources reference cache/target/assets/current/ so they resolve on any platform.
     current_link = output_dir / "current"
     if arch_dirs:
         target = sorted(arch_dirs)[-1].name
@@ -1875,7 +1875,7 @@ def build_image(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "target" / "assets"
+        output_dir = repo_root / "cache" / "target" / "assets"
 
     arch = config.build.architectures[arch_name]
     runtime = detect_runtime()
@@ -1889,9 +1889,9 @@ def build_image(
     template_name = f"Dockerfile.{template}.j2"
     tag = f"capsem-{template}-{arch_name}"
 
-    # Use a temporary directory inside the project root's target/ folder.
+    # Use a temporary directory inside the project root's cache/target/ folder.
     # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
-    build_tmp = repo_root / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "target" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
@@ -1926,6 +1926,21 @@ def build_image(
                 runtime=runtime,
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
+            component_identity = componentcache.build_identity(build_inputs)
+            restored = componentcache.restore(
+                repo_root, "kernel", component_identity, arch_output
+            )
+            if restored is not None:
+                _append_build_ledger(
+                    arch_output,
+                    {
+                        "stage": "kernel.cache_hit",
+                        "input_digest": component_identity,
+                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                    },
+                )
+                print(f"  reused kernel component {component_identity}")
+                return
             docker_build(
                 runtime,
                 tag,
@@ -1943,6 +1958,13 @@ def build_image(
                 tag,
                 arch.docker_platform,
                 arch_output,
+            )
+            componentcache.store(
+                repo_root,
+                "kernel",
+                component_identity,
+                arch_output,
+                (vmlinuz.name, initrd.name),
             )
             remove_image(runtime, tag)
             _append_build_ledger(
@@ -1964,12 +1986,25 @@ def build_image(
         elif template == "rootfs":
             # Cross-compile agent binaries
             print(f"Cross-compiling guest binaries for {arch.rust_target}...")
-            binaries = cross_compile_agent(
-                config.build,
-                arch_name,
-                repo_root,
-                context_dir,
+            guest_identity = componentcache.input_digest(
+                {
+                    "arch": arch_name,
+                    "builder": image_tag(config.build, arch_name, repo_root),
+                    "source": componentcache.source_digest(
+                        repo_root, config.build.guest_rust_builder.source_roots
+                    ),
+                }
             )
+            cached_binaries = componentcache.restore(
+                repo_root, "guest-binaries", guest_identity, context_dir
+            )
+            if cached_binaries is None:
+                binaries = cross_compile_agent(config.build, arch_name, repo_root, context_dir)
+                componentcache.store(
+                    repo_root, "guest-binaries", guest_identity, context_dir, tuple(GUEST_BINARIES)
+                )
+            else:
+                binaries = list(cached_binaries)
             for b in binaries:
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 
@@ -1992,9 +2027,27 @@ def build_image(
                 runtime=runtime,
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
+            rootfs_config = _rootfs_config_input_record(config, arch_name)
+            component_identity = componentcache.build_identity(
+                build_inputs, extra=rootfs_config
+            )
+            restored = componentcache.restore(
+                repo_root, "rootfs", component_identity, arch_output
+            )
+            if restored is not None:
+                _append_build_ledger(
+                    arch_output,
+                    {
+                        "stage": "rootfs.cache_hit",
+                        "input_digest": component_identity,
+                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                    },
+                )
+                print(f"  reused rootfs component {component_identity}")
+                return
             _append_build_ledger(
                 arch_output,
-                _rootfs_config_input_record(config, arch_name),
+                rootfs_config,
             )
             docker_build(
                 runtime,
@@ -2116,6 +2169,22 @@ def build_image(
                         "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
                     },
                 )
+            componentcache.store(
+                repo_root,
+                "rootfs",
+                component_identity,
+                arch_output,
+                tuple(
+                    name
+                    for name in (
+                        "rootfs.erofs",
+                        SOFTWARE_INVENTORY_ASSET,
+                        OBOM_ASSET,
+                        "tool-versions.txt",
+                    )
+                    if (arch_output / name).is_file()
+                ),
+            )
             remove_image(runtime, tag)
 
             print(f"  rootfs.erofs:    {erofs_path}")
@@ -2132,7 +2201,7 @@ def build_all_architectures(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "target" / "assets"
+        output_dir = repo_root / "cache" / "target" / "assets"
 
     for arch_name in config.build.architectures:
         print(f"\n=== Building {template} for {arch_name} ===")

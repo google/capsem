@@ -60,12 +60,12 @@ web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 web/marketing/                     Marketing website (Astro + Svelte 5)
 web/docs/                     Documentation site (Astro Starlight)
 build_system/builder/      capsem-builder backend and gate implementation
-build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
+build_system/release_site/ Release channel site generator (Astro, writes cache/target/distribution/)
 build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
-target/assets/            Built VM assets (gitignored, per-arch: target/assets/{arch}/)
+cache/target/assets/            Built VM assets (gitignored, per-arch: cache/target/assets/{arch}/)
 web/graphics/             Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
 tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
@@ -76,7 +76,7 @@ tests/                    Cross-crate suites (ironbank/ black-box gates, citadel
 
 ## Read the Gate Digest First
 
-`target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
+`cache/target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
 the last run did, which steps keep failing, where the time goes, and what to do
 about it. Every gate run regenerates it; `uv run --project build_system --frozen capsem-gate runs digest`
 rebuilds it on demand and `uv run --project build_system --frozen capsem-gate runs trend --step <label>` follows
@@ -211,7 +211,9 @@ Agents use these entrypoints rather than dispatching release workflows or
 authoring manifests directly. Each release command is sufficient on its own:
 its hosted lane performs release qualification, so `just test` is not a
 prerequisite. `just test <source-commit>` is optional reusable complete local
-verification. Direct release commands and `just test` own their timeouts,
+verification. Low-impact repeats are refused before expensive work and routed
+to focused owners; `just test <source-commit> force "<reason>"` is the audited
+exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
 journal, teardown, and network boundary; do not wrap or nest them.
 
 Implementation-specific invariants belong beside their executable tests and in
@@ -291,7 +293,7 @@ Two more, which follow from the first:
   coordinate nothing between two `capsem-gate` processes.
 
 One gate runs per machine, enforced by `flock` rather than a pidfile, and every
-run is recorded under `target/gate-runs/` and bounded by `[disk]`. The run log
+run is recorded under `cache/target/gate-runs/` and bounded by `[disk]`. The run log
 is written by the runner rather than by call sites, so nothing can be forgotten
 into invisibility.
 
@@ -301,7 +303,7 @@ Read `/dev-gate` before changing any of it.
 
 - **glowup** = installed-package release proof owned by `just test`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- `just test` writes benchmark recordings under `cache/target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

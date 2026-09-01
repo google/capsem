@@ -10,7 +10,7 @@ nobody touched. `_pack-initrd` wrote `${INITRD}.tmp.$$` and moved it for
 exactly this reason -- a rule that lived in one recipe, in shell, with nothing
 enforcing it.
 
-`Symlink` exists because `target/assets/current` is repointed by whichever image
+`Symlink` exists because `cache/target/assets/current` is repointed by whichever image
 builder finished last. The host-architecture VM proof that follows has to aim
 it deliberately and then check where it landed, because a proof that ran
 against the other architecture's assets passes just as readily.
@@ -130,7 +130,7 @@ class Symlink(Action, name="symlink"):
 
     Refuses to replace a real directory. Removing a populated tree because a
     link was expected in its place is not a mistake anything recovers from,
-    and it is a plausible one: `target/assets/current` is a link, and the thing
+    and it is a plausible one: `cache/target/assets/current` is a link, and the thing
     beside it with the same shape is an architecture's whole asset tree.
     """
 

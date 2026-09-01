@@ -10,7 +10,7 @@ model-shaped traffic through the local mock server. This test validates
 that all of those events were captured.
 
 Usage:
-    python3 build_system/scripts/doctor/doctor_session_test.py              # uses target/debug/capsem
+    python3 build_system/scripts/doctor/doctor_session_test.py              # uses cache/target/cargo/debug/capsem
     python3 build_system/scripts/doctor/doctor_session_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this script is a black-box ledger validator. Do not weaken it
@@ -213,13 +213,13 @@ def main():
     )
     parser.add_argument(
         "--binary",
-        default="target/debug/capsem",
-        help="Path to the capsem binary (default: target/debug/capsem)",
+        default="cache/target/cargo/debug/capsem",
+        help="Path to the capsem binary (default: cache/target/cargo/debug/capsem)",
     )
     parser.add_argument(
         "--assets",
-        default="target/assets",
-        help="Path to VM assets directory (default: target/assets)",
+        default="cache/target/assets",
+        help="Path to VM assets directory (default: cache/target/assets)",
     )
     args = parser.parse_args()
 

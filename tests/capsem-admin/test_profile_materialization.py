@@ -15,7 +15,7 @@ from helpers.constants import ASSETS_DIR
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
+ADMIN = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-admin"
 SOURCE_PROFILE = PROJECT_ROOT / "config" / "profiles" / "code" / "profile.toml"
 SOURCE_PROFILE_DIR = SOURCE_PROFILE.parent
 
@@ -220,7 +220,7 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     _ensure_admin_binary()
     manifest_path = _write_publishable_manifest(tmp_path)
     profiles_dir = _write_local_url_profile_catalog(tmp_path)
-    dist = tmp_path / "target" / "release-channel"
+    dist = tmp_path / "cache" / "target" / "release-channel"
 
     result = subprocess.run(
         [

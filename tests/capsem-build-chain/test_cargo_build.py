@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def test_all_binaries_exist(built_binaries):
-    """All 4 daemon crate binaries exist in target/debug/."""
+    """All 4 daemon crate binaries exist in cache/target/cargo/debug/."""
     for name, path in built_binaries.items():
         assert path.exists(), f"{name} not found at {path}"
 

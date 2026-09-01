@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from tests.ironbank.test_route_health import (
-    HOT_ROUTE_MEASUREMENT_SAMPLES,
+    HOT_ROUTE_WINDOW_SAMPLES,
     RouteTiming,
     _assert_hot_route_budget,
     _assert_timing_budget,
@@ -66,7 +66,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
 
     timing = RouteTiming(
         label="service /profiles/list",
-        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        samples_ms=[1.0] * HOT_ROUTE_WINDOW_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.12"), before=Decimal("1.0")),
         gateway_cpu_s=None,
     )
@@ -84,7 +84,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
 def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
     timing = RouteTiming(
         label="service /profiles/list",
-        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        samples_ms=[1.0] * HOT_ROUTE_WINDOW_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.13"), before=Decimal("1.0")),
         gateway_cpu_s=None,
     )
@@ -107,7 +107,7 @@ def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
 def test_hot_route_budget_ignores_one_host_scheduler_outlier() -> None:
     timing = RouteTiming(
         label="service /profiles/code/mcp/servers/local/tools/list",
-        samples_ms=[0.2] * (HOT_ROUTE_MEASUREMENT_SAMPLES - 1) + [9.6],
+        samples_ms=[0.2] * (HOT_ROUTE_WINDOW_SAMPLES - 1) + [9.6],
         service_cpu_s=0.01,
         gateway_cpu_s=None,
     )
@@ -119,13 +119,15 @@ def test_hot_route_budget_rejects_a_sustained_tail_regression() -> None:
     outliers = 5
     timing = RouteTiming(
         label="service /profiles/code/mcp/servers/local/tools/list",
-        samples_ms=[0.2] * (HOT_ROUTE_MEASUREMENT_SAMPLES - outliers) + [9.6] * outliers,
+        samples_ms=[0.2] * (HOT_ROUTE_WINDOW_SAMPLES - outliers) + [9.6] * outliers,
         service_cpu_s=0.01,
         gateway_cpu_s=None,
     )
 
     try:
-        _assert_hot_route_budget(timing, path="/profiles/code/mcp/servers/local/tools/list")
+        _assert_hot_route_budget(
+            timing, path="/profiles/code/mcp/servers/local/tools/list"
+        )
     except AssertionError:
         return
 

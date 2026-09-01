@@ -7,12 +7,13 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import cachelayout
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 
 
 def parent_dir(config: GateConfig) -> Path:
-    return Path(config.prefix.parent).expanduser()
+    return cachelayout.shared_path(config, config.prefix.parent)
 
 
 @contextmanager

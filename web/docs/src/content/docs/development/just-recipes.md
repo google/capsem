@@ -29,13 +29,17 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just fast-test` | Incomplete source feedback from the canonical `_test-fast` module | No |
 | `just focus-test <group>` | Run one existing owner: `assets`, `binaries`, `benchmark`, `install`, `release-system`, or `functional`; `release-system` is source-only contract proof | Depends on group |
 | `just install` | Build the complete local macOS package and install that exact package for hands-on testing | No |
-| `just test [commit]` | Reusable complete local verification of every configured artifact and VM path | Yes |
+| `just test [commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason | Yes |
 
 Use `fast-test` once for cheap source feedback and the smallest `focus-test`
 group for a specific regression. Use `test` when complete local whole-system
 verification is useful; it reuses valid build products. It is optional before
 release. The hosted `release-profile` and `release-binaries` lanes each perform
 their own release qualification and do not consume the local test journal.
+Low-impact source is admitted to another complete run after ten commits. Before
+that threshold, the command refuses early and prints the exact `focus-test`
+groups. Unknown and high-impact changes remain eligible for complete proof, and
+two forced attempts can never be made consecutively.
 
 ## Policy Verification
 
@@ -106,8 +110,8 @@ _check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
 ```
 
 `_materialize-config` invokes `capsem-admin profile materialize`, which writes
-the current-build runtime profile under `target/config/` from checked-in
-`config/` source files and `target/assets/manifest.json`.
+the current-build runtime profile under `cache/target/config/` from checked-in
+`config/` source files and `cache/target/assets/manifest.json`.
 
 ## Session inspection
 

@@ -503,7 +503,7 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
 
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     assert "name: binary-channel-before" in workflow
-    assert "target/binary-channel/*/manifest.before.json" in workflow
+    assert "cache/target/binary-channel/*/manifest.before.json" in workflow
     assert (
         '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"'
         in workflow

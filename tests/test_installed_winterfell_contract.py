@@ -64,9 +64,9 @@ def test_default_winterfell_roots_preserve_the_development_suite() -> None:
     roots = service.resolve_winterfell_artifact_roots({})
 
     assert roots.installed is False
-    assert roots.binary_dir == PROJECT_ROOT / "target" / "debug"
-    assert roots.profiles_dir == PROJECT_ROOT / "target" / "config" / "profiles"
-    assert roots.assets_dir.parent == PROJECT_ROOT / "target" / "assets"
+    assert roots.binary_dir == PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
+    assert roots.profiles_dir == PROJECT_ROOT / "cache" / "target" / "config" / "profiles"
+    assert roots.assets_dir.parent == PROJECT_ROOT / "cache" / "target" / "assets"
 
 
 def test_development_winterfell_honours_the_functional_content_selector(
@@ -125,14 +125,14 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     ("bin_dir", "assets_dir", "profiles_dir"),
     [
         (
-            PROJECT_ROOT / "target" / "debug",
-            PROJECT_ROOT / "target" / "assets",
-            PROJECT_ROOT / "target" / "config" / "profiles",
+            PROJECT_ROOT / "cache" / "target" / "cargo" / "debug",
+            PROJECT_ROOT / "cache" / "target" / "assets",
+            PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
         ),
         (
-            PROJECT_ROOT / "target" / "debug",
-            PROJECT_ROOT / "target" / "assets" / "arm64",
-            PROJECT_ROOT / "target" / "config" / "profiles",
+            PROJECT_ROOT / "cache" / "target" / "cargo" / "debug",
+            PROJECT_ROOT / "cache" / "target" / "assets" / "arm64",
+            PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
         ),
     ],
 )
@@ -149,7 +149,7 @@ def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
     tmp_path: Path,
 ) -> None:
     bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
-    source_binary = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
+    source_binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-mcp"
     if not source_binary.is_file():
         pytest.skip("source MCP binary has not been built")
     (bin_dir / "capsem-mcp").unlink()

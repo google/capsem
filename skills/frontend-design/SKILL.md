@@ -16,7 +16,7 @@ description: Capsem frontend design system. Use when building UI components, sty
 
 `tauri::generate_context!()` bakes `web/app/dist/**` into the `capsem-app` binary at cargo compile time (via the `custom-protocol` feature). This means:
 
-- `pnpm run build` alone has **no effect** on a running `./target/**/capsem-app` -- the bundle is embedded in the binary.
+- `pnpm run build` alone has **no effect** on a running `./cache/target/**/capsem-app` -- the bundle is embedded in the binary.
 - After any `web/app/` change you intend to test in the desktop app, run `just build` (chains frontend build + `cargo build -p capsem-app`).
 - `just dev ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
 - The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-app`.

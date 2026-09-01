@@ -149,17 +149,44 @@ def test_benchmark_regression_policy_is_relative_and_config_owned() -> None:
         )
 
 
-def test_fork_duration_ratchet_uses_the_least_contended_sample() -> None:
-    """Shared-runner pauses must not turn a capable fork into a regression."""
-    current = {"fork": {"fork_ms": {"min": 100.0, "mean": 200.0}}}
-    baseline = {"fork": {"fork_ms": {"min": 90.0, "mean": 100.0}}}
+def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
+    """A shared-runner pause must not turn a capable operation into a regression."""
+    current = {
+        "operations": {
+            name: {"min": 100.0, "mean": 200.0}
+            for name in ("provision_ms", "exec_ready_ms", "exec_ms", "delete_ms")
+        },
+        "fork": {
+            name: {"min": 100.0, "mean": 200.0}
+            for name in ("fork_ms", "boot_provision_ms", "boot_ready_ms")
+        }
+    }
+    baseline = {
+        "operations": {
+            name: {"min": 90.0, "mean": 100.0}
+            for name in ("provision_ms", "exec_ready_ms", "exec_ms", "delete_ms")
+        },
+        "fork": {
+            name: {"min": 90.0, "mean": 100.0}
+            for name in ("fork_ms", "boot_provision_ms", "boot_ready_ms")
+        }
+    }
 
-    assert_within_evidence(
-        metric=BenchmarkMetric.FORK_DURATION,
-        current=metric_value(current, BenchmarkMetric.FORK_DURATION),
-        baseline=baseline,
-        factor=1.2,
-    )
+    for metric in (
+        BenchmarkMetric.LIFECYCLE_PROVISION,
+        BenchmarkMetric.LIFECYCLE_READY,
+        BenchmarkMetric.LIFECYCLE_EXEC,
+        BenchmarkMetric.LIFECYCLE_DELETE,
+        BenchmarkMetric.FORK_DURATION,
+        BenchmarkMetric.FORK_BOOT_PROVISION,
+        BenchmarkMetric.FORK_BOOT_READY,
+    ):
+        assert_within_evidence(
+            metric=metric,
+            current=metric_value(current, metric),
+            baseline=baseline,
+            factor=1.2,
+        )
 
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:

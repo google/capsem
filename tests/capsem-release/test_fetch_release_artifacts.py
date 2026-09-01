@@ -1701,7 +1701,7 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
             (root / name).write_bytes(payload)
 
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
-    binary_dir = tmp_path / "target/debug"
+    binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     stale = binary_dir / "capsem-source-built"
     stale.write_bytes(b"must-not-survive")
@@ -1796,7 +1796,7 @@ def test_package_staging_rejects_inventory_missing_from_the_package(
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
 
     with pytest.raises(ValueError, match="capsem-service"):
-        STAGE.stage_package_binaries(inputs, tmp_path / "target/debug")
+        STAGE.stage_package_binaries(inputs, tmp_path / "cache/target/cargo/debug")
 
 
 def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
@@ -1814,7 +1814,7 @@ def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
             (root / name).write_bytes(payload)
 
     monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
-    binary_dir = tmp_path / "target/debug"
+    binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     (binary_dir / "capsem").write_bytes(b"source-capsem")
     (binary_dir / "capsem-mcp").write_bytes(b"source-only-fallback")

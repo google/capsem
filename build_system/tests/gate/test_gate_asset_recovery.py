@@ -325,7 +325,7 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
 #
 # The build cache used to carry only `assets/`, which this lane does not read;
 # `_when_missing` recovery answers a different question. The lane's own
-# `target/ironbank-assets` tree now travels between prefixes with a receipt, and
+# `cache/target/ironbank-assets` tree now travels between prefixes with a receipt, and
 # preflight must preserve those isolated roots long enough to validate them.
 # ---------------------------------------------------------------------------
 
@@ -440,7 +440,14 @@ def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
     from capsem_builder.gate import assetreceipt
 
     base = gate_config.load(PROJECT_ROOT)
-    prefix = base.prefix.model_copy(update={"parent": str(tmp_path / "prefixes")})
+    prefix = base.prefix.model_copy(
+        update={
+            "parent": str(tmp_path / "prefixes"),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
+        }
+    )
     config = base.model_copy(update={"root": tmp_path, "prefix": prefix})
     arch = config.arch("x86_64")
     output = config.path(config.assets.test_root) / "code" / f"build-{arch.name}"

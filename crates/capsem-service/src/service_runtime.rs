@@ -136,7 +136,7 @@ pub(super) async fn run_service() -> Result<()> {
 
     let process_binary = args
         .process_binary
-        .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
+        .unwrap_or_else(|| PathBuf::from("cache/target/cargo/debug/capsem-process"));
     let assets_base_dir = args
         .assets_dir
         .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
@@ -636,7 +636,7 @@ pub(super) async fn shutdown_signal() {
 }
 
 /// Find a sibling binary next to the current executable, falling back to
-/// target/debug/ for development builds.
+/// cache/target/cargo/debug/ for development builds.
 pub(super) fn find_sibling_binary(name: &str) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         let sibling = exe.parent().unwrap().join(name);
@@ -644,7 +644,7 @@ pub(super) fn find_sibling_binary(name: &str) -> PathBuf {
             return sibling;
         }
     }
-    PathBuf::from(format!("target/debug/{name}"))
+    PathBuf::from(format!("cache/target/cargo/debug/{name}"))
 }
 
 /// Open a log file for a companion process, returning Stdio handles for stdout and stderr.

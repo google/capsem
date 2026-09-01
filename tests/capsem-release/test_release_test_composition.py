@@ -71,11 +71,11 @@ def _qualification(**overrides):
 #: The two release lanes, spelled once. A binary lane resolves every profile
 #: the manifest names; a profile lane is publishing exactly one.
 BINARY_LANE = _qualification(
-    CAPSEM_RELEASE_INPUT_DIR="target/release-inputs",
+    CAPSEM_RELEASE_INPUT_DIR="cache/target/release-inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
 )
 PROFILE_LANE = _qualification(
-    CAPSEM_RELEASE_INPUT_DIR="target/release-inputs",
+    CAPSEM_RELEASE_INPUT_DIR="cache/target/release-inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
     CAPSEM_RELEASE_PROFILE="code",
 )
@@ -491,13 +491,13 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
 
 
 def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
-    """Coverage state under `target/`, so the candidate tree stays
+    """Coverage state under `cache/target/`, so the candidate tree stays
     byte-for-byte identical to the commit that was tested."""
     workspace = CONFIG.workspace
 
-    assert workspace.coverage_file.startswith("target/")
-    assert workspace.benchmark_root.startswith("target/")
-    assert workspace.home.startswith("target/")
+    assert workspace.coverage_file.startswith("cache/target/")
+    assert workspace.benchmark_root.startswith("cache/target/")
+    assert workspace.home.startswith("cache/target/")
 
     from capsem_builder.gate.workspace import Workspace
 
@@ -685,9 +685,9 @@ def test_release_glowup_runs_one_exact_candidate_transition() -> None:
     glowup = _planned("test-glowup", BINARY_LANE)
 
     assert glowup.count("build_system/scripts/release/local-release-glowup.py") == 1
-    assert "--work-dir target/release-module-glowup" in glowup
+    assert "--work-dir cache/target/release-module-glowup" in glowup
     assert "glowup.channel-switch" not in glowup
-    assert "target/release-module-channel-switch" not in glowup
+    assert "cache/target/release-module-channel-switch" not in glowup
 
 
 def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
@@ -712,7 +712,7 @@ def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_b
     artifacts = _planned("test-artifacts", PROFILE_LANE)
 
     assert "build_system/scripts/release/prove-release-profile-assets.py" in artifacts
-    assert "--input-dir target/release-inputs" in artifacts
+    assert "--input-dir cache/target/release-inputs" in artifacts
     assert "--profile code" in artifacts
     for forbidden in ("capsem-gate assets", "_build-kernel", "_build-rootfs", "cross-compile"):
         assert forbidden not in artifacts
@@ -752,7 +752,7 @@ def test_release_integration_follows_the_declared_staged_config_root(
     """The legacy integration driver gets the same pulled catalog as pytest."""
     from capsem_builder.gate import vmproofs
 
-    config_root = PROJECT_ROOT / "target" / "synthetic-release-config"
+    config_root = PROJECT_ROOT / "cache" / "target" / "synthetic-release-config"
     monkeypatch.setenv(CONFIG.functional.config_root_variable, str(config_root))
 
     rendered = "\n".join(
@@ -794,10 +794,10 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         _required_artifacts_for_run,
     )
 
-    source_agent = tmp_path / "target/linux-agent/x86_64"
+    source_agent = tmp_path / "cache/target/linux-agent/x86_64"
     release_inputs = tmp_path / "verified-profile-inputs"
     release_package = tmp_path / "Capsem_1.5_amd64.deb"
-    release_binary = tmp_path / "target/debug/capsem"
+    release_binary = tmp_path / "cache/target/cargo/debug/capsem"
     required = _required_artifacts_for_run(
         {
             "CAPSEM_RELEASE_INPUT_DIR": str(release_inputs),
@@ -806,11 +806,11 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         },
         {
             "assets/manifest.json": tmp_path / "assets/manifest.json",
-            "target/linux-agent/<arch>": source_agent,
+            "cache/target/linux-agent/<arch>": source_agent,
         },
     )
 
-    assert "target/linux-agent/<arch>" not in required
+    assert "cache/target/linux-agent/<arch>" not in required
     assert required["verified release input report"] == release_inputs / "release-inputs.json"
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
@@ -826,9 +826,9 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
 
     source_required = _required_artifacts_for_run(
         {},
-        {"target/linux-agent/<arch>": source_agent},
+        {"cache/target/linux-agent/<arch>": source_agent},
     )
-    assert source_required == {"target/linux-agent/<arch>": source_agent}
+    assert source_required == {"cache/target/linux-agent/<arch>": source_agent}
 
 
 def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:
@@ -901,13 +901,13 @@ def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path
     module = _source_digest_module()
 
     before = module.source_state_digest(tmp_path)
-    selected = tmp_path / "target" / "assets" / "current"
+    selected = tmp_path / "cache" / "target" / "assets" / "current"
     selected.parent.mkdir(parents=True)
     selected.symlink_to("arm64")
 
     assert module.source_state_digest(tmp_path) == before
 
-    (tmp_path / "assets").symlink_to("target/assets")
+    (tmp_path / "assets").symlink_to("cache/target/assets")
     assert module.source_state_digest(tmp_path) != before
 
 

@@ -1,4 +1,4 @@
-"""Start the gate on an interpreter that cannot read yesterday's bytecode.
+"""Start the gate on source-keyed Python bytecode.
 
 CPython validates a `.pyc` against the source's *mtime and size*. Two edits of
 the same length within one timestamp tick therefore leave bytecode that still
@@ -14,7 +14,7 @@ source to a hosted qualifying lane. A stale module could otherwise construct a
 plan that does not correspond to the source being diagnosed or published.
 
 So the entry point is this file rather than `capsem_builder.gate.cli`: it
-re-execs with a per-invocation `pycache_prefix` before anything from
+re-execs with an ABI- and source-keyed `pycache_prefix` before anything from
 `capsem_builder.gate` is imported. `PYTHONPYCACHEPREFIX` goes into the
 environment as well as onto the command line, so every child -- pytest, the
 builders, the scripts -- inherits the same isolation.
@@ -28,11 +28,11 @@ that never changes.
 
 from __future__ import annotations
 
+import hashlib
 import os
-import shutil
+import subprocess
 import sys
-import time
-from contextlib import suppress
+import tomllib
 from pathlib import Path
 from typing import NoReturn
 
@@ -44,15 +44,7 @@ MARKER = "CAPSEM_GATE_PYCACHE"
 #: because the point is that children inherit it.
 PYCACHE = "PYTHONPYCACHEPREFIX"
 
-#: Where the per-invocation caches live, under the tree the gate already
-#: reclaims. Spelled here rather than read from `config/gate.toml`, because
-#: loading that config means importing the package this runs before.
-ROOT = "target/gate-pycache"
-
-#: A prefix older than this belongs to an invocation that is long over. Pruned
-#: opportunistically on the way in, which keeps the directory bounded without
-#: needing a lock or a teardown that a killed process would skip.
-STALE_SECONDS = 6 * 3600
+FALLBACK_STAGE = Path("cache/tools/python/pycache")
 
 
 def checkout() -> Path:
@@ -65,15 +57,33 @@ def checkout() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _prune(root: Path) -> None:
-    cutoff = time.time() - STALE_SECONDS
-    with suppress(OSError):
-        for entry in root.iterdir():
-            # Tolerated, unlike every other removal in this package: another
-            # interpreter may be writing into it right now, and the only cost
-            # of leaving it is that the next invocation tries again.
-            if entry.is_dir() and entry.stat().st_mtime < cutoff:
-                shutil.rmtree(entry, ignore_errors=True)
+def _stage(root: Path) -> Path:
+    policy = root / "config/cache.toml"
+    if not policy.is_file():
+        return root / FALLBACK_STAGE
+    raw = tomllib.loads(policy.read_text(encoding="utf-8"))
+    return root / raw["root"] / raw["stages"]["python-pycache"]["path"]
+
+
+def _python_sources(root: Path) -> tuple[Path, ...]:
+    listed = subprocess.run(
+        ("git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z", "--", "*.py"),
+        check=False,
+        capture_output=True,
+    )
+    if listed.returncode == 0:
+        return tuple(root / raw.decode() for raw in listed.stdout.split(b"\0") if raw)
+    return tuple(sorted(root.rglob("*.py")))
+
+
+def _source_key(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in _python_sources(root):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def isolated_environment(root: Path | None = None) -> dict[str, str]:
@@ -82,14 +92,11 @@ def isolated_environment(root: Path | None = None) -> dict[str, str]:
     Returned rather than applied, so a test can prove the mechanism against a
     module it controls instead of against the gate's own seventy.
     """
-    prefix = (root or checkout()) / ROOT
-    prefix.mkdir(parents=True, exist_ok=True)
-    _prune(prefix)
-    # The pid alone is not enough: pids are reused, and a reused one would
-    # inherit the cache of the invocation that held it.
-    invocation = prefix / f"{os.getpid():d}-{time.time_ns():x}"
-    invocation.mkdir()
-    return {MARKER: str(invocation), PYCACHE: str(invocation)}
+    source = (root or checkout()).resolve()
+    abi = sys.implementation.cache_tag or "python"
+    generation = _stage(source) / f"{abi}-{_source_key(source)}"
+    generation.mkdir(parents=True, exist_ok=True)
+    return {MARKER: str(generation), PYCACHE: str(generation)}
 
 
 def main() -> int:

@@ -134,7 +134,7 @@ def _stage_shared_config(
 def stage_profiles(
     input_dir: Path,
     assets_dir: Path,
-    config_root: Path = Path("target/release-config"),
+    config_root: Path = Path("cache/target/release-config"),
     shared_config_root: Path = Path("config"),
 ) -> Path:
     report, manifest = _load(input_dir)
@@ -395,12 +395,12 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--input-dir", type=Path)
     source.add_argument("--package-file", type=Path)
-    parser.add_argument("--assets-dir", type=Path, default=Path("target/assets"))
-    parser.add_argument("--binary-dir", type=Path, default=Path("target/debug"))
+    parser.add_argument("--assets-dir", type=Path, default=Path("cache/target/assets"))
+    parser.add_argument("--binary-dir", type=Path, default=Path("cache/target/cargo/debug"))
     parser.add_argument(
         "--config-root",
         type=Path,
-        default=Path("target/release-config"),
+        default=Path("cache/target/release-config"),
     )
     parser.add_argument(
         "--shared-config-root",

@@ -193,8 +193,8 @@ fn snapshot_status_from_session_dir_reads_snapshot_metadata_without_db() {
 fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
     let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-abc");
     let ps = "\
-  1502 /path/to/target/debug/capsem-process --env CAPSEM_VM_ID=orphan --id orphan --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan --uds-path /tmp/capsem/abc.sock
-  1742 /path/to/target/debug/capsem-process --id victim --session-dir /var/folders/XY/T/capsem-test-abc/persistent/victim --uds-path /tmp/capsem/def.sock
+  1502 /path/to/cache/target/cargo/debug/capsem-process --env CAPSEM_VM_ID=orphan --id orphan --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan --uds-path /tmp/capsem/abc.sock
+  1742 /path/to/cache/target/cargo/debug/capsem-process --id victim --session-dir /var/folders/XY/T/capsem-test-abc/persistent/victim --uds-path /tmp/capsem/def.sock
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
     assert_eq!(pids, vec![1502, 1742]);
@@ -204,8 +204,8 @@ fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
 fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
     let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-mine");
     let ps = "\
-  1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-other/sessions/foo
-  1742 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
+  1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-other/sessions/foo
+  1742 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
     assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
@@ -217,7 +217,7 @@ fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
     // A stray cargo invocation that happens to mention the run_dir path.
     let ps = "\
   99 /bin/cargo build --manifest-path /var/folders/XY/T/capsem-test-abc/Cargo.toml
-  1502 /path/to/target/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
+  1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
     assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");

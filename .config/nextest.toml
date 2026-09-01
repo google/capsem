@@ -1,5 +1,5 @@
 [store]
-dir = "target/coverage/nextest"
+dir = "cache/target/coverage/nextest"
 
 [profile.ci]
 slow-timeout = { period = "120s", terminate-after = 3, grace-period = "10s", on-timeout = "fail" }
