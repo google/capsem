@@ -6,6 +6,7 @@ import re
 import time
 
 from .controlmodels import CapacityDecision, DockerCapacitySnapshot
+from .dockeradapter import categories
 from .models import CachePolicy
 from .paths import CachePaths
 from .runtimeexec import CommandRunner, execute
@@ -71,6 +72,7 @@ def ensure_capacity(
     if policy.control is None:
         raise ValueError("cache policy has no runtime control section")
     control = policy.control.docker
+    runtime, _ = _docker(policy)
     try:
         rail = control.rails[rail_id]
     except KeyError:
@@ -86,17 +88,38 @@ def ensure_capacity(
         )
     pruned = before.free_bytes < rail.minimum_free_bytes
     if pruned:
+        try:
+            storage = categories(runtime, runner=runner)
+            build_cache = next(row for row in storage if row.name == "Build Cache")
+        except (StopIteration, ValueError) as error:
+            return CapacityDecision(
+                rail=rail_id,
+                before=before,
+                after=before,
+                pruned=False,
+                violations=(f"BuildKit capacity inventory failed: {error}",),
+            )
+        required = rail.minimum_free_bytes - before.free_bytes
+        pressure = required + rail.reclaim_headroom_bytes
+        keep_bytes = min(
+            rail.build_cache_keep_bytes,
+            max(0, build_cache.logical_bytes - pressure),
+        )
         plan = RuntimePrunePlan(
             generated_ns=time.time_ns(),
-            reclaim_bytes=0,
+            reclaim_bytes=min(build_cache.reclaimable_bytes, pressure),
             actions=(
                 RuntimePruneAction(
                     runtime_id=control.runtime_id,
                     operation=RuntimeOperation.PRUNE_BUILD_CACHE,
                     target="buildkit",
-                    logical_bytes=0,
-                    reason=f"Docker free space is below the {rail_id} rail",
-                    keep_bytes=rail.build_cache_keep_bytes,
+                    logical_bytes=min(build_cache.reclaimable_bytes, pressure),
+                    reason=(
+                        f"Docker free space is below the {rail_id} rail; retain the hottest "
+                        f"{keep_bytes} bytes and recover the configured headroom"
+                    ),
+                    keep_bytes=keep_bytes,
+                    all_unused=True,
                 ),
             ),
             violations=(),

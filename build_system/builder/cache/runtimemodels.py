@@ -179,13 +179,16 @@ class RuntimePruneAction(BaseModel):
     logical_bytes: NonNegativeInt
     reason: StrictStr
     keep_bytes: NonNegativeInt | None = None
+    maximum_age_hours: NonNegativeInt | None = None
+    all_unused: StrictBool = False
 
     @model_validator(mode="after")
     def buildkit_budget_matches_operation(self) -> RuntimePruneAction:
-        if (self.operation is RuntimeOperation.PRUNE_BUILD_CACHE) != (
-            self.keep_bytes is not None
-        ):
+        buildkit = self.operation is RuntimeOperation.PRUNE_BUILD_CACHE
+        if buildkit != (self.keep_bytes is not None):
             raise ValueError("only bounded BuildKit prune actions declare keep_bytes")
+        if not buildkit and (self.maximum_age_hours is not None or self.all_unused):
+            raise ValueError("only bounded BuildKit prune actions declare prune scope")
         return self
 
 

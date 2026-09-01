@@ -73,6 +73,22 @@ def _categories(output: str) -> tuple[RuntimeCategory, ...]:
     return tuple(rows)
 
 
+def categories(
+    policy: DockerRuntimePolicy, *, runner: CommandRunner = execute
+) -> tuple[RuntimeCategory, ...]:
+    """Read Docker's typed top-level storage inventory without image traversal."""
+    summary = runner(
+        (policy.command, "system", "df", "--format", "{{json .}}"),
+        policy.timeout_seconds,
+    )
+    if summary.returncode != 0:
+        raise ValueError(summary.stderr or summary.stdout or "Docker unavailable")
+    try:
+        return _categories(summary.stdout)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid Docker storage inventory: {error}") from error
+
+
 def _owned_images(
     policy: DockerRuntimePolicy,
     runner: CommandRunner,
@@ -186,22 +202,8 @@ def inventory(
     now_ns: int | None = None,
 ) -> RuntimeInventory:
     generated = time.time_ns() if now_ns is None else now_ns
-    summary = runner(
-        (policy.command, "system", "df", "--format", "{{json .}}"),
-        policy.timeout_seconds,
-    )
-    if summary.returncode != 0:
-        return RuntimeInventory(
-            runtime_id=runtime_id,
-            kind=RuntimeKind.DOCKER,
-            available=False,
-            generated_ns=generated,
-            native_bytes=0,
-            owned_bytes=0,
-            error=summary.stderr or summary.stdout or "Docker unavailable",
-        )
     try:
-        categories = _categories(summary.stdout)
+        storage = categories(policy, runner=runner)
         containers, used_images = _containers(policy, runner)
         images = _owned_images(policy, runner, used_images)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -214,7 +216,7 @@ def inventory(
             owned_bytes=0,
             error=str(error),
         )
-    build = next((row for row in categories if row.name == "Build Cache"), None)
+    build = next((row for row in storage if row.name == "Build Cache"), None)
     build_resource = (
         RuntimeResource(
             kind=ResourceKind.BUILD_CACHE,
@@ -234,8 +236,8 @@ def inventory(
         kind=RuntimeKind.DOCKER,
         available=True,
         generated_ns=generated,
-        native_bytes=sum(row.logical_bytes for row in categories),
+        native_bytes=sum(row.logical_bytes for row in storage),
         owned_bytes=sum(row.logical_bytes for row in resources),
-        categories=categories,
+        categories=storage,
         resources=resources,
     )

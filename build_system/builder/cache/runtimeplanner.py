@@ -68,6 +68,7 @@ def _docker_actions(
                         f"and evict entries older than {policy.maximum_age_hours}h"
                     ),
                     keep_bytes=policy.build_cache_keep_bytes,
+                    maximum_age_hours=policy.maximum_age_hours,
                 )
             )
     for resources in groups.values():

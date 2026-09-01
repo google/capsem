@@ -354,22 +354,27 @@ recommended_disk_bytes = 214748364800 # 200 GiB
 [control.docker.rails.default]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
 
 [control.docker.rails.assets]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
 
 [control.docker.rails.package]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
 
 [control.docker.rails.install-preflight]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
 
 [control.docker.rails.install]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
 
 [control.docker.images.capsem-linux-rust-base]
 repository = "capsem-linux-rust-base"

@@ -79,7 +79,13 @@ def controlled_policy() -> CachePolicy:
             capacity_probe_image=PINNED_PROBE,
             minimum_disk_bytes=100,
             recommended_disk_bytes=200,
-            rails={"default": CapacityRail(minimum_free_bytes=10, build_cache_keep_bytes=80)},
+            rails={
+                "default": CapacityRail(
+                    minimum_free_bytes=10,
+                    build_cache_keep_bytes=80,
+                    reclaim_headroom_bytes=5,
+                )
+            },
             images={
                 "tool": ImageCachePolicy(repository="capsem-tool", keep_previous=0),
             },

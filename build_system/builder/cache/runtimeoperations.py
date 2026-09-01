@@ -44,16 +44,18 @@ def _argv(
             raise AssertionError("validated Docker operation lost its runtime type")
         if action.keep_bytes is None:
             raise ValueError("BuildKit prune action omits its retained byte budget")
-        return (
+        command = [
             runtime.command,
             "builder",
             "prune",
             "--force",
-            "--filter",
-            f"until={runtime.maximum_age_hours}h",
-            "--keep-storage",
-            f"{action.keep_bytes}B",
-        )
+        ]
+        if action.all_unused:
+            command.append("--all")
+        if action.maximum_age_hours is not None:
+            command.extend(("--filter", f"until={action.maximum_age_hours}h"))
+        command.extend(("--keep-storage", f"{action.keep_bytes}B"))
+        return tuple(command)
     if action.operation is RuntimeOperation.CLEAR_BUILD_CACHE:
         return (runtime.command, "builder", "prune", "--all", "--force")
     if action.operation is RuntimeOperation.DELETE_VM:

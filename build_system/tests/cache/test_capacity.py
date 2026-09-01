@@ -27,6 +27,12 @@ def test_pressure_prunes_buildkit_then_remeasures(tmp_path: Path) -> None:
         issued.append(argv)
         if argv[1] == "run":
             return result(argv, next(capacities))
+        if argv[1:3] == ("system", "df"):
+            return result(
+                argv,
+                '{"Type":"Build Cache","TotalCount":"1","Active":"0",'
+                '"Size":"50B","Reclaimable":"40B"}',
+            )
         return result(argv, "reclaimed")
 
     policy = controlled_policy()
@@ -39,20 +45,25 @@ def test_pressure_prunes_buildkit_then_remeasures(tmp_path: Path) -> None:
     )
 
     assert decision.pruned and decision.violations == ()
-    assert issued[1] == (
+    assert issued[2] == (
         "docker",
         "builder",
         "prune",
         "--force",
-        "--filter",
-        "until=72h",
+        "--all",
         "--keep-storage",
-        "80B",
+        "35B",
     )
 
 
 def test_capacity_failure_names_the_floor(tmp_path: Path) -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        if argv[1:3] == ("system", "df"):
+            return result(
+                argv,
+                '{"Type":"Build Cache","TotalCount":"1","Active":"0",'
+                '"Size":"5B","Reclaimable":"5B"}',
+            )
         return result(argv, "200 200 0")
 
     policy = controlled_policy()
