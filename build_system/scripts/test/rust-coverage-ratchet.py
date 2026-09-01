@@ -88,8 +88,11 @@ def violations(
     expected_crates: set[str],
     floors: dict[str, float],
     max_headroom: float,
+    minimum_floor: float,
 ) -> list[str]:
     problems: list[str] = []
+    if not 0.0 <= minimum_floor <= 100.0:
+        problems.append(f"invalid minimum crate coverage floor {minimum_floor:.2f}%")
     configured = set(floors)
     if configured != expected_crates:
         missing = sorted(expected_crates - configured)
@@ -109,6 +112,11 @@ def violations(
         coverage = measured[crate]
         if not 0.0 <= floor <= 100.0:
             problems.append(f"{crate}: invalid coverage floor {floor:.2f}%")
+        elif floor + 1e-9 < minimum_floor:
+            problems.append(
+                f"{crate}: {floor:.2f}% floor is below the workspace crate minimum "
+                f"of {minimum_floor:.2f}%"
+            )
         elif coverage.percent + 1e-9 < floor:
             problems.append(
                 f"{crate}: {coverage.percent:.2f}% is below its {floor:.2f}% floor "
@@ -141,9 +149,16 @@ def main(argv: list[str] | None = None) -> int:
         for crate, floor in settings["rust_coverage_crate_floors"].items()
     }
     max_headroom = float(settings["rust_coverage_ratchet_headroom"])
+    minimum_floor = float(settings["rust_coverage_crate_minimum"])
     crates = workspace_crates(root, args.crate_root)
     measured = lcov_by_crate(root / args.report, root, args.crate_root, crates)
-    problems = violations(measured, set(crates.values()), floors, max_headroom)
+    problems = violations(
+        measured,
+        set(crates.values()),
+        floors,
+        max_headroom,
+        minimum_floor,
+    )
     if problems:
         print(
             "Per-crate Rust coverage ratchet failed. The workspace average cannot "

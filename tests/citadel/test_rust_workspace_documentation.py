@@ -8,11 +8,11 @@ silently disagree with the gate.
 from __future__ import annotations
 
 import re
-import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_MANIFEST = PROJECT_ROOT / "Cargo.toml"
@@ -51,7 +51,7 @@ Route reusable code to the lowest-dependency crate that owns its domain.
 COVERAGE_RATIONALE = """\
 The Rust coverage floor is owned by config/gate.toml. Copying its numeric value
 into testing guidance creates a second authority that becomes stale when the
-ratchet moves; refer to rust_coverage_floor instead.
+ratchet moves; refer to rust_coverage_floors instead.
 """
 
 
@@ -151,5 +151,5 @@ def test_coverage_guard_detects_copied_numeric_floors(claim: str) -> None:
 
 
 def test_coverage_guard_accepts_the_config_owned_reference() -> None:
-    source = "Rust line coverage is owned by config/gate.toml rust_coverage_floor."
+    source = "Rust coverage is owned by config/gate.toml rust_coverage_floors."
     assert not _copied_coverage_floors({"testing.md": source})

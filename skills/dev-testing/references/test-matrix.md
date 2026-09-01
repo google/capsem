@@ -39,7 +39,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | Config-owned | `config/gate.toml` `rust_coverage_floor` | CI (`cargo llvm-cov`), `just test` |
+| Rust workspace | Config-owned | `config/gate.toml` `rust_coverage_floors` | CI (`cargo llvm-cov`), `just test` |
 | Every Rust crate | Config-owned | `rust_coverage_crate_floors` + bounded headroom ratchet | CI (`cargo llvm-cov`), `just test` |
 | Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
 | Python full suite | 85% | `--cov-fail-under=85` | `just test` |

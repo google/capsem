@@ -24,10 +24,11 @@ class ModulesConfig(Strict):
     contract_globs: tuple[str, ...]
     rust_format: tuple[str, ...]
     rust_coverage: tuple[str, ...]
-    rust_coverage_floor: str
+    rust_coverage_floors: tuple[str, ...]
     rust_coverage_report: str
     rust_coverage_ratchet: str
     rust_coverage_crate_root: str
+    rust_coverage_crate_minimum: PositiveFloat
     rust_coverage_ratchet_headroom: PositiveFloat
     rust_coverage_crate_floors: dict[str, float]
     rust_test_profile_variable: str

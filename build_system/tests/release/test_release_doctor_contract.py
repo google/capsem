@@ -60,7 +60,7 @@ REQUIRED_PR_GATE_JOBS = frozenset(
 # unmonitored crates to the measurement lowered the percentage without
 # removing a single test, and the floor followed the measurement rather than
 # tests being written to flatter it.
-RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 64"
+RUST_LINE_COVERAGE_FLOOR = "--fail-under-lines 67"
 FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
 OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
@@ -5182,8 +5182,10 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     assert "--fail-under-lines" not in runner
     from capsem_builder.gate import config as gate_config
 
-    floor = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floor
-    assert floor.replace("=", " ") == RUST_LINE_COVERAGE_FLOOR
+    floors = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floors
+    assert next(floor for floor in floors if "--fail-under-lines" in floor).replace(
+        "=", " "
+    ) == RUST_LINE_COVERAGE_FLOOR
     assert "--profile ci" in runner
     assert slow_timeout == {
         "period": "120s",

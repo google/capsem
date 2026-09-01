@@ -63,6 +63,7 @@ def test_floor_inventory_must_match_every_workspace_crate() -> None:
         {"product-core", "product-cli"},
         {"product-core": 75.0, "retired": 10.0},
         5.0,
+        40.0,
     )
 
     assert any("missing workspace crates: ['product-cli']" in item for item in problems)
@@ -79,6 +80,7 @@ def test_a_crate_below_its_floor_fails_independently_of_the_average() -> None:
         {"large", "small"},
         {"large": 95.0, "small": 50.0},
         5.0,
+        40.0,
     )
 
     assert not any(item.startswith("large:") for item in problems)
@@ -91,6 +93,7 @@ def test_improvement_past_headroom_requires_the_floor_to_ratchet() -> None:
         {"product-core"},
         {"product-core": 80.0},
         3.0,
+        40.0,
     )
 
     assert problems == [
@@ -106,6 +109,33 @@ def test_coverage_inside_the_platform_variation_band_passes() -> None:
             {"product-core"},
             {"product-core": 80.0},
             3.0,
+            40.0,
         )
         == []
     )
+
+
+def test_no_crate_floor_can_fall_below_the_workspace_minimum() -> None:
+    problems = RATCHET.violations(
+        {"product-core": RATCHET.Coverage(hit=90, found=100)},
+        {"product-core"},
+        {"product-core": 39.99},
+        60.0,
+        40.0,
+    )
+
+    assert problems == [
+        "product-core: 39.99% floor is below the workspace crate minimum of 40.00%"
+    ]
+
+
+def test_invalid_workspace_minimum_fails_closed() -> None:
+    problems = RATCHET.violations(
+        {"product-core": RATCHET.Coverage(hit=90, found=100)},
+        {"product-core"},
+        {"product-core": 80.0},
+        20.0,
+        101.0,
+    )
+
+    assert "invalid minimum crate coverage floor 101.00%" in problems

@@ -39,7 +39,7 @@ def coverage(config: GateConfig) -> Step:
     return step(
         "rust-coverage",
         Run(
-            [*settings.rust_coverage, settings.rust_coverage_floor],
+            [*settings.rust_coverage, *settings.rust_coverage_floors],
             env=environment(config),
         ),
         Script(

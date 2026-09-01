@@ -2193,7 +2193,8 @@ contract_globs = ["tests/test_*contract.py", "tests/test_release_*.py"]
 # argv here so the plan, contracts, and developers all execute one command.
 rust_format = ["cargo", "fmt", "--all", "--", "--check"]
 
-# The Rust coverage floor is 64, not 100. Some files -- uninstall, completions
+# The Rust coverage floors are measured ratchets, not aspirations to 100. Some
+# files -- uninstall, completions
 # -- are intentionally at 0% because they are thin shells over OS and CLI
 # primitives, and some defensive paths only execute under live VM traffic and
 # are covered by the integration suites rather than by unit tests. The floor
@@ -2202,20 +2203,23 @@ rust_format = ["cargo", "fmt", "--all", "--", "--check"]
 # Through Nextest, whose `ci` profile is the reason: a test that hangs
 # currently hangs the whole gate until the 7200-second lock timeout, and runs
 # have died past the two-hour mark. `slow-timeout` reports every 120s and fails
-# after three consecutive slow periods. The guarded workspace measured 65.59%
-# across 73,820 instrumented lines and 4,536 tests on Linux, leaving 1.59
-# percentage points of headroom above the ratchet. The floor catches meaningful suite loss
-# without making ordinary platform-dependent coverage variation flaky.
+# after three consecutive slow periods. The guarded workspace measured 67.97%
+# lines, 66.65% functions, and 66.42% regions across 4,573 tests on Linux. The
+# floors leave bounded platform headroom while ensuring a suite cannot improve
+# one dimension and silently regress another.
 rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage", "--lcov", "--output-path", "target/coverage/rust-workspace.lcov"]
-rust_coverage_floor = "--fail-under-lines=64"
+rust_coverage_floors = ["--fail-under-lines=67", "--fail-under-functions=66", "--fail-under-regions=65"]
 rust_coverage_report = "target/coverage/rust-workspace.lcov"
 rust_coverage_ratchet = "build_system/scripts/test/rust-coverage-ratchet.py"
 rust_coverage_crate_root = "crates"
+# No workspace member may hide behind the aggregate. This minimum is repeated
+# in the Citadel contract so lowering the policy is a deliberate guard change.
+rust_coverage_crate_minimum = 40.0
 # A floor may trail a measured crate by at most this much. That small band
 # absorbs host-specific cfg variation; once added tests improve coverage past
 # it, the same patch must raise the floor instead of leaving stale headroom.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 49.0, capsem-admin = 70.0, capsem-agent = 34.0, capsem-app = 40.0, capsem-assets = 85.0, capsem-bench = 39.0, capsem-config = 88.0, capsem-core = 74.0, capsem-credentials = 89.0, capsem-foundation = 76.0, capsem-gateway = 79.0, capsem-guard = 92.0, capsem-logger = 86.0, capsem-mcp = 22.0, capsem-mcp-aggregator = 60.0, capsem-mcp-builtin = 19.0, capsem-mock-server = 7.0, capsem-process = 20.0, capsem-proto = 88.0, capsem-service = 66.0, capsem-tray = 53.0, capsem-tui = 69.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 40.0, capsem-app = 41.0, capsem-assets = 86.0, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 75.39, capsem-credentials = 89.83, capsem-foundation = 77.0, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 40.0, capsem-mcp-aggregator = 61.0, capsem-mcp-builtin = 47.98, capsem-mock-server = 46.56, capsem-process = 40.0, capsem-proto = 90.36, capsem-service = 67.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
