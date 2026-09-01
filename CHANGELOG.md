@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache pressure cleanup now honors each owned image repository's retention
   count before trimming BuildKit to its total-byte target, and rootfs cache
   identities include the exact asset-tools image used for EROFS and inventory.
+- MITM forwarding now rejects disallowed plain-HTTP upstream ports before the
+  host dials them, and gzip collection rejects decompression beyond its bounded
+  payload limit instead of allowing a compressed body to exhaust host memory.
 - Complete local qualification now retains the shared Cargo build directory
   even when it crosses its advisory size threshold; only an explicit cold-build
   diagnostic may discard reusable compiler output.
