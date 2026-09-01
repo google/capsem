@@ -447,7 +447,6 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
 
     assets = _cache_rail("assets")
     floor_gib = assets["minimum_free_bytes"] // 1024**3
-    keep_bytes = assets["build_cache_keep_bytes"]
     # Comfortably clear of the floor, and clearly under it, whatever it is.
     ample_gib = floor_gib + 10
     starved_gib = max(floor_gib // 4, 1)
@@ -468,13 +467,10 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert reclaimed.returncode == 0, reclaimed.stderr
     assert '"pruned": true' in reclaimed.stdout
     reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
-    assert (
-        f"builder prune --force --filter until=72h --keep-storage {keep_bytes}B"
-        in reclaimed_commands
-    )
+    assert "builder prune --force --all --reserved-space 0B" in reclaimed_commands
+    assert "until=" not in reclaimed_commands
     assert "builder prune -af" not in reclaimed_commands
 
-    package = _cache_rail("package")
     package_reclaimed = _run_docker_space_gate(
         tmp_path / "package-reclaimed",
         before_kib=starved_kib,
@@ -484,10 +480,8 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert package_reclaimed.returncode == 0, package_reclaimed.stderr
     assert '"pruned": true' in package_reclaimed.stdout
     package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
-    assert (
-        f"builder prune --force --filter until=72h --keep-storage "
-        f"{package['build_cache_keep_bytes']}B" in package_commands
-    )
+    assert "builder prune --force --all --reserved-space 0B" in package_commands
+    assert "until=" not in package_commands
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
