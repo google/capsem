@@ -1,4 +1,5 @@
 use super::*;
+use tokio::io::AsyncWriteExt;
 
 /// Roundtrip helper: serialize to msgpack and back.
 fn msgpack_roundtrip<T: Serialize + for<'de> Deserialize<'de>>(val: &T) -> T {
@@ -183,4 +184,72 @@ fn response_call_result_roundtrip() {
     } else {
         panic!("expected CallResult");
     }
+}
+
+#[tokio::test]
+async fn async_frame_roundtrip_uses_the_real_wire_codec() {
+    let request = AggregatorRequest {
+        id: 77,
+        method: AggregatorMethod::CallTool {
+            name: "local__echo".into(),
+            arguments: serde_json::json!({"message": "hello"}),
+        },
+    };
+    let (mut writer, mut reader) = tokio::io::duplex(4096);
+
+    write_frame(&mut writer, &request).await.unwrap();
+    let decoded: AggregatorRequest = read_frame(&mut reader).await.unwrap().unwrap();
+
+    assert_eq!(decoded.id, 77);
+    match decoded.method {
+        AggregatorMethod::CallTool { name, arguments } => {
+            assert_eq!(name, "local__echo");
+            assert_eq!(arguments["message"], "hello");
+        }
+        _ => panic!("expected call_tool request"),
+    }
+}
+
+#[tokio::test]
+async fn frame_reader_treats_clean_and_partial_length_eof_as_disconnects() {
+    let (writer, mut reader) = tokio::io::duplex(16);
+    drop(writer);
+    let decoded: Option<AggregatorResponse> = read_frame(&mut reader).await.unwrap();
+    assert!(decoded.is_none());
+
+    let (mut writer, mut reader) = tokio::io::duplex(16);
+    writer.write_all(&[0, 0]).await.unwrap();
+    drop(writer);
+    let decoded: Option<AggregatorResponse> = read_frame(&mut reader).await.unwrap();
+    assert!(decoded.is_none());
+}
+
+#[tokio::test]
+async fn frame_reader_rejects_oversized_truncated_and_invalid_payloads() {
+    let (mut writer, mut reader) = tokio::io::duplex(32);
+    writer.write_all(&(MAX_FRAME_SIZE + 1).to_be_bytes()).await.unwrap();
+    let error = read_frame::<_, AggregatorResponse>(&mut reader)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("frame too large"), "unexpected error: {error}");
+
+    let (mut writer, mut reader) = tokio::io::duplex(32);
+    writer.write_all(&8_u32.to_be_bytes()).await.unwrap();
+    writer.write_all(&[1, 2]).await.unwrap();
+    drop(writer);
+    let error = read_frame::<_, AggregatorResponse>(&mut reader)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("read frame payload"), "unexpected error: {error}");
+
+    let (mut writer, mut reader) = tokio::io::duplex(32);
+    writer.write_all(&1_u32.to_be_bytes()).await.unwrap();
+    writer.write_all(&[0xc1]).await.unwrap();
+    let error = read_frame::<_, AggregatorResponse>(&mut reader)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("msgpack deserialize"), "unexpected error: {error}");
 }
