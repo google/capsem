@@ -2084,9 +2084,10 @@ project_manifest = "build_system/pyproject.toml"
 # booted rather than in the first second, which is the one thing a guard
 # written to "fail before it can ship green" must not do.
 citadel = "tests/citadel/"
-# Collection is a cheap source-shape proof: no cache writes, no artifacts, and
-# strict rejection of unknown configuration or markers.
-collection_flags = ["--collect-only", "-qq", "-p", "no:cacheprovider", "--strict-config", "--strict-markers"]
+# Collection is a cheap source-shape proof: only the source-keyed typed pytest
+# cache may be written, with no artifacts and strict config/marker rejection.
+# Keep cacheprovider loaded because the typed environment owns its cache_dir.
+collection_flags = ["--collect-only", "-qq", "--strict-config", "--strict-markers"]
 # One spelling of "run pytest", so sixteen call sites cannot drift into
 # sixteen slightly different opinions about --tb, --maxfail and -n.
 base_flags = ["-v", "--tb=short"]
