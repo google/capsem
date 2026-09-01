@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from typing import NoReturn, cast
 
@@ -142,15 +141,6 @@ def test_children_inherit_the_isolation(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # The wiring: the canonical entry point has to be the isolated one
 # ---------------------------------------------------------------------------
-
-
-def test_the_console_script_is_the_launcher() -> None:
-    """Otherwise the isolation is a function nobody calls."""
-    manifest = tomllib.loads(
-        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
-    )
-
-    assert manifest["project"]["scripts"]["capsem-gate"] == ("capsem_builder.gatelaunch:main")
 
 
 def test_the_launcher_imports_nothing_from_the_package_it_protects() -> None:

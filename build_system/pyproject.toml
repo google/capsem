@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.scripts]
-capsem-builder = "capsem_builder.image.cli:main"
-capsem-cache = "capsem_builder.cache.cli:main"
+capsem-builder = "capsem_builder.gatelaunch:builder_main"
+capsem-cache = "capsem_builder.gatelaunch:cache_main"
 capsem-gate = "capsem_builder.gatelaunch:main"
 
 [build-system]

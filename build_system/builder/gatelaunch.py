@@ -28,9 +28,11 @@ that never changes.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
+import importlib
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -44,11 +46,19 @@ MARKER = "CAPSEM_GATE_PYCACHE"
 #: The variable CPython itself reads. Exported rather than only passed as `-X`,
 #: because the point is that children inherit it.
 PYCACHE = "PYTHONPYCACHEPREFIX"
+PYTEST_ADDOPTS = "PYTEST_ADDOPTS"
+UV_CACHE = "UV_CACHE_DIR"
+PNPM_STORE = "npm_config_store_dir"
+CARGO_TARGET = "CARGO_TARGET_DIR"
+RUSTC_WRAPPER = "RUSTC_WRAPPER"
+SCCACHE_DIR = "SCCACHE_DIR"
+SCCACHE_CACHE_SIZE = "SCCACHE_CACHE_SIZE"
+SCCACHE_BASEDIR = "SCCACHE_BASEDIR"
+SCCACHE_SERVER_UDS = "SCCACHE_SERVER_UDS"
 
 FALLBACK_STAGE = Path("cache/tools/python/pycache")
 GATE_POLICY = Path("config/gate.toml")
 CACHE_POLICY = Path("config/cache.toml")
-_LEASES: dict[Path, BinaryIO] = {}
 
 
 def checkout() -> Path:
@@ -79,6 +89,40 @@ def _stage(root: Path, authority: Path | None = None) -> Path:
         return storage / FALLBACK_STAGE
     raw = tomllib.loads(policy.read_text(encoding="utf-8"))
     return storage / raw["root"] / raw["stages"]["python-pycache"]["path"]
+
+
+def _policy(root: Path) -> dict:
+    return tomllib.loads((root / CACHE_POLICY).read_text(encoding="utf-8"))
+
+
+def _gate_policy(root: Path) -> dict:
+    return tomllib.loads((root / GATE_POLICY).read_text(encoding="utf-8"))
+
+
+def _policy_stage(root: Path, authority: Path, stage_id: str) -> Path:
+    raw = _policy(root)
+    return authority / raw["root"] / raw["stages"][stage_id]["path"]
+
+
+def _pytest_addopts(cache: Path) -> str:
+    tokens = shlex.split(os.environ.get(PYTEST_ADDOPTS, ""))
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            token in {"-o", "--override-ini"}
+            and index + 1 < len(tokens)
+            and tokens[index + 1].startswith("cache_dir=")
+        ):
+            index += 2
+            continue
+        if token.startswith(("-o=cache_dir=", "--override-ini=cache_dir=")):
+            index += 1
+            continue
+        kept.append(token)
+        index += 1
+    return shlex.join((*kept, "-o", f"cache_dir={cache}"))
 
 
 def _python_sources(root: Path) -> tuple[Path, ...]:
@@ -118,40 +162,91 @@ def isolated_environment(
     return {MARKER: str(generation), PYCACHE: str(generation)}
 
 
+def contained_environment(root: Path | None = None) -> dict[str, str]:
+    """Select every dependency-free tool cache before a bounded child starts."""
+    source = (root or checkout()).resolve()
+    authority = _cache_authority(source)
+    python = isolated_environment(source, authority=authority)
+    if not (source / CACHE_POLICY).is_file() or not (source / GATE_POLICY).is_file():
+        return python
+    generation = Path(python[PYCACHE])
+    pytest = _policy_stage(source, authority, "python-pytest") / generation.name
+    gate = _gate_policy(source)
+    toolchain = gate["toolchain"]
+    uv = _policy_stage(source, authority, "python-uv")
+    rust = _policy_stage(source, authority, "rust-sccache")
+    cache = _policy(source)
+    environment = {
+        **python,
+        PYTEST_ADDOPTS: _pytest_addopts(pytest),
+        UV_CACHE: str(uv),
+        PNPM_STORE: str(_policy_stage(source, authority, "node-pnpm")),
+        CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
+        SCCACHE_DIR: str(rust),
+        SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['hard_bytes'] // 1024**3}G",
+        SCCACHE_BASEDIR: str(source),
+        SCCACHE_SERVER_UDS: str(rust / toolchain["compiler_cache_socket_name"]),
+    }
+    if shutil.which(toolchain["compiler_cache_command"]) is not None:
+        environment[RUSTC_WRAPPER] = toolchain["compiler_cache_command"]
+    return environment
+
+
+def hold_environment(root: Path | None = None) -> None:
+    """Lease both exact Python generations for the lifetime of this process."""
+    source = (root or checkout()).resolve()
+    authority = _cache_authority(source)
+    generation = Path(isolated_environment(source, authority=authority)[PYCACHE])
+    if not (source / CACHE_POLICY).is_file():
+        _hold_generation(generation)
+        return
+    pytest = _policy_stage(source, authority, "python-pytest") / generation.name
+    _hold_generation(generation)
+    _hold_generation(pytest)
+
+
 def _hold_generation(generation: Path) -> BinaryIO:
     """Hold a shared lifetime lease that makes routine pruning skip this generation."""
-    existing = _LEASES.get(generation)
-    if existing is not None and not existing.closed:
-        return existing
-    lease = generation.with_name(f".{generation.name}.lock")
-    descriptor = lease.open("a+b")
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BaseException:
-        descriptor.close()
-        raise
-    _LEASES[generation] = descriptor
-    return descriptor
+    from .cache.leases import retain_path
+
+    return retain_path(generation.with_name(f".{generation.name}.lock"))
 
 
-def main() -> int:
-    """Re-exec unless this interpreter matches the current source generation."""
-    environment = isolated_environment()
+def _launch(implementation: str, reexec_module: str) -> int:
+    """Enter one implementation only after every tool cache is contained."""
+    environment = contained_environment()
     isolated = (
         os.environ.get(MARKER) == environment[MARKER]
         and os.environ.get(PYCACHE) == environment[PYCACHE]
         and sys.pycache_prefix == environment[PYCACHE]
     )
     if isolated:
-        _hold_generation(Path(environment[PYCACHE]))
-        from .gate.cli import main as gate
+        os.environ.update(environment)
+        hold_environment()
+        entrypoint = importlib.import_module(implementation).main
+        return entrypoint()
 
-        return gate()
-
-    return _reexec(environment)
+    return _reexec(environment, reexec_module)
 
 
-def _reexec(environment: dict[str, str] | None = None) -> NoReturn:
+def main() -> int:
+    """Run the build gate beneath the source-keyed cache authority."""
+    return _launch("capsem_builder.gate.cli", "capsem_builder.gate")
+
+
+def cache_main() -> int:
+    """Run cache control without creating bytecode beside its own source."""
+    return _launch("capsem_builder.cache.cli", "capsem_builder.cache")
+
+
+def builder_main() -> int:
+    """Run image building without creating bytecode beside its own source."""
+    return _launch("capsem_builder.image.cli", "capsem_builder.image")
+
+
+def _reexec(
+    environment: dict[str, str] | None = None, module: str = "capsem_builder.gate"
+) -> NoReturn:
     """Become the same command on an interpreter with a private cache.
 
     `execv`, not a subprocess: a wrapper process would sit between the terminal
@@ -159,5 +254,5 @@ def _reexec(environment: dict[str, str] | None = None) -> NoReturn:
     itself.
     """
     os.environ.update(environment or isolated_environment())
-    os.execv(sys.executable, [sys.executable, "-m", "capsem_builder.gate", *sys.argv[1:]])
+    os.execv(sys.executable, [sys.executable, "-m", module, *sys.argv[1:]])
     raise AssertionError("execv returned")  # pragma: no cover - execv does not

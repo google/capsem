@@ -109,7 +109,6 @@ class ToolchainConfig(Strict):
     sync: tuple[str, ...]
     compiler_cache_command: SafeToken
     compiler_cache_socket_name: SafeToken
-    uv_identity_inputs: tuple[str, ...]
     node_workspaces: tuple[str, ...]
     node_install: tuple[str, ...]
     node_env: dict[str, str]

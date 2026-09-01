@@ -249,6 +249,17 @@ maximum_count = 20
 managed_globs = ["cpython-*"]
 lease_template = ".{key}.lock"
 
+[stages.python-pytest]
+path = "tools/python/pytest"
+warning_bytes = 268435456
+soft_bytes = 536870912
+hard_bytes = 1073741824
+prune = "lru"
+maximum_age_hours = 168
+maximum_count = 20
+managed_globs = ["cpython-*"]
+lease_template = ".{key}.lock"
+
 [stages.node-pnpm]
 path = "tools/node/pnpm"
 warning_bytes = 2147483648

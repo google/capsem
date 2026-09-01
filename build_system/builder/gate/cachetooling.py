@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 from .. import gatelaunch
+from ..cache.leases import retain_generation
+from ..cache.pythonenv import PYTEST_ADDOPTS
+from ..cache.pythonenv import select as select_python
 from ..cache.telemetry import CacheScope, CacheUse, record_use
 from ..cache.views import ViewReceipt, canonicalize
 from . import cachelayout
 from .config import GateConfig
+
+PYTHONPYCACHEPREFIX = gatelaunch.PYCACHE
 
 
 def record_cargo(config: GateConfig, *, key: str, logical_bytes: int) -> CacheUse:
@@ -27,13 +33,16 @@ def record_cargo(config: GateConfig, *, key: str, logical_bytes: int) -> CacheUs
 def environment(config: GateConfig, *, key: str, source_root: Path | None = None) -> dict[str, str]:
     """Select keyed tool stages and record their pre-run reuse state."""
     paths = cachelayout.cache_paths(config)
-    uv = cachelayout.keyed_stage_path(config, "python-uv", *config.toolchain.uv_identity_inputs)
+    uv = cachelayout.stage_path(config, "python-uv")
     pycache = Path(
         gatelaunch.isolated_environment(
             source_root or config.root, authority=cachelayout.authority(config)
         )[gatelaunch.PYCACHE]
     )
-    record_use(paths, "python-uv", tool="uv", key=key, scope=CacheScope.GENERATION, probe=uv)
+    python = select_python(paths, pycache, inherited_addopts=os.environ.get(PYTEST_ADDOPTS, ""))
+    retain_generation(paths, "python-pycache", pycache.name)
+    retain_generation(paths, "python-pytest", python.pytest_cache.name)
+    record_use(paths, "python-uv", tool="uv", key=key, scope=CacheScope.SHARED, probe=uv)
     record_use(
         paths,
         "python-pycache",
@@ -41,6 +50,14 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
         key=key,
         scope=CacheScope.GENERATION,
         probe=pycache,
+    )
+    record_use(
+        paths,
+        "python-pytest",
+        tool="pytest",
+        key=key,
+        scope=CacheScope.GENERATION,
+        probe=python.pytest_cache,
     )
     record_use(paths, "node-pnpm", tool="pnpm", key=key, scope=CacheScope.SHARED)
     record_use(
@@ -52,6 +69,7 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
         ignored_names=(config.toolchain.compiler_cache_socket_name,),
     )
     return {
+        **python.variables(),
         config.environment.uv_cache: str(uv),
         config.environment.pnpm_store: str(cachelayout.stage_path(config, "node-pnpm")),
     }

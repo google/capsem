@@ -1226,7 +1226,6 @@ run_marker = "CAPSEM_GATE_RUN"
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
 compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
-uv_identity_inputs = ["build_system/uv.lock", "build_system/pyproject.toml"]
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the

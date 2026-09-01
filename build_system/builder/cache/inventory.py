@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import fnmatch
 import os
 import shutil
@@ -11,6 +10,7 @@ import time
 from pathlib import Path
 
 from .inventorymodels import RetentionInventory
+from .leases import active_path
 from .models import CacheEntry, CacheInventory, CachePolicy, PruneMethod, StageInventory
 from .paths import CachePaths
 
@@ -21,13 +21,7 @@ def _lease_active(stage_path: Path, template: str | None, key: str) -> bool:
     lease = stage_path / template.format(key=key)
     if not lease.is_file() or lease.is_symlink():
         return False
-    with lease.open("rb") as descriptor:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-    return False
+    return active_path(lease)
 
 
 def _entry_size(path: Path, allocated_seen: set[tuple[int, int]]) -> tuple[int, int]:

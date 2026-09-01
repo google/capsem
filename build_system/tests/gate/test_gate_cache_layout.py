@@ -47,13 +47,9 @@ def test_absolute_test_override_remains_explicit(tmp_path: Path) -> None:
     assert cachelayout.shared_path(CONFIG, override) == override
 
 
-def test_uv_generation_is_keyed_by_the_locked_python_project(
+def test_uv_uses_its_content_addressed_shared_stage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
-    generation = cachelayout.keyed_stage_path(
-        CONFIG, "python-uv", *CONFIG.toolchain.uv_identity_inputs
-    )
 
-    assert generation.parent == PROJECT_ROOT / "cache/tools/python/uv"
-    assert len(generation.name) == 64
+    assert cachelayout.stage_path(CONFIG, "python-uv") == PROJECT_ROOT / "cache/tools/python/uv"

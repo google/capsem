@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 
@@ -45,14 +44,3 @@ def stage_path(config: GateConfig, stage_id: str) -> Path:
 def cache_paths(config: GateConfig) -> CachePaths:
     """Return the typed path authority shared by gate cache adapters."""
     return CachePaths(repository_root=authority(config), policy=load_policy(config.root))
-
-
-def keyed_stage_path(config: GateConfig, stage_id: str, *inputs: str) -> Path:
-    """Resolve a whole removable generation keyed by exact input bytes."""
-    digest = hashlib.sha256()
-    for relative in inputs:
-        digest.update(relative.encode())
-        digest.update(b"\0")
-        digest.update((config.root / relative).read_bytes())
-        digest.update(b"\0")
-    return stage_path(config, stage_id) / digest.hexdigest()

@@ -2,11 +2,13 @@
 
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
 from capsem_builder.cache.inventory import scan_inventory
+from capsem_builder.cache.leases import release_path
 from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 
@@ -14,6 +16,53 @@ from capsem_builder.cache.paths import CachePaths
 def _source(root: Path, value: str) -> None:
     root.mkdir()
     root.joinpath("probe.py").write_text(f'VALUE = "{value}"\n', encoding="utf-8")
+
+
+def test_every_console_script_enters_through_the_source_cache_launcher() -> None:
+    """Otherwise one Python command can repopulate bytecode beside source."""
+    root = Path(__file__).resolve().parents[3]
+    manifest = tomllib.loads((root / "build_system/pyproject.toml").read_text(encoding="utf-8"))
+
+    assert manifest["project"]["scripts"] == {
+        "capsem-builder": "capsem_builder.gatelaunch:builder_main",
+        "capsem-cache": "capsem_builder.gatelaunch:cache_main",
+        "capsem-gate": "capsem_builder.gatelaunch:main",
+    }
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "module"),
+    [
+        ("main", "capsem_builder.gate"),
+        ("cache_main", "capsem_builder.cache"),
+        ("builder_main", "capsem_builder.image"),
+    ],
+)
+def test_each_unisolated_entrypoint_reexecs_to_its_own_package(
+    entrypoint: str, module: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import capsem_builder.gatelaunch as launcher
+
+    source = tmp_path / entrypoint
+    _source(source, entrypoint)
+    issued: list[list[str]] = []
+
+    class Replaced(BaseException):
+        """A real exec never returns."""
+
+    def replace(_program: str, argv: list[str]) -> NoReturn:
+        issued.append(argv)
+        raise Replaced
+
+    monkeypatch.delenv(launcher.MARKER, raising=False)
+    monkeypatch.setattr(os, "execv", replace)
+    monkeypatch.setattr(sys, "argv", [f"capsem-{entrypoint}", "--help"])
+    monkeypatch.setattr(launcher, "checkout", lambda: source)
+
+    with pytest.raises(Replaced):
+        getattr(launcher, entrypoint)()
+
+    assert issued[0][1:] == ["-m", module, "--help"]
 
 
 def test_launcher_reexecs_when_marker_belongs_to_other_source(
@@ -103,8 +152,8 @@ def test_live_gate_generation_holds_a_prune_lease(tmp_path: Path) -> None:
     try:
         inventory = scan_inventory(CachePaths(repository_root=authority, policy=policy), policy)
     finally:
-        lease.close()
-        launcher._LEASES.pop(generation, None)
+        del lease
+        release_path(generation.with_name(f".{generation.name}.lock"))
 
     entries = {entry.key: entry for entry in inventory.stages[0].entries}
     assert entries[generation.name].protected
