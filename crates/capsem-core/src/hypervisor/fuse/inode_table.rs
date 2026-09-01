@@ -99,6 +99,18 @@ impl InodeTable {
         Some(self.entries.get(&parent_ino)?.host_path.join(name_str))
     }
 
+    /// Canonicalize `path` and return it only if it resolves inside the share.
+    ///
+    /// A symlink inode stores its own in-root path (so readlink et al. operate
+    /// on the link, not its target), so any operation that *follows* the link
+    /// to a real file must first prove the target stays within the share. Guest
+    /// symlinks can point anywhere; without this a `ln -s /etc/passwd escape`
+    /// inside the workspace would be followed straight to the host file.
+    pub(crate) fn contained_target(&self, path: &Path) -> Option<PathBuf> {
+        let canonical = path.canonicalize().ok()?;
+        canonical.starts_with(&self.root_canonical).then_some(canonical)
+    }
+
     /// Resolve a child name under a parent inode. Returns inode number.
     /// Validates path traversal security: the resolved path must be under root.
     pub fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> Option<u64> {

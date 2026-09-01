@@ -17,6 +17,13 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        // Containment: opening follows a final symlink, and a guest symlink can
+        // point outside the share. Resolve to a canonical in-share path first
+        // (intra-workspace symlinks still work); refuse anything that escapes.
+        let path = match self.inodes.contained_target(&path) {
+            Some(p) => p,
+            None => return fuse::error_response(header.unique, -libc::EACCES),
+        };
 
         let flags = open_in.flags as i32;
         let accmode = flags & libc::O_ACCMODE;
