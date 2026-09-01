@@ -377,3 +377,34 @@ match = 'http.host.contains("openai.com")'
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[test]
+fn http_host_matching_is_case_insensitive() {
+    // Hostnames are case-insensitive (the DNS path already lowercases qnames).
+    // A block rule on a lowercase host must still fire when a guest sends the
+    // request with a mixed-case Host header, otherwise the block is trivially
+    // evaded with `Host: API.Evil.Com`.
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.block_evil]
+name = "block_evil"
+action = "block"
+match = 'http.host == "api.evil.com"'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("API.Evil.Com".into()),
+        ..Default::default()
+    });
+
+    let boundary = evaluate_security_boundary(&rules, std::collections::BTreeMap::new(), event).unwrap();
+    assert_eq!(
+        boundary.enforcement.action,
+        SecurityEnforcementAction::Block,
+        "mixed-case Host must not evade a lowercase host block rule"
+    );
+}

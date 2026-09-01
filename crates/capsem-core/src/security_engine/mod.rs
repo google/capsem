@@ -1908,7 +1908,14 @@ impl SecurityEvent {
         self
     }
 
-    pub fn with_http(mut self, http: HttpSecurityEvent) -> Self {
+    pub fn with_http(mut self, mut http: HttpSecurityEvent) -> Self {
+        // Hostnames are case-insensitive. Normalize once here -- the single
+        // attach point for the matched HTTP event -- so `http.host` rules can't
+        // be evaded with a mixed-case Host header. Mirrors the DNS qname path,
+        // which already lowercases. Hostnames are ASCII (IDNs are punycode).
+        if let Some(host) = http.host.as_mut() {
+            host.make_ascii_lowercase();
+        }
         self.http = Some(http);
         self
     }
