@@ -93,6 +93,30 @@ fn pop_empty_queue() {
 }
 
 #[test]
+fn pop_zero_size_queue_does_not_panic() {
+    // A guest can drive DRIVER_OK with QUEUE_NUM=0 on the cold path, which is
+    // not clamped to the device max. `next_avail % size` would divide by zero
+    // and panic the host process (a guest-triggerable DoS). A zero-size queue
+    // must report empty, never panic.
+    let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+    // Make the avail index non-zero so pop() gets past the ring-empty check and
+    // reaches the `% size` computation.
+    write_avail_idx(&mem, avail_gpa, 1);
+    let memref = mem.clone_ref(RAM_BASE);
+    let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 0);
+    assert!(q.pop().is_none());
+}
+
+#[test]
+fn push_used_zero_size_queue_does_not_panic() {
+    let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+    let memref = mem.clone_ref(RAM_BASE);
+    let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 0);
+    // Must be a no-op rather than dividing by zero in `next_used % size`.
+    q.push_used(0, 0);
+}
+
+#[test]
 fn restored_queue_starts_after_used_entries() {
     let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
 

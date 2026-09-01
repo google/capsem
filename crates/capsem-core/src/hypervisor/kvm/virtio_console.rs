@@ -114,32 +114,38 @@ impl VirtioDevice for VirtioConsoleDevice {
             };
             while let Some(chain) = queue.pop() {
                 let mut written = 0u32;
+                let mut buf = Vec::new();
                 for desc in &chain.descriptors {
                     if desc.is_write_only() {
                         continue;
                     }
-                    if let Some(ptr) = mem.gpa_to_host(desc.addr) {
-                        let mut offset = 0usize;
-                        while offset < desc.len as usize {
-                            let ret = unsafe {
-                                libc::write(
-                                    self.tx_fd,
-                                    ptr.add(offset) as *const libc::c_void,
-                                    desc.len as usize - offset,
-                                )
-                            };
-                            if ret <= 0 {
-                                tracing::warn!(
-                                    event_name = "virtio.console.write_error",
-                                    errno = %std::io::Error::last_os_error(),
-                                    "failed to write guest console output"
-                                );
-                                break;
-                            }
-                            offset += ret as usize;
-                        }
-                        written = written.saturating_add(offset as u32);
+                    // Validate the whole [addr, addr+len) range before touching
+                    // host memory: a boundary descriptor with a large len must
+                    // never write host heap past the guest-RAM mmap to the fd.
+                    buf.clear();
+                    if !mem.read_guest_buffer(desc.addr, desc.len as usize, &mut buf) {
+                        continue;
                     }
+                    let mut offset = 0usize;
+                    while offset < buf.len() {
+                        let ret = unsafe {
+                            libc::write(
+                                self.tx_fd,
+                                buf[offset..].as_ptr() as *const libc::c_void,
+                                buf.len() - offset,
+                            )
+                        };
+                        if ret <= 0 {
+                            tracing::warn!(
+                                event_name = "virtio.console.write_error",
+                                errno = %std::io::Error::last_os_error(),
+                                "failed to write guest console output"
+                            );
+                            break;
+                        }
+                        offset += ret as usize;
+                    }
+                    written = written.saturating_add(offset as u32);
                 }
                 tracing::trace!(
                     event_name = "virtio.console.transmit_complete",

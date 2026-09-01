@@ -832,7 +832,7 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "capsem-core",
+   "capsem-foundation",
    "clap",
    "futures",
    "reqwest",
@@ -1067,6 +1067,7 @@
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
+   "capsem-proto",
    "regex",
    "reqwest",
    "rmcp",

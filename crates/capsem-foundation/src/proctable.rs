@@ -1,4 +1,4 @@
-//! The shared host process table, read with a syscall instead of spawning `ps`.
+//! The shared process table, read with a syscall instead of spawning `ps`.
 //!
 //! `/bin/ps` is setuid root, and macOS refuses to `execvp` a setuid binary
 //! from a sandboxed process whatever the profile permits -- `(allow default)`

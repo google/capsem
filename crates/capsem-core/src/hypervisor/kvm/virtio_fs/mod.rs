@@ -162,9 +162,10 @@ fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<
             if new_len > MAX_GATHER_SIZE {
                 return None;
             }
-            if let Some(ptr) = mem.gpa_to_host(desc.addr) {
-                buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr.cast_const(), desc.len as usize) });
-            }
+            // Validate the whole [addr, addr+len) range, not just the first
+            // byte: a guest descriptor near the RAM boundary with a large len
+            // must never read host memory past the mmap.
+            mem.read_guest_buffer(desc.addr, desc.len as usize, &mut buf);
         }
     }
     Some(buf)
@@ -177,13 +178,12 @@ fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) ->
     let mut offset = 0usize;
     for desc in &chain.descriptors {
         if desc.is_write_only() && offset < data.len() {
-            if let Some(ptr) = mem.gpa_to_host(desc.addr) {
-                let n = (data.len() - offset).min(desc.len as usize);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data[offset..].as_ptr(), ptr, n);
-                }
-                offset += n;
-            }
+            let n = (data.len() - offset).min(desc.len as usize);
+            // write_guest_buffer validates the whole [addr, addr+n) range
+            // before copying, so a boundary descriptor with a huge len can no
+            // longer drive an OOB write into host heap. It writes all-or-nothing.
+            let written = mem.write_guest_buffer(desc.addr, &data[offset..offset + n]);
+            offset += written;
         }
     }
     offset as u32

@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
                     &channel,
                     &commit,
                     &profile,
-                    machine::running_capsem_processes(),
+                    machine::running_capsem_processes()?,
                 );
                 let mut connection = store::open(&root)?;
                 let run_id = store::insert(&mut connection, &record)?;
@@ -251,7 +251,7 @@ async fn main() -> Result<()> {
         }
         Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH, &args.profile),
         Command::List => commands::list_dimensions(),
-        Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()),
+        Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()?),
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
             return commands::compare(
@@ -276,7 +276,7 @@ async fn main() -> Result<()> {
                 &args.channel,
                 &args.commit,
                 &args.profile,
-                machine::running_capsem_processes(),
+                machine::running_capsem_processes()?,
             );
         }
     }

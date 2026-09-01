@@ -487,23 +487,19 @@ fn substitute_brokered_query(
 }
 
 fn resolve_broker_reference(provider_hint: Option<CredentialProvider>, credential_ref: &str) -> Result<String, String> {
-    if let Some(provider) = provider_hint {
-        if let Ok(Some(raw)) = resolve_broker_reference_for_provider(provider, credential_ref) {
-            return Ok(raw);
-        }
+    // A brokered reference may only be dereferenced to raw plaintext when the
+    // request's destination binds to the credential's owning provider. Without
+    // that binding -- an unknown or attacker-controlled domain, where
+    // `credential_provider_for_request` yields None -- refuse. The previous
+    // all-provider fallback let a guest send any provider's reference to an
+    // arbitrary upstream and have the host hand back the real secret.
+    let Some(provider) = provider_hint else {
+        return Err("credential broker reference has no provider binding for this destination".to_string());
+    };
+    match resolve_broker_reference_for_provider(provider, credential_ref) {
+        Ok(Some(raw)) => Ok(raw),
+        _ => Err("credential broker reference could not be resolved".to_string()),
     }
-
-    for provider in CredentialProvider::all()
-        .iter()
-        .copied()
-        .filter(|provider| Some(*provider) != provider_hint)
-    {
-        if let Ok(Some(raw)) = resolve_broker_reference_for_provider(provider, credential_ref) {
-            return Ok(raw);
-        }
-    }
-
-    Err("credential broker reference could not be resolved".to_string())
 }
 
 fn provider_for_stored_reference(credential_ref: &str) -> Option<CredentialProvider> {

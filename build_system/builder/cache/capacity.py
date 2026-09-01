@@ -81,8 +81,19 @@ def _apply_retention(
         return False, tuple(
             f"Docker retention inventory failed: {item}" for item in plan.violations
         )
-    if not plan.actions:
+    retention = tuple(
+        action
+        for action in plan.actions
+        if action.operation is not RuntimeOperation.PRUNE_BUILD_CACHE
+    )
+    if not retention:
         return False, ()
+    plan = plan.model_copy(
+        update={
+            "actions": retention,
+            "reclaim_bytes": sum(action.logical_bytes for action in retention),
+        }
+    )
     applied = apply_runtime_prune(paths, policy, plan, reason=reason, runner=runner)
     failures = tuple(
         f"Docker retention failed: {item.output}"
@@ -148,7 +159,7 @@ def ensure_capacity(
         pressure = required + rail.reclaim_headroom_bytes
         keep_bytes = min(
             rail.build_cache_keep_bytes,
-            max(0, build_cache.reclaimable_bytes - pressure),
+            max(0, build_cache.logical_bytes - pressure),
         )
         plan = RuntimePrunePlan(
             generated_ns=time.time_ns(),

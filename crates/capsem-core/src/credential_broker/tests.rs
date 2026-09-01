@@ -310,6 +310,78 @@ fn substitution_is_domain_separated_by_provider() {
 }
 
 #[test]
+fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    // Seed a real Anthropic secret and get its opaque broker reference.
+    let obs = CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: "sk-ant-secret-do-not-leak".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    };
+    let brokered = broker_observed_credential(&obs).unwrap();
+    let reference = brokered.credential_ref.clone();
+
+    // A guest sends the Anthropic reference to an unrelated destination. The
+    // destination binds to no provider, so the host must NOT dereference the
+    // reference back to the raw Anthropic secret.
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+    );
+    let result = substitute_brokered_upstream_credentials("evil.example.com", None, &mut headers, None);
+
+    assert!(
+        result.is_err(),
+        "reference with no provider binding for the destination must not be dereferenced"
+    );
+    let auth = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        !auth.contains("sk-ant-secret-do-not-leak"),
+        "raw secret must never be materialized into a request to an unbound domain"
+    );
+}
+
+#[test]
+fn brokered_reference_substitutes_for_matching_provider_domain() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: "sk-ant-legit-value".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    };
+    let brokered = broker_observed_credential(&obs).unwrap();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {}", brokered.credential_ref)).unwrap(),
+    );
+    // The Anthropic reference sent to an Anthropic domain resolves to the secret.
+    substitute_brokered_upstream_credentials("api.anthropic.com", None, &mut headers, None).unwrap();
+    let auth = headers.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+    assert_eq!(auth, "Bearer sk-ant-legit-value");
+}
+
+#[test]
 fn broker_stores_secret_without_writing_user_settings() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();

@@ -484,3 +484,73 @@ fn aarch64_gic_spi_range_valid() {
     let max_irq = VIRTIO_MMIO_IRQ_BASE + VIRTIO_MMIO_MAX_DEVICES;
     assert!(max_irq < 1020, "virtio IRQs must stay within GIC SPI range (<1020)");
 }
+
+// -----------------------------------------------------------------------
+// Guest-buffer accessors: the whole [gpa, gpa+len) range must be backed by
+// RAM before any host read/write. A device that translates only the first
+// byte (gpa_to_host) and then copies a guest-controlled length is a
+// guest->host OOB primitive; these helpers close that class.
+// -----------------------------------------------------------------------
+
+const HELPER_RAM: u64 = 2 * PAGE_SIZE;
+
+#[test]
+fn write_guest_buffer_writes_when_range_is_backed() {
+    let mem = GuestMemory::new(HELPER_RAM).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    let data = [0xABu8; 32];
+    let n = memref.write_guest_buffer(RAM_BASE + 0x40, &data);
+    assert_eq!(n, 32);
+    let mut back = [0u8; 32];
+    mem.read_at(0x40, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
+fn write_guest_buffer_rejects_range_spilling_past_ram() {
+    let mem = GuestMemory::new(HELPER_RAM).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    // First byte is in-range but the range extends past the end of RAM. The
+    // old gpa_to_host path would translate the first byte and then copy 64
+    // bytes past the mmap -- host heap corruption. The checked helper must
+    // write nothing and report zero.
+    let data = [0xCDu8; 64];
+    let n = memref.write_guest_buffer(RAM_BASE + HELPER_RAM - 8, &data);
+    assert_eq!(n, 0, "partially-out-of-range write must be rejected wholesale");
+    // The 8 in-range bytes must be untouched too (no partial write).
+    let mut back = [0u8; 8];
+    mem.read_at(HELPER_RAM - 8, &mut back).unwrap();
+    assert_eq!(back, [0u8; 8], "rejected write must not touch any bytes");
+}
+
+#[test]
+fn read_guest_buffer_reads_when_range_is_backed() {
+    let mem = GuestMemory::new(HELPER_RAM).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    mem.write_at(0x80, &[0x11u8; 16]).unwrap();
+    let mut dst = vec![0xFFu8]; // pre-existing content must be preserved
+    assert!(memref.read_guest_buffer(RAM_BASE + 0x80, 16, &mut dst));
+    assert_eq!(dst.len(), 17);
+    assert_eq!(dst[0], 0xFF);
+    assert_eq!(&dst[1..], &[0x11u8; 16]);
+}
+
+#[test]
+fn read_guest_buffer_rejects_range_spilling_past_ram() {
+    let mem = GuestMemory::new(HELPER_RAM).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    let mut dst = Vec::new();
+    // Same OOB shape on the read side: first byte valid, range escapes RAM.
+    assert!(!memref.read_guest_buffer(RAM_BASE + HELPER_RAM - 8, 64, &mut dst));
+    assert!(dst.is_empty(), "rejected read must not append any bytes");
+}
+
+#[test]
+fn guest_buffer_zero_len_is_a_noop_success() {
+    let mem = GuestMemory::new(HELPER_RAM).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    assert_eq!(memref.write_guest_buffer(RAM_BASE + 0x10, &[]), 0);
+    let mut dst = Vec::new();
+    assert!(memref.read_guest_buffer(RAM_BASE + 0x10, 0, &mut dst));
+    assert!(dst.is_empty());
+}

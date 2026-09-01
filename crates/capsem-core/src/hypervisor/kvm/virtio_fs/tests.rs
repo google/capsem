@@ -13,7 +13,7 @@ use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer;
-
+mod descriptor_bounds;
 static EVENT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 static EVENT_CAPTURE: OnceLock<EventCaptureState> = OnceLock::new();
 

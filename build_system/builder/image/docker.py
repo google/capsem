@@ -2016,6 +2016,7 @@ def build_image(
                 runtime=runtime,
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
+            build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(config, repo_root)
             rootfs_config = _rootfs_config_input_record(config, arch_name)
             component_identity = componentcache.build_identity(
                 build_inputs, extra=rootfs_config
@@ -2068,7 +2069,6 @@ def build_image(
                 },
             )
 
-            # Export and compress
             tar_path = arch_output / "rootfs.tar"
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
@@ -2101,7 +2101,7 @@ def build_image(
                 erofs_compression,
                 erofs_cluster_size,
                 erofs_level,
-                tool_image=_asset_tools_image(config, repo_root),
+                tool_image=asset_tools_image,
                 runtime_network=config.build.asset_tools.runtime_network,
             )
             validate_erofs_size(erofs_path, config.build.rootfs)
@@ -2116,7 +2116,7 @@ def build_image(
                         "compression": erofs_compression,
                         "compression_level": erofs_level,
                         "cluster_size": erofs_cluster_size,
-                        "utils_image": _asset_tools_image(config, repo_root),
+                        "utils_image": asset_tools_image,
                     },
                     "outputs": [erofs_entry],
                 },
@@ -2129,7 +2129,7 @@ def build_image(
                 repo_root=repo_root,
                 architecture=arch_name,
                 runtime=runtime,
-                tool_image=_asset_tools_image(config, repo_root),
+                tool_image=asset_tools_image,
                 tool_platform=_native_linux_platform(),
                 runtime_network=config.build.asset_tools.runtime_network,
             )

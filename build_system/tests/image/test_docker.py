@@ -2057,6 +2057,9 @@ class TestBuildLedger:
             "reference": dependency_tag,
             "image_id": dependency_id,
         }
+        assert inventory_record["inputs"]["asset_tools_image"] == _asset_tools_image(
+            real_config, PROJECT_ROOT
+        )
         assert inventory_record["outputs"][0]["path"] == "software-inventory.json"
         erofs_record = records[3]
         assert erofs_record["erofs"] == {

@@ -487,7 +487,7 @@ pub(super) fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path
 /// SIGTERM -> 2s poll -> SIGKILL. An unreadable table is reported; no matching
 /// process is ordinary and silent.
 pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let table = match capsem_core::proctable::running_processes() {
+    let table = match capsem_foundation::proctable::running_processes() {
         Ok(table) => table,
         // Loudly. This used to shell out to `ps` and return silently when the
         // spawn failed, which is indistinguishable from finding no orphans --
