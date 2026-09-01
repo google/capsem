@@ -6069,9 +6069,7 @@ where
 async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, String> {
     claim_asset_reconcile(&state)?;
     let result = ensure_assets_after_claim(Arc::clone(&state)).await;
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
+    state.asset_reconcile_inflight.store(false, Ordering::Release);
     result
 }
 
@@ -6159,9 +6157,7 @@ async fn ensure_profile_assets_for_state(
 ) -> Result<usize, String> {
     claim_asset_reconcile(&state)?;
     let result = ensure_profile_assets_after_claim(Arc::clone(&state), profile).await;
-    state
-        .asset_reconcile_inflight
-        .store(false, Ordering::Release);
+    state.asset_reconcile_inflight.store(false, Ordering::Release);
     result
 }
 
@@ -6704,9 +6700,7 @@ fn build_profile_status_cache(
 
 fn asset_reconcile_has_route_fields(state: &ServiceState) -> bool {
     state.asset_reconcile_inflight.load(Ordering::Acquire)
-        || state
-            .asset_reconcile
-            .lock()
+        || state.asset_reconcile.lock()
             .map(|reconcile| reconcile.in_progress)
             .unwrap_or(true)
 }
