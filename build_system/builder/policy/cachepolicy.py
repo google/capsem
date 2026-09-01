@@ -2,54 +2,43 @@
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 
-@dataclass(frozen=True)
-class CacheLimits:
+class CacheLimits(BaseModel):
     """The three independent ways a retained cache is bounded."""
 
-    maximum_count: int
-    maximum_age_seconds: float
-    maximum_bytes: int
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
 
-    def __post_init__(self) -> None:
-        if self.maximum_count <= 0:
-            raise ValueError("cache maximum_count must be positive")
-        if self.maximum_age_seconds <= 0:
-            raise ValueError("cache maximum_age_seconds must be positive")
-        if self.maximum_bytes <= 0:
-            raise ValueError("cache maximum_bytes must be positive")
+    maximum_count: Annotated[StrictInt, Field(gt=0)]
+    maximum_age_seconds: Annotated[float, Field(gt=0)]
+    maximum_bytes: Annotated[StrictInt, Field(gt=0)]
 
 
-@dataclass(frozen=True)
-class CacheProduct:
+class CacheProduct(BaseModel):
     """One product ordered by observed use, with a stable tie breaker."""
 
-    key: str
-    size_bytes: int
-    created_at: float
-    last_used_at: float
-    protected: bool = False
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
 
-    def __post_init__(self) -> None:
-        if not self.key:
-            raise ValueError("cache product key must be non-empty")
-        if self.size_bytes < 0:
-            raise ValueError("cache product size cannot be negative")
-        if (
-            not math.isfinite(self.created_at)
-            or not math.isfinite(self.last_used_at)
-            or self.created_at < 0
-            or self.last_used_at < self.created_at
-        ):
-            raise ValueError("cache product timestamps are invalid")
+    key: Annotated[str, Field(min_length=1)]
+    size_bytes: Annotated[StrictInt, Field(ge=0)]
+    created_at: Annotated[float, Field(ge=0)]
+    last_used_at: Annotated[float, Field(ge=0)]
+    protected: StrictBool = False
+
+    @model_validator(mode="after")
+    def timestamps_are_ordered(self) -> CacheProduct:
+        if self.last_used_at < self.created_at:
+            raise ValueError("cache product last use cannot precede creation")
+        return self
 
 
-@dataclass(frozen=True)
-class ReclaimPlan:
+class ReclaimPlan(BaseModel):
     """What may leave and whether pinned products still violate policy."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     evict: tuple[str, ...]
     violations: tuple[str, ...]
@@ -104,4 +93,4 @@ def plan_reclaim(
     )
     if future:
         violations.append("future-dated protected products: " + ", ".join(future))
-    return ReclaimPlan(tuple(evicted), tuple(violations))
+    return ReclaimPlan(evict=tuple(evicted), violations=tuple(violations))

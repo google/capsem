@@ -42,7 +42,7 @@ fn terminal_socket_prefers_the_readable_path() {
 #[test]
 fn terminal_socket_fits_under_a_long_run_dir() {
     let run_dir = PathBuf::from(
-        "/Users/somebody/git/capsem/cache/target/ironbank-assets/co-work/home/.capsem/run",
+        "/Users/somebody/git/capsem/cache/target/tests/ironbank/co-work/home/.capsem/run",
     );
     let path = terminal_socket_path(&run_dir, "322e7460-f1b2-4fdd-88f1-0c4b58c48e46");
 
@@ -61,7 +61,7 @@ fn the_terminal_fallback_is_the_same_in_every_process() {
     // binding and dialling different paths -- which fails exactly like the
     // overflow it was meant to fix.
     let run_dir = PathBuf::from(
-        "/Users/somebody/git/capsem/cache/target/ironbank-assets/co-work/home/.capsem/run",
+        "/Users/somebody/git/capsem/cache/target/tests/ironbank/co-work/home/.capsem/run",
     );
     let id = "322e7460-f1b2-4fdd-88f1-0c4b58c48e46";
 

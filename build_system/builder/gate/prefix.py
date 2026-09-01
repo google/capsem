@@ -73,7 +73,7 @@ def socket_root(config: GateConfig) -> Path:
     into a prefix cannot lengthen a socket path by even one byte. That is the
     property worth holding, and it is not obvious: the workspace run dir is
     relative to the root and would grow with it, and at
-    `<root>/cache/target/test-home/.capsem/run` it is already past `SUN_LEN` once
+    `<root>/cache/target/tests/home/.capsem/run` it is already past `SUN_LEN` once
     the gateway's 54-byte suffix is added. The asset lane exists at
     `/tmp/capsem-a.XXXXXX` precisely so that number is never the binding one.
     """

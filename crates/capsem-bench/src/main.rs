@@ -49,7 +49,7 @@ enum Command {
 #[derive(Parser, Debug)]
 struct ReportArgs {
     /// The benchmark store to read.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     store: PathBuf,
     #[arg(long, default_value = "code")]
     profile: String,
@@ -63,7 +63,7 @@ struct RunArgs {
     #[arg(long, default_value = "benchmarks/collectors")]
     collectors: PathBuf,
     /// The benchmark store to record into.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     out: PathBuf,
     /// Reduced samples, skipping everything that boots a guest.
     #[arg(long)]
@@ -117,7 +117,7 @@ struct CompareArgs {
 #[derive(Parser, Debug)]
 struct VerifyArgs {
     /// The store holding this run.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     records: PathBuf,
     /// The store holding checked-in evidence.
     #[arg(long)]

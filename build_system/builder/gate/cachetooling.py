@@ -14,7 +14,7 @@ def record_cargo(config: GateConfig, *, key: str, logical_bytes: int) -> CacheUs
     """Observe the live Cargo profile without deleting compiler internals."""
     return record_use(
         cachelayout.cache_paths(config),
-        "cargo-debug",
+        "cargo",
         tool="cargo",
         key=key,
         logical_bytes=logical_bytes,

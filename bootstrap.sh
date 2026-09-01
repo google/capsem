@@ -7,19 +7,20 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DOCKER_DISK_GIB=$(awk -F= '
-    /^\[docker\]$/ { in_docker=1; next }
+DOCKER_DISK_BYTES=$(awk -F= '
+    /^\[control\.docker\]$/ { in_docker=1; next }
     /^\[/ { in_docker=0 }
-    in_docker && $1 ~ /^[[:space:]]*recommended_disk_gib[[:space:]]*$/ {
+    in_docker && $1 ~ /^[[:space:]]*recommended_disk_bytes[[:space:]]*$/ {
         gsub(/[[:space:]]/, "", $2); print $2; exit
     }
-' "$SCRIPT_DIR/config/storage-policy.toml")
-case "$DOCKER_DISK_GIB" in
+' "$SCRIPT_DIR/config/cache.toml")
+case "$DOCKER_DISK_BYTES" in
     ''|*[!0-9]*)
-        printf "invalid docker.recommended_disk_gib in config/storage-policy.toml\n" >&2
+        printf "invalid control.docker.recommended_disk_bytes in config/cache.toml\n" >&2
         exit 2
         ;;
 esac
+DOCKER_DISK_GIB=$((DOCKER_DISK_BYTES / 1073741824))
 
 ASSUME_YES=0
 for arg in "$@"; do

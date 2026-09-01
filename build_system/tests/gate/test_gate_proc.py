@@ -88,7 +88,7 @@ def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
     )
     runner = RecordingRunner(tmp_path)
 
-    runner.script("build_system/scripts/build/docker-storage-policy.py", "gc")
+    runner.script("build_system/scripts/build/sync-container-clock.py", "gc")
 
     assert runner.commands[0].argv == (
         "uv",
@@ -97,7 +97,7 @@ def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
         "build_system",
         "--frozen",
         "python",
-        str(tmp_path / "build_system/scripts/build/docker-storage-policy.py"),
+        str(tmp_path / "build_system/scripts/build/sync-container-clock.py"),
         "gc",
     )
 

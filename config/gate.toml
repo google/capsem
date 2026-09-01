@@ -32,13 +32,13 @@ pkg_config_template = "/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"
 # table.
 [outputs]
 assets = "cache/target/assets"
-benchmarks = "cache/target/test-benchmarks"
+benchmarks = "cache/target/tests/benchmarks"
 coverage = "cache/target/coverage"
-distribution = "cache/target/distribution"
+distribution = "cache/target/release/distribution"
 gate_runs = "cache/target/gate-runs"
 materialized_config = "cache/target/config"
 packages = "cache/target/packages"
-test_artifacts = "cache/target/test-artifacts"
+test_artifacts = "cache/target/tests/evidence"
 
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
@@ -55,25 +55,6 @@ gnu = "x86_64-linux-gnu"
 apt_cross_compilers = ["gcc-x86-64-linux-gnu", "g++-x86-64-linux-gnu"]
 docker_platform = "linux/amd64"
 aliases = ["x86_64", "amd64"]
-
-# ---------------------------------------------------------------------------
-# Docker storage
-# ---------------------------------------------------------------------------
-
-[storage]
-policy_file = "config/storage-policy.toml"
-policy_script = "build_system/scripts/build/docker-storage-policy.py"
-ensure_space_script = "build_system/scripts/build/ensure-docker-space.sh"
-
-# Points at which storage held for a finished rail may be released, and the
-# rail whose headroom that release serves. Eleven recipes used to spell these
-# pairs by hand, so the legal set existed only as a habit.
-[storage.phases]
-completed-docker-rails = { boundary = "after-assets", rail = "package" }
-completed-package-arm64 = { boundary = "after-package-arm64", rail = "install" }
-completed-package-x86_64 = { boundary = "after-package-x86_64", rail = "install" }
-deferred-install-target = { boundary = "before-packages", rail = "package" }
-after-install = { boundary = "after-install", rail = "install" }
 
 # ---------------------------------------------------------------------------
 # Stopping gate-owned daemons
@@ -323,7 +304,7 @@ package_runtime_packages = [
 dockerfile = "build_system/docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
-source_identity_file = "cache/target/install-image/receipt.json"
+source_identity_file = "cache/target/build/install-image/receipt.json"
 identity_inputs = [
     "Cargo.toml",
     "Cargo.lock",
@@ -386,14 +367,14 @@ package_name = "capsem"
 # Scratch, all under cache/target/ so a failed run leaves evidence without dirtying
 # the checkout.
 [install.layout]
-assets = "cache/target/install-test-assets"
-config = "cache/target/install-test-config"
+assets = "cache/target/tests/install/assets"
+config = "cache/target/tests/install/config"
 # The authored release tree is distribution output even though this instance
 # exists only long enough to prove the installer.
-channel = "cache/target/distribution/install-proof"
-packages = "cache/target/install-test-packages"
-glowup = "cache/target/local-release-glowup"
-glowup_evidence = "cache/target/local-release-glowup-evidence"
+channel = "cache/target/release/distribution/install-proof"
+packages = "cache/target/tests/install/packages"
+glowup = "cache/target/release/staging/local-glowup"
+glowup_evidence = "cache/target/release/staging/local-glowup-evidence"
 
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["build_system/release_site/node_modules", "build_system/release_site/dist"]
@@ -671,7 +652,7 @@ status_requires = [
 # ---------------------------------------------------------------------------
 
 [assets]
-test_root = "cache/target/ironbank-assets"
+test_root = "cache/target/tests/ironbank"
 profiles_glob = "config/profiles/*/profile.toml"
 
 # Everything a built VM asset is a function of. A lane whose identity matches
@@ -747,7 +728,7 @@ current_link = "current"
 evidence_suffixes = [".log", ".json", ".toml"]
 evidence_prune_dirs = ["guest", "auto_snapshots"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
-# session path, and cache/target/ironbank-assets is already too long.
+# session path, and cache/target/tests/ironbank is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
 
 [assets.cache]
@@ -774,11 +755,11 @@ source_digest_script = "build_system/scripts/build/source-state-digest.py"
 orphan_script = "build_system/scripts/ci/check-orphan-processes.py"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
-source_state_file = "cache/target/gate-source-state.json"
+source_state_file = "cache/state/gate-source.json"
 # Source-derived Docker builds consume this immutable copy. Tests may mutate
 # checkout metadata transiently; one recorded context prevents two phases from
 # assigning different identities to the same eventual source state.
-source_snapshot_dir = "cache/target/gate-source-snapshot"
+source_snapshot_dir = "cache/worktrees/gate-source"
 
 # The Colima binary, restored to whatever the developer had. This used to be a
 # shell trap around the expensive half of the gate, so it was correct only for
@@ -865,7 +846,7 @@ invalid-argument-type = 91
 invalid-assignment = 6
 invalid-method-override = 1
 invalid-return-type = 4
-no-matching-overload = 7
+no-matching-overload = 6
 not-iterable = 2
 not-subscriptable = 144
 unresolved-attribute = 86
@@ -1088,7 +1069,7 @@ max_lines = 300
 [boundary.scripts.oversized_line_counts]
 "build_system/packaging/macos/build-pkg.sh" = 349
 "build_system/packaging/macos/macos_release_glowup.py" = 369
-"build_system/packaging/macos/macos_tart_glowup.py" = 563
+"build_system/packaging/macos/macos_tart_glowup.py" = 558
 "build_system/packaging/macos/macos_tart_guest.sh" = 317
 
 # ---------------------------------------------------------------------------
@@ -1357,8 +1338,8 @@ notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
 fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
 binaries = "build_system/scripts/release/release-binaries.py"
 profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
-preflight_dir = "cache/target/release-preflight"
-channel_source = "cache/target/release-preflight/channel-source.json"
+preflight_dir = "cache/target/release/staging/preflight"
+channel_source = "cache/target/release/staging/preflight/channel-source.json"
 default_repository = "google/capsem"
 repository_variable = "GITHUB_REPOSITORY"
 token_variable = "GITHUB_TOKEN"
@@ -1385,7 +1366,7 @@ generate_settings = "build_system/scripts/build/generate-settings.sh"
 # effect, and one the gate cannot have once it may not write its own source.
 # `contracts.release` still compares the committed pair against a fresh
 # generation, so drift is caught -- by the step whose job that is.
-generated_settings_scratch = "cache/target/generated-settings"
+generated_settings_scratch = "cache/target/generated/settings"
 check_settings = "build_system/scripts/build/check-generated-settings.sh"
 materialize_config = "build_system/scripts/build/materialize-config.sh"
 
@@ -1635,7 +1616,7 @@ profiles = ["debug", "release"]
 
 [logs]
 service_log = ".capsem/run/service.log"
-failure_root = "cache/target/test-artifacts"
+failure_root = "cache/target/tests/evidence"
 cli = "cache/target/cargo/debug/capsem"
 
 [imagebuild]
@@ -1649,7 +1630,7 @@ dependency_backend = ["uv", "run", "--project", "build_system", "--frozen", "pyt
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
 guest_dir = "guest"
-workspace_root = "cache/target/image-workspace/{profile}/{arch}"
+workspace_root = "cache/target/build/image-workspace/{profile}/{arch}"
 workspace_guest_dir = "guest"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
@@ -1899,7 +1880,6 @@ source_contract = [
     "build_system/tests/scripts/test_cargo_audit_gate.py",
     "build_system/tests/scripts/test_check_cargo_audit.py",
     "build_system/tests/release/test_complete_release_channel.py",
-    "build_system/tests/policy/test_docker_storage_policy.py",
     "build_system/tests/policy/test_exec_lock.py",
     "build_system/tests/gate/test_exit_status_integrity.py",
     "build_system/tests/gate/test_fast_gate_ci_contract.py",
@@ -1959,10 +1939,8 @@ source_contract = [
     "build_system/tests/gate/test_gate_run_ledger.py",
 
     "build_system/tests/gate/test_gate_smoke_lifecycle.py",
-    "build_system/tests/gate/test_gate_storage.py",
-    "build_system/tests/gate/test_gate_storage_ordering.py",
+    "build_system/tests/gate/test_gate_cache_control.py",
     "build_system/tests/gate/test_gate_socket_length.py",
-    "build_system/tests/gate/test_gate_storage_consumers.py",
     "build_system/tests/gate/test_gate_module_prerequisites.py",
     "build_system/tests/gate/test_gate_module_boundary.py",
     "build_system/tests/gate/test_gate_shared_contention.py",
@@ -2189,7 +2167,7 @@ macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 platform_support_script = "build_system/packaging/linux/prove-deb-platform-support.py"
 macos_glowup_report = "cache/target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
-glowup_work_dir = "cache/target/release-module-glowup"
+glowup_work_dir = "cache/target/release/staging/module-glowup"
 
 # The local rehearsal of the release lane's pulled path. `just test` builds
 # every artifact and installs the one it built; what it never did is resolve a
@@ -2203,8 +2181,8 @@ rehearsal_script = "build_system/scripts/release/rehearse-release-cohort.py"
 rehearsal_channel = "stable"
 # `release_cohort` creates its deployable `dist/` below this work directory,
 # so the work directory itself belongs beneath the canonical output owner.
-rehearsal_work_dir = "cache/target/distribution/rehearsal"
-rehearsal_inputs_dir = "cache/target/release-rehearsal-inputs"
+rehearsal_work_dir = "cache/target/release/distribution/rehearsal"
+rehearsal_inputs_dir = "cache/target/release/staging/rehearsal-inputs"
 # `{version}` is the workspace version and `{arch}` the dpkg architecture, and
 # both are load-bearing. `capsem-admin assets channel record-binary` refuses a
 # name that does not carry the version, and the exact pairing then matches the
@@ -2212,9 +2190,9 @@ rehearsal_inputs_dir = "cache/target/release-rehearsal-inputs"
 # name is refused at authoring time and, if it got past that, would match no
 # package record at all. The plan can still name this before anything is built,
 # because the version comes from `Cargo.toml`.
-rehearsal_package = "cache/target/release-rehearsal-package/Capsem_{version}_{arch}.deb"
-rehearsal_content_root = "cache/target/release-rehearsal-content"
-rehearsal_glowup_work_dir = "cache/target/release-rehearsal-glowup"
+rehearsal_package = "cache/target/release/staging/rehearsal-package/Capsem_{version}_{arch}.deb"
+rehearsal_content_root = "cache/target/release/staging/rehearsal-content"
+rehearsal_glowup_work_dir = "cache/target/release/staging/rehearsal-glowup"
 # The public before-state the rehearsal pairs against, and the candidate
 # manifest it authored. `{channel}` is the rehearsal channel.
 #
@@ -2225,8 +2203,8 @@ rehearsal_glowup_work_dir = "cache/target/release-rehearsal-glowup"
 # `packages: []` and `profiles: {}`. That is what makes the pairing
 # FRESH_INSTALL -- the pairing a first release makes, and the one that had never
 # run anywhere before this rehearsal existed.
-rehearsal_before_inputs = "cache/target/release-rehearsal-before"
-rehearsal_after_manifest = "cache/target/distribution/rehearsal/dist/assets/{channel}/manifest.json"
+rehearsal_before_inputs = "cache/target/release/staging/rehearsal-before"
+rehearsal_after_manifest = "cache/target/release/distribution/rehearsal/dist/assets/{channel}/manifest.json"
 release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
 default_bin_dir = "cache/target/cargo/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
@@ -2369,29 +2347,29 @@ carried = ["private"]
 # `cache/target/assets` is the selected payload. Isolated VM products live in the stable
 # content-addressed `vm_image_cache`; each prefix keeps only symlinks selecting
 # its exact input generation, so a resumable source continues to pin its bytes.
-# `cache/target/install-image` carries the live source/helper/runtime/product receipt
+# `cache/target/build/install-image` carries the live source/helper/runtime/product receipt
 # for the sealed Docker image. Without it a successful prefix kept the image in
 # Docker, deleted the authority to reuse it, and forced the next prefix to run
 # the same construction again.
-lent = ["cache/target/assets", "cache/target/install-image"]
+lent = ["cache/target/assets", "cache/target/build/install-image"]
 
 # Tiny lent authorities that stay in a failed/explicitly retained prefix when
 # they are also copied into the shared cache. This is deliberately narrower
 # than `lent`: duplicating VM images would defeat the cache bound, but deleting
 # this receipt from a resumable prefix lets Docker reclamation erase the exact
 # source and helper images that its journal still needs.
-resumable = ["cache/target/install-image"]
+resumable = ["cache/target/build/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/test-artifacts", "cache/target/test-benchmarks"]
+exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
 # build scaffolding, which is worth carrying between runs and has no business
 # being copied back into the checkout. A lent path must appear in one list or
 # the other, so nothing can be lent that no run is known to write.
-produced = ["cache/target/install-image"]
+produced = ["cache/target/build/install-image"]
 
 # ---------------------------------------------------------------------------
 # The host-kernel sandbox
@@ -2465,7 +2443,7 @@ sockets = ["~/.colima/default/docker.sock", "~/.colima/_lima/colima/ha.sock"]
 # forty-runs-one-discovery-each outcome report mode exists to avoid:
 #
 #   /private/var/folders/<...>/T/capsem-test-<id>/run/*.sock   552 times
-#   <prefix>/cache/target/test-home/.capsem/run/service.sock         463 times
+#   <prefix>/cache/target/tests/home/.capsem/run/service.sock         463 times
 #   ~/.colima/_lima/colima/ha.sock                             169 times
 #
 # The first is `$TMPDIR` on macOS, which is a per-user path under
@@ -2490,7 +2468,7 @@ local_socket_prefixes = [
 
 # The gate's own service, gateway and per-VM sockets live under the workspace,
 # which is inside the prefix and therefore has no fixed path to list.
-local_socket_regexes = ["cache/target/test-home/\\.capsem/run/"]
+local_socket_regexes = ["cache/target/tests/home/\\.capsem/run/"]
 
 # Servers the gate starts and talks to: the mock upstream, the gateway, and
 # every per-VM listener. `local:*:0` alone was 1915 of the observed events.
@@ -2526,7 +2504,7 @@ report_stop_timeout = 10.0
 # Everything the gate does happens against this home, never the developer's.
 # Wiped at the start of a run, which is why the machine lock is taken first and
 # why the lockfile lives outside it.
-home = "cache/target/test-home/.capsem"
+home = "cache/target/tests/home/.capsem"
 # AF_UNIX paths must not grow with a full 40-character release prefix. The
 # source-root digest makes parallel synthetic checkouts distinct; the machine
 # lock makes the production path single-owner.
@@ -2539,11 +2517,11 @@ seeded_dirs = ["run", "sessions", "logs"]
 # sequence and the VM performance recordings are written by the functional one;
 # a later module wiping them is why a fortnight of full gates left this empty
 # and froze the published arm64 history. The entry point clears it once.
-benchmark_root = "cache/target/test-benchmarks"
+benchmark_root = "cache/target/tests/benchmarks"
 coverage_file = "cache/target/coverage/.coverage"
 
 # What a failing run leaves behind, copied out before the run directory goes.
-evidence_dir = "cache/target/test-artifacts"
+evidence_dir = "cache/target/tests/evidence"
 
 # ---------------------------------------------------------------------------
 # The step attribute migration
@@ -2612,7 +2590,7 @@ summary = "summary.txt"
 # Source trees, because a gate must not edit what it is qualifying; plus the
 # staged release channel, because a hardlink *to* checked-in source lands in
 # build output and leaves the source directory untouched.
-observed_roots = ["config", "crates", "scripts", "guest", "src", "cache/target/web-parity"]
+observed_roots = ["config", "crates", "scripts", "guest", "src", "cache/target/tests/web-parity"]
 # Trees inside those roots where two files holding identical bytes is somebody
 # else's decision. Exact and short on purpose: the duplicate-content rule earns
 # its place everywhere else -- it caught a package lane copying a hardlinked
@@ -2627,7 +2605,7 @@ duplicate_content_exempt = ["crates/capsem-app/gen"]
 # `source.record` intentionally copies every Git-visible byte into this exact
 # tree. Duplicate and empty bytes there are properties of checked-in input,
 # while hardlinks, mode churn, and concurrent writers remain faults.
-source_replica_roots = ["cache/target/gate-source-snapshot"]
+source_replica_roots = ["cache/worktrees/gate-source"]
 # How Linux answers "what path is this descriptor". `shutil.rmtree` deletes
 # through a directory descriptor, so the observer receives a bare entry name
 # and has to anchor it -- without this it resolved against the working
@@ -2864,7 +2842,7 @@ collectors = "benchmarks/collectors"
 # One SQLite file rather than a JSON tree. Asking "is /vms/list slower than it
 # was three releases ago" used to mean globbing filenames and parsing ten
 # shapes; it is now a query.
-store = "cache/target/test-benchmarks/benchmarks.db"
+store = "cache/target/tests/benchmarks/benchmarks.db"
 # The collectors are Python and import the project's dependencies, so they run
 # under the project's interpreter rather than whatever the shebang resolves to.
 interpreter = "uv run --project build_system --frozen --active python"
@@ -2945,15 +2923,15 @@ lane_share = 0.25
 # `..` so the list cannot be aimed at the wrong tree.
 reclaimable = [
     "cache/target/gate-runs",
-    "cache/target/test-home",
-    "cache/target/image-workspace",
-    "cache/target/test-benchmarks",
+    "cache/target/tests/home",
+    "cache/target/build/image-workspace",
+    "cache/target/tests/benchmarks",
     "cache/target/coverage",
-    "cache/target/test-artifacts",
-    "cache/target/install-test-assets",
-    "cache/target/distribution",
-    "cache/target/release-module-glowup",
-    "cache/target/release-module-channel-switch",
+    "cache/target/tests/evidence",
+    "cache/target/tests/install/assets",
+    "cache/target/release/distribution",
+    "cache/target/release/staging/module-glowup",
+    "cache/target/release/staging/module-channel-switch",
 ]
 # Refuse to start an expensive phase below this, after reclaiming what we can.
 # The gate builds two architectures of VM images; running out at minute thirty

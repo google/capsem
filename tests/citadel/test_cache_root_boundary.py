@@ -7,7 +7,13 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = re.compile(r"(?:~?/)?\.cg/|(?<!cache/)target/")
+LEGACY = re.compile(r"(?:~?/)?\.cg(?:-[A-Za-z0-9_-]+)?/|(?<!cache/)target/")
+RETIRED_CONTROL = (
+    "config/storage-policy.toml",
+    "docker-storage-policy.py",
+    "docker_storage_policy.py",
+    "ensure-docker-space.sh",
+)
 EXCLUDED = (
     "CHANGELOG.md",
     "build_system/tests/cache/",
@@ -27,7 +33,9 @@ def _legacy_records(sources: dict[str, str]) -> tuple[str, ...]:
         sorted(
             f"{path}:{number}:{line.strip()}"
             for path, text in sources.items()
-            if not any(path == excluded or path.startswith(excluded) for excluded in EXCLUDED)
+            if not any(
+                path == excluded or path.startswith(excluded) for excluded in EXCLUDED
+            )
             if "baselines" not in Path(path).parts
             if not (path.startswith("tests/citadel/") and path.endswith("_debt.toml"))
             for number, line in enumerate(text.splitlines(), 1)
@@ -57,7 +65,10 @@ def _tracked_text() -> dict[str, str]:
 
 def test_legacy_cache_roots_are_observed_red() -> None:
     records = _legacy_records(
-        {"one.py": 'Path("target/assets")', "two.md": "use ~/.cg/deadbeef"}
+        {
+            "one.py": 'Path("target/assets")',
+            "two.md": "use ~/.cg-build/deadbeef",
+        }
     )
 
     assert len(records) == 2, RATIONALE
@@ -65,6 +76,45 @@ def test_legacy_cache_roots_are_observed_red() -> None:
 
 def test_generated_state_has_one_root() -> None:
     records = _legacy_records(_tracked_text())
+
+    assert not records, RATIONALE + "\n" + "\n".join(records)
+
+
+def test_retired_cache_controllers_cannot_return() -> None:
+    sources = _tracked_text()
+    records = tuple(
+        sorted(
+            f"{path}:{token}"
+            for path, text in sources.items()
+            if path not in {"CHANGELOG.md", "LATEST_RELEASE.md"}
+            if path != "tests/citadel/test_cache_root_boundary.py"
+            for token in RETIRED_CONTROL
+            if token in text
+        )
+    )
+
+    assert not records, RATIONALE + "\n" + "\n".join(records)
+
+
+def test_runtime_cache_cleanup_has_one_mutation_boundary() -> None:
+    sources = _tracked_text()
+    forbidden = (
+        '"system", "prune"',
+        '"image", "prune"',
+        '"container", "prune"',
+        '"volume", "prune"',
+    )
+    records = tuple(
+        sorted(
+            f"{path}:{token}"
+            for path, text in sources.items()
+            if path.endswith((".py", ".sh"))
+            if not path.startswith(("tests/", "build_system/tests/"))
+            if path != "build_system/builder/cache/runtimeoperations.py"
+            for token in forbidden
+            if token in text
+        )
+    )
 
     assert not records, RATIONALE + "\n" + "\n".join(records)
 

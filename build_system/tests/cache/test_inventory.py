@@ -75,3 +75,16 @@ def test_allocated_bytes_count_cross_stage_hardlinks_once(tmp_path: Path) -> Non
     assert report.allocated_bytes == payload.stat().st_blocks * 512
     assert stages["objects"].allocated_bytes == report.allocated_bytes
     assert stages["packages"].allocated_bytes == 0
+
+
+def test_inventory_reports_minimal_unclassified_roots(tmp_path: Path) -> None:
+    paths = CachePaths(repository_root=tmp_path, policy=policy())
+    paths.stage("objects").mkdir(parents=True)
+    stray = paths.root / "target/stray/nested"
+    stray.mkdir(parents=True)
+    (stray / "payload").write_bytes(b"unmanaged")
+
+    report = scan_inventory(paths, policy(), now_ns=10)
+
+    assert [entry.relative_path for entry in report.unclassified] == [Path("target/stray")]
+    assert report.unclassified[0].logical_bytes == len(b"unmanaged")

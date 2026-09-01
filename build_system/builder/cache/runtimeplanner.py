@@ -67,6 +67,7 @@ def _docker_actions(
                         f"retain {policy.build_cache_keep_bytes} bytes of hottest BuildKit data "
                         f"and evict entries older than {policy.maximum_age_hours}h"
                     ),
+                    keep_bytes=policy.build_cache_keep_bytes,
                 )
             )
     for resources in groups.values():
@@ -117,10 +118,182 @@ def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
             actions.extend(_docker_actions(inventory, runtime))
         elif isinstance(runtime, TartRuntimePolicy):
             actions.extend(_tart_actions(inventory, runtime))
-    selected = tuple(sorted(actions, key=lambda item: (item.runtime_id, item.operation, item.target)))
+    selected = tuple(
+        sorted(actions, key=lambda item: (item.runtime_id, item.operation, item.target))
+    )
     return RuntimePrunePlan(
         generated_ns=snapshot.generated_ns,
         reclaim_bytes=sum(action.logical_bytes for action in selected),
         actions=selected,
+        violations=tuple(violations),
+    )
+
+
+def _runtime(snapshot: RuntimeSnapshot, runtime_id: str) -> RuntimeInventory:
+    try:
+        return next(item for item in snapshot.runtimes if item.runtime_id == runtime_id)
+    except StopIteration:
+        raise ValueError(f"runtime snapshot omits {runtime_id!r}") from None
+
+
+def plan_repository_reclaim(
+    snapshot: RuntimeSnapshot,
+    policy: CachePolicy,
+    resource_id: str,
+    *,
+    keep: str,
+    protect: tuple[str, ...] = (),
+) -> RuntimePrunePlan:
+    """Retire superseded tags around an exact caller-owned anchor."""
+    if policy.control is None:
+        raise ValueError("cache policy has no runtime control section")
+    control = policy.control.docker
+    try:
+        image_policy = control.images[resource_id]
+    except KeyError:
+        raise ValueError(f"unknown image cache resource {resource_id!r}") from None
+    if _repository(keep) != image_policy.repository:
+        raise ValueError(f"{keep!r} is not a tag of {image_policy.repository!r}")
+    invalid = sorted(tag for tag in protect if _repository(tag) != image_policy.repository)
+    if invalid:
+        raise ValueError(f"protected images are outside {image_policy.repository!r}: {invalid}")
+    inventory = _runtime(snapshot, control.runtime_id)
+    if not inventory.available:
+        return RuntimePrunePlan(
+            generated_ns=snapshot.generated_ns,
+            reclaim_bytes=0,
+            actions=(),
+            violations=(f"{control.runtime_id} unavailable: {inventory.error}",),
+        )
+    resources = sorted(
+        (
+            item
+            for item in inventory.resources
+            if item.kind is ResourceKind.IMAGE
+            and any(_repository(name) == image_policy.repository for name in item.names)
+        ),
+        key=lambda item: (item.created_ns, item.identity),
+        reverse=True,
+    )
+    names = {name for item in resources for name in item.names}
+    if keep not in names:
+        raise ValueError(f"anchor image {keep!r} is absent; refusing unanchored reclaim")
+    pinned = {keep, *protect}
+    previous = 0
+    actions = []
+    for item in resources:
+        repository_names = tuple(
+            name for name in item.names if _repository(name) == image_policy.repository
+        )
+        if any(name in pinned for name in repository_names):
+            continue
+        if previous < image_policy.keep_previous:
+            previous += 1
+            continue
+        if item.protected:
+            continue
+        actions.extend(
+            RuntimePruneAction(
+                runtime_id=control.runtime_id,
+                operation=RuntimeOperation.REMOVE_IMAGE,
+                target=name,
+                logical_bytes=item.logical_bytes,
+                reason=f"superseded generation of {image_policy.repository}",
+            )
+            for name in repository_names
+        )
+    selected = tuple(sorted(actions, key=lambda item: item.target))
+    return RuntimePrunePlan(
+        generated_ns=snapshot.generated_ns,
+        reclaim_bytes=sum(item.logical_bytes for item in selected),
+        actions=selected,
+        violations=(),
+    )
+
+
+def plan_release(snapshot: RuntimeSnapshot, policy: CachePolicy, boundary: str) -> RuntimePrunePlan:
+    """Release exact working images after their configured final consumer."""
+    if policy.control is None:
+        raise ValueError("cache policy has no runtime control section")
+    control = policy.control.docker
+    try:
+        release = control.releases[boundary]
+    except KeyError:
+        raise ValueError(f"unknown cache release boundary {boundary!r}") from None
+    inventory = _runtime(snapshot, control.runtime_id)
+    actions = []
+    violations = []
+    for target in release.images:
+        found = next(
+            (
+                item
+                for item in inventory.resources
+                if item.kind is ResourceKind.IMAGE and target in item.names
+            ),
+            None,
+        )
+        if found is None:
+            continue
+        if found.protected:
+            violations.append(f"working image {target} still has an active container")
+            continue
+        actions.append(
+            RuntimePruneAction(
+                runtime_id=control.runtime_id,
+                operation=RuntimeOperation.REMOVE_IMAGE,
+                target=target,
+                logical_bytes=found.logical_bytes,
+                reason=f"final consumer completed at {boundary}",
+            )
+        )
+    values = tuple(actions)
+    return RuntimePrunePlan(
+        generated_ns=snapshot.generated_ns,
+        reclaim_bytes=sum(item.logical_bytes for item in values),
+        actions=values,
+        violations=tuple(violations),
+    )
+
+
+def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> RuntimePrunePlan:
+    """Select every inactive, explicitly owned native cache resource."""
+    actions = []
+    violations = []
+    for inventory in snapshot.runtimes:
+        if not inventory.available:
+            violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
+            continue
+        for item in inventory.resources:
+            if not item.owned or item.protected:
+                continue
+            if item.kind is ResourceKind.IMAGE:
+                operation = RuntimeOperation.REMOVE_IMAGE
+                targets = item.names
+            elif item.kind is ResourceKind.CONTAINER:
+                operation = RuntimeOperation.REMOVE_CONTAINER
+                targets = (item.identity,)
+            elif item.kind is ResourceKind.BUILD_CACHE:
+                operation = RuntimeOperation.CLEAR_BUILD_CACHE
+                targets = (item.identity,)
+            elif item.kind is ResourceKind.VM:
+                operation = RuntimeOperation.DELETE_VM
+                targets = (item.identity,)
+            else:  # pragma: no cover - enum is exhaustive
+                continue
+            actions.extend(
+                RuntimePruneAction(
+                    runtime_id=inventory.runtime_id,
+                    operation=operation,
+                    target=target,
+                    logical_bytes=item.logical_bytes,
+                    reason="explicit cold cleanup of an inactive Capsem-owned cache",
+                )
+                for target in targets
+            )
+    values = tuple(sorted(actions, key=lambda item: (item.runtime_id, item.operation, item.target)))
+    return RuntimePrunePlan(
+        generated_ns=snapshot.generated_ns,
+        reclaim_bytes=sum(item.logical_bytes for item in values),
+        actions=values,
         violations=tuple(violations),
     )

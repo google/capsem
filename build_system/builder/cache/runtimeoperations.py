@@ -27,6 +27,7 @@ def _argv(
         RuntimeOperation.REMOVE_IMAGE,
         RuntimeOperation.REMOVE_CONTAINER,
         RuntimeOperation.PRUNE_BUILD_CACHE,
+        RuntimeOperation.CLEAR_BUILD_CACHE,
     }
     if action.operation in docker_operations and not isinstance(runtime, DockerRuntimePolicy):
         raise ValueError(f"{action.operation} requires a Docker runtime")
@@ -41,6 +42,8 @@ def _argv(
     if action.operation is RuntimeOperation.PRUNE_BUILD_CACHE:
         if not isinstance(runtime, DockerRuntimePolicy):  # narrowed for the type checker
             raise AssertionError("validated Docker operation lost its runtime type")
+        if action.keep_bytes is None:
+            raise ValueError("BuildKit prune action omits its retained byte budget")
         return (
             runtime.command,
             "builder",
@@ -49,8 +52,10 @@ def _argv(
             "--filter",
             f"until={runtime.maximum_age_hours}h",
             "--keep-storage",
-            f"{runtime.build_cache_keep_bytes}B",
+            f"{action.keep_bytes}B",
         )
+    if action.operation is RuntimeOperation.CLEAR_BUILD_CACHE:
+        return (runtime.command, "builder", "prune", "--all", "--force")
     if action.operation is RuntimeOperation.DELETE_VM:
         return (runtime.command, "delete", action.target)
     raise ValueError(f"unsupported runtime operation: {action.operation}")
@@ -69,7 +74,7 @@ def apply_runtime_prune(
     results = []
     for action in plan.actions:
         runtime = policy.runtimes[action.runtime_id]
-        command = runner(_argv(action, runtime), runtime.timeout_seconds)
+        command = runner(_argv(action, runtime), runtime.mutation_timeout_seconds)
         output = "\n".join(part for part in (command.stdout, command.stderr) if part)
         results.append(
             RuntimeActionResult(action=action, returncode=command.returncode, output=output)

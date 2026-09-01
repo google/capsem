@@ -143,7 +143,7 @@ def main() -> int:
         "--install-script", default=PROJECT_ROOT / "web/marketing/public/install.sh", type=Path
     )
     parser.add_argument(
-        "--work-dir", default=PROJECT_ROOT / "cache/target/local-release-glowup", type=Path
+        "--work-dir", default=PROJECT_ROOT / "cache/target/release/staging/local-glowup", type=Path
     )
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--skip-install", action="store_true")

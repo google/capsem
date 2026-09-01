@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .models import GitImpact
+from .gitmodels import GitImpact
 
 
 def _git(root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:

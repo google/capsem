@@ -21,6 +21,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GATE_CONFIG = PROJECT_ROOT / "config/gate.toml"
+CACHE_CONFIG = PROJECT_ROOT / "config/cache.toml"
 README = PROJECT_ROOT / "README.md"
 DOCS = PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "getting-started.md"
 TAURI = PROJECT_ROOT / "crates/capsem-app/tauri.conf.json"
@@ -69,6 +70,16 @@ def test_probe_images_are_pinned_by_digest() -> None:
     for row in _platforms()["linux"]["distributions"]:
         assert row["digest"].startswith("sha256:"), row
         assert len(row["digest"]) == len("sha256:") + 64, row
+
+
+def test_cache_controller_probe_image_is_pinned_by_digest() -> None:
+    """Capacity enforcement must execute the same image on every run."""
+    image = tomllib.loads(CACHE_CONFIG.read_text(encoding="utf-8"))["control"]["docker"][
+        "capacity_probe_image"
+    ]
+    _, separator, digest = image.rpartition("@sha256:")
+
+    assert separator and len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
 def test_readme_badges_match_the_supported_releases() -> None:

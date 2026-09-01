@@ -125,15 +125,23 @@ def enforce(config: GateConfig, *, protected: frozenset[Path]) -> tuple[Path, ..
             size = _tree_size(path)
         else:
             created, last_used, size = metadata
-        products.append(CacheProduct(key, size, created, last_used, path.resolve() in pinned))
+        products.append(
+            CacheProduct(
+                key=key,
+                size_bytes=size,
+                created_at=created,
+                last_used_at=last_used,
+                protected=path.resolve() in pinned,
+            )
+        )
         by_key[key] = path
     policy = config.assets.cache
     plan = plan_reclaim(
         tuple(products),
         CacheLimits(
-            policy.maximum_count,
-            policy.maximum_age_hours * 3600,
-            policy.maximum_bytes,
+            maximum_count=policy.maximum_count,
+            maximum_age_seconds=policy.maximum_age_hours * 3600,
+            maximum_bytes=policy.maximum_bytes,
         ),
         now=now,
     )

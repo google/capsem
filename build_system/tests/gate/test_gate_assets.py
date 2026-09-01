@@ -362,7 +362,7 @@ def test_verified_base_profile_becomes_the_canonical_following_input(
     """Build-chain, packaging and glow-up must consume the bytes IronBank booted.
 
     A warm canonical tree used to survive the private profile build. IronBank
-    proved ``cache/target/ironbank-assets/code`` and the following modules silently
+    proved ``cache/target/tests/ironbank/code`` and the following modules silently
     opened the older ``assets/`` and ``cache/target/config/profiles`` instead.
     """
     gate, _ = _gate(tmp_path, monkeypatch, profiles=("co-work", "code"))

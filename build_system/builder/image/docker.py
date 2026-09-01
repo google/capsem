@@ -2213,14 +2213,6 @@ def build_all_architectures(
             repo_root=repo_root,
         )
 
-    # Prune dangling images left by multi-stage builds
-    runtime = detect_runtime()
-    try:
-        run_cmd([runtime, "image", "prune", "-f"], capture=True)
-        print("Pruned dangling images.")
-    except RuntimeError:
-        pass
-
     if template != "kernel":
         version = get_project_version(repo_root)
         print(f"\nGenerating checksums (version {version})...")

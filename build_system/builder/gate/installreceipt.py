@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .configschema import Strict
 from .docker import Docker
@@ -16,7 +17,6 @@ from .errors import GateError
 from .filesystem import write_text
 from .imageidentity import exact_image_id, require_exact_image, require_input_key
 from .proc import Runner
-from .storage import Storage
 
 if TYPE_CHECKING:
     from . import installbuilder, sourcecapture
@@ -103,7 +103,7 @@ def validate(
         raise GateError(f"install image receipt selects stale input key {receipt.input_key}")
     if receipt.runtime_digest != runtime_digest or receipt.platform != platform:
         raise GateError("install image receipt no longer matches the Docker runtime")
-    limits = Storage(runner).image_limits(resource)
+    limits = CacheControl(runner).image_limits(resource)
     now = time.time()
     if receipt.created_at > now or receipt.last_used_at > now:
         raise GateError("install image receipt has future-dated cache timestamps")
@@ -114,9 +114,7 @@ def validate(
     if not docker.image_exists(tag, platform=platform):
         raise GateError(f"install qualification image {tag} is missing")
     require_input_key(docker, tag, label=input_key_label, subject="install qualification image")
-    image_id = exact_image_id(
-        docker, tag, platform=platform, subject="install qualification image"
-    )
+    image_id = exact_image_id(docker, tag, platform=platform, subject="install qualification image")
     if image_id != receipt.image_id:
         raise GateError(
             f"install qualification image {tag} moved: expected {receipt.image_id}, "

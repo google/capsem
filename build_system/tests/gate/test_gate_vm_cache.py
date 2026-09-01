@@ -142,9 +142,7 @@ def test_a_non_finite_install_receipt_is_rebuilt(tmp_path: Path, monkeypatch) ->
     assert any("missing or invalid" in note for note in runner.notes)
 
 
-def test_install_image_receipt_survives_a_successful_prefix(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_install_image_receipt_survives_a_successful_prefix(tmp_path: Path, monkeypatch) -> None:
     from capsem_builder.gate import buildcache, installbuilder, installimage, sourcecapture
 
     base = _config(tmp_path)
@@ -162,13 +160,13 @@ def test_install_image_receipt_survives_a_successful_prefix(
     installimage.build_source_image(runner, first, identity=helper, source=source)
     builds = len(runner.matching(r"docker build .*Dockerfile.install-test"))
 
-    assert "cache/target/install-image" in buildcache.salvage(first, first_root)
+    assert "cache/target/build/install-image" in buildcache.salvage(first, first_root)
     retained_receipt = first_root / first.install.builder.source_identity_file
     shared_receipt = buildcache.root(first) / first.install.builder.source_identity_file
     assert retained_receipt.is_file()
     assert shared_receipt.read_bytes() == retained_receipt.read_bytes()
     second_root.mkdir()
-    assert "cache/target/install-image" in buildcache.lend(first, second_root)
+    assert "cache/target/build/install-image" in buildcache.lend(first, second_root)
     assert retained_receipt.is_file(), "lending erased a resumable prefix's Docker pins"
     second = first.model_copy(update={"root": second_root})
     installimage.build_source_image(runner, second, identity=helper, source=source)
@@ -180,7 +178,7 @@ def test_only_configured_tiny_authorities_are_duplicated_for_resume(tmp_path: Pa
     from capsem_builder.gate import buildcache
 
     config = _config(tmp_path)
-    assert config.prefix.resumable == ("cache/target/install-image",)
+    assert config.prefix.resumable == ("cache/target/build/install-image",)
     assert set(config.prefix.resumable) <= set(config.prefix.lent)
     assert set(config.prefix.resumable) <= set(config.prefix.produced)
 
@@ -231,9 +229,11 @@ def test_vm_cache_roots_and_identities_cannot_escape_their_owned_sibling(
 def test_lru_reclaim_never_evicts_a_pinned_vm_product() -> None:
     plan = plan_reclaim(
         (
-            CacheProduct("old", 40, 1, 2),
-            CacheProduct("recent", 40, 2, 4),
-            CacheProduct("pinned", 40, 1, 1, protected=True),
+            CacheProduct(key="old", size_bytes=40, created_at=1, last_used_at=2),
+            CacheProduct(key="recent", size_bytes=40, created_at=2, last_used_at=4),
+            CacheProduct(
+                key="pinned", size_bytes=40, created_at=1, last_used_at=1, protected=True
+            ),
         ),
         CacheLimits(maximum_count=2, maximum_age_seconds=100, maximum_bytes=80),
         now=10,
@@ -246,8 +246,12 @@ def test_lru_reclaim_never_evicts_a_pinned_vm_product() -> None:
 def test_pinned_overflow_is_reported_instead_of_deleted() -> None:
     plan = plan_reclaim(
         (
-            CacheProduct("one", 60, 1, 1, protected=True),
-            CacheProduct("two", 60, 1, 2, protected=True),
+            CacheProduct(
+                key="one", size_bytes=60, created_at=1, last_used_at=1, protected=True
+            ),
+            CacheProduct(
+                key="two", size_bytes=60, created_at=1, last_used_at=2, protected=True
+            ),
         ),
         CacheLimits(maximum_count=1, maximum_age_seconds=5, maximum_bytes=100),
         now=10,
@@ -264,8 +268,10 @@ def test_pinned_overflow_is_reported_instead_of_deleted() -> None:
 def test_future_cache_clocks_fail_closed() -> None:
     plan = plan_reclaim(
         (
-            CacheProduct("unpinned", 1, 20, 20),
-            CacheProduct("pinned", 1, 20, 20, protected=True),
+            CacheProduct(key="unpinned", size_bytes=1, created_at=20, last_used_at=20),
+            CacheProduct(
+                key="pinned", size_bytes=1, created_at=20, last_used_at=20, protected=True
+            ),
         ),
         CacheLimits(maximum_count=2, maximum_age_seconds=100, maximum_bytes=10),
         now=10,
@@ -370,14 +376,13 @@ def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(tmp_path: P
         checkout.mkdir(parents=True)
         config = base.model_copy(update={"root": checkout})
         assetcache.materialize(config, ("code",), identity)
-        selected.append(
-            config.path(config.assets.test_root) / "code" / "build-x86_64"
-        )
+        selected.append(config.path(config.assets.test_root) / "code" / "build-x86_64")
 
     assert selected[0].resolve() == selected[1].resolve()
-    assert selected[0].resolve() == assetcache.lane(
-        base, identity, profile="code", arch=base.arch("x86_64")
-    ).resolve()
+    assert (
+        selected[0].resolve()
+        == assetcache.lane(base, identity, profile="code", arch=base.arch("x86_64")).resolve()
+    )
 
 
 def test_retained_prefix_receipts_pin_both_source_and_helper_images(
@@ -411,9 +416,9 @@ def test_retained_prefix_receipts_pin_both_source_and_helper_images(
         encoding="utf-8",
     )
 
-    assert imagecache.protected_tags(
-        config, "capsem-install-test", field="input_key"
-    ) == ("capsem-install-test:source",)
+    assert imagecache.protected_tags(config, "capsem-install-test", field="input_key") == (
+        "capsem-install-test:source",
+    )
     assert imagecache.protected_tags(
         config, "capsem-install-builder", field="helper_input_key"
     ) == ("capsem-install-builder:helper",)
@@ -450,9 +455,9 @@ def test_the_active_source_checkout_receipt_pins_its_docker_images(
     )
     monkeypatch.setenv(config.environment.source_checkout, str(source))
 
-    assert imagecache.protected_tags(
-        config, "capsem-install-test", field="input_key"
-    ) == ("capsem-install-test:source",)
+    assert imagecache.protected_tags(config, "capsem-install-test", field="input_key") == (
+        "capsem-install-test:source",
+    )
     assert imagecache.protected_tags(
         config, "capsem-install-builder", field="helper_input_key"
     ) == ("capsem-install-builder:helper",)
@@ -465,11 +470,7 @@ def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(
 
     config = _config(tmp_path)
     monkeypatch.delenv(config.environment.source_checkout, raising=False)
-    receipt = (
-        Path(config.prefix.parent)
-        / "deadbeef"
-        / config.install.builder.source_identity_file
-    )
+    receipt = Path(config.prefix.parent) / "deadbeef" / config.install.builder.source_identity_file
     receipt.parent.mkdir(parents=True)
     receipt.write_text(
         json.dumps(
@@ -481,36 +482,34 @@ def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(
         encoding="utf-8",
     )
 
-    assert imagecache.protected_tags(
-        config, "capsem-install-test", field="input_key"
-    ) == ()
+    assert imagecache.protected_tags(config, "capsem-install-test", field="input_key") == ()
 
 
-def test_storage_reclaim_passes_protected_receipts_to_the_policy() -> None:
-    from capsem_builder.gate.storage import Storage
+def test_cache_reclaim_passes_protected_receipts_to_the_policy() -> None:
+    from capsem_builder.gate.cachecontrol import CacheControl
 
     runner = RecordingRunner(PROJECT_ROOT)
-    Storage(runner).reclaim(
+    CacheControl(runner).reclaim(
         "capsem-install-test",
         keep="capsem-install-test:current",
         protect=("capsem-install-test:old", "capsem-install-test:current"),
     )
 
     assert runner.ran(
-        r"docker-storage-policy\.py reclaim --resource capsem-install-test "
-        r"--keep capsem-install-test:current --protect capsem-install-test:old"
+        r"reclaim-image capsem-install-test --keep capsem-install-test:current "
+        r"--protect capsem-install-test:old --apply"
     )
 
 
 def test_vm_and_asset_cache_bounds_are_declared() -> None:
-    from capsem_builder.gate.storage import Storage
+    from capsem_builder.gate.cachecontrol import CacheControl
 
     assert CONFIG.assets.cache.maximum_count > len(CONFIG.architectures)
     assert CONFIG.assets.cache.maximum_age_hours > 0
     assert CONFIG.assets.cache.maximum_bytes > 0
-    storage = Storage(RecordingRunner(PROJECT_ROOT))
-    source_limits = storage.image_limits("capsem-install-test")
-    helper_limits = storage.image_limits("capsem-install-builder")
+    cache = CacheControl(RecordingRunner(PROJECT_ROOT))
+    source_limits = cache.image_limits("capsem-install-test")
+    helper_limits = cache.image_limits("capsem-install-builder")
     ordinary_receipt_lineages = CONFIG.prefix.keep + 2
     assert source_limits.maximum_count == ordinary_receipt_lineages
     assert helper_limits.maximum_count == ordinary_receipt_lineages

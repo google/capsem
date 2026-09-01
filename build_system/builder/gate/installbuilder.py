@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import imagecache
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
@@ -19,7 +20,6 @@ from .imageidentity import (
 )
 from .invocation import ConsoleMode
 from .proc import Runner
-from .storage import Storage
 
 INPUT_KEY_LABEL = "org.capsem.install-builder.input-key"
 
@@ -173,7 +173,7 @@ def materialize(runner: Runner, config: GateConfig) -> InstallBuilderIdentity:
         f"Install helper {host_arch.name}: input key {tag}; exact image {exact_id}; "
         f"build reference {reference}"
     )
-    Storage(runner).reclaim(
+    CacheControl(runner).reclaim(
         image_repository(config),
         keep=tag,
         protect=imagecache.protected_tags(

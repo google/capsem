@@ -347,7 +347,7 @@ a HEAD change on a tree nobody had touched.
 
 The same rule applies to any contract that builds a plan from the real config
 and runs it: pass `observing=True`. `tests/conftest.py` fails the test that
-rewrites `cache/target/gate-source-state.json`, so the next one to forget finds out
+rewrites `cache/state/gate-source.json`, so the next one to forget finds out
 in seconds rather than at `source.verify`.
 
 | | |

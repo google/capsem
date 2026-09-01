@@ -18,7 +18,6 @@ from . import (
     pytestsuite,
     rustchecks,
     sandbox,
-    storage,
     toolchain,
 )
 from .actions import Run
@@ -180,11 +179,3 @@ def _guest_binaries_present(config: GateConfig):
         needs=frozenset({Needs.DISK}),
         speed=Speed.FAST,
     )
-
-
-def storagerelease(config: GateConfig, phase: str):
-    """Hand back the storage a finished rail was holding.
-
-    The one spelling lives in `storage`; this is the name the modules use.
-    """
-    return storage.release_step(config, phase)

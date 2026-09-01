@@ -655,7 +655,7 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
     assert runner.last_index_of(r"docker rm -f -v capsem-install-test") > runner.index_of(
         r"dpkg -i"
     )
-    assert runner.ran(r"docker-storage-policy\.py gc --rail install")
+    assert runner.ran(r"capsem-cache .* prune --apply")
 
 
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:

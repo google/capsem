@@ -68,7 +68,7 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
 
     assert policy.root == Path("cache")
     assert policy.minimum_free_bytes == 40 * 1024**3
-    assert policy.stages["cargo-debug"].path == Path("target/cargo/debug")
+    assert policy.stages["cargo"].path == Path("target/cargo")
     assert policy.stages["python-pycache"].path == Path("tools/python/pycache")
     assert policy.stages["buildkit-exports"].external is False
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
@@ -81,6 +81,7 @@ def test_runtime_policy_references_owned_receipt_and_log_stages() -> None:
         kind="docker",
         command="docker",
         timeout_seconds=30,
+        mutation_timeout_seconds=600,
         receipt_stage="receipts",
         log_stage="missing",
         image_prefixes=("capsem-",),

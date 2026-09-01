@@ -79,7 +79,10 @@ def _tracked_line_counts(
         if not raw:
             continue
         relative = Path(raw.decode())
-        source = (root / relative).read_text(encoding="utf-8")
+        path = root / relative
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8")
         if relative.suffix in suffixes or source.startswith("#!"):
             counts[relative.as_posix()] = len(source.splitlines())
     return dict(sorted(counts.items()))

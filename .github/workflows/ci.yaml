@@ -109,7 +109,7 @@ jobs:
           tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Prepare test output owners
-        run: mkdir -p cache/target/coverage/linux cache/target/test-artifacts
+        run: mkdir -p cache/target/coverage/linux cache/target/tests/evidence
 
       # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
@@ -172,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-linux-${{ github.run_attempt }}
-          path: cache/target/test-artifacts/
+          path: cache/target/tests/evidence/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -236,7 +236,7 @@ jobs:
 
       - name: Prepare test output owners
         run: |
-          mkdir -p cache/target/coverage/python cache/target/coverage/rust cache/target/coverage/junit cache/target/test-artifacts
+          mkdir -p cache/target/coverage/python cache/target/coverage/rust cache/target/coverage/junit cache/target/tests/evidence
           echo "COVERAGE_FILE=$GITHUB_WORKSPACE/cache/target/coverage/.coverage" >> "$GITHUB_ENV"
 
       - name: Install sha256sum compatibility wrapper
@@ -388,14 +388,14 @@ jobs:
       # T5: preserve every test artifact (service.log / process.log /
       # session.db etc.) on failure so PR reviewers can debug without
       # rerunning. preserve_tmp_dir_on_failure() in tests/helpers/service.py
-      # populates `cache/target/test-artifacts/` only on red runs; if-no-files-found
+      # populates `cache/target/tests/evidence/` only on red runs; if-no-files-found
       # is "ignore" so green runs don't bloat the workflow.
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-${{ runner.os }}-${{ github.run_attempt }}
-          path: cache/target/test-artifacts/
+          path: cache/target/tests/evidence/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -533,7 +533,7 @@ jobs:
           name: install-glowup-evidence-${{ github.run_attempt }}
           path: |
             cache/target/gate-runs/
-            cache/target/local-release-glowup-evidence/
+            cache/target/release/staging/local-glowup-evidence/
           retention-days: 7
           # Input resolution can fail before a gate exists. Preserve that
           # primary failure without adding a misleading upload failure, while

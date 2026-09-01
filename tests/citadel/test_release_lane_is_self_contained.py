@@ -90,7 +90,7 @@ def test_every_release_qualification_owns_one_source_boundary() -> None:
 
     The binary lane once reached broad pytest without ``source.record``. Five
     plan-contract tests asked for the parent's frozen snapshot and failed on a
-    missing ``cache/target/gate-source-state.json`` after every package had already
+    missing ``cache/state/gate-source.json`` after every package had already
     been built and installed. The profile lane uses the same prefix machinery,
     so both of its branches carry the same invariant before either can regress.
     """

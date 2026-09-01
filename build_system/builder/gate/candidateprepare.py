@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from . import host, hostpackage, imagebuild, initrd
 from .actions import Call, Run, Script
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Remove
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
-from .storage import Storage
 
 
 def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -58,7 +58,7 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
         )
     bounded = phase.add(
         step(
-            "storage-budget",
+            "cache-budget",
             _ensure_space(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
@@ -126,7 +126,7 @@ def _ensure_space(config: GateConfig) -> Call:
     settings = config.candidate
     return Call(
         "refuse to start a gate the daemon has no room to finish",
-        lambda ctx: Storage(ctx.runner).ensure_space(*settings.candidate_budget),
+        lambda ctx: CacheControl(ctx.runner).ensure_space(*settings.candidate_budget),
         justification=CallJustification(
             kind=OpaqueKind.PURE_INSPECTION,
             reason="reads the daemon's free space and refuses a gate it has no room to finish",

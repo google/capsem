@@ -10,6 +10,7 @@ from pathlib import Path
 from . import config as gate_config
 from . import imagecache, installbuilder, installreceipt, sourcecapture
 from .actions import Action
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
@@ -22,7 +23,6 @@ from .imageidentity import (
 )
 from .invocation import ConsoleMode
 from .proc import Runner
-from .storage import Storage
 
 INPUT_KEY_LABEL = "org.capsem.install-image.input-key"
 
@@ -188,7 +188,7 @@ def build_source_image(
     )
     runtime_digest = installreceipt.digest(docker.runtime_identity())
     image_size = docker.image_size(tag)
-    limits = Storage(runner).image_limits(_source_repository(config))
+    limits = CacheControl(runner).image_limits(_source_repository(config))
     if image_size > limits.maximum_bytes:
         raise GateError(
             f"install qualification image is {image_size} bytes, above the configured "
@@ -220,7 +220,7 @@ def build_source_image(
         f"Install image: input key {tag}; exact image {image_id}; build reference {reference}"
     )
     _write_receipt(config, found)
-    Storage(runner).reclaim(
+    CacheControl(runner).reclaim(
         _source_repository(config),
         keep=tag,
         protect=imagecache.protected_tags(config, _source_repository(config), field="input_key"),

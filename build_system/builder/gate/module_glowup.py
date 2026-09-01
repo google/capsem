@@ -22,7 +22,6 @@ from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
-from .staticmodule import storagerelease
 from .testmodules import InWorkspace
 
 
@@ -213,7 +212,6 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
     previous: tuple = after
-    last = list(config.architectures)[-1]
     content = ProfileContent.isolated(
         config,
         config.path(config.assets.test_root) / config.suites.pytest.base_profile,
@@ -232,14 +230,10 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
             after=previous,
             defer_proof=True,
         )
-        released = phase.add(storagerelease(config, f"completed-package-{arch}"), after=(built,))
-        # Between the two package builds, not after both: the second build
-        # needs the headroom the install rail is still reserving.
-        previous = (
-            (phase.add(storagerelease(config, "deferred-install-target"), after=(released,)),)
-            if arch != last
-            else (released,)
-        )
+        # Content-keyed images and BuildKit layers remain reusable across both
+        # architectures. The old intermediate steps removed named volumes no
+        # lane mounts, so they were pure graph and process overhead.
+        previous = (built,)
 
     # Nothing releases capsem-host-builder here. Both package builds need it,
     # and so does `build_system/docker/Dockerfile.install-test`, which the install proof

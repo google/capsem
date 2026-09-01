@@ -88,7 +88,6 @@ def test_build_script_boundaries_are_thin_image_owned_launchers() -> None:
         "check-macos-native-glowup.py": "check_macos_native_glowup",
         "clean_stale.py": "clean_stale",
         "create_hash_assets.py": "create_hash_assets",
-        "docker-storage-policy.py": "docker_storage_policy",
         "gen_manifest.py": "gen_manifest",
         "materialize-package-ort.py": "materialize_package_ort",
         "print-gate-digest.py": "print_gate_digest",

@@ -292,15 +292,15 @@ jobs:
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/binary-selected-profiles \
-            --assets-dir cache/target/release-assets \
-            --config-root cache/target/release-config \
+            --assets-dir cache/target/release/staging/assets \
+            --config-root cache/target/release/staging/config \
             --shared-config-root config
 
       - name: Materialize runtime config
         run: |
           CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/release-assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release-config" \
+          CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
           CAPSEM_ARCH=arm64 \
             bash build_system/scripts/build/materialize-config.sh
 
@@ -973,11 +973,11 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/candidate-profile-inputs \
             --assets-dir cache/target/assets \
-            --config-root cache/target/release-config \
+            --config-root cache/target/release/staging/config \
             --shared-config-root config
           CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
           CAPSEM_ASSETS_PATH="$PWD/cache/target/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release-config" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
@@ -1023,10 +1023,10 @@ jobs:
         with:
           name: binary-pairing-evidence-${{ github.run_attempt }}
           path: |
-            cache/target/test-artifacts/
+            cache/target/tests/evidence/
             cache/target/gate-runs/
-            cache/target/test-home/.capsem/run/sessions/
-            cache/target/test-home/.capsem/logs/
+            cache/target/tests/home/.capsem/run/sessions/
+            cache/target/tests/home/.capsem/logs/
           retention-days: 7
           include-hidden-files: true
           if-no-files-found: error
@@ -1153,12 +1153,12 @@ jobs:
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir cache/target/distribution
+            --out-dir cache/target/release/distribution
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: cache/target/distribution/
+          path: cache/target/release/distribution/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

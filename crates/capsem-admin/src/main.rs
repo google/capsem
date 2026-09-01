@@ -384,7 +384,7 @@ struct AssetsChannelBuildArgs {
     #[arg(long, default_value = "1.0.0")]
     manifest_version: String,
     /// Static output directory for Cloudflare Pages.
-    #[arg(long, default_value = "cache/target/distribution")]
+    #[arg(long, default_value = "cache/target/release/distribution")]
     out_dir: PathBuf,
     /// Channel generation timestamp. Defaults to current UTC time.
     #[arg(long)]
@@ -397,7 +397,7 @@ struct AssetsChannelBuildArgs {
 #[derive(Debug, Parser)]
 struct AssetsChannelCheckArgs {
     /// Static output directory to validate.
-    #[arg(long, default_value = "cache/target/distribution")]
+    #[arg(long, default_value = "cache/target/release/distribution")]
     dist: PathBuf,
     /// Channel name expected under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]

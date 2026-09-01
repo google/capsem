@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 
 from .actions import Action
+from .cachecontrol import CacheControl
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
@@ -32,7 +33,6 @@ from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
 from .filesystem import make_dir
 from .plan import Plan
-from .storage import Storage
 
 
 def base_tag(config: GateConfig, docker: Docker) -> str:
@@ -71,7 +71,7 @@ def base_repository(config: GateConfig) -> str:
     """The repository the digest-keyed tags live in.
 
     Read off the same template the tags are minted from, so the name exists
-    once. `config/storage-policy.toml` declares this repository's retention
+    once. `config/cache.toml` declares this repository's retention
     under exactly this string, and a second spelling would be a second thing
     to keep in step.
     """
@@ -134,7 +134,7 @@ class WarmBase(Action, name="linux-rust-warm-base"):
         # state this exists to clear, and reclaiming only after a build would
         # leave it there until the next bump -- which retires them one image
         # too late, after the disk has already carried the peak.
-        Storage(context.runner).reclaim(base_repository(config), keep=tag)
+        CacheControl(context.runner).reclaim(base_repository(config), keep=tag)
 
 
 class RunLane(Action, name="linux-rust-lane"):
@@ -208,7 +208,10 @@ def lane(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
     already run before any resource is held.
     """
     warmed = plan.add(
-        step("warm-base", WarmBase(), contends=(config.exclusive("docker_daemon"),),
+        step(
+            "warm-base",
+            WarmBase(),
+            contends=(config.exclusive("docker_daemon"),),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DOCKER, Needs.DISK}),
             speed=Speed.SLOW,
@@ -216,7 +219,10 @@ def lane(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
         after=after,
     )
     return plan.add(
-        step("linux-rust", RunLane(), contends=(config.exclusive("docker_daemon"),),
+        step(
+            "linux-rust",
+            RunLane(),
+            contends=(config.exclusive("docker_daemon"),),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DOCKER, Needs.DISK}),
             speed=Speed.SLOW,

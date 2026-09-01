@@ -89,7 +89,7 @@ case "$surface" in
         ;;
     release-channel)
         require_release_site_astro
-        work="$ROOT/cache/target/web-parity"
+        work="$ROOT/cache/target/tests/web-parity"
         fixture="$work/release-site-fixture"
         dist="$work/release-channel"
         graph_sources="$work/release-graphs"

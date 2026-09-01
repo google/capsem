@@ -385,7 +385,7 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     # lane's builder rail from here, which was ordered only by the line it sat
     # on -- so once this preflight moved ahead of that lane, the release landed
     # 164ms before `cache-ownership` ran the image it had just deleted.
-    assert not runner.ran(r"docker-storage-policy\.py release"), (
+    assert not runner.ran(r"capsem-cache .* release"), (
         "the preflight releases another lane's rail; that rail's own step does"
     )
 
@@ -529,7 +529,7 @@ def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
     )
     selected = tmp_path / "cache" / "target" / "ironbank-assets" / "code" / "assets"
     selected.mkdir(parents=True)
-    (tmp_path / "assets").symlink_to("cache/target/ironbank-assets/code/assets")
+    (tmp_path / "assets").symlink_to("cache/target/tests/ironbank/code/assets")
 
     assert (
         installimage.source_image_tag(

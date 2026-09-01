@@ -165,16 +165,15 @@ def test_guest_rust_builder_tag_is_keyed_by_every_materialized_input(
     assert image_tag(BUILD, "arm64", tmp_path) != first
 
 
-def test_every_guest_rust_builder_generation_is_owned_by_storage_policy() -> None:
+def test_every_guest_rust_builder_generation_is_owned_by_cache_policy() -> None:
     policy = tomllib.loads(
-        (PROJECT_ROOT / "config/storage-policy.toml").read_text(encoding="utf-8")
+        (PROJECT_ROOT / "config/cache.toml").read_text(encoding="utf-8")
     )
 
     for arch_name in BUILD.architectures:
         repository = image_repository(BUILD, arch_name)
-        resource = policy["resources"][repository]
-        assert resource["docker_name"] == repository
-        assert resource["retention"] == "generational"
+        resource = policy["control"]["docker"]["images"][repository]
+        assert resource["repository"] == repository
         assert resource["keep_previous"] == 0
 
 

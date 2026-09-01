@@ -67,6 +67,41 @@ def _stage_inventory(
     )
 
 
+def _unclassified_inventory(
+    paths: CachePaths,
+    policy: CachePolicy,
+    allocated_seen: set[tuple[int, int]],
+) -> tuple[CacheEntry, ...]:
+    """Return minimal cache roots not owned by any configured stage."""
+    stage_paths = tuple(stage.path for stage in policy.stages.values())
+    entries: list[CacheEntry] = []
+
+    def visit(path: Path, relative: Path) -> None:
+        if relative in stage_paths:
+            return
+        if path.is_dir() and any(relative in stage.parents for stage in stage_paths):
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                visit(child, relative / child.name)
+            return
+        logical, allocated = _entry_size(path, allocated_seen)
+        stat = path.lstat()
+        entries.append(
+            CacheEntry(
+                key=relative.as_posix(),
+                relative_path=relative,
+                logical_bytes=logical,
+                allocated_bytes=allocated,
+                created_ns=stat.st_ctime_ns,
+                last_used_ns=stat.st_atime_ns,
+            )
+        )
+
+    if paths.root.is_dir():
+        for child in sorted(paths.root.iterdir(), key=lambda item: item.name):
+            visit(child, Path(child.name))
+    return tuple(entries)
+
+
 def scan_inventory(
     paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None
 ) -> CacheInventory:
@@ -77,13 +112,17 @@ def scan_inventory(
         stage_id: _stage_inventory(stage_id, paths, policy, allocated_seen)
         for stage_id in scan_order
     }
+    unclassified = _unclassified_inventory(paths, policy, allocated_seen)
     stages = tuple(by_id[stage_id] for stage_id in sorted(by_id))
     free = shutil.disk_usage(paths.root.parent).free
     return CacheInventory(
         root=paths.root,
         generated_ns=time.time_ns() if now_ns is None else now_ns,
         filesystem_free_bytes=free,
-        logical_bytes=sum(stage.logical_bytes for stage in stages),
-        allocated_bytes=sum(stage.allocated_bytes for stage in stages),
+        logical_bytes=sum(stage.logical_bytes for stage in stages)
+        + sum(entry.logical_bytes for entry in unclassified),
+        allocated_bytes=sum(stage.allocated_bytes for stage in stages)
+        + sum(entry.allocated_bytes for entry in unclassified),
         stages=stages,
+        unclassified=unclassified,
     )

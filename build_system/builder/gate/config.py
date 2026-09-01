@@ -47,7 +47,6 @@ from .configschema import (
     EnvironmentConfig,
     OutputRootsConfig,
     PidfileConfig,
-    StorageConfig,
     Strict,
     VersionsConfig,
 )
@@ -86,7 +85,6 @@ class GateConfig(Strict):
     """
     architectures: dict[str, Arch]
     apt_snapshot: AptSnapshotConfig
-    storage: StorageConfig
     outputs: OutputRootsConfig
     pidfiles: PidfileConfig
     install: InstallConfig

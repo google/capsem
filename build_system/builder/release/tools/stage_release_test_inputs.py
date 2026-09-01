@@ -134,7 +134,7 @@ def _stage_shared_config(
 def stage_profiles(
     input_dir: Path,
     assets_dir: Path,
-    config_root: Path = Path("cache/target/release-config"),
+    config_root: Path = Path("cache/target/release/staging/config"),
     shared_config_root: Path = Path("config"),
 ) -> Path:
     report, manifest = _load(input_dir)
@@ -400,7 +400,7 @@ def main() -> int:
     parser.add_argument(
         "--config-root",
         type=Path,
-        default=Path("cache/target/release-config"),
+        default=Path("cache/target/release/staging/config"),
     )
     parser.add_argument(
         "--shared-config-root",

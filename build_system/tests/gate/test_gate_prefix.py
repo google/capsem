@@ -134,7 +134,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
     Worth stating as its own property, because the obvious reading is wrong:
     the *workspace* run dir is relative to the checkout root, and at
-    `<root>/cache/target/test-home/.capsem/run` it is already 105 bytes with the
+    `<root>/cache/target/tests/home/.capsem/run` it is already 105 bytes with the
     gateway suffix -- over the limit today, prefix or no prefix. It is not the
     binding path, and a test that measured it would fail for a reason that has
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
@@ -648,7 +648,7 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/config",
         "cache/target/coverage",
         "cache/target/packages",
-        "cache/target/test-artifacts",
+        "cache/target/tests/evidence",
     } <= exports
     assert any(export.startswith("cache/target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
@@ -805,7 +805,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 ) -> None:
     """Retaining a journal without its selected assets cannot resume.
 
-    ``cache/target/assets`` selects ``cache/target/ironbank-assets/<profile>/assets``.
+    ``cache/target/assets`` selects ``cache/target/tests/ironbank/<profile>/assets``.
     Salvaging the selector follows it and moves the real directory into the
     shared cache, leaving the retained prefix with neither path. The next
     exact-source attempt then carries ``assets.assemble`` and fails before its

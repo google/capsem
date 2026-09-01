@@ -25,10 +25,17 @@ def scan_runtimes(
     runner: CommandRunner = execute,
     now_ns: int | None = None,
     offline: bool = False,
+    runtime_ids: frozenset[str] | None = None,
 ) -> RuntimeSnapshot:
     generated = time.time_ns() if now_ns is None else now_ns
     inventories: list[RuntimeInventory] = []
+    selected = set(policy.runtimes) if runtime_ids is None else set(runtime_ids)
+    unknown = sorted(selected - set(policy.runtimes))
+    if unknown:
+        raise ValueError(f"unknown cache runtimes: {', '.join(unknown)}")
     for runtime_id, runtime in sorted(policy.runtimes.items()):
+        if runtime_id not in selected:
+            continue
         if offline:
             inventories.append(
                 RuntimeInventory(
@@ -60,7 +67,9 @@ def scan_runtimes(
     )
 
 
-def write_receipts(paths: CachePaths, policy: CachePolicy, snapshot: RuntimeSnapshot) -> tuple[Path, ...]:
+def write_receipts(
+    paths: CachePaths, policy: CachePolicy, snapshot: RuntimeSnapshot
+) -> tuple[Path, ...]:
     """Atomically record one strict native inventory per configured runtime."""
     written = []
     by_id = {runtime.runtime_id: runtime for runtime in snapshot.runtimes}

@@ -40,7 +40,9 @@ REFERENCE_PATTERNS = {
     "marketing": re.compile(r"(?<![\w-])site/|['\"]site['\"]"),
     "graphics": re.compile(r"(?<![\w/-])graphics/|['\"]graphics['\"]"),
     "collectors": re.compile(r"(?<![\w-])bench/collectors/|['\"]bench['\"]"),
-    "baselines": re.compile(r"(?<![\w-])benchmarks/|['\"]benchmarks['\"]"),
+    "baselines": re.compile(
+        r"(?<![\w-])(?<!tests/)benchmarks/|['\"]benchmarks['\"]"
+    ),
 }
 STATIC_LITERAL = re.compile(
     r"['\"](/[^'\"?#]+[.](?:png|svg|ico|wasm|ttf|woff2?))(?:[?#][^'\"]*)?['\"]"
@@ -214,7 +216,7 @@ def _observe() -> Observed:
     recordings = tuple(
         f"tracked generated recording: {path}"
         for path in tracked
-        if path.startswith("cache/target/test-benchmarks/")
+        if path.startswith("cache/target/tests/benchmarks/")
     )
     assets = _tauri_problems(
         json.loads(TAURI_CONFIG.read_text(encoding="utf-8")), tracked_set
@@ -305,7 +307,7 @@ def _empty_policy() -> dict[str, Any]:
         (
             _synthetic(
                 tracked_recording_problems=(
-                    "tracked generated recording: cache/target/test-benchmarks/new.json",
+                    "tracked generated recording: cache/target/tests/benchmarks/new.json",
                 )
             ),
             "tracked generated recording",

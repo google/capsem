@@ -683,7 +683,7 @@ jobs:
             --assets-dir cache/target/assets \
             --manifest-version "$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')" \
             --profile-source-root cache/target/profile-candidate \
-            --out-dir cache/target/distribution
+            --out-dir cache/target/release/distribution
 
       - name: Attest VM asset provenance
         if: ${{ inputs.dry_run == false }}
@@ -749,7 +749,7 @@ jobs:
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         with:
           name: asset-channel-preview
-          path: cache/target/distribution/
+          path: cache/target/release/distribution/
 
   deploy-channel:
     needs: publish-profile-release

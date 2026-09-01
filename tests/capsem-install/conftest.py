@@ -68,7 +68,7 @@ def _resolve_capsem_home() -> Path:
       - ``CAPSEM_DEB_INSTALLED=1`` (Docker install-test harness): we are
         the system under test -- write to the real $HOME/.capsem there.
       - ``CAPSEM_HOME`` already set by the caller: honor it (lets `just
-        test` point the suite at its isolated ``cache/target/test-home``).
+        test` point the suite at its isolated ``cache/target/tests/home``).
     """
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
         return Path.home() / ".capsem"

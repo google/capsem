@@ -176,7 +176,7 @@ def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
             taken.append(relative)
             continue
         # What the link points at, never the link. A prefix reaches its assets
-        # through links -- `cache/target/ironbank-assets/<profile>/assets` is one, and
+        # through links -- `cache/target/tests/ironbank/<profile>/assets` is one, and
         # `[prefix] exports` says a top-level selector may be another -- and a
         # moved link points into a prefix that is about to be deleted. The
         # result reads as a directory of zero bytes to `du` and as absent to

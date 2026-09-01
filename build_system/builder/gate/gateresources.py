@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 
+from .cachecontrol import CacheControl
 from .egress import Egress
 from .errors import GateError
 from .lifecycle import Resource
@@ -24,7 +25,6 @@ from .proc import Runner
 from .sandbox import OFF, SandboxMode
 from .sandboxreport import SandboxReport
 from .sourcecommit import SourceCommit
-from .storage import Storage
 from .workspace import Workspace
 
 
@@ -81,8 +81,7 @@ class FailureEvidence(Resource, name="failure-evidence"):
             source_commit = SourceCommit(selected) if isinstance(selected, str) else None
         except ValueError:
             source_commit = None
-        Storage(self._runner).capture_failure(
-            rail=self._config.candidate.failure_rail,
+        CacheControl(self._runner).capture_failure(
             label=str(state.get("head", self._config.candidate.unknown_head))[:12],
             run_id=self._runner.run_id,
             source_commit=source_commit,

@@ -331,7 +331,7 @@ def _start_service_with_test_config(
         "RUST_LOG": "info",
     }
 
-    log_path = project_root / "cache/target/integration-test-service.log"
+    log_path = project_root / "cache/containers/logs/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
