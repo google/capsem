@@ -408,7 +408,10 @@ impl FsMonitor {
         } else {
             None
         };
-        let rules = security_rules.read().unwrap().clone();
+        // Recover a poisoned rules lock rather than panic: an unwrap here kills
+        // the monitor thread, silently ending all fs-event recording. Matches
+        // the trace_state recovery just below.
+        let rules = security_rules.read().unwrap_or_else(|e| e.into_inner()).clone();
         let trace_id = {
             let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
             state
