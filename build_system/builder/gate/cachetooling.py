@@ -51,6 +51,9 @@ def compiler_environment(config: GateConfig) -> dict[str, str]:
         config.environment.sccache_dir: str(paths.stage("rust-sccache")),
         config.environment.sccache_cache_size: f"{stage.hard_bytes // 1024**3}G",
         config.environment.sccache_base_dir: str(config.root),
+        config.environment.sccache_server_uds: str(
+            paths.stage("rust-sccache") / config.toolchain.compiler_cache_socket_name
+        ),
     }
 
 

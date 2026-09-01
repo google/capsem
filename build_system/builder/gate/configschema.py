@@ -170,6 +170,7 @@ class EnvironmentConfig(Strict):
     sccache_dir: str
     sccache_cache_size: str
     sccache_base_dir: str
+    sccache_server_uds: str
     uv_cache: str
     pnpm_store: str
     source_commit: str

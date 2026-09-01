@@ -28,6 +28,9 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     assert compiler[CONFIG.environment.sccache_dir] == str(ROOT / "cache/tools/rust/sccache")
     assert compiler[CONFIG.environment.sccache_cache_size] == "32G"
     assert compiler[CONFIG.environment.sccache_base_dir] == str(ROOT)
+    assert compiler[CONFIG.environment.sccache_server_uds] == str(
+        ROOT / "cache/tools/rust/sccache/sccache.sock"
+    )
     assert observed == [
         ("python-uv", "uv"),
         ("python-pycache", "python"),
