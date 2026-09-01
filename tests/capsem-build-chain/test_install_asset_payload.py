@@ -286,6 +286,8 @@ elif [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
     esac
 elif [ "$1" = "volume" ] && [ "$2" = "rm" ]; then
     :
+elif [ "$2" = "ls" ] && { [ "$1" = "container" ] || [ "$1" = "image" ]; }; then
+    :
 elif [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
     exit 1
 elif [ "$1" = "ps" ]; then
@@ -425,10 +427,8 @@ def _gate_plan_step(label: str):
 
 
 def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
-    # The gate refuses to start a build the daemon cannot finish, before the
-    # lanes rather than after them -- running out at minute thirty wastes the
-    # thirty. The preflight is inside `AssetGate` now; what stays checkable
-    # here is that it happens and that the policy it reads is the assets rail.
+    # Refuse a build the daemon cannot finish before its expensive lanes.
+    # The preflight is inside `AssetGate`; prove it reads the assets rail.
     assets_source = (
         PROJECT_ROOT / "build_system" / "builder" / "gate" / "assets.py"
     ).read_text(encoding="utf-8")
