@@ -489,7 +489,13 @@ fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
             continue;
         }
         if let Ok(rel) = entry.path().strip_prefix(root) {
-            let rel_str = rel.to_string_lossy().to_string();
+            // Key by the exact UTF-8 path. A lossy conversion collapses distinct
+            // non-UTF8 names onto the same replacement string, corrupting change
+            // detection; such names are unaddressable through the JSON tool API
+            // anyway, so skip them rather than let them collide.
+            let Some(rel_str) = rel.to_str().map(str::to_string) else {
+                continue;
+            };
             // Use symlink_metadata so we don't follow symlinks for size.
             let size = entry.path().symlink_metadata().map(|m| m.len()).unwrap_or(0);
             let is_symlink = ft.is_symlink();

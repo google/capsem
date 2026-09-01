@@ -1143,3 +1143,23 @@ fn write_regular_file_no_follow_creates_fresh_file_with_mode() {
     assert_eq!(std::fs::read(&path).unwrap(), b"hi");
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 }
+
+#[cfg(unix)]
+#[test]
+fn collect_files_does_not_collapse_distinct_non_utf8_names() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    // Two distinct invalid-UTF8 filenames. to_string_lossy maps both to the
+    // same replacement string, collapsing them in the map and corrupting change
+    // detection. They are unaddressable through the JSON tool API regardless.
+    std::fs::write(dir.path().join(OsStr::from_bytes(b"\xff")), b"a").unwrap();
+    std::fs::write(dir.path().join(OsStr::from_bytes(b"\xfe")), b"b").unwrap();
+
+    let files = collect_files(dir.path());
+    assert_eq!(
+        files.len(),
+        0,
+        "distinct non-UTF8 filenames must not collapse into a single entry: {files:?}"
+    );
+}
