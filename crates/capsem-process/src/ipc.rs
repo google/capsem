@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
 type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
+type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
 /// Per-attempt timeout the host watchdog waits before re-sending a quick
 /// request/response HostToGuest payload.
@@ -39,6 +40,32 @@ const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// replay layer takes care of forward-path losses regardless of this
 /// number; the watchdog's job is just to cover return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
+
+/// Negotiate the synchronous Hello side-channel away from Tokio's worker
+/// threads, then hand the verified socket to the typed async IPC transport.
+/// A peer mismatch is a refused connection, not a process-fatal error.
+async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<ProcessIpcChannel>> {
+    let std_stream = stream.into_std()?;
+    let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
+    let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
+        let mut std_stream = std_stream;
+        let handshake =
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process", traceparent);
+        (std_stream, handshake)
+    })
+    .await
+    .context("join IPC handshake task")?;
+
+    match handshake {
+        Ok(peer) => info!(target: "ipc", peer = %peer.peer, "IPC handshake ok"),
+        Err(error) => {
+            error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(channel_from_std(std_stream)?))
+}
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
     j_rx.await.map_err(|_| "Exec result channel closed".to_string())
@@ -93,28 +120,12 @@ pub(crate) async fn handle_ipc_connection(
     snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut std_stream = stream.into_std()?;
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    match capsem_foundation::ipc_handshake::negotiate_responder(
-        &mut std_stream,
-        "capsem-process",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    ) {
-        Ok(peer) => {
-            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
-        }
-        Err(e) => {
-            error!(
-                target: "ipc",
-                error = %e,
-                "IPC handshake failed; refusing connection"
-            );
-            return Ok(());
-        }
-    }
-    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) = channel_from_std(std_stream)?;
+    let Some((tx, rx)) = open_ipc_channel(stream).await? else {
+        return Ok(());
+    };
 
     // Serialize all IPC writes through a single channel to prevent concurrent
     // sendmsg() interleaving that corrupts the data stream. tokio_unix_ipc's

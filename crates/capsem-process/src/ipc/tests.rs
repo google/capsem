@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use super::*;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 
 #[tokio::test]
@@ -39,6 +40,37 @@ async fn exec_wait_returns_completed_exec_result() {
         }
         other => panic!("unexpected job result: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn negotiated_channel_carries_typed_messages_in_both_directions() {
+    let (process_stream, service_stream) = tokio::net::UnixStream::pair().unwrap();
+    let mut service_stream = service_stream.into_std().unwrap();
+    let service = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_initiator(&mut service_stream, "capsem-service-test", "").unwrap();
+        let channel: (
+            tokio_unix_ipc::Sender<ServiceToProcess>,
+            tokio_unix_ipc::Receiver<ProcessToService>,
+        ) = tokio_unix_ipc::channel_from_std(service_stream).unwrap();
+        channel
+    });
+
+    let (process_tx, process_rx) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    let (service_tx, service_rx) = service.await.unwrap();
+
+    service_tx.send(ServiceToProcess::Ping).await.unwrap();
+    assert!(matches!(process_rx.recv().await.unwrap(), ServiceToProcess::Ping));
+
+    process_tx.send(ProcessToService::Pong).await.unwrap();
+    assert!(matches!(service_rx.recv().await.unwrap(), ProcessToService::Pong));
+}
+
+#[tokio::test]
+async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
+    let (process_stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
+    peer.write_all(&0_u32.to_be_bytes()).await.unwrap();
+
+    assert!(open_ipc_channel(process_stream).await.unwrap().is_none());
 }
 
 #[test]
