@@ -10,6 +10,7 @@ CONFIG = gate_config.load(ROOT)
 
 
 def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) -> None:
+    monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
     observed: list[tuple[str, str]] = []
     monkeypatch.setattr(
         cachetooling,

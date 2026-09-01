@@ -14,13 +14,13 @@ from ..image.config import load_guest_config
 from ..image.guestbuilder import build_arguments, image_repository, image_tag
 from ..image.models import ArchConfig, BuildConfig
 from .actions import Action
+from .cachecontrol import CacheControl
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .imageidentity import require_input_key
 from .proc import Runner
-from .storage import Storage
 
 
 def build_config(config: GateConfig) -> BuildConfig:
@@ -99,7 +99,7 @@ def prefetch(
 def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
     """Build the input-keyed host helper used by the sealed asset tail."""
     docker = Docker(runner)
-    storage = Storage(runner)
+    cache = CacheControl(runner)
     build = build_config(config)
     name = config.host_arch().name
     arch = build.architectures[name]
@@ -134,7 +134,7 @@ def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
         )
     exact_id = docker.image_id(tag, platform=arch.docker_platform)
     runner.note(f"sealed asset tools identity: {tag} -> {exact_id}")
-    storage.reclaim(assettools.image_repository(build, name), keep=tag)
+    cache.reclaim(assettools.image_repository(build, name), keep=tag)
 
 
 def materialize_rust_builders(
@@ -144,7 +144,7 @@ def materialize_rust_builders(
 ) -> None:
     """Build lockfile-keyed helpers after cross-platform execution is proven."""
     docker = Docker(runner)
-    storage = Storage(runner)
+    cache = CacheControl(runner)
     build = build_config(config)
     for name, _arch in selected(config, names):
         resolved = guestbuilder.environment(build, name)
@@ -170,7 +170,7 @@ def materialize_rust_builders(
             )
         exact_id = docker.image_id(builder, platform=resolved.docker_platform)
         runner.note(f"sealed {name} guest Rust builder identity: {builder} -> {exact_id}")
-        storage.reclaim(image_repository(build, name), keep=builder)
+        cache.reclaim(image_repository(build, name), keep=builder)
 
 
 class Prefetch(Action, name="guest-base-prefetch"):

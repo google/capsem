@@ -250,11 +250,11 @@ def test_the_bootstrap_exemption_stays_minimal() -> None:
 def test_a_path_literal_would_be_caught(tmp_path: Path) -> None:
     """Red-first, permanently: the guard must see the shape it forbids."""
     module = tmp_path / "example.py"
-    module.write_text('LAYOUT = "cache/target/install-test-assets"\n')
+    module.write_text('LAYOUT = "cache/target/tests/install/assets"\n')
 
     caught = [value for _line, value in _literals(module) if _looks_like_a_path(value)]
 
-    assert caught == ["cache/target/install-test-assets"]
+    assert caught == ["cache/target/tests/install/assets"]
 
 
 def test_a_file_mode_is_not_mistaken_for_a_path(tmp_path: Path) -> None:

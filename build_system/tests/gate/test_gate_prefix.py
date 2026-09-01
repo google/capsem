@@ -134,7 +134,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
     Worth stating as its own property, because the obvious reading is wrong:
     the *workspace* run dir is relative to the checkout root, and at
-    `<root>/cache/target/test-home/.capsem/run` it is already 105 bytes with the
+    `<root>/cache/target/tests/home/.capsem/run` it is already 105 bytes with the
     gateway suffix -- over the limit today, prefix or no prefix. It is not the
     binding path, and a test that measured it would fail for a reason that has
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
@@ -648,7 +648,7 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/config",
         "cache/target/coverage",
         "cache/target/packages",
-        "cache/target/test-artifacts",
+        "cache/target/tests/evidence",
     } <= exports
     assert any(export.startswith("cache/target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
@@ -805,7 +805,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 ) -> None:
     """Retaining a journal without its selected assets cannot resume.
 
-    ``cache/target/assets`` selects ``cache/target/ironbank-assets/<profile>/assets``.
+    ``cache/target/assets`` selects ``cache/target/tests/ironbank/<profile>/assets``.
     Salvaging the selector follows it and moves the real directory into the
     shared cache, leaving the retained prefix with neither path. The next
     exact-source attempt then carries ``assets.assemble`` and fails before its
@@ -1314,10 +1314,15 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
     every binary had built and installed.
     """
-    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate import cachelayout, cargotarget
 
     checkout = tmp_path / "checkout"
     (checkout / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    (checkout / "config").mkdir()
+    (checkout / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     config = _shared_target_config(tmp_path, warning_gb=1.0).model_copy(
         update={"root": checkout}
     )
@@ -1334,13 +1339,16 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
 
     assert (prefix_path / "cache" / "target" / "config" / "profiles" / "code").is_dir()
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == binaries
+    assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
+        config, "objects"
+    )
 
 
 def test_an_ordinary_run_still_compiles_into_the_shared_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No release variables means the build root, exactly as before."""
-    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate import cachelayout, cargotarget
 
     config = _shared_target_config(tmp_path, warning_gb=1.0)
     monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
@@ -1349,7 +1357,23 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     cargotarget.link_prefix_trees(config, prefix_path)
 
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == cargotarget.path(config) / "debug"
+    assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
+        config, "objects"
+    )
     assert not (prefix_path / "cache" / "target" / "config").exists()
+
+
+def test_a_private_prefix_object_store_is_refused(tmp_path: Path) -> None:
+    """A local store would make identical exact-source rounds compile twice."""
+    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate.errors import GateError
+
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    prefix_path = tmp_path / "prefixes" / ("e" * 8)
+    (prefix_path / "cache" / "objects").mkdir(parents=True)
+
+    with pytest.raises(GateError, match="private object store"):
+        cargotarget.link_object_store(config, prefix_path)
 
 
 def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) -> None:

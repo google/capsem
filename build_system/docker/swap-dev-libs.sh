@@ -82,7 +82,6 @@ if [ "$TARGET_ARCH" = "$NATIVE_ARCH" ]; then
     echo "Reinstalling $NATIVE_ARCH dev libraries via $SNAPSHOT_URL"
     apt-get install -y --reinstall --allow-downgrades --no-install-recommends \
         -o Dpkg::Options::="--force-overwrite" "${NATIVE_PKGS[@]}"
-    rm -rf /var/lib/apt/lists/*
     echo "Reinstalled $NATIVE_ARCH dev libraries from the selected snapshot."
     exit 0
 fi
@@ -108,6 +107,5 @@ done
 
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" \
     "${HOST_PKGS[@]}" "${FOREIGN_PKGS[@]}"
-rm -rf /var/lib/apt/lists/*
 
 echo "Installed ${TARGET_ARCH} -dev libraries."

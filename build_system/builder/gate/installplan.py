@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from . import hostimage, installbuilder
 from .actions import Call
+from .cachecontrol import CacheControl
 from .command import GateCommand
 from .config import GateConfig
 from .execution import Kind, Needs, Requires, Speed, Step, step
@@ -26,7 +27,6 @@ from .outside import Outside
 from .plan import Plan
 from .sourcecapture import require_recorded
 from .sourcestate import record_step
-from .storage import Storage
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
@@ -35,14 +35,18 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     # those later steps back onto it would create a cycle. Standalone plans
     # still get the same root step here.
     recorded = plan.shared(record_step(config))
-    built = hostimage.fragment(plan, config, after=after)
+    # Groundwork has no ordering of its own. The capacity consumer waits for
+    # both the builder and this fragment's caller; pushing `after` into a
+    # shared producer lets a later consumer add a backwards edge and cycle the
+    # candidate graph once another lane has already materialized the producer.
+    built = hostimage.fragment(plan, config)
 
     capacity = plan.shared(
         step(
             _step_label(InstallImageStep.CAPACITY),
             Call(
                 "reserve disk for the install helper and exact source image",
-                lambda context: Storage(context.runner).ensure_space("install-preflight"),
+                lambda context: CacheControl(context.runner).ensure_space("install-preflight"),
                 justification=CallJustification(
                     kind=OpaqueKind.RUNTIME_DERIVED,
                     reason="the storage policy measures and reserves Docker capacity",

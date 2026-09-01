@@ -334,8 +334,9 @@ def test_only_the_target_directory_entry_is_granted_not_its_contents(
 
     container.start(options=[])
 
-    assert runner.ran(r"chown capsem:capsem /src/cache/target$")
-    assert not runner.ran(r"chown -R capsem:capsem /src/cache/target$")
+    parent = Path(CONFIG.install.layout.assets).parent
+    assert runner.ran(rf"chown capsem:capsem /src/{parent}$")
+    assert not runner.ran(rf"chown -R capsem:capsem /src/{parent}$")
 
 
 def test_writes_are_handed_back_to_the_host_user(
@@ -385,7 +386,7 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     # lane's builder rail from here, which was ordered only by the line it sat
     # on -- so once this preflight moved ahead of that lane, the release landed
     # 164ms before `cache-ownership` ran the image it had just deleted.
-    assert not runner.ran(r"docker-storage-policy\.py release"), (
+    assert not runner.ran(r"capsem-cache .* release"), (
         "the preflight releases another lane's rail; that rail's own step does"
     )
 
@@ -436,6 +437,8 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert f"APT_SNAPSHOT_ID={CONFIG.apt_snapshot.id}" in str(helper)
     assert f"RUST_TARGET={CONFIG.host_arch().rust_target}" in str(helper)
     assert f"CARGO_STORE={CONFIG.install.builder.cargo_store}" in str(helper)
+    assert f"APT_LISTS_CACHE_ID={CONFIG.install.builder.apt_lists_cache_id}" in str(helper)
+    assert f"APT_ARCHIVES_CACHE_ID={CONFIG.install.builder.apt_archives_cache_id}" in str(helper)
     assert "INPUT_IDENTITY=capsem-install-builder:" in str(helper)
     assert "--platform linux/amd64" in str(source)
     assert "--network none" in str(source)
@@ -529,7 +532,7 @@ def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
     )
     selected = tmp_path / "cache" / "target" / "ironbank-assets" / "code" / "assets"
     selected.mkdir(parents=True)
-    (tmp_path / "assets").symlink_to("cache/target/ironbank-assets/code/assets")
+    (tmp_path / "assets").symlink_to("cache/target/tests/ironbank/code/assets")
 
     assert (
         installimage.source_image_tag(

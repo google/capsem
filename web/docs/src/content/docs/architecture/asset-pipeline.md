@@ -54,7 +54,7 @@ cache/target/assets/
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
 | `capsem-admin manifest generate cache/target/assets` | Generate `cache/target/assets/manifest.json` from the repository asset directory |
 | `capsem-admin profile materialize` | Generate `cache/target/config` from source `config/` plus `cache/target/assets/manifest.json` |
-| `capsem-admin assets channel build` | Generate `cache/target/distribution` with `assets/<channel>/manifest.json` for release.capsem.org |
+| `capsem-admin assets channel build` | Generate `cache/target/release/distribution` with `assets/<channel>/manifest.json` for release.capsem.org |
 | `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
 
 `config/` is checked-in source material: profile, corp, settings, rule files,
@@ -102,8 +102,8 @@ The manifest (`cache/target/assets/manifest.json`, format 2) is a single top-lev
 ```
 
 The public asset channel is a deployed view of that same manifest. The generated
-Cloudflare Pages root is `cache/target/distribution/`, with the machine manifest at
-`cache/target/distribution/assets/stable/manifest.json`. After deployment the URL
+Cloudflare Pages root is `cache/target/release/distribution/`, with the machine manifest at
+`cache/target/release/distribution/assets/stable/manifest.json`. After deployment the URL
 is `https://release.capsem.org/assets/stable/manifest.json`.
 The release-channel deploy smoke verifies public `Cache-Control` headers after
 Cloudflare publishes the generated site: mutable pointers (`/`, `/health.json`,

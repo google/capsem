@@ -294,7 +294,7 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
         # unit test cannot mistake itself for a release -- and the child then
         # inherits an environment that still says artifacts are required while
         # no longer saying which lane is running. It concluded it was a local
-        # build and asked for `cache/target/linux-agent`, which a pulled lane
+        # build and asked for `cache/target/build/linux-agent`, which a pulled lane
         # correctly does not have, fifteen minutes into a release gate.
         env={k: v for k, v in os.environ.items() if k != "CAPSEM_REQUIRE_ARTIFACTS"},
     )

@@ -9,6 +9,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
+from .controlmodels import CacheControlPolicy
 from .runtimemodels import RuntimeInventory, RuntimePolicy
 
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
@@ -144,6 +145,7 @@ class CachePolicy(BaseModel):
     )
     stages: dict[str, StagePolicy]
     runtimes: dict[str, RuntimePolicy] = Field(default_factory=dict)
+    control: CacheControlPolicy | None = None
 
     @model_validator(mode="after")
     def validate_policy(self) -> CachePolicy:
@@ -163,10 +165,20 @@ class CachePolicy(BaseModel):
                     raise ValueError(
                         f"cache runtime {runtime_id!r} references unknown stage {stage_id!r}"
                     )
+        if self.control is not None:
+            docker_id = self.control.docker.runtime_id
+            if docker_id not in self.runtimes:
+                raise ValueError(f"cache control references unknown runtime {docker_id!r}")
+            failure_stage = self.control.failure_artifacts.stage
+            if failure_stage not in self.stages:
+                raise ValueError(
+                    f"cache control references unknown failure stage {failure_stage!r}"
+                )
         items = sorted(self.stages.items())
         for index, (left_id, left) in enumerate(items):
             for right_id, right in items[index + 1 :]:
-                if left.path == right.path or left.path in right.path.parents or right.path in left.path.parents:
+                overlaps = left.path == right.path or left.path in right.path.parents
+                if overlaps or right.path in left.path.parents:
                     raise ValueError(
                         f"cache stage paths overlap: {left_id}={left.path} and "
                         f"{right_id}={right.path}"
@@ -217,6 +229,7 @@ class CacheInventory(BaseModel):
     logical_bytes: Annotated[StrictInt, Field(ge=0)]
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     stages: tuple[StageInventory, ...]
+    unclassified: tuple[CacheEntry, ...] = ()
     runtimes: tuple[RuntimeInventory, ...] = ()
 
 
@@ -278,15 +291,3 @@ class AdmissionEvent(BaseModel):
     timestamp_ns: Annotated[StrictInt, Field(ge=0)]
     source_identity: str
     reason: str
-
-
-class GitImpact(BaseModel):
-    """Read-only Git facts used by the pure admission decision."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    baseline: str
-    target: str
-    ancestor: StrictBool
-    commits: Annotated[StrictInt, Field(ge=0)]
-    paths: tuple[str, ...]

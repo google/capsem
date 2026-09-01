@@ -45,10 +45,11 @@ WINTERFELL_REQUIRED_BINARIES = (
 )
 
 
-with (PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as _policy_stream:
-    _DEBUG_ARTIFACT_POLICY = tomllib.load(_policy_stream)["debug_artifacts"]
+with (PROJECT_ROOT / "config" / "cache.toml").open("rb") as _policy_stream:
+    _CACHE_POLICY = tomllib.load(_policy_stream)
+_DEBUG_ARTIFACT_POLICY = _CACHE_POLICY["control"]["failure_artifacts"]
 
-ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_mib"]) * 1024 * 1024
+ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_bytes"])
 ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset(
     {
         # Multi-GB VM disk images -- regenerable from the build, would burn
@@ -60,10 +61,10 @@ ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozense
         "checkpoint.vzsave",
     }
 )
-ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_runs"])
-ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
-ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
-ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
+ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_count"])
+ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_count"])
+ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_hours"]) * 60 * 60
+ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_bytes"])
 DEFAULT_TEST_RUST_LOG = "debug,notify::poll::data=error"
 REQUIRED_TEST_RUST_LOG = "service=info,capsem=debug"
 
@@ -116,7 +117,8 @@ def resolve_winterfell_artifact_roots(
 
     environment = os.environ if environment is None else environment
     configured = {
-        field: environment.get(variable) for field, variable in WINTERFELL_ROOT_ENV.items()
+        field: environment.get(variable)
+        for field, variable in WINTERFELL_ROOT_ENV.items()
     }
     present = [field for field, value in configured.items() if value is not None]
     if not present:
@@ -166,9 +168,13 @@ def resolve_winterfell_artifact_roots(
                 f"installed Winterfell {family} root is not a directory: {directory}"
             )
     if not (assets_dir / "manifest.json").is_file():
-        raise RuntimeError(f"installed Winterfell asset root has no manifest.json: {assets_dir}")
+        raise RuntimeError(
+            f"installed Winterfell asset root has no manifest.json: {assets_dir}"
+        )
     if not _contains_profile_toml(profiles_dir):
-        raise RuntimeError(f"installed Winterfell profile root has no profile.toml: {profiles_dir}")
+        raise RuntimeError(
+            f"installed Winterfell profile root has no profile.toml: {profiles_dir}"
+        )
     for name in WINTERFELL_REQUIRED_BINARIES:
         binary = binary_dir / name
         if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -242,7 +248,9 @@ def wait_profile_assets_settled(
 
 
 def _contains_profile_toml(profiles_dir: Path) -> bool:
-    return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
+    return any(
+        path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml")
+    )
 
 
 def materialize_test_profiles(tmp_dir: Path) -> Path:
@@ -277,7 +285,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
 def preserve_tmp_dir_on_failure(
     tmp_dir, *, force: bool = False, any_worker_failure: bool = False
 ):
-    """Copy tmp_dir to cache/target/test-artifacts/ when this worker saw any failure.
+    """Copy tmp_dir to cache/target/tests/evidence/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
     tmp dir, so service.log, sessions/<vm>/process.log, sessions/<vm>/serial.log,
@@ -297,7 +305,7 @@ def preserve_tmp_dir_on_failure(
     concurrently during teardown. A per-file try/except isolates those
     transient errors so one flaky file doesn't vanish the entire subtree.
 
-    Also rotates `cache/target/test-artifacts/` after each preserve, keeping only the
+    Also rotates `cache/target/tests/evidence/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:
@@ -352,7 +360,9 @@ def preserve_tmp_dir_on_failure(
         def _on_walk_error(err):
             errors.append(f"walk {err.filename}: {err}")
 
-        for src_dir, _dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
+        for src_dir, _dirnames, filenames in os.walk(
+            tmp_dir, topdown=True, onerror=_on_walk_error
+        ):
             src_path = Path(src_dir)
             rel = src_path.relative_to(tmp_dir)
             dst_dir = dest / rel
@@ -502,7 +512,9 @@ class ServiceInstance:
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
         env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
-        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(self.home_dir / "credential-store.json")
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
+            self.home_dir / "credential-store.json"
+        )
         env["HOME"] = str(self.home_dir)
 
         log_path = self.tmp_dir / "service.log"
@@ -578,7 +590,9 @@ class ServiceInstance:
     def _preserve_failure_evidence_before_delete(self):
         """Archive required VM evidence before destructive test cleanup."""
         forced = bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
-        if self._failure_evidence_preserved or (sys.exc_info()[0] is None and not forced):
+        if self._failure_evidence_preserved or (
+            sys.exc_info()[0] is None and not forced
+        ):
             return
         preserve_tmp_dir_on_failure(self.home_dir, force=True)
         self._failure_evidence_preserved = True
@@ -689,7 +703,9 @@ def vm_session_dir(tmp_dir, client, typed_id, *, must_exist=True):
 
 
 def vm_session_db_path(tmp_dir, client, typed_id, *, must_exist=True):
-    db_path = vm_session_dir(tmp_dir, client, typed_id, must_exist=must_exist) / "session.db"
+    db_path = (
+        vm_session_dir(tmp_dir, client, typed_id, must_exist=must_exist) / "session.db"
+    )
     if must_exist and not db_path.exists():
         raise AssertionError(f"session.db missing at {db_path}")
     return db_path

@@ -72,7 +72,8 @@ def _python_sources(root: Path) -> tuple[Path, ...]:
         capture_output=True,
     )
     if listed.returncode == 0:
-        return tuple(root / raw.decode() for raw in listed.stdout.split(b"\0") if raw)
+        candidates = (root / raw.decode() for raw in listed.stdout.split(b"\0") if raw)
+        return tuple(path for path in candidates if path.is_file())
     return tuple(sorted(root.rglob("*.py")))
 
 

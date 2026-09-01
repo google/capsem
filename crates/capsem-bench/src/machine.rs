@@ -10,6 +10,7 @@
 use std::fs;
 use std::path::Path;
 
+use capsem_core::proctable::Process;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::Host;
@@ -114,21 +115,44 @@ pub fn assess(
     objections
 }
 
-/// The capsem processes named by `pgrep -l`, excluding this one.
+/// PIDs in this process's ancestry, including itself.
 ///
-/// Pure so the exclusion is testable: `capsem-bench-rs` matches its own
-/// pattern, and a doctor that counts itself as contention refuses every
-/// machine forever.
-pub fn strays_from_pgrep(stdout: &str, self_pid: &str) -> Vec<String> {
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let pid = fields.next()?;
-            let name = fields.next()?;
-            (pid != self_pid).then(|| name.to_string())
+/// The doctor runs both directly and as a child of `capsem-gate`. Its own gate
+/// is measurement infrastructure, while another Capsem process is contention.
+/// The shared process-table snapshot distinguishes those cases without
+/// exempting every process named `capsem-gate`.
+fn ancestry(processes: &[Process], self_pid: u32) -> Vec<u32> {
+    let mut ancestry = Vec::new();
+    let mut current = self_pid;
+    while !ancestry.contains(&current) {
+        ancestry.push(current);
+        let Some(process) = processes.iter().find(|process| process.pid == current) else {
+            break;
+        };
+        current = process.parent_pid;
+    }
+    ancestry
+}
+
+/// Capsem processes outside this process's ancestry.
+fn strays_from_processes(processes: &[Process], self_pid: u32) -> Vec<String> {
+    let ancestry = ancestry(processes, self_pid);
+    processes
+        .iter()
+        .filter(|process| !ancestry.contains(&process.pid))
+        .filter_map(|process| {
+            let executable = process.arguments.split_whitespace().next()?;
+            let name = Path::new(executable).file_name()?.to_str()?;
+            name.starts_with("capsem").then(|| name.to_string())
         })
         .collect()
+}
+
+/// Capsem processes already running, which compete for the CPU being measured.
+pub fn running_capsem_processes() -> Vec<String> {
+    capsem_core::proctable::processes()
+        .map(|processes| strays_from_processes(&processes, std::process::id()))
+        .unwrap_or_default()
 }
 
 /// Observe this machine and judge it.

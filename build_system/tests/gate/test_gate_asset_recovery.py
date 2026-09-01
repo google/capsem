@@ -325,7 +325,7 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
 #
 # The build cache used to carry only `assets/`, which this lane does not read;
 # `_when_missing` recovery answers a different question. The lane's own
-# `cache/target/ironbank-assets` tree now travels between prefixes with a receipt, and
+# `cache/target/tests/ironbank` tree now travels between prefixes with a receipt, and
 # preflight must preserve those isolated roots long enough to validate them.
 # ---------------------------------------------------------------------------
 

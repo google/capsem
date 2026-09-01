@@ -29,6 +29,7 @@ from pathlib import Path
 from . import assetevidence, crossexec, imagebases, pidfiles
 from . import config as gate_config
 from .assetlanes import AssetLanes, Profile, discover_profiles, prepare_workspace
+from .cachecontrol import CacheControl
 from .context import Context
 from .errors import GateError
 from .fileactions import (
@@ -43,7 +44,6 @@ from .fileactions import (
 from .proc import Runner
 from .service import WaitForSocket
 from .service import launch as launch_service
-from .storage import Storage
 
 
 class AssetGate:
@@ -53,7 +53,7 @@ class AssetGate:
         self._runner = runner
         self._config = gate_config.for_root(runner.root)
         self._assets = self._config.assets
-        self._storage = Storage(runner)
+        self._cache = CacheControl(runner)
         self.root = self._config.root
         self.test_root = self._config.path(self._assets.test_root)
         self.host_arch = self._config.host_arch()
@@ -248,7 +248,7 @@ class AssetGate:
         # Resolve the asset rail from the checked-in storage policy: the
         # dual-architecture BuildKit cohort survives unless the daemon falls
         # below its declared reserve.
-        self._storage.ensure_space("assets")
+        self._cache.ensure_space("assets")
         prepare_workspace(self._config, discover_profiles(self._config))
 
     def prefetch(self) -> None:

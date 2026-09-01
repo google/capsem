@@ -13,7 +13,7 @@
 /// reported against a URL nobody had asked for.
 #[test]
 fn root_relative_artifacts_resolve_against_a_file_channels_dist_root() {
-    let manifest = "file:///src/cache/target/distribution/install-proof/assets/local/manifest.json";
+    let manifest = "file:///src/cache/target/release/distribution/install-proof/assets/local/manifest.json";
 
     let resolved = super::resolve_release_channel_artifact_url(
         manifest,
@@ -23,7 +23,7 @@ fn root_relative_artifacts_resolve_against_a_file_channels_dist_root() {
 
     assert_eq!(
         resolved,
-        "file:///src/cache/target/distribution/install-proof/profiles/releases/local/co-work/0.6.0/arm64/initrd.img"
+        "file:///src/cache/target/release/distribution/install-proof/profiles/releases/local/co-work/0.6.0/arm64/initrd.img"
     );
 }
 
@@ -47,11 +47,11 @@ fn root_relative_artifacts_resolve_against_an_http_origin() {
 /// absolute URL is still taken as given.
 #[test]
 fn relative_and_absolute_artifact_references_are_unchanged() {
-    let manifest = "file:///src/cache/target/distribution/install-proof/assets/local/manifest.json";
+    let manifest = "file:///src/cache/target/release/distribution/install-proof/assets/local/manifest.json";
 
     assert_eq!(
         super::resolve_release_channel_artifact_url(manifest, "health.json").expect("relative"),
-        "file:///src/cache/target/distribution/install-proof/assets/local/health.json"
+        "file:///src/cache/target/release/distribution/install-proof/assets/local/health.json"
     );
     assert_eq!(
         super::resolve_release_channel_artifact_url(manifest, "https://example.test/a.img").expect("absolute"),

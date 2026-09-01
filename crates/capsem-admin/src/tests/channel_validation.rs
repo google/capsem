@@ -4,7 +4,7 @@ use super::*;
 fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     let asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
 
     let report = build_assets_channel(
@@ -46,7 +46,7 @@ fn assets_channel_check_rejects_bad_health_schema() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
@@ -77,7 +77,7 @@ fn assets_channel_check_rejects_bad_health_schema() {
 fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -109,7 +109,7 @@ fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
 fn assets_channel_check_rejects_missing_asset_release_date() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -144,7 +144,7 @@ fn assets_channel_check_rejects_missing_asset_release_date() {
 fn assets_channel_check_rejects_missing_evidence_vm_obom() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -175,7 +175,7 @@ fn assets_channel_check_rejects_missing_evidence_vm_obom() {
 fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -216,7 +216,7 @@ fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
 fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -257,7 +257,7 @@ fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
 fn assets_channel_check_rejects_missing_host_sbom_attestation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -324,7 +324,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
         serde_json::to_string_pretty(&manifest).expect("manifest json"),
     )
     .expect("write manifest with deb");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -367,7 +367,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
 fn assets_channel_check_rejects_attestation_without_verification_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -405,7 +405,7 @@ fn assets_channel_check_rejects_missing_current_asset_blob() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("cache/target/distribution");
+    let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
@@ -438,7 +438,7 @@ fn assets_channel_rejects_unsafe_channel_names() {
             &profiles_dir,
             channel,
             "1.0.2",
-            &temp.path().join("cache/target/distribution"),
+            &temp.path().join("cache/target/release/distribution"),
             "2030-01-01T00:00:00Z",
             None,
         )
@@ -458,7 +458,7 @@ fn assets_channel_manifest_source_must_be_url() {
         &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
-        &temp.path().join("cache/target/distribution"),
+        &temp.path().join("cache/target/release/distribution"),
         "2030-01-01T00:00:00Z",
         None,
     )

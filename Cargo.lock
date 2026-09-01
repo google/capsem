@@ -777,6 +777,7 @@ name = "capsem-bench"
 version = "0.6.2"
 dependencies = [
  "anyhow",
+ "capsem-core",
  "clap",
  "futures",
  "reqwest 0.12.28",

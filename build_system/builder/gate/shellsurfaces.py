@@ -43,6 +43,7 @@ EXPRESSION = re.compile(r"\$\{\{\s*.*?\s*\}\}", re.S)
 EXPRESSION_PLACEHOLDER = "${CAPSEM_GH_EXPRESSION}"
 
 RUN_INSTRUCTION = re.compile(r"^RUN\s+((?:.*\\\n)*.*)", re.MULTILINE)
+RUN_OPTION = re.compile(r"--[A-Za-z][A-Za-z0-9-]*(?:=[^\\\s]+)?[ \t]*(?:\\\n[ \t]*)?")
 
 #: A command continued onto the next line. Joined before lexing, so a five-line
 #: invocation is one command rather than five fragments.
@@ -124,10 +125,24 @@ def run_instructions(dockerfile: str) -> list[str]:
     Docker uses. Reversing it leaves the `\\` preceding a comment line dangling
     and reports a syntax error in a RUN that builds correctly.
 
-    Continuations are otherwise left intact: ShellCheck reads them, and
-    flattening pulls a trailing comment into the middle of a logical line.
+    Docker consumes leading instruction options such as BuildKit cache mounts;
+    they are not arguments passed to `/bin/sh -c` and are stripped here.
+    Continuations in the shell body are otherwise left intact: ShellCheck
+    reads them, and flattening pulls a trailing comment into the middle of a
+    logical line.
     """
-    return RUN_INSTRUCTION.findall(_without_comments(dockerfile))
+    return [
+        _without_run_options(body)
+        for body in RUN_INSTRUCTION.findall(_without_comments(dockerfile))
+    ]
+
+
+def _without_run_options(body: str) -> str:
+    """Remove only Docker's leading `RUN --option` prefix."""
+    position = 0
+    while found := RUN_OPTION.match(body, position):
+        position = found.end()
+    return body[position:]
 
 
 def workflow_bodies(workflows: Path) -> dict[str, str]:

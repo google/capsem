@@ -89,3 +89,22 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     ) in package
     assert "COPY sources-multiarch.sh /tmp/" in host
     assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
+
+
+def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
+    """A failed immutable snapshot request must not discard completed bytes."""
+    config = (ROOT / "config/gate.toml").read_text(encoding="utf-8")
+    for name, namespace in (
+        ("Dockerfile.install-builder", "install"),
+        ("Dockerfile.package-builder", "package"),
+    ):
+        source = (OWNER / name).read_text(encoding="utf-8")
+        assert f'apt_lists_cache_id = "capsem-{namespace}-apt-lists"' in config
+        assert f'apt_archives_cache_id = "capsem-{namespace}-apt-archives"' in config
+        assert "id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked" in source
+        assert "id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked" in source
+        assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
+
+    for helper in ("materialize-install-os.sh", "swap-dev-libs.sh"):
+        source = (OWNER / helper).read_text(encoding="utf-8")
+        assert "rm -rf /var/lib/apt/lists" not in source

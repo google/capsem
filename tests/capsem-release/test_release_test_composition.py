@@ -71,11 +71,11 @@ def _qualification(**overrides):
 #: The two release lanes, spelled once. A binary lane resolves every profile
 #: the manifest names; a profile lane is publishing exactly one.
 BINARY_LANE = _qualification(
-    CAPSEM_RELEASE_INPUT_DIR="cache/target/release-inputs",
+    CAPSEM_RELEASE_INPUT_DIR="cache/target/release/staging/inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
 )
 PROFILE_LANE = _qualification(
-    CAPSEM_RELEASE_INPUT_DIR="cache/target/release-inputs",
+    CAPSEM_RELEASE_INPUT_DIR="cache/target/release/staging/inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
     CAPSEM_RELEASE_PROFILE="code",
 )
@@ -382,7 +382,7 @@ def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> No
     static = _recipe("_test-compiled-checks")
 
     assert "_bootstrap" not in static.splitlines()[0]
-    assert "just _bound-docker-test-storage" in static
+    assert 'just cache ensure-space default --reason "compiled test preflight"' in static
     assert "_check-generated-settings" in static.splitlines()[0]
     assert "uv sync" in _planned("test-static") or "uv sync" in _planned("test-fast")
     for forbidden in (
@@ -685,9 +685,9 @@ def test_release_glowup_runs_one_exact_candidate_transition() -> None:
     glowup = _planned("test-glowup", BINARY_LANE)
 
     assert glowup.count("build_system/scripts/release/local-release-glowup.py") == 1
-    assert "--work-dir cache/target/release-module-glowup" in glowup
+    assert "--work-dir cache/target/release/staging/module-glowup" in glowup
     assert "glowup.channel-switch" not in glowup
-    assert "cache/target/release-module-channel-switch" not in glowup
+    assert "cache/target/release/staging/module-channel-switch" not in glowup
 
 
 def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
@@ -712,7 +712,7 @@ def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_b
     artifacts = _planned("test-artifacts", PROFILE_LANE)
 
     assert "build_system/scripts/release/prove-release-profile-assets.py" in artifacts
-    assert "--input-dir cache/target/release-inputs" in artifacts
+    assert "--input-dir cache/target/release/staging/inputs" in artifacts
     assert "--profile code" in artifacts
     for forbidden in ("capsem-gate assets", "_build-kernel", "_build-rootfs", "cross-compile"):
         assert forbidden not in artifacts
@@ -794,7 +794,7 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         _required_artifacts_for_run,
     )
 
-    source_agent = tmp_path / "cache/target/linux-agent/x86_64"
+    source_agent = tmp_path / "cache/target/build/linux-agent/x86_64"
     release_inputs = tmp_path / "verified-profile-inputs"
     release_package = tmp_path / "Capsem_1.5_amd64.deb"
     release_binary = tmp_path / "cache/target/cargo/debug/capsem"
@@ -806,11 +806,11 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
         },
         {
             "assets/manifest.json": tmp_path / "assets/manifest.json",
-            "cache/target/linux-agent/<arch>": source_agent,
+            "cache/target/build/linux-agent/<arch>": source_agent,
         },
     )
 
-    assert "cache/target/linux-agent/<arch>" not in required
+    assert "cache/target/build/linux-agent/<arch>" not in required
     assert required["verified release input report"] == release_inputs / "release-inputs.json"
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
@@ -826,9 +826,9 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
 
     source_required = _required_artifacts_for_run(
         {},
-        {"cache/target/linux-agent/<arch>": source_agent},
+        {"cache/target/build/linux-agent/<arch>": source_agent},
     )
-    assert source_required == {"cache/target/linux-agent/<arch>": source_agent}
+    assert source_required == {"cache/target/build/linux-agent/<arch>": source_agent}
 
 
 def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:

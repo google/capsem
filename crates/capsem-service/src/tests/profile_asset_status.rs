@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn reconcile_claim_keeps_routes_unsettled_until_cache_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    state.asset_reconcile_inflight.store(true, Ordering::Release);
+    state.asset_reconcile.lock().unwrap().last_downloaded = Some(3);
+
+    assert!(asset_reconcile_has_route_fields(&state));
+    let status = refresh_reconcile_fields(&state, json!({ "downloading": false }));
+    assert_eq!(status["downloading"], true);
+    assert_eq!(status["downloaded"], 3);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn does_not_read_asset_contents_on_hot_path() {

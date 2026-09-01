@@ -23,6 +23,7 @@ pub(super) fn start_profile_ensure(state: &Arc<ServiceState>, profile: &ProfileC
         if let Err(AppError(_, error)) = rebuild_profile_status_cache(&state) {
             warn!(profile = %profile.id, error = %error, "failed to refresh profile status after asset reconciliation");
         }
+        state.asset_reconcile_inflight.store(false, Ordering::Release);
     });
     Ok(true)
 }
@@ -50,5 +51,6 @@ pub(super) fn start_startup_ensure(state: Arc<ServiceState>) {
         if let Err(AppError(_, error)) = rebuild_profile_status_cache(&state) {
             warn!(error = %error, "failed to refresh profile status after startup asset reconciliation");
         }
+        state.asset_reconcile_inflight.store(false, Ordering::Release);
     });
 }

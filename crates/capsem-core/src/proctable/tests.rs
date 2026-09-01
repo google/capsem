@@ -1,7 +1,7 @@
-//! The enumerator has to find real processes, and the cheapest real process
+//! The shared enumerator has to find real processes; the cheapest real process
 //! to assert about is the one running the test.
 
-use super::running_processes;
+use super::{processes, running_processes};
 
 #[test]
 fn running_processes_finds_this_process_and_its_arguments() {
@@ -21,6 +21,19 @@ fn running_processes_finds_this_process_and_its_arguments() {
         !arguments.trim().is_empty(),
         "this process was listed with no arguments: {line:?}"
     );
+}
+
+#[test]
+fn process_records_carry_real_parent_identity() {
+    let mine = std::process::id();
+    let process = processes()
+        .expect("the process table must be readable")
+        .into_iter()
+        .find(|process| process.pid == mine)
+        .unwrap_or_else(|| panic!("the process table did not contain pid {mine}"));
+
+    assert!(process.parent_pid > 0);
+    assert!(!process.arguments.is_empty());
 }
 
 #[test]

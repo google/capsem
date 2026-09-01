@@ -23,7 +23,6 @@ from .plan import Plan
 #: One reason per phase. The class docstring used to carry a single rationale
 #: -- "a package build carries signing material" -- for all eight, which is
 #: true of exactly one of them.
-RAILS = "which rails the assets finished with is resolved from the policy at run time"
 HEADROOM = "reads the daemon's free space before an hour of compilation spends it"
 CLOCK = "Colima's clock drift is a property of the machine this runs on"
 CONTENT = "verifies one paired asset and configuration bundle for the package target"
@@ -93,12 +92,6 @@ def fragment(
     #: opaque `Call`.
     phases = (
         (
-            "storage-release",
-            "hand back the rails the assets finished with",
-            "release_rails",
-            _because(RAILS, Effect.PROCESS, Effect.HOST_STATE),
-        ),
-        (
             "space",
             "reserve the package rail's headroom",
             "reserve",
@@ -143,7 +136,7 @@ def fragment(
             proof[2],
         ),
         (
-            "storage-gc",
+            "cache-prune",
             "list the artifacts and reclaim this lane's disk",
             "collect",
             _because(RECLAIM, Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),

@@ -21,12 +21,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from capsem_builder.cache.config import load_policy
-from capsem_builder.cache.objects import object_path
-from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.objects import digest_file, verify
 from capsem_builder.cache.views import ViewReceipt
+from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import crosscompile
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
@@ -126,7 +124,6 @@ def _run_lane(rail):
     The phases are plan steps now, so a test that wants the whole lane says
     so -- and a test that wants one phase can finally ask for one.
     """
-    rail.release_rails()
     rail.reserve()
     rail.sync_clock()
     rail.require_content()
@@ -901,6 +898,8 @@ def test_package_helper_is_host_native_and_target_specific(
     assert "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages) in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
+    assert f"APT_LISTS_CACHE_ID={config.package.builder.apt_lists_cache_id}" in build
+    assert f"APT_ARCHIVES_CACHE_ID={config.package.builder.apt_archives_cache_id}" in build
     assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build
     assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build
@@ -1266,7 +1265,7 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     # The lane's first phase depends on the image; the rest chain from there.
     # It was one step, so the edge landed on the whole lane -- which is also
     # why nothing could be ordered against a phase inside it.
-    assert (hostimage.STEP, f"package.{TARGET.name}.storage-release") in plan.edges
+    assert (hostimage.STEP, f"package.{TARGET.name}.materialize") in plan.edges
 
 
 def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None:
@@ -1336,8 +1335,10 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     receipt = ViewReceipt.model_validate_json(
         package.with_name(f"{package.name}.object.json").read_text(encoding="utf-8")
     )
-    paths = CachePaths(repository_root=root, policy=load_policy(root))
-    assert package.stat().st_ino == object_path(paths, receipt.object).stat().st_ino
+    paths = cachelayout.cache_paths(gate_config.load(root))
+    cached = verify(paths, receipt.object)
+    assert digest_file(package) == receipt.object.digest
+    assert package.read_bytes() == cached.read_bytes()
 
 
 def test_a_build_that_recorded_nothing_fails(

@@ -20,7 +20,7 @@ from typing import Literal
 from pydantic import model_validator
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
-from .configschema import Strict
+from .configschema import SafeToken, Strict
 
 
 class InstallLayout(Strict):
@@ -103,6 +103,8 @@ class InstallBuilderConfig(Strict):
     source_build_network: Literal[BuildNetwork.NONE]
     cargo_store: str
     pnpm_store: str
+    apt_lists_cache_id: SafeToken
+    apt_archives_cache_id: SafeToken
     apt_packages: tuple[str, ...]
 
 
@@ -237,6 +239,8 @@ class PackageBuilderConfig(Strict):
     runtime_network: Literal[ContainerNetwork.NONE]
     cargo_store: str
     pnpm_store: str
+    apt_lists_cache_id: SafeToken
+    apt_archives_cache_id: SafeToken
     ort_lib_location: str
 
 

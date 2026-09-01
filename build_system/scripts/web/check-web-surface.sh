@@ -24,7 +24,7 @@ require_release_site_astro() {
 # So the lock lives here, at the place that actually runs the build, and is
 # derived from the repository rather than from the caller's environment. Every
 # entry point serializes because they all come through this file.
-BUILD_LOCK="$ROOT/cache/target/capsem-release-site-build.lock"
+BUILD_LOCK="$ROOT/cache/state/locks/release-site-build.lock"
 
 astro_build() {
     run_with_exec_lock "$BUILD_LOCK" "$@"
@@ -89,7 +89,7 @@ case "$surface" in
         ;;
     release-channel)
         require_release_site_astro
-        work="$ROOT/cache/target/web-parity"
+        work="$ROOT/cache/target/tests/web-parity"
         fixture="$work/release-site-fixture"
         dist="$work/release-channel"
         graph_sources="$work/release-graphs"

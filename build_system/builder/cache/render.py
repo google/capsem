@@ -27,6 +27,10 @@ def inventory_text(report: CacheInventory) -> str:
             f"  {stage.stage_id}: {bytes_label(stage.logical_bytes)} "
             f"({stage.entry_count} entries, {kind})"
         )
+    for entry in report.unclassified:
+        lines.append(
+            f"  UNCLASSIFIED {entry.relative_path}: {bytes_label(entry.logical_bytes)}"
+        )
     for runtime in report.runtimes:
         state = "available" if runtime.available else f"unavailable: {runtime.error}"
         lines.append(

@@ -19,8 +19,7 @@ def test_every_pnpm_workspace_resolves_the_owned_store() -> None:
 def test_cargo_live_profiles_are_observed_but_not_selectively_pruned() -> None:
     policy = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
 
-    for stage in ("cargo-debug", "cargo-release", "cargo-coverage", "cargo-cross"):
-        assert policy["stages"][stage]["prune"] == "none"
+    assert policy["stages"]["cargo"]["prune"] == "none"
 
 
 def test_bootstrap_uv_cache_is_inside_the_owned_stage() -> None:

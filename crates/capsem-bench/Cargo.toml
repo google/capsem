@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+capsem-core = { path = "../capsem-core" }
 clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true

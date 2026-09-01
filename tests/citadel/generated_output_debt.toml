@@ -3,10 +3,10 @@ version = 1
 approved_output_probes = [
   "cache/target/assets/.boundary-probe",
   "cache/target/packages/.boundary-probe",
-  "cache/target/distribution/.boundary-probe",
-  "cache/target/test-artifacts/.boundary-probe",
+  "cache/target/release/distribution/.boundary-probe",
+  "cache/target/tests/evidence/.boundary-probe",
   "cache/target/config/.boundary-probe",
-  "cache/target/test-benchmarks/.boundary-probe",
+  "cache/target/tests/benchmarks/.boundary-probe",
   "cache/target/gate-runs/.boundary-probe",
   "cache/target/coverage/.boundary-probe",
 ]
@@ -28,9 +28,9 @@ prefix_exports = [
   "cache/target/assets",
   "cache/target/config",
   "cache/target/coverage",
-  "cache/target/distribution",
+  "cache/target/release/distribution",
   "cache/target/gate-runs",
   "cache/target/packages",
-  "cache/target/test-artifacts",
-  "cache/target/test-benchmarks",
+  "cache/target/tests/evidence",
+  "cache/target/tests/benchmarks",
 ]

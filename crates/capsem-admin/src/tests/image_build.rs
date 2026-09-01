@@ -25,8 +25,8 @@ fn image_build_workspaces_are_isolated_by_profile_and_architecture() {
     let x86_64 = image_build_workspace_path(&profile, Some("x86_64"));
 
     assert_ne!(arm64, x86_64);
-    assert_eq!(arm64, PathBuf::from("cache/target/image-workspace/code/arm64"));
-    assert_eq!(x86_64, PathBuf::from("cache/target/image-workspace/code/x86_64"));
+    assert_eq!(arm64, PathBuf::from("cache/target/build/image-workspace/code/arm64"));
+    assert_eq!(x86_64, PathBuf::from("cache/target/build/image-workspace/code/x86_64"));
 }
 
 #[test]

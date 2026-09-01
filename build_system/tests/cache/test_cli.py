@@ -78,3 +78,14 @@ def test_dispatch_safely_parses_the_joined_just_command(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["stages"][0]["stage_id"] == "objects"
+
+
+def test_verify_rejects_unclassified_cache_paths(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    stray = root / "cache/target/stray"
+    stray.mkdir(parents=True)
+
+    result = invoke(root, "verify")
+
+    assert result.exit_code != 0
+    assert "unclassified cache paths: target/stray" in result.output

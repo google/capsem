@@ -29,7 +29,7 @@ def _release_pairing() -> Plan:
     plan = Plan("release-pairing")
     state = qualification.rehearsal(
         CONFIG,
-        input_dir="cache/target/release-inputs",
+        input_dir="cache/target/release/staging/inputs",
         package="cache/target/package.deb",
     )
     return module_qualify._pairing(

@@ -16,7 +16,7 @@ from .planner import plan_clean, plan_prune
 from .render import inventory_text, plan_text
 from .runtimeinventory import scan_runtimes, write_receipts
 from .runtimeoperations import apply_runtime_prune
-from .runtimeplanner import plan_runtime_prune
+from .runtimeplanner import plan_runtime_clean, plan_runtime_prune
 
 
 def _state(repository: Path, *, native: bool = False):
@@ -61,6 +61,9 @@ def verify(context: click.Context, as_json: bool) -> None:
     policy, paths, report, _ = _state(context.obj["repository"])
     for stage_id in policy.stages:
         paths.stage(stage_id).relative_to(paths.root)
+    if report.unclassified:
+        names = ", ".join(entry.relative_path.as_posix() for entry in report.unclassified)
+        raise click.ClickException(f"unclassified cache paths: {names}")
     if as_json:
         click.echo(
             json.dumps(
@@ -116,14 +119,39 @@ def clean(context: click.Context, stage_id: str, apply: bool, reason: str, as_js
     """Plan removal of one stage or all stages."""
     if apply and stage_id == "all" and not reason.strip():
         raise click.UsageError("clean all --apply requires --reason")
-    _, paths, report, _ = _state(context.obj["repository"])
+    policy, paths, report, snapshot = _state(context.obj["repository"], native=stage_id == "all")
     try:
         plan = plan_clean(report, stage_id)
     except KeyError as error:
         raise click.UsageError(str(error)) from error
     if apply:
         apply_prune(paths.root, plan, reason=reason or f"clean {stage_id}")
-    click.echo(plan.model_dump_json(indent=2) if as_json else plan_text(plan, preview=not apply))
+    runtime_plan = plan_runtime_clean(snapshot, policy) if stage_id == "all" else None
+    if apply and runtime_plan is not None:
+        result = apply_runtime_prune(
+            paths, policy, runtime_plan, reason=reason or "clean all native caches"
+        )
+        if any(item.returncode != 0 for item in result.results):
+            raise click.ClickException("one or more native cache cleanup actions failed")
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "filesystem": plan.model_dump(mode="json"),
+                    "runtimes": (
+                        runtime_plan.model_dump(mode="json") if runtime_plan is not None else None
+                    ),
+                },
+                indent=2,
+            )
+        )
+    else:
+        click.echo(plan_text(plan, preview=not apply))
+        if runtime_plan is not None:
+            click.echo(
+                f"{'PREVIEW' if not apply else 'APPLIED'} native clean: "
+                f"{len(runtime_plan.actions)} owned actions"
+            )
 
 
 @main.command()
@@ -155,3 +183,8 @@ def dispatch(context: click.Context, command: str) -> None:
         prog_name="capsem-cache",
         standalone_mode=False,
     )
+
+
+from .controlcli import register as _register_control  # noqa: E402
+
+_register_control(main)

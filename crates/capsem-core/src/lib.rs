@@ -4,6 +4,7 @@ pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_state;
 pub mod hypervisor;
+pub mod proctable;
 #[macro_use]
 pub mod macros;
 pub mod mcp;

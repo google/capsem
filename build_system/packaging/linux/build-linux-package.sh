@@ -55,13 +55,13 @@ bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-agent
-mkdir -p "/cargo-cache/target/linux-agent/$TARGET_ARCH"
+mkdir -p "/cargo-cache/target/build/linux-agent/$TARGET_ARCH"
 cp "/cargo-cache/target/$RUST_TARGET/release/capsem-pty-agent" \
    "/cargo-cache/target/$RUST_TARGET/release/capsem-mcp-server" \
    "/cargo-cache/target/$RUST_TARGET/release/capsem-net-proxy" \
    "/cargo-cache/target/$RUST_TARGET/release/capsem-dns-proxy" \
    "/cargo-cache/target/$RUST_TARGET/release/capsem-sysutil" \
-   "/cargo-cache/target/linux-agent/$TARGET_ARCH/"
+   "/cargo-cache/target/build/linux-agent/$TARGET_ARCH/"
 
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
@@ -108,4 +108,4 @@ cp "$DEB" "$OUT/"
 # Record the exact package this run produced, so a stale cache/target/packages entry
 # from an earlier build can never be the one that gets proved and published.
 basename "$DEB" > "$OUT/.cross-compile-$TARGET_ARCH-deb"
-cp "/cargo-cache/target/linux-agent/$TARGET_ARCH/"* "$OUT/"
+cp "/cargo-cache/target/build/linux-agent/$TARGET_ARCH/"* "$OUT/"

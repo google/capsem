@@ -1,4 +1,4 @@
-//! The process table, read with a syscall instead of by spawning `ps`.
+//! The shared host process table, read with a syscall instead of spawning `ps`.
 //!
 //! `/bin/ps` is setuid root, and macOS refuses to `execvp` a setuid binary
 //! from a sandboxed process whatever the profile permits -- `(allow default)`
@@ -16,7 +16,21 @@
 //! the time a crashed service restarts, whereas a command line naming this
 //! run directory cannot.
 
+use std::fmt::Write as _;
 use std::io;
+
+/// One process observed in a single host process-table sweep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Process {
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub arguments: String,
+}
+
+/// Every readable running process as typed identity and ancestry.
+pub fn processes() -> io::Result<Vec<Process>> {
+    imp::processes()
+}
 
 /// Every running process, one `"<pid> <argv>"` line each.
 ///
@@ -24,11 +38,16 @@ use std::io;
 /// on macOS `KERN_PROCARGS2` is denied for processes owned by other users,
 /// which is most of the system and none of ours.
 pub fn running_processes() -> io::Result<String> {
-    imp::running_processes()
+    let mut table = String::new();
+    for process in processes()? {
+        writeln!(table, "{} {}", process.pid, process.arguments).expect("writing to a String cannot fail");
+    }
+    Ok(table)
 }
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use super::Process;
     use nix::libc;
     use std::io;
 
@@ -123,27 +142,54 @@ mod imp {
         Some(arguments.join(" "))
     }
 
-    pub(super) fn running_processes() -> io::Result<String> {
-        let mut lines = String::new();
+    fn parent_pid(pid: libc::pid_t) -> Option<u32> {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let written = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, info.as_mut_ptr().cast(), size) };
+        if written != size {
+            return None;
+        }
+        // SAFETY: proc_pidinfo reported that it initialized the whole struct.
+        Some(unsafe { info.assume_init() }.pbi_ppid)
+    }
+
+    pub(super) fn processes() -> io::Result<Vec<Process>> {
+        let mut processes = Vec::new();
         for pid in pids()? {
             // Unreadable is ordinary: `KERN_PROCARGS2` is denied for other
             // users' processes, and ours are not among those.
-            if let Some(arguments) = argv(pid) {
-                lines.push_str(&format!("{pid} {arguments}\n"));
+            if let (Some(parent_pid), Some(arguments)) = (parent_pid(pid), argv(pid)) {
+                processes.push(Process {
+                    pid: pid as u32,
+                    parent_pid,
+                    arguments,
+                });
             }
         }
-        Ok(lines)
+        Ok(processes)
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
+    use super::Process;
     use std::io;
 
-    pub(super) fn running_processes() -> io::Result<String> {
-        let mut lines = String::new();
+    fn parent_pid(stat: &str) -> Option<u32> {
+        let after_name = stat.rsplit_once(") ")?.1;
+        after_name.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    pub(super) fn processes() -> io::Result<Vec<Process>> {
+        let mut processes = Vec::new();
         for entry in std::fs::read_dir("/proc")?.flatten() {
             let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+                continue;
+            };
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            let Some(parent_pid) = parent_pid(&stat) else {
                 continue;
             };
             // A process that exits mid-scan takes its `/proc` entry with it.
@@ -158,9 +204,13 @@ mod imp {
             if arguments.is_empty() {
                 continue;
             }
-            lines.push_str(&format!("{pid} {}\n", arguments.join(" ")));
+            processes.push(Process {
+                pid,
+                parent_pid,
+                arguments: arguments.join(" "),
+            });
         }
-        Ok(lines)
+        Ok(processes)
     }
 }
 

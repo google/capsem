@@ -37,6 +37,7 @@ class RuntimeOperation(StrEnum):
     REMOVE_IMAGE = "remove-image"
     REMOVE_CONTAINER = "remove-container"
     PRUNE_BUILD_CACHE = "prune-build-cache"
+    CLEAR_BUILD_CACHE = "clear-build-cache"
     DELETE_VM = "delete-vm"
 
 
@@ -46,6 +47,7 @@ class DockerRuntimePolicy(BaseModel):
     kind: Literal["docker"]
     command: StrictStr
     timeout_seconds: PositiveInt
+    mutation_timeout_seconds: PositiveInt
     receipt_stage: StrictStr
     log_stage: StrictStr
     image_prefixes: tuple[StrictStr, ...]
@@ -80,6 +82,7 @@ class TartRuntimePolicy(BaseModel):
     kind: Literal["tart"]
     command: StrictStr
     timeout_seconds: PositiveInt
+    mutation_timeout_seconds: PositiveInt
     receipt_stage: StrictStr
     log_stage: StrictStr
     vm_prefixes: tuple[StrictStr, ...]
@@ -175,6 +178,18 @@ class RuntimePruneAction(BaseModel):
     target: StrictStr
     logical_bytes: NonNegativeInt
     reason: StrictStr
+    keep_bytes: NonNegativeInt | None = None
+    maximum_age_hours: NonNegativeInt | None = None
+    all_unused: StrictBool = False
+
+    @model_validator(mode="after")
+    def buildkit_budget_matches_operation(self) -> RuntimePruneAction:
+        buildkit = self.operation is RuntimeOperation.PRUNE_BUILD_CACHE
+        if buildkit != (self.keep_bytes is not None):
+            raise ValueError("only bounded BuildKit prune actions declare keep_bytes")
+        if not buildkit and (self.maximum_age_hours is not None or self.all_unused):
+            raise ValueError("only bounded BuildKit prune actions declare prune scope")
+        return self
 
 
 class RuntimePrunePlan(BaseModel):

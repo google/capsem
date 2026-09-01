@@ -2,19 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-LOG="$ROOT/cache/target/build.log"
+LOG="$ROOT/cache/containers/logs/build.log"
 
-mkdir -p "$ROOT/target"
 mkdir -p "$ROOT/cache/target/config/profiles"
+mkdir -p "$(dirname "$LOG")"
 
 dump_build_log() {
   status=$?
   if [ "$status" -ne 0 ]; then
     echo "build_system/scripts/build/generate-settings.sh failed with exit code $status" >&2
     if [ -f "$LOG" ]; then
-      echo "---- cache/target/build.log tail ----" >&2
+      echo "---- cache/containers/logs/build.log tail ----" >&2
       tail -200 "$LOG" >&2 || true
-      echo "---- end cache/target/build.log tail ----" >&2
+      echo "---- end cache/containers/logs/build.log tail ----" >&2
     fi
   fi
   exit "$status"

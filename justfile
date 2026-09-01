@@ -170,7 +170,7 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 #
-# Runs against an isolated CAPSEM_HOME under cache/target/test-home/ so the suite
+# Runs against an isolated CAPSEM_HOME under cache/target/tests/home/ so the suite
 # never kills or mutates the user's locally installed capsem. The flock is
 # still honored for multi-agent coordination but now lives inside the test
 # home, not the shared ~/.capsem/run.
@@ -202,7 +202,7 @@ _test-source-checks:
     just _test-release-contracts
 
 _test-compiled-checks: _clean-stale _check-generated-settings
-    just _bound-docker-test-storage
+    just cache ensure-space default --reason "compiled test preflight"
     uv run --project build_system --frozen capsem-gate test-static
 
 _test-artifacts:
@@ -252,20 +252,6 @@ _warm-linux-rust-base:
 _gate-host-package-sbom:
     uv run --project build_system --frozen capsem-gate host-sbom
 
-
-# Remove cross-compilation image and cached volumes.
-_clean-host-image:
-    @uv run --project build_system --frozen capsem-gate storage clean --scope all
-
-_release-completed-docker-rails:
-    @uv run --project build_system --frozen capsem-gate storage release completed-docker-rails
-
-_release-completed-package-rails:
-    @uv run --project build_system --frozen capsem-gate storage release completed-package-arm64
-    @uv run --project build_system --frozen capsem-gate storage release completed-package-x86_64
-
-_release-deferred-install-target:
-    @uv run --project build_system --frozen capsem-gate storage release deferred-install-target
 
 # repack-deb.sh below reads the materialized profile catalog from cache/target/config,
 # so this recipe owns filling it rather than leaving each call site to remember.
@@ -364,21 +350,6 @@ logs target="":
 # See build_system/scripts/build/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
     @uv run --project build_system --frozen python3 build_system/scripts/build/clean_stale.py
-
-# Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
-# Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
-_docker-gc:
-    @uv run --project build_system --frozen capsem-gate storage gc
-
-# Enforce release-rail headroom while preserving content-addressed Cargo,
-# registry, rustup, and recent BuildKit caches that make forward fixes fast.
-_bound-docker-test-storage:
-    @uv run --project build_system --frozen capsem-gate storage ensure-space default candidate-boundary
-
-# Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
-# deliberately does not call this recipe.
-_clean-docker-test-targets:
-    @uv run --project build_system --frozen capsem-gate storage clean --scope working --rail default
 
 # --- Internal helpers (hidden from `just --list`) ---
 

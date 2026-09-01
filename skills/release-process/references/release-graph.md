@@ -69,7 +69,7 @@ immutable cache policy. Every public reference must resolve through the graph;
 bare local paths are invalid.
 
 The generated distribution lives under
-`cache/target/distribution/assets/<channel>/manifest.json`. Public selectors are
+`cache/target/release/distribution/assets/<channel>/manifest.json`. Public selectors are
 `https://release.capsem.org/channels.json`,
 `https://release.capsem.org/assets/stable/manifest.json`, and
 `https://release.capsem.org/assets/nightly/manifest.json`.

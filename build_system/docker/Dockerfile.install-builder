@@ -33,6 +33,8 @@ ARG APT_PACKAGES
 ARG INSTALL_VENV
 ARG CARGO_STORE
 ARG PNPM_STORE
+ARG APT_LISTS_CACHE_ID
+ARG APT_ARCHIVES_CACHE_ID
 ARG INPUT_IDENTITY
 
 LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
@@ -45,6 +47,11 @@ RUN test -n "${APT_SNAPSHOT_BASE}" \
     && test -n "${INSTALL_VENV}" \
     && test -n "${CARGO_STORE}" \
     && test -n "${PNPM_STORE}" \
+    && test -n "${APT_LISTS_CACHE_ID}" \
+    && test -n "${APT_ARCHIVES_CACHE_ID}"
+RUN --mount=type=cache,id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
     && materialize-install-os "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}" ${APT_PACKAGES}
 
 # The privileged proof needs a real systemd userspace but must not disturb

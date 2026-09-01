@@ -235,7 +235,7 @@ def test_the_build_context_is_bounded() -> None:
     def ignored(relative: str) -> bool:
         parts = relative.split("/")
         for pattern in patterns:
-            bare = pattern.removeprefix("**/")
+            bare = pattern.removeprefix("**/").removeprefix("/")
             if pattern.startswith("**/"):
                 if any(fnmatch.fnmatch(segment, bare) for segment in parts):
                     return True

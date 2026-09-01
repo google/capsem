@@ -63,41 +63,14 @@ groups = ["binaries", "release-system"]
 prefix = "config/data/"
 groups = ["binaries"]
 
-[stages.cargo-debug]
-path = "target/cargo/debug"
-warning_bytes = 38654705664
-soft_bytes = 51539607552
-hard_bytes = 68719476736
+[stages.cargo]
+path = "target/cargo"
+warning_bytes = 103079215104
+soft_bytes = 137438953472
+hard_bytes = 171798691840
 prune = "none"
 maximum_age_hours = 720
-maximum_count = 3
-
-[stages.cargo-release]
-path = "target/cargo/release"
-warning_bytes = 17179869184
-soft_bytes = 25769803776
-hard_bytes = 34359738368
-prune = "none"
-maximum_age_hours = 720
-maximum_count = 3
-
-[stages.cargo-coverage]
-path = "target/cargo/coverage"
-warning_bytes = 21474836480
-soft_bytes = 30064771072
-hard_bytes = 38654705664
-prune = "none"
-maximum_age_hours = 336
-maximum_count = 2
-
-[stages.cargo-cross]
-path = "target/cargo/cross"
-warning_bytes = 12884901888
-soft_bytes = 21474836480
-hard_bytes = 30064771072
-prune = "none"
-maximum_age_hours = 336
-maximum_count = 2
+maximum_count = 4
 
 [stages.generated]
 path = "target/generated"
@@ -107,6 +80,33 @@ hard_bytes = 4294967296
 prune = "generational"
 maximum_age_hours = 336
 maximum_count = 5
+
+[stages.build-workspaces]
+path = "target/build"
+warning_bytes = 34359738368
+soft_bytes = 51539607552
+hard_bytes = 68719476736
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 8
+
+[stages.gate-runs]
+path = "target/gate-runs"
+warning_bytes = 4294967296
+soft_bytes = 8589934592
+hard_bytes = 12884901888
+prune = "lru"
+maximum_age_hours = 720
+maximum_count = 60
+
+[stages.materialized-config]
+path = "target/config"
+warning_bytes = 1073741824
+soft_bytes = 2147483648
+hard_bytes = 4294967296
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 8
 
 [stages.objects]
 path = "objects"
@@ -170,6 +170,42 @@ prune = "lru"
 maximum_age_hours = 2160
 maximum_count = 40
 
+[stages.install-tests]
+path = "target/tests/install"
+warning_bytes = 8589934592
+soft_bytes = 12884901888
+hard_bytes = 17179869184
+prune = "ephemeral"
+maximum_age_hours = 72
+maximum_count = 8
+
+[stages.ironbank]
+path = "target/tests/ironbank"
+warning_bytes = 34359738368
+soft_bytes = 51539607552
+hard_bytes = 68719476736
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 4
+
+[stages.test-home]
+path = "target/tests/home"
+warning_bytes = 8589934592
+soft_bytes = 17179869184
+hard_bytes = 25769803776
+prune = "ephemeral"
+maximum_age_hours = 24
+maximum_count = 8
+
+[stages.web-parity]
+path = "target/tests/web-parity"
+warning_bytes = 2147483648
+soft_bytes = 4294967296
+hard_bytes = 8589934592
+prune = "ephemeral"
+maximum_age_hours = 72
+maximum_count = 8
+
 [stages.release-staging]
 path = "target/release/staging"
 warning_bytes = 8589934592
@@ -187,6 +223,15 @@ hard_bytes = 17179869184
 prune = "generational"
 maximum_age_hours = 720
 maximum_count = 4
+
+[stages.toolchain]
+path = "target/toolchain"
+warning_bytes = 8589934592
+soft_bytes = 17179869184
+hard_bytes = 25769803776
+prune = "lru"
+maximum_age_hours = 720
+maximum_count = 20
 
 [stages.python-uv]
 path = "tools/python/uv"
@@ -279,21 +324,113 @@ maximum_count = 8
 kind = "docker"
 command = "docker"
 timeout_seconds = 30
+mutation_timeout_seconds = 600
 receipt_stage = "container-receipts"
 log_stage = "container-logs"
 image_prefixes = ["capsem-"]
 container_prefixes = ["capsem-"]
 build_cache_owned = true
 maximum_age_hours = 72
-keep_image_generations = 2
+keep_image_generations = 1
 build_cache_keep_bytes = 85899345920
 
 [runtimes.tart]
 kind = "tart"
 command = "tart"
 timeout_seconds = 30
+mutation_timeout_seconds = 60
 receipt_stage = "container-receipts"
 log_stage = "container-logs"
 vm_prefixes = ["capsem-glowup-"]
 base_images = ["ghcr.io/cirruslabs/macos-sequoia-base@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"]
 home = "~/.tart"
+
+[control.docker]
+runtime_id = "docker"
+capacity_probe_image = "debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
+minimum_disk_bytes = 171798691840 # 160 GiB
+recommended_disk_bytes = 214748364800 # 200 GiB
+
+[control.docker.rails.default]
+minimum_free_bytes = 64424509440
+build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
+
+[control.docker.rails.assets]
+minimum_free_bytes = 64424509440
+build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
+
+[control.docker.rails.package]
+minimum_free_bytes = 42949672960
+build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
+
+[control.docker.rails.install-preflight]
+minimum_free_bytes = 42949672960
+build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
+
+[control.docker.rails.install]
+minimum_free_bytes = 42949672960
+build_cache_keep_bytes = 85899345920
+reclaim_headroom_bytes = 8589934592
+
+[control.docker.images.capsem-linux-rust-base]
+repository = "capsem-linux-rust-base"
+
+[control.docker.images.capsem-guest-rust-arm64]
+repository = "capsem-guest-rust-arm64"
+
+[control.docker.images.capsem-guest-rust-x86_64]
+repository = "capsem-guest-rust-x86_64"
+
+[control.docker.images.capsem-asset-tools-arm64]
+repository = "capsem-asset-tools-arm64"
+
+[control.docker.images.capsem-asset-tools-x86_64]
+repository = "capsem-asset-tools-x86_64"
+
+[control.docker.images.capsem-package-builder-arm64]
+repository = "capsem-package-builder-arm64"
+
+[control.docker.images.capsem-package-builder-x86_64]
+repository = "capsem-package-builder-x86_64"
+
+[control.docker.images.capsem-install-test]
+repository = "capsem-install-test"
+maximum_count = 3
+maximum_age_hours = 336
+maximum_bytes = 103079215104 # 96 GiB
+
+[control.docker.images.capsem-install-builder]
+repository = "capsem-install-builder"
+maximum_count = 3
+maximum_age_hours = 336
+maximum_bytes = 68719476736 # 64 GiB
+
+[control.docker.releases.after-install]
+rail = "install"
+images = ["capsem-host-builder:latest"]
+
+[control.failure_artifacts]
+stage = "test-evidence"
+minimum_count = 5
+maximum_count = 30
+maximum_age_hours = 336
+maximum_bytes = 8589934592
+maximum_file_bytes = 26214400
+skip_names = [
+  "rootfs.img",
+  "scratch.img",
+  "disk.img",
+  "rootfs.erofs",
+  "vmlinuz",
+  "initrd.img",
+]
+source_patterns = [
+  "containers/logs/build.log",
+  "containers/logs/runtime-mutations.jsonl",
+  "target/tests/ironbank/build-*.log",
+  "target/tests/ironbank/*/run-failure/**/*",
+]

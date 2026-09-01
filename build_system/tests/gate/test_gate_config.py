@@ -15,10 +15,10 @@ surfacing forty minutes into a run as a `KeyError` inside a Docker call.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from pydantic import ValidationError
@@ -60,20 +60,18 @@ def test_generated_output_roots_are_target_owned_and_distinct(
 ) -> None:
     assert config.outputs.model_dump() == {
         "assets": "cache/target/assets",
-        "benchmarks": "cache/target/test-benchmarks",
+        "benchmarks": "cache/target/tests/benchmarks",
         "coverage": "cache/target/coverage",
-        "distribution": "cache/target/distribution",
+        "distribution": "cache/target/release/distribution",
         "gate_runs": "cache/target/gate-runs",
         "materialized_config": "cache/target/config",
         "packages": "cache/target/packages",
-        "test_artifacts": "cache/target/test-artifacts",
+        "test_artifacts": "cache/target/tests/evidence",
     }
 
 
 @pytest.mark.parametrize("replacement", ('assets = "assets"', 'assets = "../assets"'))
-def test_generated_output_roots_cannot_escape_target(
-    tmp_path: Path, replacement: str
-) -> None:
+def test_generated_output_roots_cannot_escape_target(tmp_path: Path, replacement: str) -> None:
     root = _checkout(tmp_path)
     source = root / "config" / "gate.toml"
     source.write_text(
@@ -319,28 +317,14 @@ def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(
     )
 
 
-def test_every_storage_phase_names_a_rail_the_policy_declares(
-    config: gate_config.GateConfig,
-) -> None:
-    """A phase naming a rail that does not exist releases nothing, silently."""
-    policy = tomllib.loads(
-        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+def test_cache_release_boundaries_name_declared_rails() -> None:
+    control = load_policy(PROJECT_ROOT).control
+    assert control is not None
+
+    unknown = {release.rail for release in control.docker.releases.values()} - set(
+        control.docker.rails
     )
-
-    unknown = sorted(
-        {phase.rail for phase in config.storage.phases.values()} - set(policy["rails"])
-    )
-    assert not unknown, f"storage phases name rails the policy does not declare: {unknown}"
-
-
-def test_every_phase_declares_a_distinct_boundary_and_rail_pair(
-    config: gate_config.GateConfig,
-) -> None:
-    pairs = [(phase.boundary, phase.rail) for phase in config.storage.phases.values()]
-
-    assert len(set(pairs)) == len(pairs), (
-        "two names for one boundary/rail pair means one of them is dead"
-    )
+    assert not unknown
 
 
 # ---------------------------------------------------------------------------

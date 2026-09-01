@@ -60,7 +60,7 @@ web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 web/marketing/                     Marketing website (Astro + Svelte 5)
 web/docs/                     Documentation site (Astro Starlight)
 build_system/builder/      capsem-builder backend and gate implementation
-build_system/release_site/ Release channel site generator (Astro, writes cache/target/distribution/)
+build_system/release_site/ Release channel site generator (Astro, writes cache/target/release/distribution/)
 build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
@@ -303,7 +303,7 @@ Read `/dev-gate` before changing any of it.
 
 - **glowup** = installed-package release proof owned by `just test`: Linux runs `build_system/scripts/release/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test` writes benchmark recordings under `cache/target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- `just test` writes benchmark recordings under `cache/target/tests/benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

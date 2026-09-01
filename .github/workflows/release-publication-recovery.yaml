@@ -58,12 +58,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FAILED_RUN_ID: ${{ inputs.failed_run_id }}
         run: |
-          mkdir -p cache/target/release-recovery
+          mkdir -p cache/target/release/staging/recovery
           gh run view "$FAILED_RUN_ID" \
             --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
-            > cache/target/release-recovery/source-run.json
+            > cache/target/release/staging/recovery/source-run.json
           python3 build_system/scripts/release/verify-release-recovery-run.py \
-            --run cache/target/release-recovery/source-run.json \
+            --run cache/target/release/staging/recovery/source-run.json \
             --run-id "$FAILED_RUN_ID" \
             --source-commit "$SOURCE_COMMIT" \
             --failed-job assemble-release-channel
@@ -110,19 +110,19 @@ jobs:
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir cache/target/distribution
+            --out-dir cache/target/release/distribution
 
       - name: Verify public package storage from recovered candidate
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/release-package-contract.py verify-storage \
-            --manifest "cache/target/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
+            --manifest "cache/target/release/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
             --work-dir /tmp/candidate-packages
 
       - name: Prove install.sh selects recovered candidate Linux package
         run: >
-          build_system/scripts/release/prove-candidate-installer.sh cache/target/distribution
+          build_system/scripts/release/prove-candidate-installer.sh cache/target/release/distribution
           "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist recovered source manifest on immutable release
@@ -138,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: cache/target/distribution/
+          path: cache/target/release/distribution/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before

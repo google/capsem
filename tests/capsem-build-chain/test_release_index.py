@@ -815,9 +815,9 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
     assert "build_system/scripts/release/build-complete-release-channel.py" in publish
-    assert "--out-dir cache/target/distribution" in publish
+    assert "--out-dir cache/target/release/distribution" in publish
     assert "name: asset-channel-preview" in publish
-    assert "path: cache/target/distribution/" in publish
+    assert "path: cache/target/release/distribution/" in publish
     assert "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}" in publish
 
     assert (

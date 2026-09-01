@@ -21,11 +21,11 @@ from __future__ import annotations
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
-from .execution import Kind, Needs, Speed, step
+from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 
 
-def _build(config: GateConfig):
+def _build(config: GateConfig, *, label: str = "bench.build") -> Step:
     """Build the harness before running it.
 
     Its absence is otherwise reported as a missing file at the moment of
@@ -33,13 +33,35 @@ def _build(config: GateConfig):
     """
     settings = config.benchmark.run
     return step(
-        "bench.build",
+        label,
         Run(["cargo", "build", "-p", settings.crate, "--bin", settings.bin_name]),
         contends=(config.exclusive("workspace_binaries"),),
         produces=(config.path(settings.binary),),
         kind=Kind.PACKAGE,
         needs=frozenset({Needs.DISK}),
         speed=Speed.SLOW,
+    )
+
+
+def fitness(config: GateConfig) -> tuple[Step, Step]:
+    """Describe the harness build and early machine-fitness check.
+
+    The complete gate used to discover resident Capsem services only when its
+    final timing suite ran, after spending more than an hour building assets.
+    The Rust harness already owns machine fitness; preparation only needs to
+    put that answer before expensive work.
+    """
+    settings = config.benchmark.run
+    return (
+        _build(config, label="benchmark-harness"),
+        step(
+            "benchmark-fitness",
+            Run([str(config.path(settings.binary)), "doctor"]),
+            contends=(config.exclusive("host_service"),),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
     )
 
 

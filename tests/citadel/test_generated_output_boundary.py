@@ -20,13 +20,13 @@ POLICY_PATH = "tests/citadel/generated_output_debt.toml"
 
 FINAL_OUTPUT_ROOTS = {
     "assets": "cache/target/assets",
-    "benchmarks": "cache/target/test-benchmarks",
+    "benchmarks": "cache/target/tests/benchmarks",
     "coverage": "cache/target/coverage",
-    "distribution": "cache/target/distribution",
+    "distribution": "cache/target/release/distribution",
     "gate_runs": "cache/target/gate-runs",
     "materialized_config": "cache/target/config",
     "packages": "cache/target/packages",
-    "test_artifacts": "cache/target/test-artifacts",
+    "test_artifacts": "cache/target/tests/evidence",
 }
 
 RATIONALE = """\
@@ -103,7 +103,9 @@ def _digest(records: tuple[str, ...]) -> str:
 def _text_sources(paths: list[str]) -> dict[str, str]:
     sources: dict[str, str] = {}
     for path in paths:
-        if path in {SELF, POLICY_PATH} or path.startswith(("tests/", "sprints/", "tmp/")):
+        if path in {SELF, POLICY_PATH} or path.startswith(
+            ("tests/", "sprints/", "tmp/")
+        ):
             continue
         candidate = ROOT / path
         if candidate.is_symlink() or not candidate.is_file():
@@ -185,7 +187,10 @@ def _literal_assignment(path: Path, name: str) -> set[str]:
     for statement in tree.body:
         if not isinstance(statement, ast.Assign):
             continue
-        if any(isinstance(target, ast.Name) and target.id == name for target in statement.targets):
+        if any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in statement.targets
+        ):
             expression = statement.value
             if (
                 isinstance(expression, ast.Call)
@@ -231,10 +236,14 @@ def _tracked_generated_problems(
 ) -> list[str]:
     problems: list[str] = []
     for path in tracked:
-        if path.startswith(("assets/", "packages/", "dist/", "test-artifacts/", "cache/target/")):
+        if path.startswith(
+            ("assets/", "packages/", "dist/", "test-artifacts/", "cache/target/")
+        ):
             problems.append(f"tracked generated root byte: {path}")
         generated_name = ".generated." in Path(path).name
-        generated_source = path.startswith(("src/", "config/", "build_system/")) and generated_name
+        generated_source = (
+            path.startswith(("src/", "config/", "build_system/")) and generated_name
+        )
         if generated_source and path not in allowed_support:
             problems.append(f"generated file in source/config root: {path}")
     return problems
@@ -276,7 +285,10 @@ def _problems(policy: dict[str, Any], observed: Observed) -> list[str]:
     leaked = sorted(
         path
         for path in observed.source_subject
-        if any(path == probe or path.startswith(str(Path(probe).parent) + "/") for probe in probes)
+        if any(
+            path == probe or path.startswith(str(Path(probe).parent) + "/")
+            for probe in probes
+        )
     )
     if leaked:
         problems.append(f"generated output leaked into source identity: {leaked}")
@@ -316,7 +328,10 @@ def _synthetic_policy() -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("observed", "message"),
     [
-        (_synthetic(producers=("scripts/build.sh:mkdir -p packages/out",)), "producer debt"),
+        (
+            _synthetic(producers=("scripts/build.sh:mkdir -p packages/out",)),
+            "producer debt",
+        ),
         (
             _synthetic(tracked=("cache/target/assets/manifest.json",)),
             "tracked generated root byte",
@@ -334,7 +349,9 @@ def _synthetic_policy() -> dict[str, Any]:
             "ambient_asset debt",
         ),
         (
-            _synthetic(ci_transfers=(".github/workflows/ci.yaml:path: test-artifacts/",)),
+            _synthetic(
+                ci_transfers=(".github/workflows/ci.yaml:path: test-artifacts/",)
+            ),
             "ci_transfer debt",
         ),
         (_synthetic(ignored_probes=frozenset()), "not ignored"),
@@ -344,9 +361,9 @@ def _synthetic_policy() -> dict[str, Any]:
 def test_each_generated_output_violation_is_observed_red(
     observed: Observed, message: str
 ) -> None:
-    assert any(message in problem for problem in _problems(_synthetic_policy(), observed)), (
-        RATIONALE
-    )
+    assert any(
+        message in problem for problem in _problems(_synthetic_policy(), observed)
+    ), RATIONALE
 
 
 def test_empty_output_surface_fails_closed() -> None:
@@ -358,7 +375,7 @@ def test_empty_output_surface_fails_closed() -> None:
 def test_producer_scanner_distinguishes_repository_roots() -> None:
     records = _producer_records(
         {
-            "scripts/new.py": '\n'.join(
+            "scripts/new.py": "\n".join(
                 (
                     'Path("assets/cache").mkdir(parents=True)',
                     'output_pkg = Path("../packages/Capsem.pkg")',
@@ -378,11 +395,11 @@ def test_producer_scanner_distinguishes_repository_roots() -> None:
 def test_ambient_scanner_distinguishes_path_defaults_from_asset_data() -> None:
     records = _ambient_asset_records(
         {
-            "scripts/new.py": '\n'.join(
+            "scripts/new.py": "\n".join(
                 (
                     'parser.add_argument("--assets", default=Path("assets"))',
                     'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"',
-                    'assets: list[Asset] = Field(default_factory=list)',
+                    "assets: list[Asset] = Field(default_factory=list)",
                     'parser.add_argument("--lane", choices=("assets",), default="assets")',
                 )
             )
@@ -400,9 +417,13 @@ def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> Non
     config = _gate_config()
     target = FINAL_OUTPUT_ROOTS["assets"]
 
-    assert not [record for record in observed.producers if "assets" in record], RATIONALE
+    assert not [record for record in observed.producers if "assets" in record], (
+        RATIONALE
+    )
     assert not observed.ambient_assets, RATIONALE
-    assert not [record for record in observed.ci_transfers if "assets/" in record], RATIONALE
+    assert not [record for record in observed.ci_transfers if "assets/" in record], (
+        RATIONALE
+    )
     assert config["imagebuild"]["output"] == target
     assert config["service"]["assets_dir"] == target
     assert config["suites"]["pytest"]["test_manifest"] == f"{target}/manifest.json"
@@ -420,9 +441,9 @@ def test_native_package_owners_use_the_canonical_target_root() -> None:
     config = _gate_config()
     target = FINAL_OUTPUT_ROOTS["packages"]
     workflow = (ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
-    macos_builder = (
-        ROOT / "build_system/packaging/macos/build-pkg.sh"
-    ).read_text(encoding="utf-8")
+    macos_builder = (ROOT / "build_system/packaging/macos/build-pkg.sh").read_text(
+        encoding="utf-8"
+    )
     local_macos_builder = (
         ROOT / "build_system/packaging/macos/build-test-macos-package.sh"
     ).read_text(encoding="utf-8")
@@ -444,7 +465,9 @@ def test_native_package_owners_use_the_canonical_target_root() -> None:
     assert "cache/target/packages/Capsem-$VERSION.pkg" in workflow
     assert "cp cache/target/packages/*.deb" in workflow
     assert "/cache/target/packages/Capsem-$VERSION.pkg" in macos_builder
-    assert 'PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"' in local_macos_builder
+    assert (
+        'PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"' in local_macos_builder
+    )
 
 
 def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
@@ -455,15 +478,11 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     release_workflow = (ROOT / ".github/workflows/release.yaml").read_text(
         encoding="utf-8"
     )
-    storage = tomllib.loads(
-        (ROOT / "config/storage-policy.toml").read_text(encoding="utf-8")
+    cache = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
+    nextest = tomllib.loads((ROOT / ".config/nextest.toml").read_text(encoding="utf-8"))
+    linux_runner = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text(
+        encoding="utf-8"
     )
-    nextest = tomllib.loads(
-        (ROOT / ".config/nextest.toml").read_text(encoding="utf-8")
-    )
-    linux_runner = (
-        ROOT / "build_system/scripts/test/test-linux-rust.sh"
-    ).read_text(encoding="utf-8")
     frontend_vitest = (ROOT / "web/app/vitest.config.ts").read_text(encoding="utf-8")
     release_vitest = (ROOT / "build_system/release_site/vitest.config.ts").read_text(
         encoding="utf-8"
@@ -473,7 +492,10 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         ROOT / "build_system/builder/release/tools/release_collect_evidence.py"
     ).read_text(encoding="utf-8")
 
-    assert storage["debug_artifacts"]["root"] == evidence, RATIONALE
+    failure = cache["control"]["failure_artifacts"]
+    assert f"{cache['root']}/{cache['stages'][failure['stage']]['path']}" == evidence, (
+        RATIONALE
+    )
     assert {coverage, evidence} <= set(config["prefix"]["exports"]), RATIONALE
     assert config["hostimage"]["extract_to"] == f"{coverage}/linux", RATIONALE
     assert config["workspace"]["coverage_file"] == f"{coverage}/.coverage", RATIONALE
@@ -489,9 +511,11 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     assert nextest["profile"]["ci-integration"]["junit"]["path"] == "junit.xml", (
         RATIONALE
     )
-    assert f'$ROOT/{coverage}/linux' in linux_runner, RATIONALE
+    assert f"$ROOT/{coverage}/linux" in linux_runner, RATIONALE
     assert f"reportsDirectory: '../../{coverage}/web-app'" in frontend_vitest, RATIONALE
-    assert f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest, RATIONALE
+    assert (
+        f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest
+    ), RATIONALE
     assert "_GATE_CONFIG.outputs.test_artifacts" in conftest, RATIONALE
     assert f'Path("{evidence}") / "release"' in collector, RATIONALE
 
@@ -512,7 +536,9 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         f"{coverage}/junit/python-build-system.xml",
         f"{evidence}/",
     }
-    assert not sorted(path for path in required_ci_paths if path not in workflow), RATIONALE
+    assert not sorted(path for path in required_ci_paths if path not in workflow), (
+        RATIONALE
+    )
     assert f"{evidence}/" in release_workflow, RATIONALE
     for stale in (
         "frontend/test-artifacts/",
@@ -546,17 +572,20 @@ def test_generated_output_transfer_and_cleanup_ownership_is_symmetric() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     }
     assert "/cache/" in gitignore, RATIONALE
-    assert not {
-        "test-artifacts/",
-        "coverage/",
-        ".coverage",
-        "codecov-*.json",
-        "codecov-*.xml",
-        "*-junit.xml",
-        "/assets",
-        "/packages/",
-        "/build_system/packaging/packages/",
-    } & gitignore, RATIONALE
+    assert (
+        not {
+            "test-artifacts/",
+            "coverage/",
+            ".coverage",
+            "codecov-*.json",
+            "codecov-*.xml",
+            "*-junit.xml",
+            "/assets",
+            "/packages/",
+            "/build_system/packaging/packages/",
+        }
+        & gitignore
+    ), RATIONALE
     assert "dist/" in gitignore, RATIONALE
 
     dockerignore = {
@@ -575,9 +604,9 @@ def test_generated_output_transfer_and_cleanup_ownership_is_symmetric() -> None:
     assert retired.isdisjoint(_literal_assignment(classifier, "KNOWN_DIRECTORIES")), (
         RATIONALE
     )
-    assert retired.isdisjoint(_literal_assignment(classifier, "RUST_GUEST_CONFIG_ROOTS")), (
-        RATIONALE
-    )
+    assert retired.isdisjoint(
+        _literal_assignment(classifier, "RUST_GUEST_CONFIG_ROOTS")
+    ), RATIONALE
 
 
 def test_current_generated_output_boundary_is_exact() -> None:

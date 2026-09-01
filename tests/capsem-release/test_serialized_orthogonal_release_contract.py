@@ -513,7 +513,7 @@ def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -
 
     assert "build_system/scripts/release/fetch-release-artifacts.py" in action
     assert '--manifest-url "${{ inputs.manifest-url }}"' in action
-    assert "--cache-dir cache/target/release-input-cache" in action
+    assert "--cache-dir cache/target/release/staging/input-cache" in action
     assert "--prune-cache" not in action
     assert "actions/cache/restore@" in action
     assert "actions/cache/save@" in action
@@ -539,12 +539,12 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
     assert "just qualify-binaries" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-    assert "--config-root cache/target/release-config" in workflow
+    assert "--config-root cache/target/release/staging/config" in workflow
     assert "--shared-config-root config" in workflow
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release-config"' in workflow
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config"' in workflow
     assert '--package-file "$package"' in workflow
     assert 'build_system/packaging/linux/install-deb-runtime-dependencies.py "$package"' in workflow
-    assert "cp cache/target/release-package-root/usr/bin/capsem*" not in workflow
+    assert "cp cache/target/release/staging/package-root/usr/bin/capsem*" not in workflow
     assert "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem" in workflow
 
     for forbidden in (

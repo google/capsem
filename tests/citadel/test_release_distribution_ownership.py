@@ -45,7 +45,7 @@ RATIONALE = """\
 The Astro release site is a build-time distribution generator, not an
 independent product website. Its source and unit tests belong to build_system,
 while cross-system deployment acceptance stays under root tests. Generated
-distribution bytes have one repository output root, cache/target/distribution. Old
+distribution bytes have one repository output root, cache/target/release/distribution. Old
 source or output literals can make local, CI, package, and deployment lanes
 build different trees. See T3 and cache/target/ in the repository cleanup proposal.
 """
@@ -113,7 +113,7 @@ def test_legacy_literal_detector_observes_both_old_owners() -> None:
         {
             "source": "release-site/package.json",
             "output": "--out-dir cache/target/release-channel",
-            "valid": "build_system/release_site and cache/target/distribution",
+            "valid": "build_system/release_site and cache/target/release/distribution",
         }
     )
     assert found == ["output", "source"], RATIONALE
@@ -124,7 +124,7 @@ def test_local_output_detector_observes_pre_convergence_paths() -> None:
         {
             "install": 'channel = "cache/target/install-test-channel"',
             "rehearsal": "cache/target/release-rehearsal/dist/assets/stable/manifest.json",
-            "valid": "cache/target/distribution/rehearsal/dist/assets/stable/manifest.json",
+            "valid": "cache/target/release/distribution/rehearsal/dist/assets/stable/manifest.json",
             "crates/capsem/src/tests.rs": "cache/target/install-test-channel",
         }
     )
@@ -181,7 +181,7 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
     disk = config["disk"]
     assert isinstance(disk, dict)
     reclaimable = disk["reclaimable"]
-    assert "cache/target/distribution" in reclaimable, RATIONALE
+    assert "cache/target/release/distribution" in reclaimable, RATIONALE
     assert "cache/target/release-channel" not in reclaimable, RATIONALE
 
 

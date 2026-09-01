@@ -112,11 +112,11 @@ gh run download <run-id> -n test-artifacts-macOS-1
 
 ## Docker storage budget
 
-`config/storage-policy.toml` governs the gate's Docker footprint. The numbers
+`config/cache.toml` governs the gate's Docker footprint. The numbers
 are coupled and must stay satisfiable:
 
 ```
-buildkit_keep_gib + minimum_free_gib + fixed usage  <=  minimum_disk_gib
+build_cache_keep_bytes + minimum_free_bytes + fixed usage <= minimum_disk_bytes
 ```
 
 Violate it and the floor can never be met by the one action taken to meet it —
@@ -127,7 +127,7 @@ capacity probe *starts a container* to run `df`, so a thrashing daemon makes it
 
 Fixed usage is the declared cache volumes plus base images (~18 GiB here).
 
-**A too-small `buildkit_keep_gib` is a speed bug, not a safety margin.** At 24 GiB
+**A too-small `build_cache_keep_bytes` is a speed bug, not a safety margin.** At 24 GiB
 against a ~35 GB hot graph, every pressure prune discarded layers about to be
 reused and the host-builder image recompiled cold each run.
 
@@ -136,8 +136,8 @@ structurally cannot help during a burst of same-day runs — everything is young
 than the threshold. Expect `gc` to return near-zero after a heavy session; that
 is the policy working, not failing. Provision headroom instead of pruning harder.
 
-Thresholds are asserted in `build_system/tests/policy/test_docker_storage_policy.py`, so config and
-contract move together.
+Thresholds are validated by the strict cache policy and exercised in
+`build_system/tests/cache/`, so config and contract move together.
 
 ## Release CI is orthogonal
 

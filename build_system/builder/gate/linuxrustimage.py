@@ -65,8 +65,12 @@ class _LinuxRust:
         # `output-ownership` are gone with the mounts and volumes that
         # required them -- they existed only to repair what root-owned shared
         # state left behind.
-        built = plan.shared(image(config), after=after)
-        return linuxrust.lane(plan, config, after=(built,))
+        # The host builder is shared groundwork, not a phase boundary. A
+        # package preflight may already have placed it before this module;
+        # pushing this module's later prerequisites back into that producer
+        # creates a cycle. The parity consumer waits for both instead.
+        built = plan.shared(image(config))
+        return linuxrust.lane(plan, config, after=(built, *after))
 
 
 class LinuxRustCommand(

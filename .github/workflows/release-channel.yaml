@@ -58,7 +58,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CHANNEL: ${{ inputs.channel }}
-      DIST_DIR: cache/target/distribution
+      DIST_DIR: cache/target/release/distribution
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -86,12 +86,12 @@ jobs:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
-          mkdir -p cache/target/release-channel-deployment
+          mkdir -p cache/target/release/staging/channel-deployment
           gh run view "$ARTIFACT_RUN_ID" \
             --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
-            > cache/target/release-channel-deployment/source-run.json
+            > cache/target/release/staging/channel-deployment/source-run.json
           python build_system/scripts/release/verify-release-recovery-run.py \
-            --run cache/target/release-channel-deployment/source-run.json \
+            --run cache/target/release/staging/channel-deployment/source-run.json \
             --run-id "$ARTIFACT_RUN_ID" \
             --source-commit "$SOURCE_COMMIT"
 
@@ -100,14 +100,14 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.dist_artifact }}
-          path: cache/target/distribution/
+          path: cache/target/release/distribution/
 
       - name: Reuse verified asset channel from failed release
         if: ${{ inputs.artifact_run_id != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.dist_artifact }}
-          path: cache/target/distribution/
+          path: cache/target/release/distribution/
           github-token: ${{ github.token }}
           run-id: ${{ inputs.artifact_run_id }}
 
@@ -173,7 +173,7 @@ jobs:
         run: |
           python build_system/scripts/web/cloudflare_pages_rollback.py capture \
             --project release \
-            --state cache/target/release-channel-deployment/prior-cloudflare.json
+            --state cache/target/release/staging/channel-deployment/prior-cloudflare.json
 
       - name: Snapshot current production distribution
         if: ${{ inputs.activate_production }}
@@ -184,7 +184,7 @@ jobs:
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --snapshot-only \
-            --snapshot-out cache/target/release-channel-deployment/prior-release.json
+            --snapshot-out cache/target/release/staging/channel-deployment/prior-release.json
 
       - name: Deploy immutable preview
         id: preview
@@ -195,7 +195,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy cache/target/distribution/ --project-name=release --branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}
+          command: pages deploy cache/target/release/distribution/ --project-name=release --branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}
 
       - name: Validate preview distribution
         env:
@@ -211,7 +211,7 @@ jobs:
             "${CHANNEL_ARGS[@]}" \
             --dist "$DIST_DIR" \
             --dist-verification-only \
-            --snapshot-out cache/target/release-channel-deployment/candidate-release.json
+            --snapshot-out cache/target/release/staging/channel-deployment/candidate-release.json
 
       - name: Activate verified production distribution
         id: production
@@ -224,7 +224,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy cache/target/distribution/ --project-name=release
+          command: pages deploy cache/target/release/distribution/ --project-name=release
 
       - name: Verify canonical production deployment
         id: production_identity
@@ -251,7 +251,7 @@ jobs:
             "${CHANNEL_ARGS[@]}" \
             --attempts 30 \
             --delay-seconds 20 \
-            --expect-snapshot cache/target/release-channel-deployment/candidate-release.json
+            --expect-snapshot cache/target/release/staging/channel-deployment/candidate-release.json
 
       - name: Decide production recovery
         id: recovery
@@ -271,7 +271,7 @@ jobs:
         run: |
           python build_system/scripts/web/cloudflare_pages_rollback.py restore \
             --project release \
-            --state cache/target/release-channel-deployment/prior-cloudflare.json \
+            --state cache/target/release/staging/channel-deployment/prior-cloudflare.json \
             --attempts 30 \
             --delay-seconds 10
 
@@ -287,7 +287,7 @@ jobs:
             --snapshot-only \
             --attempts 30 \
             --delay-seconds 20 \
-            --expect-snapshot cache/target/release-channel-deployment/prior-release.json
+            --expect-snapshot cache/target/release/staging/channel-deployment/prior-release.json
 
       - name: Require successful production activation
         if: ${{ !cancelled() && inputs.activate_production && steps.production.outcome != 'skipped' }}

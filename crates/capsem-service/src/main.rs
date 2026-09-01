@@ -42,7 +42,6 @@ use tracing::{error, info, warn, Instrument};
 
 mod asset_background;
 mod instance_reaper;
-mod proctable;
 mod profile_status_cache;
 mod session_cleanup;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};

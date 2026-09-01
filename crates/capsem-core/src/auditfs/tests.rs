@@ -20,7 +20,7 @@ fn staging_checked_in_source_into_output_copies_instead_of_linking() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/root.manifest.json");
 
     stage(&seed, &published, root).unwrap();
 
@@ -42,7 +42,7 @@ fn a_chmod_on_the_published_artifact_cannot_reach_the_source() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/root.manifest.json");
     stage(&seed, &published, root).unwrap();
 
     fs::set_permissions(&published, fs::Permissions::from_mode(0o000)).unwrap();
@@ -62,7 +62,7 @@ fn staging_build_output_into_build_output_still_hardlinks() {
     let built = root.join("cache/target/assets/rootfs.erofs");
     fs::create_dir_all(built.parent().unwrap()).unwrap();
     fs::write(&built, b"image").unwrap();
-    let staged = root.join("cache/target/distribution/rootfs.erofs");
+    let staged = root.join("cache/target/release/distribution/rootfs.erofs");
 
     stage(&built, &staged, root).unwrap();
 
@@ -104,7 +104,7 @@ fn a_relative_source_path_is_not_assumed_to_be_build_output() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/root.manifest.json");
 
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(root).unwrap();

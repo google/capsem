@@ -6,7 +6,8 @@ import argparse
 from pathlib import Path
 
 import pytest
-from capsem_builder.cache.models import AdmissionEventKind, GitImpact
+from capsem_builder.cache.gitmodels import GitImpact
+from capsem_builder.cache.models import AdmissionEventKind
 from capsem_builder.gate import cli, testadmission
 from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.errors import GateError

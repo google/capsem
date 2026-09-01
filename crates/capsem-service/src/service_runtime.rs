@@ -482,11 +482,12 @@ pub(super) fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path
 }
 
 /// Reap `capsem-process` orphans from a prior service run that shared this
-/// run_dir. See [`find_orphan_capsem_pids`] for the why; this wrapper shells
-/// out to `ps`, applies the match, and escalates SIGTERM -> 2s poll ->
-/// SIGKILL. Best effort: silent if `ps` is missing or nothing matches.
+/// run_dir. See [`find_orphan_capsem_pids`] for the why; this wrapper reads the
+/// shared syscall-backed process table, applies the match, and escalates
+/// SIGTERM -> 2s poll -> SIGKILL. An unreadable table is reported; no matching
+/// process is ordinary and silent.
 pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let table = match proctable::running_processes() {
+    let table = match capsem_core::proctable::running_processes() {
         Ok(table) => table,
         // Loudly. This used to shell out to `ps` and return silently when the
         // spawn failed, which is indistinguishable from finding no orphans --

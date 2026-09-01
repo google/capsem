@@ -138,6 +138,9 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     packages = tmp_path / CONFIG.outputs.packages
     packages.mkdir(parents=True)
     (packages / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
@@ -549,6 +552,9 @@ def _checkout_without_package(tmp_path: Path) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     return tmp_path
 
 
@@ -655,7 +661,7 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
     assert runner.last_index_of(r"docker rm -f -v capsem-install-test") > runner.index_of(
         r"dpkg -i"
     )
-    assert runner.ran(r"docker-storage-policy\.py gc --rail install")
+    assert runner.ran(r"capsem-cache .* prune --apply")
 
 
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:

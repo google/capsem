@@ -142,3 +142,11 @@ def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
 
     assert gateway_status_cpu_s > direct_status_cpu_s
     assert gateway_status_cpu_s == gateway_vm_list_cpu_s
+
+
+def test_profile_inventory_and_readiness_share_the_richer_budget() -> None:
+    """Profile collections must not fall through to the tiny scalar default."""
+    assert _hot_route_budget("/profiles/list") == _hot_route_budget("/profiles/status")
+    assert _hot_route_budget("/profiles/list", gateway=True) == _hot_route_budget(
+        "/profiles/status", gateway=True
+    )

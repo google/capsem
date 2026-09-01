@@ -1,6 +1,9 @@
 """VM components reuse exact input-keyed object receipts."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import patch
 
 from capsem_builder.image.componentcache import (
     build_identity,
@@ -9,8 +12,29 @@ from capsem_builder.image.componentcache import (
     source_digest,
     store,
 )
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.guestbinarycache import materialize
+from capsem_builder.image.models import BuildConfig
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_guest_binary_identity_names_only_its_output_inputs() -> None:
+    roots = set(
+        load_guest_config(ROOT / "config/docker/image")
+        .build.guest_rust_builder.source_roots
+    )
+
+    assert roots == {
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "crates/capsem-agent",
+        "crates/capsem-bench",
+        "crates/capsem-proto",
+        "build_system/builder/image/docker.py",
+        "build_system/builder/image/guestbinarycache.py",
+    }
 
 
 def repository(tmp_path: Path) -> Path:
@@ -75,3 +99,68 @@ def test_source_digest_changes_with_source_bytes_and_names(tmp_path: Path) -> No
     third = source_digest(tmp_path, ("crates",))
 
     assert len({first, second, third}) == 3
+
+
+def test_source_digest_ignores_undeclared_crates(tmp_path: Path) -> None:
+    agent = tmp_path / "crates/agent"
+    agent.mkdir(parents=True)
+    agent.joinpath("main.rs").write_text("fn main() {}", encoding="utf-8")
+    first = source_digest(tmp_path, ("crates/agent",))
+
+    admin = tmp_path / "crates/admin"
+    admin.mkdir()
+    admin.joinpath("main.rs").write_text("fn unrelated() {}", encoding="utf-8")
+
+    assert source_digest(tmp_path, ("crates/agent",)) == first
+
+
+def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    source = repo / "guest-input"
+    source.write_text("source", encoding="utf-8")
+    prefix_root = tmp_path / "prefix"
+    prefix_root.mkdir()
+    prefix = repository(prefix_root)
+    prefix.joinpath("guest-input").write_text("source", encoding="utf-8")
+    prefix.joinpath("cache").mkdir()
+    prefix.joinpath("cache/objects").symlink_to(
+        repo / "cache/objects", target_is_directory=True
+    )
+    build = cast(
+        BuildConfig,
+        SimpleNamespace(guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))),
+    )
+    names = ("capsem-agent", "capsem-bench")
+    calls = 0
+
+    def compile_binaries(_build, _arch, _repo, output):
+        nonlocal calls
+        calls += 1
+        output.mkdir(parents=True, exist_ok=True)
+        binaries = tuple(output / name for name in names)
+        for binary in binaries:
+            binary.write_bytes(binary.name.encode())
+            binary.chmod(0o555)
+        return list(binaries)
+
+    with patch(
+        "capsem_builder.image.guestbinarycache.guestbuilder.image_tag",
+        return_value="sealed-builder:one",
+    ):
+        first = materialize(
+            build, "x86_64", repo, repo / "cache/target/rootfs", names, compile_binaries
+        )
+        second = materialize(
+            build,
+            "x86_64",
+            prefix,
+            prefix / "cache/target/initrd",
+            names,
+            compile_binaries,
+        )
+
+    assert calls == 1
+    assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
+    assert all(path.stat().st_mode & 0o777 == 0o555 for path in second)

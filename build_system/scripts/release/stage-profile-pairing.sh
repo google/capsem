@@ -58,11 +58,11 @@ uv run --project build_system --frozen python build_system/scripts/release/stage
 uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
     --input-dir cache/target/candidate-profile-inputs \
     --assets-dir assets \
-    --config-root cache/target/release-config \
+    --config-root cache/target/release/staging/config \
     --shared-config-root config
 
 CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
-CAPSEM_CONFIG_ROOT="$PWD/cache/target/release-config" \
+CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
     bash build_system/scripts/build/materialize-config.sh --pair-content
 

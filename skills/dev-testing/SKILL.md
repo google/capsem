@@ -53,7 +53,7 @@ byte, then fails if either changes while the gate runs. Generated output stays
 under ignored build directories. The local proof therefore covers the exact
 source state the developer asked to test without forcing commit choreography.
 Automatic gate benchmark output belongs under ignored
-`cache/target/test-benchmarks/`. Historical benchmark publication uses the owning
+`cache/target/tests/benchmarks/`. Historical benchmark publication uses the owning
 pytest/benchmark command and an explicit review; it is not a Just convenience
 recipe.
 
@@ -541,8 +541,8 @@ Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_man
 shell and fails in the gate:
 
 ```bash
-CAPSEM_HOME="$PWD/cache/target/test-home/.capsem" \
-CAPSEM_RUN_DIR="$PWD/cache/target/test-home/.capsem/run" \
+CAPSEM_HOME="$PWD/cache/target/tests/home/.capsem" \
+CAPSEM_RUN_DIR="$PWD/cache/target/tests/home/.capsem/run" \
   cargo test -p <crate>
 ```
 

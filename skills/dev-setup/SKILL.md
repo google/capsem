@@ -187,7 +187,9 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ```bash
 just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Build + boot + run command + exit
-just test             # Full release gate, including clean Tart .pkg install on macOS
+just fast-test        # Incomplete source feedback before expensive work
+just focus-test functional # Rerun one affected functional owner
+just test             # Optional reusable whole-system proof when warranted
 just dev ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
 ```
@@ -295,17 +297,23 @@ Run `just _build-assets` first. Assets are gitignored and must be built locally.
 - Platform-specific type issues: use `as _` for libc calls (see `/dev-rust-patterns`)
 
 ### Disk full / Colima eating all disk space
-Docker builds accumulate images, build cache, and stopped containers inside the Colima VM. The VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own -- even after `docker system prune`, macOS doesn't get the space back.
-
-The `_docker-gc` recipe runs automatically after `build-assets`, `cross-compile`, and `test-install` to prevent this. It prunes containers, images >72h, build cache >72h, and runs `fstrim` to release freed blocks back to macOS. If disk is already full:
+Docker builds accumulate images, BuildKit data, and stopped containers inside
+the Colima VM. Inspect and reclaim them through the typed cache controller so
+active images, foreign resources, retention pins, and every applied deletion
+remain visible in one inventory and journal:
 
 ```bash
-# One-time recovery
-docker system prune -af --volumes           # free space inside VM
-colima ssh -- sudo fstrim /mnt/lima-colima  # release it to macOS
+just cache status
+just cache 'runtime-prune docker' # exact preview; no mutation
+just cache 'runtime-prune docker --apply --reason "Colima disk recovery"'
 ```
 
-To check current state: `colima ssh -- docker system df` (inside VM) and `du -sh ~/.colima` (host).
+Do not bypass this with broad `docker system/image/builder prune` commands:
+they cannot distinguish active Capsem reuse from disposable state and leave no
+controller journal. The runtime adapter runs the configured host-side trim
+after an applied Colima reclamation. `just cache status` reports repository and
+native-runtime state together; use `--offline` when Docker or Tart is
+intentionally unavailable.
 
 ### Docker credential helper error (`docker-credential-osxkeychain not found`)
 When Colima is installed standalone (without Docker Desktop), `~/.docker/config.json` may reference a credential helper that doesn't exist. The symptom is `docker run` failing to pull images with `exec: "docker-credential-osxkeychain": executable file not found`.

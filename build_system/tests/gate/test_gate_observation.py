@@ -728,7 +728,7 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
     tmp_path: Path,
 ) -> None:
     """A frozen input copy is source evidence, not independently authored output."""
-    replica = tmp_path / "cache" / "target" / "gate-source-snapshot"
+    replica = tmp_path / "cache" / "worktrees" / "gate-source"
     replica.mkdir(parents=True)
     first = replica / "first"
     second = replica / "second"
@@ -739,7 +739,7 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("cache/target/gate-source-snapshot",),
+        source_replica_roots=("cache/worktrees/gate-source",),
     )
 
     for path in (first, second, empty):
@@ -751,7 +751,7 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
 
 
 def test_a_source_replica_exemption_does_not_cover_sibling_output(tmp_path: Path) -> None:
-    replica = tmp_path / "cache" / "target" / "gate-source-snapshot"
+    replica = tmp_path / "cache" / "worktrees" / "gate-source"
     sibling = tmp_path / "cache" / "target" / "other"
     replica.mkdir(parents=True)
     sibling.mkdir(parents=True)
@@ -762,7 +762,7 @@ def test_a_source_replica_exemption_does_not_cover_sibling_output(tmp_path: Path
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("cache/target/gate-source-snapshot",),
+        source_replica_roots=("cache/worktrees/gate-source",),
     )
 
     watch.observed("created", first)
@@ -785,7 +785,7 @@ def test_a_source_replica_still_refuses_hardlinks_into_checked_in_source(
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("cache/target/gate-source-snapshot",),
+        source_replica_roots=("cache/worktrees/gate-source",),
     )
 
     watch.observed("created", linked)
