@@ -70,13 +70,13 @@ def _cache_authority(root: Path) -> Path:
     return Path(selected).resolve() if selected else root
 
 
-def _stage(root: Path) -> Path:
-    authority = _cache_authority(root)
+def _stage(root: Path, authority: Path | None = None) -> Path:
+    storage = _cache_authority(root) if authority is None else authority.resolve()
     policy = root / CACHE_POLICY
     if not policy.is_file():
-        return authority / FALLBACK_STAGE
+        return storage / FALLBACK_STAGE
     raw = tomllib.loads(policy.read_text(encoding="utf-8"))
-    return authority / raw["root"] / raw["stages"]["python-pycache"]["path"]
+    return storage / raw["root"] / raw["stages"]["python-pycache"]["path"]
 
 
 def _python_sources(root: Path) -> tuple[Path, ...]:
@@ -101,7 +101,9 @@ def _source_key(root: Path) -> str:
     return digest.hexdigest()
 
 
-def isolated_environment(root: Path | None = None) -> dict[str, str]:
+def isolated_environment(
+    root: Path | None = None, *, authority: Path | None = None
+) -> dict[str, str]:
     """A fresh cache prefix, as the environment that selects it.
 
     Returned rather than applied, so a test can prove the mechanism against a
@@ -109,7 +111,7 @@ def isolated_environment(root: Path | None = None) -> dict[str, str]:
     """
     source = (root or checkout()).resolve()
     abi = sys.implementation.cache_tag or "python"
-    generation = _stage(source) / f"{abi}-{_source_key(source)}"
+    generation = _stage(source, authority) / f"{abi}-{_source_key(source)}"
     generation.mkdir(parents=True, exist_ok=True)
     return {MARKER: str(generation), PYCACHE: str(generation)}
 

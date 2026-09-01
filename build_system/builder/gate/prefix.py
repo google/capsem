@@ -244,7 +244,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.cargo_target: str(cargotarget.path(config)),
-        **cachetooling.environment(config, key=str(commit or path.name)),
+        **cachetooling.environment(config, key=str(commit or path.name), source_root=path),
     }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)

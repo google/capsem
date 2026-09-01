@@ -5,7 +5,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from ..cache.telemetry import CacheUse, record_use
+from .. import gatelaunch
+from ..cache.telemetry import CacheScope, CacheUse, record_use
 from ..cache.views import ViewReceipt, canonicalize
 from . import cachelayout
 from .config import GateConfig
@@ -18,21 +19,38 @@ def record_cargo(config: GateConfig, *, key: str, logical_bytes: int) -> CacheUs
         "cargo",
         tool="cargo",
         key=key,
-        logical_bytes=logical_bytes,
+        scope=CacheScope.SHARED,
+        observed_bytes=logical_bytes,
     )
 
 
-def environment(config: GateConfig, *, key: str) -> dict[str, str]:
+def environment(config: GateConfig, *, key: str, source_root: Path | None = None) -> dict[str, str]:
     """Select keyed tool stages and record their pre-run reuse state."""
     paths = cachelayout.cache_paths(config)
     uv = cachelayout.keyed_stage_path(config, "python-uv", *config.toolchain.uv_identity_inputs)
-    record_use(paths, "python-uv", tool="uv", key=key, probe=uv)
-    for stage_id, tool in (
-        ("python-pycache", "python"),
-        ("node-pnpm", "pnpm"),
-        ("rust-sccache", config.toolchain.compiler_cache_command),
-    ):
-        record_use(paths, stage_id, tool=tool, key=key)
+    pycache = Path(
+        gatelaunch.isolated_environment(
+            source_root or config.root, authority=cachelayout.authority(config)
+        )[gatelaunch.PYCACHE]
+    )
+    record_use(paths, "python-uv", tool="uv", key=key, scope=CacheScope.GENERATION, probe=uv)
+    record_use(
+        paths,
+        "python-pycache",
+        tool="python",
+        key=key,
+        scope=CacheScope.GENERATION,
+        probe=pycache,
+    )
+    record_use(paths, "node-pnpm", tool="pnpm", key=key, scope=CacheScope.SHARED)
+    record_use(
+        paths,
+        "rust-sccache",
+        tool=config.toolchain.compiler_cache_command,
+        key=key,
+        scope=CacheScope.SHARED,
+        ignored_names=(config.toolchain.compiler_cache_socket_name,),
+    )
     return {
         config.environment.uv_cache: str(uv),
         config.environment.pnpm_store: str(cachelayout.stage_path(config, "node-pnpm")),
