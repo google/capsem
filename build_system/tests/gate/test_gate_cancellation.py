@@ -266,9 +266,9 @@ def test_a_copy_stops_between_files(tmp_path: Path) -> None:
     with cancellation.cancellable() as flag:
         flag.set()
         with pytest.raises(cancellation.Cancelled):
-            copy_tree(source, tmp_path / "target")
+            copy_tree(source, tmp_path / "cache" / "target")
 
-    copied = list((tmp_path / "target").glob("*.bin"))
+    copied = list((tmp_path / "cache" / "target").glob("*.bin"))
     assert len(copied) < 50
     for path in copied:
         assert path.stat().st_size == 1024, "a file was left half written"

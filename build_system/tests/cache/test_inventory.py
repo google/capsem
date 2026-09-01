@@ -27,7 +27,7 @@ def policy() -> CachePolicy:
 
 
 def test_inventory_counts_entries_and_does_not_follow_symlinks(tmp_path: Path) -> None:
-    paths = CachePaths(tmp_path, policy())
+    paths = CachePaths(repository_root=tmp_path, policy=policy())
     first = paths.stage("objects") / "first"
     first.mkdir(parents=True)
     (first / "payload").write_bytes(b"abc")
@@ -46,8 +46,9 @@ def test_inventory_counts_entries_and_does_not_follow_symlinks(tmp_path: Path) -
 
 
 def test_missing_stage_directory_is_an_empty_inventory(tmp_path: Path) -> None:
-    report = scan_inventory(CachePaths(tmp_path, policy()), policy(), now_ns=10)
+    report = scan_inventory(
+        CachePaths(repository_root=tmp_path, policy=policy()), policy(), now_ns=10
+    )
 
     assert report.stages[0].entry_count == 0
     assert report.stages[0].logical_bytes == 0
-

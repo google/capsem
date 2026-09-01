@@ -337,7 +337,7 @@ feedback rather than release qualification.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config
-into `target/config/` and pins profile asset descriptors to the current public
+into `cache/target/config/` and pins profile asset descriptors to the current public
 asset channel manifest at
 `https://release.capsem.org/assets/<selected-channel>/manifest.json`. CI must not
 hand-edit profiles or bypass that step. Channel-specific profile image changes
@@ -348,7 +348,7 @@ scheduler invokes that same public rail.
 
 `release-assets.yaml` is the profile image release workflow. It builds
 the profile-owned image files for both supported architectures, generates the
-same `target/assets/manifest.json` produced by `capsem-admin manifest generate`, and
+same `cache/target/assets/manifest.json` produced by `capsem-admin manifest generate`, and
 builds a channel preview. By default it runs as a dry run; live publication
 calls `release-channel.yaml`.
 
@@ -360,13 +360,13 @@ signing material.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
 from the release graph JSON and profile image files produced by the asset
-workflow. The generated deploy root is `target/distribution/`; the machine
+workflow. The generated deploy root is `cache/target/distribution/`; the machine
 manifests live at:
 
 ```text
-target/distribution/assets/stable/manifest.json
-target/distribution/assets/nightly/manifest.json
-target/distribution/channels.json
+cache/target/distribution/assets/stable/manifest.json
+cache/target/distribution/assets/nightly/manifest.json
+cache/target/distribution/channels.json
 ```
 
 After deployment, clients read them as:

@@ -2,19 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-LOG="$ROOT/target/build.log"
+LOG="$ROOT/cache/target/build.log"
 
 mkdir -p "$ROOT/target"
-mkdir -p "$ROOT/target/config/profiles"
+mkdir -p "$ROOT/cache/target/config/profiles"
 
 dump_build_log() {
   status=$?
   if [ "$status" -ne 0 ]; then
     echo "build_system/scripts/build/generate-settings.sh failed with exit code $status" >&2
     if [ -f "$LOG" ]; then
-      echo "---- target/build.log tail ----" >&2
+      echo "---- cache/target/build.log tail ----" >&2
       tail -200 "$LOG" >&2 || true
-      echo "---- end target/build.log tail ----" >&2
+      echo "---- end cache/target/build.log tail ----" >&2
     fi
   fi
   exit "$status"
@@ -22,7 +22,7 @@ dump_build_log() {
 trap dump_build_log EXIT
 
 echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
-(cd "$ROOT" && cargo run -p capsem-core --bin mcp_export 2>>"$LOG" > target/config/profiles/catalog.generated.json)
+(cd "$ROOT" && cargo run -p capsem-core --bin mcp_export 2>>"$LOG" > cache/target/config/profiles/catalog.generated.json)
 echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
 # `$1`, when given, is where the two tracked settings files go. The checker
 # passes a scratch directory so the gate never writes into its own checked-in

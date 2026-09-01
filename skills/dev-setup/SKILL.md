@@ -234,7 +234,7 @@ This allows:
 - `pnpm *` -- frontend package management and builds
 - `npx *` -- skills CLI and other npx tools
 - `python3 build_system/scripts/*` -- project build and diagnostic boundaries
-- `rustup *` -- target/component management
+- `rustup *` -- cache/target/component management
 
 ## Codesigning
 
@@ -259,7 +259,7 @@ for the same artifact-recording performance suite as macOS.
 - Run `just doctor` -- it will diagnose the specific signing issue
 - Ensure Xcode CLTools are installed: `xcode-select --install`
 - Check entitlements file exists: `cat build_system/packaging/macos/entitlements.plist`
-- Try manual sign: `codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force target/debug/capsem`
+- Try manual sign: `codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force cache/target/cargo/debug/capsem`
 - Check SIP status: `csrutil status`
 
 ### `just doctor` fails
@@ -318,8 +318,8 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 `just doctor` checks for this under "Container Runtime" and will flag the mismatch.
 
 ### VM boot hangs
-- Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls target/assets/arm64/vmlinuz target/assets/arm64/rootfs.erofs`
+- Check codesigning: `codesign -dvv cache/target/cargo/debug/capsem 2>&1 | grep entitlements`
+- Check assets exist: `ls cache/target/assets/arm64/vmlinuz cache/target/assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just exec`
 

@@ -48,7 +48,11 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
     (tmp_path / "config").mkdir(parents=True)
     gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
-        gate.replace('parent = "~/.cg"', f'parent = "{tmp_path / "prefixes"}"')
+        gate.replace('parent = "cache/worktrees"', f'parent = "{tmp_path / "prefixes"}"')
+    )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
     )
     image_config = tmp_path / "config" / "docker" / "image"
     image_config.mkdir(parents=True)
@@ -358,8 +362,8 @@ def test_verified_base_profile_becomes_the_canonical_following_input(
     """Build-chain, packaging and glow-up must consume the bytes IronBank booted.
 
     A warm canonical tree used to survive the private profile build. IronBank
-    proved ``target/ironbank-assets/code`` and the following modules silently
-    opened the older ``assets/`` and ``target/config/profiles`` instead.
+    proved ``cache/target/ironbank-assets/code`` and the following modules silently
+    opened the older ``assets/`` and ``cache/target/config/profiles`` instead.
     """
     gate, _ = _gate(tmp_path, monkeypatch, profiles=("co-work", "code"))
     root = gate.root
@@ -432,7 +436,7 @@ def test_a_failed_boot_preserves_its_evidence(
     assert (preserved / "vm" / "active_profile.toml").is_file()
     assert not (preserved / "guest").exists(), (
         "guest/ duplicates the guest's own workspace once per generation and "
-        "must not be copied into target/"
+        "must not be copied into cache/target/"
     )
 
 

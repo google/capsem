@@ -124,7 +124,7 @@ def test_rootfs_asset_build_repacks_then_regenerates_its_manifest() -> None:
     assert plan.after_of("hash-aliases") == {"manifest"}
     packed = plan.step_named("pack-initrds")
     assert packed.produces == (
-        PROJECT_ROOT / "target" / "assets" / "arm64" / "initrd.img",
+        PROJECT_ROOT / "cache" / "target" / "assets" / "arm64" / "initrd.img",
     )
     rendering = "\n".join(packed.render())
     assert "--arch arm64" in rendering
@@ -243,7 +243,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
 
 def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
-    """A blanket copy also takes the guest's workspace into target/.
+    """A blanket copy also takes the guest's workspace into cache/target/.
 
     The snapshots duplicate that workspace once per generation, and the same
     name filter is what keeps the VM disk image and session.db out.
@@ -404,13 +404,13 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     container = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py").read_text()
     proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text()
 
-    # Removing target/install-test-* needs write permission on their parent.
+    # Removing cache/target/install-test-* needs write permission on their parent.
     # Granted as the one directory entry: recursive here would walk every
     # cargo artifact in the checkout.
     assert 'f"{owner}:{owner}", f"{self._settings.mount}/{target}"' in container
     assert '"-R", f"{owner}:{owner}", f"{self._settings.mount}/{target}"' not in container
     # The directory entry, taken from the layout rather than spelled again.
-    assert "Path(self._settings.layout.assets).parts[0]" in container
+    assert "Path(self._settings.layout.assets).parent" in container
 
     # Every path this user writes has to live off the bind mount.
     for path in (guest.tmp, guest.pytest_cache, guest.asset_manifest, config.install.venv):
@@ -450,7 +450,7 @@ def test_materialize_config_uses_admin_profile_command() -> None:
     assert "--config-root" in script
     assert "--manifest" in script
     assert "--output-root" in script
-    assert "target/config" in script
+    assert "cache/target/config" in script
 
 
 def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> None:
@@ -469,7 +469,7 @@ def test_materialize_config_uses_release_manifest_profile_membership() -> None:
     script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
 
     assert 'rm -rf "$OUTPUT_ROOT"' in script
-    assert 'rm -rf "$ROOT/target/config"' not in script
+    assert 'rm -rf "$ROOT/cache/target/config"' not in script
     assert 'manifest_schema="release"' in script
     assert 'profile_ids="$(' in script
     assert 'profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"' in script
@@ -493,7 +493,7 @@ def test_ensure_service_uses_generated_profiles() -> None:
     config = gate_config.load(PROJECT_ROOT)
     service = (PROJECT_ROOT / "build_system/builder/gate/service.py").read_text(encoding="utf-8")
 
-    assert config.service.generated_profiles == "target/config/profiles"
+    assert config.service.generated_profiles == "cache/target/config/profiles"
     # The variable name has one owner now, so asserting the literal appeared
     # in this module was asserting where it was spelled rather than what the
     # daemon is told. The claim is that the launch carries it.
@@ -542,14 +542,14 @@ def test_release_workflow_uses_same_config_materializer() -> None:
 
     assert workflow.count("bash build_system/scripts/build/materialize-config.sh") == 3
     assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in workflow
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"' in workflow
     # A path, not a `file://` URL. The pairing job now materializes with
     # `--pair-content`, which compares the selected manifest against the assets
     # directory as filesystem paths to check it is pairing what it was given --
     # so a URL fails that comparison against the very file it names, and the
     # message reads as a content mismatch rather than a spelling one.
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json"' in workflow
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/assets"' in workflow
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json"' in workflow
+    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/assets"' in workflow
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 
@@ -585,7 +585,7 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     assert "gh release upload" not in upload_step
     assert 'files=("$RELEASE_DIR"/*)' in upload_step
     assert 'for section in ("config", "images", "evidence")' in stager
-    assert "subject-path: target/asset-release/profile-*/*" in attest_step
+    assert "subject-path: cache/target/asset-release/profile-*/*" in attest_step
     assert "vm-build-ledger-" not in workflow
     assert "build-ledger.log" not in upload_step
     assert "build-ledger.log" not in attest_step

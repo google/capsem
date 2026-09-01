@@ -906,7 +906,7 @@ fn doctor_mock_server_is_bound_to_the_cli_parent() {
 fn mock_server_binary_prefers_installed_sibling() {
     let fixture = tempfile::tempdir().unwrap();
     let installed_bin = fixture.path().join("installed/bin");
-    let source_bin = fixture.path().join("source/target/debug");
+    let source_bin = fixture.path().join("source/cache/target/cargo/debug");
     std::fs::create_dir_all(&installed_bin).unwrap();
     std::fs::create_dir_all(&source_bin).unwrap();
     let executable = installed_bin.join("capsem");

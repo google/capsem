@@ -42,7 +42,7 @@ from .sourcecommit import SourceCommit
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
-#: and 186 MB, against 84s and 164 GB for a copy that also took `target/`.
+#: and 186 MB, against 84s and 164 GB for a copy that also took `cache/target/`.
 #:
 #: It also has to be copy-on-write rather than a hardlink. A hardlinked copy
 #: satisfies every other property here and still lets an outside edit reach
@@ -263,7 +263,7 @@ def refresh(source: Path, target: Path, config: GateConfig) -> None:
     """Bring an existing copy's source up to date, keeping its build output.
 
     What `--prefix` does on every resume. Only the source is replaced; the
-    `target/` the earlier run filled is the whole reason to reuse the tree.
+    `cache/target/` the earlier run filled is the whole reason to reuse the tree.
 
     Copying the current subject over the old one is not enough, and the first
     version did only that. A file deleted from the source stayed in the copy,
@@ -289,7 +289,7 @@ def refresh(source: Path, target: Path, config: GateConfig) -> None:
     # exports and carried paths. That deleted `.venv`: gitignored, therefore
     # never in the subject, therefore never "kept". The resumed run died before
     # its first step with "no Python executable was found". Everything an
-    # earlier run built is in that category -- `target/`, `node_modules`, the
+    # earlier run built is in that category -- `cache/target/`, `node_modules`, the
     # venv -- and deleting it deletes the entire reason to reuse the tree.
     for relative in set(_subject(target)) - set(wanted):
         (target / relative).unlink(missing_ok=True)

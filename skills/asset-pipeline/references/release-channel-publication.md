@@ -7,7 +7,7 @@ evidence and attestation validation, or public cache headers.
 The public asset channel is generated from that manifest with
 `capsem-admin assets channel build`. Do not invent a separate release-channel
 source tree or alternate manifest format. The generated deploy root is
-`target/distribution/`; the machine artifact is
+`cache/target/distribution/`; the machine artifact is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
 `capsem-admin` writes the machine channel artifacts only: root `channels.json`,
@@ -15,7 +15,7 @@ per-channel manifest JSON, profile-owned image/config/evidence files,
 `_headers`, and `robots.txt`. The human release pages are built by the
 `build_system/release_site/` Astro
 app from those JSON files with
-`CAPSEM_RELEASE_GRAPH=/path/to/target/distribution CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/distribution pnpm run
+`CAPSEM_RELEASE_GRAPH=/path/to/cache/target/distribution CAPSEM_RELEASE_CHANNEL_DIST=/path/to/cache/target/distribution pnpm run
 build:channel`, which overlays the root channel list, per-channel pages, and
 per-profile pages into the same deploy root before channel validation or
 deployment.

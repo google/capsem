@@ -31,14 +31,14 @@ pkg_config_template = "/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"
 # semantics, not checkout output paths, and are intentionally outside this
 # table.
 [outputs]
-assets = "target/assets"
-benchmarks = "target/test-benchmarks"
-coverage = "target/coverage"
-distribution = "target/distribution"
-gate_runs = "target/gate-runs"
-materialized_config = "target/config"
-packages = "target/packages"
-test_artifacts = "target/test-artifacts"
+assets = "cache/target/assets"
+benchmarks = "cache/target/test-benchmarks"
+coverage = "cache/target/coverage"
+distribution = "cache/target/distribution"
+gate_runs = "cache/target/gate-runs"
+materialized_config = "cache/target/config"
+packages = "cache/target/packages"
+test_artifacts = "cache/target/test-artifacts"
 
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
@@ -241,7 +241,7 @@ local_macos_target = "/"
 # it is produced *after* the image is built. ProfileContent supplies its exact
 # assets/config pair separately. Mounted read-only -- an install proof that
 # could rewrite the package it is proving would be proving nothing.
-generated_inputs = ["target/packages"]
+generated_inputs = ["cache/target/packages"]
 systemd_ready_attempts = 30
 systemd_ready_interval_seconds = 0.5
 serve_ready_file = "/tmp/capsem-install-release.json"
@@ -280,7 +280,7 @@ sbom_name = "capsem-sbom.spdx.json"
 candidate_prefix = "v"
 file_url_scheme = "file://"
 release_site_dir = "build_system/release_site"
-storage_ledger = "target/storage"
+storage_ledger = "cache/target/storage"
 test_output_root = "/tmp/capsem-test-output"
 
 # Where the postinst records which channel it hydrated from. Read back after
@@ -323,7 +323,7 @@ package_runtime_packages = [
 dockerfile = "build_system/docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
-source_identity_file = "target/install-image/receipt.json"
+source_identity_file = "cache/target/install-image/receipt.json"
 identity_inputs = [
     "Cargo.toml",
     "Cargo.lock",
@@ -383,17 +383,17 @@ runtime_dependencies_config = "config/gate.toml"
 # The Debian package name, as dpkg-query reports it.
 package_name = "capsem"
 
-# Scratch, all under target/ so a failed run leaves evidence without dirtying
+# Scratch, all under cache/target/ so a failed run leaves evidence without dirtying
 # the checkout.
 [install.layout]
-assets = "target/install-test-assets"
-config = "target/install-test-config"
+assets = "cache/target/install-test-assets"
+config = "cache/target/install-test-config"
 # The authored release tree is distribution output even though this instance
 # exists only long enough to prove the installer.
-channel = "target/distribution/install-proof"
-packages = "target/install-test-packages"
-glowup = "target/local-release-glowup"
-glowup_evidence = "target/local-release-glowup-evidence"
+channel = "cache/target/distribution/install-proof"
+packages = "cache/target/install-test-packages"
+glowup = "cache/target/local-release-glowup"
+glowup_evidence = "cache/target/local-release-glowup-evidence"
 
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["build_system/release_site/node_modules", "build_system/release_site/dist"]
@@ -551,10 +551,10 @@ lane_container = "capsem-package-{arch}"
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
-# `target/assets/` is 3.0 GB and changes every run; `target/config` is the
+# `cache/target/assets/` is 3.0 GB and changes every run; `cache/target/config` is the
 # materialized profile catalog `repack-deb.sh` reads. Both are produced by
 # earlier steps, so they are mounted read-only rather than copied.
-generated_inputs = ["target/assets", "target/config"]
+generated_inputs = ["cache/target/assets", "cache/target/config"]
 lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout is copied into the source image; these three paths get
@@ -667,7 +667,7 @@ status_requires = [
 # ---------------------------------------------------------------------------
 
 [assets]
-test_root = "target/ironbank-assets"
+test_root = "cache/target/ironbank-assets"
 profiles_glob = "config/profiles/*/profile.toml"
 
 # Everything a built VM asset is a function of. A lane whose identity matches
@@ -705,7 +705,7 @@ evidence_artifacts = ["obom.cdx.json", "software-inventory.json"]
 obom_artifact = "obom.cdx.json"
 failure_tail_lines = 200
 # What the run watches for filesystem faults, and where it writes them the
-# moment they happen. Source trees only: `target/` is where a gate is supposed
+# moment they happen. Source trees only: `cache/target/` is where a gate is supposed
 # to write, and watching it would drown the report -- except that build output
 # is exactly where a hardlink to checked-in source lands, so the staged
 # release channel is watched too.
@@ -714,7 +714,7 @@ shell_proof_timeout_seconds = 300
 # `cargo run` rather than a built binary: the asset gate runs before anything
 # has installed one, and the admin under test is this checkout's.
 admin_command = ["cargo", "run", "-p", "capsem-admin", "--"]
-capsem_binary = "target/debug/capsem"
+capsem_binary = "cache/target/cargo/debug/capsem"
 hash_assets_script = "build_system/scripts/build/create_hash_assets.py"
 shell_proof_script = "build_system/scripts/test/prove-installed-shell.py"
 container_cleanup_script = "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"
@@ -739,11 +739,11 @@ current_link = "current"
 # Copied out of a failed run before its scratch is removed. Host-side
 # diagnostics only: `guest/` and `auto_snapshots/` duplicate the guest's own
 # workspace once per generation, and the same filter keeps the VM disk image
-# and session.db out of target/.
+# and session.db out of cache/target/.
 evidence_suffixes = [".log", ".json", ".toml"]
 evidence_prune_dirs = ["guest", "auto_snapshots"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
-# session path, and target/ironbank-assets is already too long.
+# session path, and cache/target/ironbank-assets is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
 
 [assets.cache]
@@ -770,11 +770,11 @@ source_digest_script = "build_system/scripts/build/source-state-digest.py"
 orphan_script = "build_system/scripts/ci/check-orphan-processes.py"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
-source_state_file = "target/gate-source-state.json"
+source_state_file = "cache/target/gate-source-state.json"
 # Source-derived Docker builds consume this immutable copy. Tests may mutate
 # checkout metadata transiently; one recorded context prevents two phases from
 # assigning different identities to the same eventual source state.
-source_snapshot_dir = "target/gate-source-snapshot"
+source_snapshot_dir = "cache/target/gate-source-snapshot"
 
 # The Colima binary, restored to whatever the developer had. This used to be a
 # shell trap around the expensive half of the gate, so it was correct only for
@@ -1196,7 +1196,7 @@ rust_components = ["llvm-tools"]
 [toolchain.ort]
 script = "build_system/scripts/build/materialize-package-ort.py"
 archive_cache_template = "~/.cache/capsem/ort/archive-{sha256}.tar.lzma2"
-output_template = "target/toolchain/ort/{consumer}-{target}-{sha256}"
+output_template = "cache/target/toolchain/ort/{consumer}-{target}-{sha256}"
 strategy_variable = "ORT_STRATEGY"
 location_variable = "ORT_LIB_LOCATION"
 strategy = "system"
@@ -1352,8 +1352,8 @@ notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
 fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
 binaries = "build_system/scripts/release/release-binaries.py"
 profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
-preflight_dir = "target/release-preflight"
-channel_source = "target/release-preflight/channel-source.json"
+preflight_dir = "cache/target/release-preflight"
+channel_source = "cache/target/release-preflight/channel-source.json"
 default_repository = "google/capsem"
 repository_variable = "GITHUB_REPOSITORY"
 token_variable = "GITHUB_TOKEN"
@@ -1380,7 +1380,7 @@ generate_settings = "build_system/scripts/build/generate-settings.sh"
 # effect, and one the gate cannot have once it may not write its own source.
 # `contracts.release` still compares the committed pair against a fresh
 # generation, so drift is caught -- by the step whose job that is.
-generated_settings_scratch = "target/generated-settings"
+generated_settings_scratch = "cache/target/generated-settings"
 check_settings = "build_system/scripts/build/check-generated-settings.sh"
 materialize_config = "build_system/scripts/build/materialize-config.sh"
 
@@ -1390,7 +1390,7 @@ binaries = [
     "capsem-pty-agent", "capsem-net-proxy", "capsem-dns-proxy",
     "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
 ]
-staging = "target/linux-agent"
+staging = "cache/target/linux-agent"
 # Rebuilt when a staged binary is missing, or older than anything the build
 # reads. Cheaper than an unconditional cross-compile -- but only correct if
 # "anything the build reads" is honest, and `*.rs` under these crates is not:
@@ -1436,9 +1436,9 @@ hash_assets = "build_system/scripts/build/create_hash_assets.py"
 [smoke]
 # Focused developer feedback, never release qualification. Three groups that
 # can share the machine, then the two that cannot.
-doctor = ["target/debug/capsem", "doctor"]
+doctor = ["cache/target/cargo/debug/capsem", "doctor"]
 run_id_variable = "CAPSEM_TEST_RUN_ID"
-log = "target/smoke.log"
+log = "cache/target/smoke.log"
 
 # Suspend/resume is host-resource sensitive under Apple VZ: an unrelated VM can
 # make a resume fail before the guest signals ready. These run after the
@@ -1482,11 +1482,11 @@ markers = "integration"
 # The development daemon: the same profile/assets rail an installed package
 # uses, so the dev service cannot mix stale profile pins with fresh assets and
 # make profiles look broken in the UI.
-binary = "target/debug/capsem-service"
-process_binary = "target/debug/capsem-process"
+binary = "cache/target/cargo/debug/capsem-service"
+process_binary = "cache/target/cargo/debug/capsem-process"
 sync_assets_script = "build_system/scripts/build/sync-dev-assets.sh"
-generated_profiles = "target/config/profiles"
-assets_dir = "target/assets"
+generated_profiles = "cache/target/config/profiles"
+assets_dir = "cache/target/assets"
 home_assets = "assets"
 home_profiles = "profiles"
 socket = "service.sock"
@@ -1534,7 +1534,7 @@ container_output_dir = "/linux-rust-output"
 # without it the coverage nests at `<dest>/linux-rust-output/` where nothing
 # looks for it.
 container_output_contents = "/linux-rust-output/."
-extract_to = "target/coverage/linux"
+extract_to = "cache/target/coverage/linux"
 lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
@@ -1571,11 +1571,11 @@ mount = "/src"
 
 [sbom]
 script = "build_system/scripts/release/generate-host-binary-sbom.py"
-output = "target/ironbank-host-sbom.spdx.json"
+output = "cache/target/ironbank-host-sbom.spdx.json"
 linux_packages_glob = "*{version}*.deb"
 macos_package_name = "Capsem-{version}.pkg"
 # Two, one per architecture. Fewer means a build did not happen; more means an
-# older version's packages are still in target/packages/ and the SBOM would
+# older version's packages are still in cache/target/packages/ and the SBOM would
 # describe a cohort nobody is shipping.
 expected_debs = 2
 spdx_version = "SPDX-2.3"
@@ -1583,8 +1583,8 @@ spdx_version = "SPDX-2.3"
 [signing]
 entitlements = "build_system/packaging/macos/entitlements.plist"
 binaries = [
-    "target/debug/capsem", "target/debug/capsem-service", "target/debug/capsem-process",
-    "target/debug/capsem-gateway", "target/debug/capsem-mcp", "target/debug/capsem-admin",
+    "cache/target/cargo/debug/capsem", "cache/target/cargo/debug/capsem-service", "cache/target/cargo/debug/capsem-process",
+    "cache/target/cargo/debug/capsem-gateway", "cache/target/cargo/debug/capsem-mcp", "cache/target/cargo/debug/capsem-admin",
 ]
 # Every host binary a run needs on disk, as bin names. A superset of the signed
 # list, validated to be one: `binaries` is the subset that calls
@@ -1595,9 +1595,9 @@ binaries = [
 # It exists because nothing built any of them. Signing was `codesign --force`
 # against whatever an earlier `just build` had left, and a run that did not
 # inherit a warm tree failed three times in a row, one binary at a time:
-# `codesign: target/debug/capsem: No such file or directory`, then `required
+# `codesign: cache/target/cargo/debug/capsem: No such file or directory`, then `required
 # MCP aggregator binary capsem-mcp-aggregator is missing`, then `Binary not
-# found: target/debug/capsem-tray`.
+# found: cache/target/cargo/debug/capsem-tray`.
 #
 # So it is the whole host cohort now, and
 # `test_the_built_binaries_are_every_host_binary` holds it against `cargo
@@ -1618,7 +1618,7 @@ built = [
 built_elsewhere = ["capsem-app"]
 guest_crate = "capsem-agent"
 
-release_binary = "target/debug/capsem"
+release_binary = "cache/target/cargo/debug/capsem"
 
 [frontend]
 build_script = "build_system/scripts/web/check-web-surface.sh"
@@ -1630,8 +1630,8 @@ profiles = ["debug", "release"]
 
 [logs]
 service_log = ".capsem/run/service.log"
-failure_root = "target/test-artifacts"
-cli = "target/debug/capsem"
+failure_root = "cache/target/test-artifacts"
+cli = "cache/target/cargo/debug/capsem"
 
 [imagebuild]
 # One `capsem-admin image build` invocation, with the template as the only
@@ -1644,7 +1644,7 @@ dependency_backend = ["uv", "run", "--project", "build_system", "--frozen", "pyt
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
 guest_dir = "guest"
-workspace_root = "target/image-workspace/{profile}/{arch}"
+workspace_root = "cache/target/image-workspace/{profile}/{arch}"
 workspace_guest_dir = "guest"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
@@ -1654,7 +1654,7 @@ templates = ["kernel", "rootfs", "all"]
 profiles_glob = "config/profiles/*/profile.toml"
 profile_manifest = "config/profiles/{profile}/profile.toml"
 config_root = "config"
-output = "target/assets"
+output = "cache/target/assets"
 # Doctor is run first, with the checks that would fail on the very thing this
 # is about to build turned off.
 doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
@@ -1907,6 +1907,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_boundary.py",
     "build_system/tests/gate/test_gate_typecheck.py",
     "build_system/tests/gate/test_gate_candidate.py",
+    "build_system/tests/gate/test_gate_cache_layout.py",
     "build_system/tests/gate/test_gate_cli.py",
     "build_system/tests/gate/test_gate_command.py",
     "build_system/tests/gate/test_gate_config.py",
@@ -2035,7 +2036,7 @@ base_flags = ["-v", "--tb=short"]
 # enough to show a pattern and few enough to stop a cascade.
 stop_at_first = "--maxfail=5"
 parallel_flags = ["-n", "4", "--dist=loadfile"]
-coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:target/coverage/python/codecov.xml"]
+coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 
 # Directories the broad suite never collects, each for its own reason.
 #
@@ -2082,8 +2083,8 @@ profile_variable = "CAPSEM_TEST_PROFILE"
 # The profile every broad proof runs against first. The rest are the
 # compatibility axis, and run the VM-owned suites again behind it.
 base_profile = "code"
-materialized_profiles = "target/config/profiles"
-test_manifest = "target/assets/manifest.json"
+materialized_profiles = "cache/target/config/profiles"
+test_manifest = "cache/target/assets/manifest.json"
 
 [functional]
 # The two legacy VM drivers. Neither is pytest, both need a real VM, and both
@@ -2091,9 +2092,9 @@ test_manifest = "target/assets/manifest.json"
 # spelled out at each of their four call sites.
 injection_script = "build_system/scripts/test/injection_test.py"
 integration_script = "build_system/scripts/test/integration_test.py"
-binary = "target/debug/capsem"
-assets_dir = "target/assets"
-config_root = "target/config"
+binary = "cache/target/cargo/debug/capsem"
+assets_dir = "cache/target/assets"
+config_root = "cache/target/config"
 # The Node workspaces these suites render, and only those. `toolchain.node`
 # installs every workspace the local gate exercises, which is more than this
 # module needs and more than a release lane has warmed: the docs and site
@@ -2173,9 +2174,9 @@ macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 # claims and is refused below the floor. The rest of the install chain
 # only ever runs on ubuntu:24.04, where a wrong floor is invisible.
 platform_support_script = "build_system/packaging/linux/prove-deb-platform-support.py"
-macos_glowup_report = "target/macos-tart-glowup/report.json"
+macos_glowup_report = "cache/target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
-glowup_work_dir = "target/release-module-glowup"
+glowup_work_dir = "cache/target/release-module-glowup"
 
 # The local rehearsal of the release lane's pulled path. `just test` builds
 # every artifact and installs the one it built; what it never did is resolve a
@@ -2189,8 +2190,8 @@ rehearsal_script = "build_system/scripts/release/rehearse-release-cohort.py"
 rehearsal_channel = "stable"
 # `release_cohort` creates its deployable `dist/` below this work directory,
 # so the work directory itself belongs beneath the canonical output owner.
-rehearsal_work_dir = "target/distribution/rehearsal"
-rehearsal_inputs_dir = "target/release-rehearsal-inputs"
+rehearsal_work_dir = "cache/target/distribution/rehearsal"
+rehearsal_inputs_dir = "cache/target/release-rehearsal-inputs"
 # `{version}` is the workspace version and `{arch}` the dpkg architecture, and
 # both are load-bearing. `capsem-admin assets channel record-binary` refuses a
 # name that does not carry the version, and the exact pairing then matches the
@@ -2198,9 +2199,9 @@ rehearsal_inputs_dir = "target/release-rehearsal-inputs"
 # name is refused at authoring time and, if it got past that, would match no
 # package record at all. The plan can still name this before anything is built,
 # because the version comes from `Cargo.toml`.
-rehearsal_package = "target/release-rehearsal-package/Capsem_{version}_{arch}.deb"
-rehearsal_content_root = "target/release-rehearsal-content"
-rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
+rehearsal_package = "cache/target/release-rehearsal-package/Capsem_{version}_{arch}.deb"
+rehearsal_content_root = "cache/target/release-rehearsal-content"
+rehearsal_glowup_work_dir = "cache/target/release-rehearsal-glowup"
 # The public before-state the rehearsal pairs against, and the candidate
 # manifest it authored. `{channel}` is the rehearsal channel.
 #
@@ -2211,10 +2212,10 @@ rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
 # `packages: []` and `profiles: {}`. That is what makes the pairing
 # FRESH_INSTALL -- the pairing a first release makes, and the one that had never
 # run anywhere before this rehearsal existed.
-rehearsal_before_inputs = "target/release-rehearsal-before"
-rehearsal_after_manifest = "target/distribution/rehearsal/dist/assets/{channel}/manifest.json"
+rehearsal_before_inputs = "cache/target/release-rehearsal-before"
+rehearsal_after_manifest = "cache/target/distribution/rehearsal/dist/assets/{channel}/manifest.json"
 release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
-default_bin_dir = "target/debug"
+default_bin_dir = "cache/target/cargo/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
 # the installed state rather than inherit what the previous run was told.
 # What a glow-up is told about the one exact transition it proves.
@@ -2235,35 +2236,30 @@ after_profile_inputs = "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"
 # A private copy of the checkout, one per run, so what the gate reads cannot be
 # edited by anyone while it runs. Clonefiled on APFS: 2074 tracked files plus
 # `.git` measured 2.2s and 186 MB, against 84s and 164 GB for a copy that also
-# took `target/` -- which is why the seed the first draft of this design wanted
+# took `cache/target/` -- which is why the seed the first draft of this design wanted
 # is not here.
 #
-# `parent` is deliberately tiny. `build_system/tests/gate/test_gate_prefix.py` checks the
-# arithmetic, but the budget is `SUN_LEN` 104 minus the gateway's 64-byte
-# `instances/<uuid>-ws.sock` suffix; `/tmp/capsem-gate-<32hex>` is 41
-# characters and reproduced a 12,024-error socket failure. `~/.cg/<8hex>` is 24.
-parent = "~/.cg"
+# Private sources are retained under the repository cache and never in an
+# ambient home-directory prefix. Runtime socket paths have their own short
+# config-owned roots and do not inherit this checkout path.
+parent = "cache/worktrees"
 lease_template = ".{identity}.lock"
 
 # Where `[prefix] lent` output lives between runs, written as a position
 # relative to the prefix root rather than as a second absolute path.
 #
-# Beside that root and never inside it: `sweep` reclaims every directory under
-# `parent` except the newest `keep`, and it recognizes a prefix by where it is
-# rather than by what it is called, so a cache underneath would survive exactly
-# one run. On the same filesystem, because lending is a `rename`.
-#
-# `{parent}` rather than a path of its own because the two must move together.
-# Three separate tests relocated the prefix root to a temporary directory,
-# left the cache on the real filesystem, and failed on a cross-device rename
-# that had nothing to do with what they were testing.
-build_cache = "{parent}-build"
+# Outside that root and never inside it: `sweep` reclaims every directory under
+# `parent` except the newest `keep`, while this stage is retained independently.
+# Both paths resolve through the same repository cache authority, so lending is
+# a same-filesystem `rename`; tests that need isolation use explicit absolute
+# overrides for every shared root.
+build_cache = "cache/target/prefix-products"
 
 # Content-addressed VM boot products live at a stable path while private
 # prefixes come and go. Prefixes point their lane paths at one input-identity
 # generation, so a retained resumable prefix pins its exact images and a new
 # source can use or evict other generations without stealing those bytes.
-vm_image_cache = "{parent}-vm-images"
+vm_image_cache = "cache/target/assets/generations"
 
 # Where cargo writes, for every run, at one absolute path.
 #
@@ -2284,11 +2280,11 @@ vm_image_cache = "{parent}-vm-images"
 # filesystem. `--clean-build` discards it, which is what makes that flag mean
 # what it says.
 #
-# The prefix gets a symlink per profile at `target/<profile>`, so the ~30
-# checked-in `target/debug/...` and `target/release/...` paths keep resolving
-# and the rest of `target/` -- the journal, the materialized config, the test
+# The prefix gets a symlink per profile at `cache/target/cargo/<profile>`, so the ~30
+# checked-in `cache/target/cargo/debug/...` and `cache/target/cargo/release/...` paths keep resolving
+# and the rest of `cache/target/` -- the journal, the materialized config, the test
 # homes -- stays private to the run that made it.
-cargo_target = "{parent}-target"
+cargo_target = "cache/target/cargo"
 cargo_profiles = ["debug", "release"]
 
 # The size at which a run warns that the shared directory deserves attention.
@@ -2315,7 +2311,7 @@ name_length = 8
 #
 # Still one, and deliberately: raising it was the other candidate answer to
 # cold rebuilds, and it is the wrong one. Ten retained prefixes are ten copies
-# of the same `target/`, none of which the eleventh run may use, because a
+# of the same `cache/target/`, none of which the eleventh run may use, because a
 # prefix is named for its commit and no run may work in another commit's tree.
 # `build_cache` reuses the output without duplicating it.
 keep = 1
@@ -2336,18 +2332,18 @@ carried = ["private"]
 # `tests/citadel/test_build_cache_is_reusable.py` checks it against
 # `git check-ignore` rather than against a second list here.
 #
-# Only content-addressed artifacts. `target/assets/` is VM images plus a manifest of
+# Only content-addressed artifacts. `cache/target/assets/` is VM images plus a manifest of
 # their digests: nothing in it records where it was built, so the same bytes are
 # valid under any prefix name, and the asset conditions already decide from
 # content whether a rebuild is needed.
 #
-# `target/` is not here, and that was measured rather than assumed. Cargo
+# `cache/target/` is not here, and that was measured rather than assumed. Cargo
 # relocates a build directory happily; build *scripts* do not. Tauri records its
 # generated permission files by absolute `OUT_DIR`, so the first run given a
-# borrowed `target/` died with
+# borrowed `cache/target/` died with
 #
 #   failed to read plugin permissions: failed to read file
-#   '~/.cg/6d7cc52c/target/debug/build/tauri-.../permissions/app/.../app_hide.toml'
+#   'cache/worktrees/6d7cc52c/cache/target/cargo/debug/build/tauri-.../permissions/app/.../app_hide.toml'
 #
 # naming a prefix that had already been reclaimed. That is why compiler output
 # is not lent: it is shared instead, at `cargo_target` above, which is the one
@@ -2357,32 +2353,32 @@ carried = ["private"]
 # mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in
 # every console-script shebang, and both are already fast from warm global
 # stores.
-# `target/assets` is the selected payload. Isolated VM products live in the stable
+# `cache/target/assets` is the selected payload. Isolated VM products live in the stable
 # content-addressed `vm_image_cache`; each prefix keeps only symlinks selecting
 # its exact input generation, so a resumable source continues to pin its bytes.
-# `target/install-image` carries the live source/helper/runtime/product receipt
+# `cache/target/install-image` carries the live source/helper/runtime/product receipt
 # for the sealed Docker image. Without it a successful prefix kept the image in
 # Docker, deleted the authority to reuse it, and forced the next prefix to run
 # the same construction again.
-lent = ["target/assets", "target/install-image"]
+lent = ["cache/target/assets", "cache/target/install-image"]
 
 # Tiny lent authorities that stay in a failed/explicitly retained prefix when
 # they are also copied into the shared cache. This is deliberately narrower
 # than `lent`: duplicating VM images would defeat the cache bound, but deleting
 # this receipt from a resumable prefix lets Docker reclamation erase the exact
 # source and helper images that its journal still needs.
-resumable = ["target/install-image"]
+resumable = ["cache/target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["target/assets", "target/config", "target/coverage", "target/distribution", "target/gate-runs", "target/packages", "target/test-artifacts", "target/test-benchmarks"]
+exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/test-artifacts", "cache/target/test-benchmarks"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
 # build scaffolding, which is worth carrying between runs and has no business
 # being copied back into the checkout. A lent path must appear in one list or
 # the other, so nothing can be lent that no run is known to write.
-produced = ["target/install-image"]
+produced = ["cache/target/install-image"]
 
 # ---------------------------------------------------------------------------
 # The host-kernel sandbox
@@ -2456,7 +2452,7 @@ sockets = ["~/.colima/default/docker.sock", "~/.colima/_lima/colima/ha.sock"]
 # forty-runs-one-discovery-each outcome report mode exists to avoid:
 #
 #   /private/var/folders/<...>/T/capsem-test-<id>/run/*.sock   552 times
-#   <prefix>/target/test-home/.capsem/run/service.sock         463 times
+#   <prefix>/cache/target/test-home/.capsem/run/service.sock         463 times
 #   ~/.colima/_lima/colima/ha.sock                             169 times
 #
 # The first is `$TMPDIR` on macOS, which is a per-user path under
@@ -2481,7 +2477,7 @@ local_socket_prefixes = [
 
 # The gate's own service, gateway and per-VM sockets live under the workspace,
 # which is inside the prefix and therefore has no fixed path to list.
-local_socket_regexes = ["target/test-home/\\.capsem/run/"]
+local_socket_regexes = ["cache/target/test-home/\\.capsem/run/"]
 
 # Servers the gate starts and talks to: the mock upstream, the gateway, and
 # every per-VM listener. `local:*:0` alone was 1915 of the observed events.
@@ -2517,7 +2513,7 @@ report_stop_timeout = 10.0
 # Everything the gate does happens against this home, never the developer's.
 # Wiped at the start of a run, which is why the machine lock is taken first and
 # why the lockfile lives outside it.
-home = "target/test-home/.capsem"
+home = "cache/target/test-home/.capsem"
 # AF_UNIX paths must not grow with a full 40-character release prefix. The
 # source-root digest makes parallel synthetic checkouts distinct; the machine
 # lock makes the production path single-owner.
@@ -2530,11 +2526,11 @@ seeded_dirs = ["run", "sessions", "logs"]
 # sequence and the VM performance recordings are written by the functional one;
 # a later module wiping them is why a fortnight of full gates left this empty
 # and froze the published arm64 history. The entry point clears it once.
-benchmark_root = "target/test-benchmarks"
-coverage_file = "target/coverage/.coverage"
+benchmark_root = "cache/target/test-benchmarks"
+coverage_file = "cache/target/coverage/.coverage"
 
 # What a failing run leaves behind, copied out before the run directory goes.
-evidence_dir = "target/test-artifacts"
+evidence_dir = "cache/target/test-artifacts"
 
 # ---------------------------------------------------------------------------
 # The step attribute migration
@@ -2599,7 +2595,7 @@ post-materialization bytes used by the VM and package lanes.
 [runlog]
 # One directory per run, so a failed gate is a directory you attach to a bug
 # rather than a scrollback you had to be present for.
-root = "target/gate-runs"
+root = "cache/target/gate-runs"
 events = "run.jsonl"
 # Spelled `event_schema` here and emitted as `schema` in each event: a Pydantic
 # field named `schema` shadows a BaseModel attribute.
@@ -2612,7 +2608,7 @@ summary = "summary.txt"
 # Source trees, because a gate must not edit what it is qualifying; plus the
 # staged release channel, because a hardlink *to* checked-in source lands in
 # build output and leaves the source directory untouched.
-observed_roots = ["config", "crates", "scripts", "guest", "src", "target/web-parity"]
+observed_roots = ["config", "crates", "scripts", "guest", "src", "cache/target/web-parity"]
 # Trees inside those roots where two files holding identical bytes is somebody
 # else's decision. Exact and short on purpose: the duplicate-content rule earns
 # its place everywhere else -- it caught a package lane copying a hardlinked
@@ -2627,7 +2623,7 @@ duplicate_content_exempt = ["crates/capsem-app/gen"]
 # `source.record` intentionally copies every Git-visible byte into this exact
 # tree. Duplicate and empty bytes there are properties of checked-in input,
 # while hardlinks, mode churn, and concurrent writers remain faults.
-source_replica_roots = ["target/gate-source-snapshot"]
+source_replica_roots = ["cache/target/gate-source-snapshot"]
 # How Linux answers "what path is this descriptor". `shutil.rmtree` deletes
 # through a directory descriptor, so the observer receives a bare entry name
 # and has to anchor it -- without this it resolved against the working
@@ -2859,12 +2855,12 @@ codex = 2500
 # what makes `p99` mean the same thing in all eighteen dimensions.
 crate = "capsem-bench"
 bin_name = "capsem-bench-rs"
-binary = "target/debug/capsem-bench-rs"
+binary = "cache/target/cargo/debug/capsem-bench-rs"
 collectors = "benchmarks/collectors"
 # One SQLite file rather than a JSON tree. Asking "is /vms/list slower than it
 # was three releases ago" used to mean globbing filenames and parsing ten
 # shapes; it is now a query.
-store = "target/test-benchmarks/benchmarks.db"
+store = "cache/target/test-benchmarks/benchmarks.db"
 # The collectors are Python and import the project's dependencies, so they run
 # under the project's interpreter rather than whatever the shebang resolves to.
 interpreter = "uv run --project build_system --frozen --active python"
@@ -2893,7 +2889,7 @@ hot_route_factor = 1.2
 # spends that before lunch, so every question worth asking -- is this getting
 # slower, does that keep failing, did the change help -- was answerable only
 # across whatever had not yet been deleted. A row is a couple of kilobytes.
-path = "target/gate-runs/ledger.jsonl"
+path = "cache/target/gate-runs/ledger.jsonl"
 row_schema = "capsem.gate.ledger.v2"
 # Months of history for a few megabytes. Trimmed at every append, so the file
 # cannot become the thing that fills the disk it was added to protect.
@@ -2904,7 +2900,7 @@ keep_rows = 2000
 # It is read far more often than it is written, and it is paid for in context
 # on work that has nothing to do with the gate, so both bounds below are about
 # staying worth reading rather than about storage.
-path = "target/gate-runs/DIGEST.md"
+path = "cache/target/gate-runs/DIGEST.md"
 # Comparable in the ledger's sense: same command, argv, host class and plan
 # shape. Ten is enough for a median to survive one bad neighbour.
 compare_runs = 10
@@ -2944,23 +2940,23 @@ lane_share = 0.25
 # reclaimer cannot reach past it, and the loader rejects an absolute path or a
 # `..` so the list cannot be aimed at the wrong tree.
 reclaimable = [
-    "target/gate-runs",
-    "target/test-home",
-    "target/image-workspace",
-    "target/test-benchmarks",
-    "target/coverage",
-    "target/test-artifacts",
-    "target/install-test-assets",
-    "target/distribution",
-    "target/release-module-glowup",
-    "target/release-module-channel-switch",
+    "cache/target/gate-runs",
+    "cache/target/test-home",
+    "cache/target/image-workspace",
+    "cache/target/test-benchmarks",
+    "cache/target/coverage",
+    "cache/target/test-artifacts",
+    "cache/target/install-test-assets",
+    "cache/target/distribution",
+    "cache/target/release-module-glowup",
+    "cache/target/release-module-channel-switch",
 ]
 # Refuse to start an expensive phase below this, after reclaiming what we can.
 # The gate builds two architectures of VM images; running out at minute thirty
 # wastes the thirty.
 required_free_gb = 60
 # The same floor for the scratch filesystem, which is often not the one the
-# checkout is on. `required_free_gb` measures where `target/` lives; the suites
+# checkout is on. `required_free_gb` measures where `cache/target/` lives; the suites
 # do their bulk scratch work under the temporary directory, and on a host where
 # that is a tmpfs it is a much smaller, entirely separate volume. One run died
 # on ENOSPC twenty-five minutes in with 196GB free beside it, because nothing

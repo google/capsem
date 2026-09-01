@@ -7,15 +7,15 @@ import time
 from pathlib import Path
 
 from ..policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
-from . import assetreceipt, prefix
+from . import assetreceipt, cachelayout, prefix
 from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import link, make_dir, remove
 
 
 def root(config: GateConfig) -> Path:
-    """The stable VM image cache beside the ephemeral prefix root."""
-    return Path(config.prefix.vm_image_cache.format(parent=config.prefix.parent)).expanduser()
+    """The stable VM image cache inside the repository cache."""
+    return cachelayout.shared_path(config, config.prefix.vm_image_cache)
 
 
 def lane(config: GateConfig, identity: str, *, profile: str, arch: Arch) -> Path:

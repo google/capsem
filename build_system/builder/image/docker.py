@@ -468,7 +468,7 @@ def materialize_asset_dependencies(
         return require_asset_dependencies(runtime, config, arch_name, template)
 
     arch = config.build.architectures[arch_name]
-    build_tmp = repo_root / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "target" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)
     with tempfile.TemporaryDirectory(
@@ -747,7 +747,7 @@ def container_compile_agent(
 
     # Build all shell commands from GUEST_BINARIES constant
     cp_cmds = " && ".join(
-        f"cp target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
+        f"cp cache/target/{rust_target}/release/{_guest_binary_source(b)} /output/{b}"
         for b in GUEST_BINARIES
     )
     rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
@@ -1211,7 +1211,7 @@ def generate_cyclonedx_obom(
     network_value = require_container_network(runtime_network)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_parent = repo_root / "target" / "tmp"
+    tmp_parent = repo_root / "cache" / "target" / "tmp"
     tmp_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
         rootfs_dir = Path(tmp) / "rootfs"
@@ -1736,8 +1736,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    # Create target/assets/current symlink pointing to the most recently built arch.
-    # Tauri bundle resources reference target/assets/current/ so they resolve on any platform.
+    # Create cache/target/assets/current symlink pointing to the most recently built arch.
+    # Tauri bundle resources reference cache/target/assets/current/ so they resolve on any platform.
     current_link = output_dir / "current"
     if arch_dirs:
         target = sorted(arch_dirs)[-1].name
@@ -1875,7 +1875,7 @@ def build_image(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "target" / "assets"
+        output_dir = repo_root / "cache" / "target" / "assets"
 
     arch = config.build.architectures[arch_name]
     runtime = detect_runtime()
@@ -1889,9 +1889,9 @@ def build_image(
     template_name = f"Dockerfile.{template}.j2"
     tag = f"capsem-{template}-{arch_name}"
 
-    # Use a temporary directory inside the project root's target/ folder.
+    # Use a temporary directory inside the project root's cache/target/ folder.
     # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
-    build_tmp = repo_root / "target" / "tmp"
+    build_tmp = repo_root / "cache" / "target" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
@@ -2132,7 +2132,7 @@ def build_all_architectures(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "target" / "assets"
+        output_dir = repo_root / "cache" / "target" / "assets"
 
     for arch_name in config.build.architectures:
         print(f"\n=== Building {template} for {arch_name} ===")

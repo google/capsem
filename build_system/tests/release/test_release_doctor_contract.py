@@ -832,8 +832,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "deployments: write" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: packages" in workflow
-    assert "output: target/profile-public-before/packages" in workflow
-    assert "--input-dir target/profile-public-before/packages" in workflow
+    assert "output: cache/target/profile-public-before/packages" in workflow
+    assert "--input-dir cache/target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
     assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
@@ -877,7 +877,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_API_TOKEN:" in workflow
     assert "required: true" in workflow
     assert "actions/download-artifact@" in workflow
-    assert "DIST_DIR: target/distribution" in workflow
+    assert "DIST_DIR: cache/target/distribution" in workflow
     assert 'test -f "$DIST_DIR/index.html"' in workflow
     assert 'test -f "$DIST_DIR/health.json"' in workflow
     assert 'test -f "$DIST_DIR/_headers"' in workflow
@@ -898,7 +898,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
         "cloudflare/wrangler-action@"
     )
-    assert "pages deploy target/distribution/ --project-name=release" in workflow
+    assert "pages deploy cache/target/distribution/ --project-name=release" in workflow
     assert "assets/stable/manifest.json" not in workflow
     assert (
         "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"
@@ -942,7 +942,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
-    assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in (
+    assert "--expect-snapshot cache/target/release-channel-deployment/candidate-release.json" in (
         validator_step
     )
     assert workflow.index("Activate verified production distribution") < workflow.index(
@@ -982,7 +982,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "release_site_url: ${{ inputs.release_site_url }}" in workflow
     assert "activate_production: false" in workflow
     assert (
-        "pages deploy target/distribution/ --project-name=release "
+        "pages deploy cache/target/distribution/ --project-name=release "
         "--branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}"
     ) in reusable
 
@@ -1667,9 +1667,9 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: profiles" in workflow
-    assert "output: target/binary-public-before/profiles" in workflow
-    assert "output: target/candidate-profile-inputs" in workflow
-    assert "--input-dir target/candidate-profile-inputs" in workflow
+    assert "output: cache/target/binary-public-before/profiles" in workflow
+    assert "output: cache/target/candidate-profile-inputs" in workflow
+    assert "--input-dir cache/target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
@@ -1720,14 +1720,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     ).read_text()
     assert 'gh release create "$release_tag"' in immutable_publisher
     assert 'gh release upload "$release_tag" "$owned_dir/$missing"' in immutable_publisher
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
     assert "name: binary-channel-candidate" in assemble_channel
-    assert "path: target/binary-channel/" in assemble_channel
+    assert "path: cache/target/binary-channel/" in assemble_channel
     record_step = author_candidate.split(
         "- name: Record binary candidate metadata once", maxsplit=1
     )[1].split("- name: Prove binary candidate preserved every profile", maxsplit=1)[0]
-    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
+    assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
         "- name: Build complete release channels with existing VM assets", maxsplit=1
@@ -1736,7 +1736,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert '--generated-at "$generated_at"' in build_channels
     assert "build_system/scripts/release/build-complete-release-channel.py" in build_channels
     assert (
-        '--channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"'
+        '--channel-source "$RELEASE_CHANNEL=file://$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"'
         in build_channels
     )
     assert '--primary-channel "$RELEASE_CHANNEL"' in build_channels
@@ -2802,8 +2802,8 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     for text in (docs,):
         normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
-        assert "target/distribution/assets/<channel>/manifest.json" in text or (
-            "target/distribution/assets/stable/manifest.json" in text
+        assert "cache/target/distribution/assets/<channel>/manifest.json" in text or (
+            "cache/target/distribution/assets/stable/manifest.json" in text
         )
         assert "https://release.capsem.org/assets/nightly/manifest.json" in text
         assert "https://release.capsem.org/channels.json" in text
@@ -2824,7 +2824,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
 
     asset_skill_text = " ".join(asset_skill.split())
     assert "https://release.capsem.org/assets/stable/manifest.json" in asset_skill
-    assert "target/distribution/assets/<channel>/manifest.json" in asset_skill
+    assert "cache/target/distribution/assets/<channel>/manifest.json" in asset_skill
     assert "`channels.json`" in asset_skill
     assert "package artifacts separate from per-binary inventory" in asset_skill_text
     assert (
@@ -2834,7 +2834,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "channels/stable/index.json" not in asset_skill
 
     assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
-    assert "target/distribution/assets/<channel>/manifest.json" in release_skill
+    assert "cache/target/distribution/assets/<channel>/manifest.json" in release_skill
     assert "`channels.json`" in release_skill
     assert "Profiles belong to channels" in release_skill
     assert "Packages are delivery containers" in release_skill_text
@@ -5123,7 +5123,7 @@ def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> Non
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     tsconfig = json.loads((PROJECT_ROOT / "web" / "app" / "tsconfig.json").read_text())
 
-    assert "target/coverage/web-app/coverage-final.json" in workflow
+    assert "cache/target/coverage/web-app/coverage-final.json" in workflow
     assert "web/app/coverage/coverage-final.json" not in workflow
     assert "coverage" in tsconfig["exclude"]
 
@@ -5154,10 +5154,10 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
         "--doc",
     ):
         assert test_selector not in report_command.split()
-    assert "target/coverage/rust/unit.json" in workflow
-    assert "target/coverage/rust/summary.txt" in workflow
-    assert "target/coverage/linux/codecov.json" in workflow
-    assert "target/coverage/linux/summary.txt" in workflow
+    assert "cache/target/coverage/rust/unit.json" in workflow
+    assert "cache/target/coverage/rust/summary.txt" in workflow
+    assert "cache/target/coverage/linux/codecov.json" in workflow
+    assert "cache/target/coverage/linux/summary.txt" in workflow
 
 
 def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
@@ -5354,7 +5354,7 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "capsem-gate host-sbom" in host_sbom
     assert "SBOM" in host_sbom
     # Exactly the current version's packages, so an older `.deb` still in
-    # `target/packages/` cannot be described by a cohort nobody ships.
+    # `cache/target/packages/` cannot be described by a cohort nobody ships.
     from capsem_builder.gate import config as gate_config
 
     sbom = gate_config.load(PROJECT_ROOT).sbom
@@ -5381,13 +5381,13 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "Fetch exact selected arm64 profiles" in mac_job
     assert "uses: ./.github/actions/fetch-release-inputs" in mac_job
     assert "architecture: arm64" in mac_job
-    assert "output: target/binary-selected-profiles" in mac_job
-    assert "--input-dir target/binary-selected-profiles" in mac_job
-    assert "--assets-dir target/release-assets" in mac_job
-    assert "--config-root target/release-config" in mac_job
+    assert "output: cache/target/binary-selected-profiles" in mac_job
+    assert "--input-dir cache/target/binary-selected-profiles" in mac_job
+    assert "--assets-dir cache/target/release-assets" in mac_job
+    assert "--config-root cache/target/release-config" in mac_job
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in mac_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in mac_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release-config"' in mac_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/release-assets"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
     assert "bash build_system/scripts/build/materialize-config.sh" in mac_job
     assert mac_job.index("Fetch exact selected arm64 profiles") < mac_job.index(
@@ -5398,14 +5398,14 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "Fetch exact selected ${{ matrix.arch }} profiles" in linux_job
     assert "uses: ./.github/actions/fetch-release-inputs" in linux_job
     assert "architecture: ${{ matrix.arch }}" in linux_job
-    assert "output: target/binary-selected-profiles" in linux_job
-    assert "--input-dir target/binary-selected-profiles" in linux_job
-    assert "--assets-dir target/package-content/assets" in linux_job
-    assert "--config-root target/package-source-config" in linux_job
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in linux_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config"' in linux_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets"' in linux_job
-    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config"' in linux_job
+    assert "output: cache/target/binary-selected-profiles" in linux_job
+    assert "--input-dir cache/target/binary-selected-profiles" in linux_job
+    assert "--assets-dir cache/target/package-content/assets" in linux_job
+    assert "--config-root cache/target/package-source-config" in linux_job
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"' in linux_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/package-source-config"' in linux_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets"' in linux_job
+    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config"' in linux_job
     assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in linux_job
     assert_unmasked_step(
         "release.yaml",
@@ -5419,7 +5419,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
         "bash build_system/scripts/build/materialize-config.sh"
     )
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
-    assert "--content-root target/package-content" in linux_job
+    assert "--content-root cache/target/package-content" in linux_job
     assert "--defer-proof" in linux_job
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
     for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
@@ -5444,7 +5444,7 @@ def test_linux_release_always_retains_full_per_arch_gate_evidence() -> None:
     assert "if: always()" in upload
     assert "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in upload
     assert "name: release-linux-${{ matrix.arch }}-gate-runs-${{ github.run_attempt }}" in upload
-    assert "path: target/gate-runs/" in upload
+    assert "path: cache/target/gate-runs/" in upload
     assert "if-no-files-found: error" in upload
 
 
@@ -5456,10 +5456,10 @@ def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
 
     assert step["if"] == "failure()"
     assert set(step["with"]["path"].splitlines()) >= {
-        "target/test-artifacts/",
-        "target/gate-runs/",
-        "target/test-home/.capsem/run/sessions/",
-        "target/test-home/.capsem/logs/",
+        "cache/target/test-artifacts/",
+        "cache/target/gate-runs/",
+        "cache/target/test-home/.capsem/run/sessions/",
+        "cache/target/test-home/.capsem/logs/",
     }
     assert step["with"]["include-hidden-files"] is True
     assert step["with"]["if-no-files-found"] == "error"
@@ -5481,7 +5481,7 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
     assert step["if"] == "failure()"
     assert step["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     assert set(step["with"]["path"].splitlines()) == {
-        "target/gate-runs/",
+        "cache/target/gate-runs/",
         f"{evidence}/",
     }
     assert step["with"]["if-no-files-found"] == (
@@ -5911,8 +5911,8 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
     script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "generate-settings.sh").read_text()
 
-    mkdir_pos = script.find('mkdir -p "$ROOT/target/config/profiles"')
-    catalog_pos = script.find("target/config/profiles/catalog.generated.json")
+    mkdir_pos = script.find('mkdir -p "$ROOT/cache/target/config/profiles"')
+    catalog_pos = script.find("cache/target/config/profiles/catalog.generated.json")
 
     assert mkdir_pos != -1
     assert catalog_pos != -1
@@ -5940,7 +5940,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
         "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
     )
     bench_package_pos = block.find("-p capsem-bench")
-    bench_binary_pos = block.find("target/debug/capsem-bench-rs")
+    bench_binary_pos = block.find("cache/target/cargo/debug/capsem-bench-rs")
     sign_pos = block.find("codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force")
     pytest_pos = block.find(
         "uv run --project build_system --frozen python -m pytest "
@@ -5951,7 +5951,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     assert build_pos != -1
     assert bench_package_pos != -1
     assert bench_binary_pos != -1
-    assert "target/debug/capsem-bench;" not in block
+    assert "cache/target/cargo/debug/capsem-bench;" not in block
     assert sign_pos != -1
     assert pytest_pos != -1
     assert asset_pos < pytest_pos

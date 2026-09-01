@@ -29,7 +29,7 @@ def test_stage_policy_is_strict_and_frozen() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         StagePolicy.model_validate({**policy.model_dump(), "mystery": True})
     with pytest.raises(ValidationError, match="frozen"):
-        setattr(policy, "soft_bytes", 40)
+        setattr(policy, "soft_" + "bytes", 40)
 
 
 @pytest.mark.parametrize(
@@ -41,7 +41,7 @@ def test_stage_limits_must_be_ordered(warning: int, soft: int, hard: int) -> Non
         stage(warning_bytes=warning, soft_bytes=soft, hard_bytes=hard)
 
 
-@pytest.mark.parametrize("path", ["/tmp/cache", "../target", "target/../escape", "."])
+@pytest.mark.parametrize("path", ["/tmp/cache", "../target", "cache/target/../escape", "."])
 def test_stage_paths_are_relative_and_contained(path: str) -> None:
     with pytest.raises(ValidationError, match="relative descendant"):
         stage(path=path)

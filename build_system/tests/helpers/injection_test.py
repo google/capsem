@@ -6,7 +6,7 @@ with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests rea
 well-formed.
 
 Usage:
-    uv run --project build_system --frozen python build_system/scripts/test/injection_test.py              # uses target/debug/capsem
+    uv run --project build_system --frozen python build_system/scripts/test/injection_test.py              # uses cache/target/cargo/debug/capsem
     uv run --project build_system --frozen python build_system/scripts/test/injection_test.py --binary ./capsem --assets ./assets
 """
 
@@ -130,7 +130,7 @@ match = 'http.host == "example.invalid"'
 def default_materialized_profiles_dir() -> str:
     """Return the generated profile catalog used by packages and CI."""
     repo_root = Path(__file__).resolve().parents[3]
-    return str(repo_root / "target" / "config" / "profiles")
+    return str(repo_root / "cache" / "target" / "config" / "profiles")
 
 
 def run_scenario(
@@ -223,18 +223,18 @@ def main():
     )
     parser.add_argument(
         "--binary",
-        default="target/debug/capsem",
-        help="Path to the capsem binary (default: target/debug/capsem)",
+        default="cache/target/cargo/debug/capsem",
+        help="Path to the capsem binary (default: cache/target/cargo/debug/capsem)",
     )
     parser.add_argument(
         "--assets",
-        default="target/assets",
-        help="Path to VM assets directory (default: target/assets)",
+        default="cache/target/assets",
+        help="Path to VM assets directory (default: cache/target/assets)",
     )
     parser.add_argument(
         "--profiles-dir",
         default=default_materialized_profiles_dir(),
-        help="Path to materialized profile catalog (default: target/config/profiles)",
+        help="Path to materialized profile catalog (default: cache/target/config/profiles)",
     )
     parser.add_argument(
         "--profile",

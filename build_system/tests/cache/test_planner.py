@@ -82,4 +82,3 @@ def test_protected_entries_are_never_selected_and_report_violations() -> None:
 
     assert [action.key for action in plan.actions] == ["old"]
     assert plan.violations == ("objects remains 40 bytes above soft cap 20",)
-

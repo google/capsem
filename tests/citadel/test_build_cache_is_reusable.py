@@ -2,10 +2,10 @@
 
 Every commit used to qualify cold. `just test` works in a private copy named
 for the commit, so a fix on top of a qualified tree shares nothing with the run
-before it -- three consecutive runs carried zero steps while a 42 GiB `target/`
+before it -- three consecutive runs carried zero steps while a 42 GiB `cache/target/`
 from the previous one sat on the same disk waiting for the next sweep to delete
 it. `resume.py` had said so in its opening paragraph for months: "a fresh copy
-per run starts with no `target/`, so every replay is cold."
+per run starts with no `cache/target/`, so every replay is cold."
 
 `buildcache` lends those trees to whichever prefix is running and takes them
 back by `rename`. That is cheap and it is also sharp, so the two properties it
@@ -39,6 +39,9 @@ def _relocated(tmp_path: Path):
     settings = config.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
     return config.model_copy(update={"prefix": settings})
@@ -74,7 +77,7 @@ def test_every_lent_path_is_invisible_to_the_source_digest() -> None:
 def test_nothing_that_records_where_it_was_built_is_lent() -> None:
     """Cargo relocates a build directory. Build scripts do not.
 
-    The first run handed a borrowed `target/` died in Tauri's build script,
+    The first run handed a borrowed `cache/target/` died in Tauri's build script,
     which records its generated permission files by absolute `OUT_DIR` and went
     looking inside a prefix that had already been reclaimed. A uv venv is the
     same shape through `pyvenv.cfg` and its console-script shebangs, and a
@@ -112,7 +115,7 @@ def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
     """
     config = _config()
     cache = buildcache.root(config).resolve()
-    parent = Path(config.prefix.parent).expanduser().resolve()
+    parent = prefix.parent_dir(config).resolve()
     assert parent != cache and parent not in cache.parents, (
         f"the lent build output at {cache} lives under the prefix root "
         f"{parent}, where the next sweep would reclaim it as a stale prefix"
@@ -145,7 +148,7 @@ def test_a_prefix_gives_its_output_back_through_the_door_it_leaves_by(tmp_path: 
 
 
 def test_lending_never_overwrites_what_the_prefix_already_built(tmp_path: Path) -> None:
-    """A resumed prefix kept its own `target/`, and it is the newer one.
+    """A resumed prefix kept its own `cache/target/`, and it is the newer one.
 
     The cache can be holding an older tree from a run that was killed before it
     handed anything back. Overwriting here would replace the output a resume
@@ -205,7 +208,7 @@ def test_an_over_threshold_compiler_cache_is_still_reused(tmp_path: Path) -> Non
 
 
 def test_compiler_output_is_shared_rather_than_lent() -> None:
-    """The mechanism that replaces lending `target/`, pinned where it is chosen.
+    """The mechanism that replaces lending `cache/target/`, pinned where it is chosen.
 
     A shared build directory is only sound while it sits outside the prefix
     root -- inside it, `prefix.sweep` reclaims it as a prefix and the next run
@@ -213,7 +216,7 @@ def test_compiler_output_is_shared_rather_than_lent() -> None:
     would look for.
     """
     prefix_config = _config().prefix
-    shared = PurePosixPath(prefix_config.cargo_target.format(parent=prefix_config.parent))
+    shared = PurePosixPath(prefix_config.cargo_target)
     parent = PurePosixPath(prefix_config.parent)
 
     assert shared != parent and parent not in shared.parents, (
@@ -221,7 +224,7 @@ def test_compiler_output_is_shared_rather_than_lent() -> None:
     )
     assert prefix_config.cargo_profiles, (
         "no profile directory is linked into the shared build root, so every "
-        "checked-in `target/debug/...` path resolves into the prefix instead"
+        "checked-in `cache/target/cargo/debug/...` path resolves into the prefix instead"
     )
     assert "target" not in set(prefix_config.lent), (
         "compiler output is shared at one path, not lent between prefixes"

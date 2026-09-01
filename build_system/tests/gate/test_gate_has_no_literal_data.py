@@ -5,7 +5,7 @@ value lived in eleven places: `--boundary X --rail Y` written out at each call
 site, four `case` blocks over architecture names each free to disagree, the
 pinned Rust toolchain spelled three times inside one script. Moving that into
 Python fixed nothing by itself -- the first draft of this package promptly grew
-`CONTAINER = "capsem-install-test"` and `LAYOUT = Layout(assets="target/...")`
+`CONTAINER = "capsem-install-test"` and `LAYOUT = Layout(assets="cache/target/...")`
 in whichever module happened to need them.
 
 `config/gate.toml` is the answer, and this is what keeps it the answer. Three
@@ -20,7 +20,7 @@ really did carry its own copy of the stamped-file list.
 from `config.arch(...)` and `config.package.channels`, which fail by name on a
 value they do not recognise.
 
-**Literal arguments to file calls.** `open("target/thing")` is the same defect
+**Literal arguments to file calls.** `open("cache/target/thing")` is the same defect
 in the form the user meets it. The argument must be a value that came from
 somewhere.
 
@@ -158,7 +158,7 @@ def test_no_module_spells_a_path(module: Path) -> None:
 
 @pytest.mark.parametrize("module", _gate_modules(), ids=lambda p: p.name)
 def test_no_file_call_receives_a_literal(module: Path) -> None:
-    """`open("target/thing")` is the same defect in the form you meet it."""
+    """`open("cache/target/thing")` is the same defect in the form you meet it."""
     tree = ast.parse(module.read_text(encoding="utf-8"))
     offenders = []
     for node in ast.walk(tree):
@@ -250,11 +250,11 @@ def test_the_bootstrap_exemption_stays_minimal() -> None:
 def test_a_path_literal_would_be_caught(tmp_path: Path) -> None:
     """Red-first, permanently: the guard must see the shape it forbids."""
     module = tmp_path / "example.py"
-    module.write_text('LAYOUT = "target/install-test-assets"\n')
+    module.write_text('LAYOUT = "cache/target/install-test-assets"\n')
 
     caught = [value for _line, value in _literals(module) if _looks_like_a_path(value)]
 
-    assert caught == ["target/install-test-assets"]
+    assert caught == ["cache/target/install-test-assets"]
 
 
 def test_a_file_mode_is_not_mistaken_for_a_path(tmp_path: Path) -> None:

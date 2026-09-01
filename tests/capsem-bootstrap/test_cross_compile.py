@@ -19,7 +19,7 @@ def _host_arch():
 
 def _agent_dir():
     arch = _host_arch()
-    return PROJECT_ROOT / "target" / "linux-agent" / arch
+    return PROJECT_ROOT / "cache" / "target" / "linux-agent" / arch
 
 
 class TestGuestBinaries:

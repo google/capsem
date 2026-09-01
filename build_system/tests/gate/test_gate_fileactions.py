@@ -8,7 +8,7 @@ every asset tree built from the same bytes. Truncating it in place corrupts all
 of them, which is why `_pack-initrd` wrote `${INITRD}.tmp.$$` and moved it
 (justfile:1470-1472) -- a rule that lived in one recipe and nothing enforced.
 
-`Symlink` exists because `target/assets/current` is repointed by whichever image
+`Symlink` exists because `cache/target/assets/current` is repointed by whichever image
 builder finished last, so the host-architecture VM proof that follows needs it
 aimed deliberately and then checked (assets.py:107-115).
 """
@@ -187,7 +187,7 @@ def test_an_unknown_digest_names_the_alternatives(
 
 
 def test_symlink_replaces_an_existing_link(context: Context, tmp_path: Path) -> None:
-    """`target/assets/current` is repointed by whichever builder finished last, so
+    """`cache/target/assets/current` is repointed by whichever builder finished last, so
     the proof that follows has to aim it deliberately."""
     (tmp_path / "arm64").mkdir()
     (tmp_path / "x86_64").mkdir()
@@ -290,7 +290,8 @@ def test_copying_a_tree_replaces_a_destination_root_symlink(
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
     (unrelated / "old.log").write_text("old\n")
-    target = tmp_path / "target"
+    target = tmp_path / "cache" / "target"
+    target.parent.mkdir()
     target.symlink_to(unrelated, target_is_directory=True)
 
     Copy(source, target).perform(context)
@@ -310,9 +311,9 @@ def test_copying_a_tree_refuses_a_source_root_symlink(context: Context, tmp_path
     source.symlink_to(real_source, target_is_directory=True)
 
     with pytest.raises(GateError, match="source tree is a symlink"):
-        Copy(source, tmp_path / "target").perform(context)
+        Copy(source, tmp_path / "cache" / "target").perform(context)
 
-    assert not (tmp_path / "target").exists()
+    assert not (tmp_path / "cache" / "target").exists()
 
 
 def test_copying_something_absent_says_which(context: Context, tmp_path: Path) -> None:

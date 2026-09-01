@@ -103,9 +103,9 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}" in workflow
     assert "PREVIEW_URL: ${{ inputs.release_site_url }}" not in workflow
     assert "inputs.activate_production && steps.preview.outputs.deployment-url" not in workflow
-    assert "--snapshot-out target/release-channel-deployment/candidate-release.json" in workflow
-    assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in workflow
-    assert "--expect-snapshot target/release-channel-deployment/prior-release.json" in workflow
+    assert "--snapshot-out cache/target/release-channel-deployment/candidate-release.json" in workflow
+    assert "--expect-snapshot cache/target/release-channel-deployment/candidate-release.json" in workflow
+    assert "--expect-snapshot cache/target/release-channel-deployment/prior-release.json" in workflow
     prior_step = workflow[prior_snapshot:preview]
     rollback_step = workflow[rollback_check:verdict]
     assert "--snapshot-only" in prior_step
@@ -177,11 +177,11 @@ def test_staging_workflows_keep_mutable_outputs_outside_cargo_cache() -> None:
     for name, workflow in workflows.items():
         assert "Swatinem/rust-cache" in workflow
         assert "$RUNNER_TEMP/" in workflow
-        assert "target/distribution" not in workflow, f"{name} stages into Cargo's cache"
+        assert "cache/target/distribution" not in workflow, f"{name} stages into Cargo's cache"
 
     binary = workflows["release-binary-staging.yaml"]
-    assert "target/binary-staging-packages" not in binary
-    assert "target/binary-channel-dry-run" not in binary
+    assert "cache/target/binary-staging-packages" not in binary
+    assert "cache/target/binary-channel-dry-run" not in binary
 
 
 def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None:

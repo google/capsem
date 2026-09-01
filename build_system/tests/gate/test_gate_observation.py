@@ -8,7 +8,7 @@ subprocesses down.
 
 That gap cost two hours of release runs. `rust-coverage` runs the capsem-admin
 suite, which builds release channels from the real `config/` tree and hardlinks
-those checked-in files into `target/`. `linux-rust` is a container with the
+those checked-in files into `cache/target/`. `linux-rust` is a container with the
 same tree bind-mounted read-only over virtiofs. The scheduler ran them together
 because their declarations were disjoint, and the container got an intermittent
 `Permission denied` on a file that was `0644` before and `0644` after.
@@ -179,7 +179,7 @@ def test_a_mode_that_returns_to_a_previous_value_is_a_flip_flop() -> None:
     the field.
     """
     watch = Watch([], source_root=Path("/repo"))
-    path = Path("/repo/target/seed.json")
+    path = Path("/repo/cache/target/seed.json")
     for mode in (0o644, 0o000, 0o644):
         watch._judge(Event(at=1.0, kind="modified", path=path, steps=(), facts=Facts(mode=mode)))
 
@@ -192,8 +192,8 @@ def test_a_hardlink_into_build_output_is_named_where_it_lands(tmp_path: Path) ->
     """The actual bug, and the reason the first version of this module could
     not have found it.
 
-    Hardlinking `config/x` to `target/y` creates a directory entry in
-    `target/` and leaves `config/` untouched -- no event fires there, ever.
+    Hardlinking `config/x` to `cache/target/y` creates a directory entry in
+    `cache/target/` and leaves `config/` untouched -- no event fires there, ever.
     Watching the source tree is structurally blind to it. The only trace is
     that the new file's inode is one a checked-in file already owns, which is
     decidable from one `stat` and needs no concurrency at all.
@@ -206,12 +206,12 @@ def test_a_hardlink_into_build_output_is_named_where_it_lands(tmp_path: Path) ->
     seed.write_text("{}", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
 
-    output = tmp_path / "target" / "release"
+    output = tmp_path / "cache" / "target" / "cargo" / "release"
     output.mkdir(parents=True)
     staged = output / "root-payload-abc"
 
     live: list[Fault] = []
-    with Watch([tmp_path / "target"], source_root=tmp_path, on_fault=live.append) as watch:
+    with Watch([tmp_path / "cache" / "target"], source_root=tmp_path, on_fault=live.append) as watch:
         watch.entered("contracts.release")
         os.link(seed, staged)
         _settle(watch, 1)
@@ -247,7 +247,7 @@ def test_two_exact_writers_touching_one_build_path_are_named() -> None:
         Event(
             at=1.0,
             kind="modified",
-            path=Path("/repo/target/store.db"),
+            path=Path("/repo/cache/target/store.db"),
             steps=("a", "b"),
             attribution="exact",
         )
@@ -261,7 +261,7 @@ def test_an_async_change_does_not_turn_live_steps_into_claimed_writers() -> None
     watch.entered("a")
     watch.entered("b")
 
-    watch.observed("modified", Path("/repo/target/store.db"))
+    watch.observed("modified", Path("/repo/cache/target/store.db"))
 
     assert watch.events[-1].steps == ("a", "b")
     assert watch.events[-1].attribution == "candidates"
@@ -272,7 +272,7 @@ def test_one_live_step_is_still_attributed_exactly() -> None:
     watch = Watch([], source_root=Path("/repo"))
     watch.entered("build")
 
-    watch.observed("modified", Path("/repo/target/output"))
+    watch.observed("modified", Path("/repo/cache/target/output"))
 
     assert watch.events[-1].steps == ("build",)
     assert watch.events[-1].attribution == "exact"
@@ -286,7 +286,7 @@ def test_interception_names_the_exact_step_among_live_candidates() -> None:
     watch.entered("b")
     token = CURRENT_STEP.set("a")
     try:
-        watch.observed("write", Path("/repo/target/output"))
+        watch.observed("write", Path("/repo/cache/target/output"))
     finally:
         CURRENT_STEP.reset(token)
 
@@ -306,7 +306,7 @@ def test_a_declared_shared_resource_is_not_a_fault() -> None:
         Event(
             at=1.0,
             kind="modified",
-            path=Path("/repo/target/assets/x"),
+            path=Path("/repo/cache/target/assets/x"),
             steps=("a", "b"),
             attribution="exact",
         )
@@ -316,23 +316,21 @@ def test_a_declared_shared_resource_is_not_a_fault() -> None:
 
 def test_build_output_is_not_the_checked_in_tree() -> None:
     watch = Watch([], source_root=Path("/repo"))
-    watch._judge(Event(at=1.0, kind="modified", path=Path("/repo/target/x"), steps=("build",)))
+    watch._judge(Event(at=1.0, kind="modified", path=Path("/repo/cache/target/x"), steps=("build",)))
     assert watch.faults == []
 
 
-def test_every_build_root_is_build_output_not_only_target() -> None:
-    """`dist/`, `packages/` and `assets/` are gitignored and rewritten per run.
-
-    Only `target` was excluded, so deleting a stale `.deb` or resyncing
-    `target/assets/current` -- both ordinary steps -- read as the gate mutating the
-    tree it is qualifying.
-    """
+def test_the_cache_root_owns_build_output() -> None:
+    """Every repository product is beneath cache; VCS/tool state stays exempt."""
     watch = Watch([], source_root=Path("/repo"))
-    for directory in ("target", "dist", "packages", "assets", ".git", "node_modules", ".venv"):
+    for directory in ("cache", ".git", "node_modules", ".venv"):
         watch._judge(
             Event(at=1.0, kind="unlink", path=Path(f"/repo/{directory}/x"), steps=("build",))
         )
     assert watch.faults == [], [fault.render() for fault in watch.faults]
+
+    for legacy in ("target", "dist", "packages", "assets"):
+        assert watch.is_source(Path(f"/repo/{legacy}/x")), legacy
 
 
 def test_a_relative_path_is_never_judged_against_the_working_directory(
@@ -371,17 +369,17 @@ def test_rmtree_of_build_output_is_not_reported_as_a_source_mutation(
     from capsem_builder.gate.interception import Instrument
 
     root = tmp_path / "checkout"
-    (root / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    (root / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
     (root / "config" / "profiles").mkdir(parents=True)
-    (root / "target" / "config" / "profiles" / "code" / "profile.toml").write_text("x")
-    (root / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text("y")
+    (root / "cache" / "target" / "config" / "profiles" / "code" / "profile.toml").write_text("x")
+    (root / "cache" / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text("y")
 
     # cwd at the checkout root is what made a bare entry name resolve into the
     # source tree in the first place.
     monkeypatch.chdir(root)
     watch = Watch(roots=(root,), source_root=root)
     with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
-        shutil.rmtree(root / "target" / "config")
+        shutil.rmtree(root / "cache" / "target" / "config")
 
     offenders = [fault for fault in watch.faults if fault.reason == "source-tree"]
     assert not offenders, [fault.render() for fault in offenders]
@@ -419,8 +417,8 @@ def test_an_intercepted_fault_names_an_absolute_path(tmp_path: Path, monkeypatch
 def test_an_empty_artifact_is_only_decidable_at_the_end(tmp_path: Path) -> None:
     """Mid-run it is a file being written; at the end it is a build that
     reported success and produced nothing."""
-    target = tmp_path / "target"
-    target.mkdir()
+    target = tmp_path / "cache" / "target"
+    target.mkdir(parents=True)
     artifact = target / "capsem.pkg"
     artifact.write_bytes(b"")
 
@@ -436,7 +434,7 @@ def test_identical_bytes_under_two_names_are_named(tmp_path: Path) -> None:
             Event(
                 at=1.0,
                 kind="modified",
-                path=tmp_path / "target" / name,
+                path=tmp_path / "cache" / "target" / name,
                 steps=(),
                 facts=Facts(inode=1 if name == "one" else 2, digest="deadbeef"),
             )
@@ -502,8 +500,8 @@ def test_interception_sees_a_hardlink_with_no_watcher_at_all(tmp_path: Path) -> 
     token = CURRENT_STEP.set("contracts.release")
     try:
         with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
-            (tmp_path / "target").mkdir()
-            os.link(seed, tmp_path / "target" / "staged-payload")
+            (tmp_path / "cache" / "target").mkdir(parents=True)
+            os.link(seed, tmp_path / "cache" / "target" / "staged-payload")
     finally:
         CURRENT_STEP.reset(token)
 
@@ -525,8 +523,8 @@ def test_interception_catches_the_mode_that_a_watcher_arrives_too_late_for(
     """
     from capsem_builder.gate.interception import Instrument
 
-    target = tmp_path / "target" / "artifact"
-    target.parent.mkdir()
+    target = tmp_path / "cache" / "target" / "artifact"
+    target.parent.mkdir(parents=True)
     target.write_text("x", encoding="utf-8")
     target.chmod(0o644)
 
@@ -594,14 +592,14 @@ def test_the_fault_log_is_bounded(tmp_path: Path) -> None:
     log_path = tmp_path / "errors.log"
     log = FaultLog(log_path, max_bytes=512, keep=2)
     for index in range(400):
-        log(Fault(path=Path(f"/repo/target/{index}"), steps=(), reason="x", detail="y" * 40))
+        log(Fault(path=Path(f"/repo/cache/target/{index}"), steps=(), reason="x", detail="y" * 40))
     log.close()
 
     generations = sorted(tmp_path.glob("errors.log*"))
     assert len(generations) <= 3, generations
     total = sum(path.stat().st_size for path in generations)
     assert total <= 512 * 3, f"{total} bytes across {generations}"
-    assert "/repo/target/399" in log_path.read_text(encoding="utf-8"), "newest fault was dropped"
+    assert "/repo/cache/target/399" in log_path.read_text(encoding="utf-8"), "newest fault was dropped"
 
 
 def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None:
@@ -625,7 +623,7 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
     root = tmp_path / "checkout"
     (root / "crates" / "app").mkdir(parents=True)
     (root / "src").mkdir()
-    (root / ".gitignore").write_text("crates/app/gen/\ntarget/\n", encoding="utf-8")
+    (root / ".gitignore").write_text("crates/app/gen/\ncache/target/\n", encoding="utf-8")
     (root / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
     for argv in (("init", "-q"), ("add", ".gitignore", "src/real.py")):
         subprocess.run(["git", *argv], cwd=root, check=True, capture_output=True)
@@ -646,7 +644,7 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
     assert watch.is_source(root / "src" / "real.py"), "and real source still counts"
     # The hand-written names stay too: a fixture is not always a repository,
     # and git answers nothing outside one.
-    assert not watch.is_source(root / "target" / "debug" / "x.bin")
+    assert not watch.is_source(root / "cache" / "target" / "cargo" / "debug" / "x.bin")
 
 
 def test_a_symlink_is_recorded_where_it_was_created(tmp_path: Path) -> None:
@@ -664,7 +662,7 @@ def test_a_symlink_is_recorded_where_it_was_created(tmp_path: Path) -> None:
     """
     from capsem_builder.gate.interception import Instrument
 
-    output = tmp_path / "target" / "assets"
+    output = tmp_path / "cache" / "target" / "assets"
     output.mkdir(parents=True)
     (output / "arm64").mkdir()
 
@@ -730,7 +728,7 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
     tmp_path: Path,
 ) -> None:
     """A frozen input copy is source evidence, not independently authored output."""
-    replica = tmp_path / "target" / "gate-source-snapshot"
+    replica = tmp_path / "cache" / "target" / "gate-source-snapshot"
     replica.mkdir(parents=True)
     first = replica / "first"
     second = replica / "second"
@@ -741,7 +739,7 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("target/gate-source-snapshot",),
+        source_replica_roots=("cache/target/gate-source-snapshot",),
     )
 
     for path in (first, second, empty):
@@ -753,8 +751,8 @@ def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
 
 
 def test_a_source_replica_exemption_does_not_cover_sibling_output(tmp_path: Path) -> None:
-    replica = tmp_path / "target" / "gate-source-snapshot"
-    sibling = tmp_path / "target" / "other"
+    replica = tmp_path / "cache" / "target" / "gate-source-snapshot"
+    sibling = tmp_path / "cache" / "target" / "other"
     replica.mkdir(parents=True)
     sibling.mkdir(parents=True)
     first = sibling / "first"
@@ -764,7 +762,7 @@ def test_a_source_replica_exemption_does_not_cover_sibling_output(tmp_path: Path
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("target/gate-source-snapshot",),
+        source_replica_roots=("cache/target/gate-source-snapshot",),
     )
 
     watch.observed("created", first)
@@ -780,14 +778,14 @@ def test_a_source_replica_still_refuses_hardlinks_into_checked_in_source(
     source = tmp_path / "source.txt"
     source.write_text("source", encoding="utf-8")
     subprocess.run(("git", "add", "source.txt"), cwd=tmp_path, check=True)
-    replica = tmp_path / "target" / "gate-source-snapshot"
+    replica = tmp_path / "cache" / "target" / "gate-source-snapshot"
     replica.mkdir(parents=True)
     linked = replica / "linked.txt"
     os.link(source, linked)
     watch = Watch(
         [],
         source_root=tmp_path,
-        source_replica_roots=("target/gate-source-snapshot",),
+        source_replica_roots=("cache/target/gate-source-snapshot",),
     )
 
     watch.observed("created", linked)

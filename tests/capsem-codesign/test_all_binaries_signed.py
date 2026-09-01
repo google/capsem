@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-TARGET_DIR = PROJECT_ROOT / "target" / "debug"
+TARGET_DIR = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
 IS_MACOS = os.uname().sysname == "Darwin"
 SIGNED_BINARIES = {
     "capsem-process": TARGET_DIR / "capsem-process",

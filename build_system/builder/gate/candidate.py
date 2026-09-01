@@ -100,7 +100,7 @@ class CompleteGate:
     commands that spend the multi-hour proof -- which is the same set long
     enough for someone to edit the tree while it runs.
 
-    It is not free: a private copy starts with no `target/`, and `test-fast`
+    It is not free: a private copy starts with no `cache/target/`, and `test-fast`
     measures 89s from a prefix against 28s in a warm checkout. That ratio is
     the price of a qualification whose subject cannot move while it runs, and
     only a command that already costs an hour should pay it.

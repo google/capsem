@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from ..release.obom import validate_exported_rootfs_obom
+from . import cachelayout
 from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import digest_of, write_text
@@ -36,12 +37,8 @@ def _location_matches(
 ) -> bool:
     if len(identity) != 64 or identity.strip("0123456789abcdef") or not profile or Path(profile).name != profile:
         return False
-    cached = (
-        Path(config.prefix.vm_image_cache.format(parent=config.prefix.parent)).expanduser()
-        / identity
-        / profile
-        / f"build-{architecture}"
-    )
+    cached = cachelayout.shared_path(config, config.prefix.vm_image_cache)
+    cached = cached / identity / profile / f"build-{architecture}"
     local = config.path(config.assets.test_root) / profile / f"build-{architecture}"
     resolved = output.resolve()
     if resolved == cached.resolve():

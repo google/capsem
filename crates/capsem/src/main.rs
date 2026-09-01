@@ -133,12 +133,12 @@ fn find_mock_server_binary(
         }
     }
 
-    let cwd_candidate = current_dir.join("target/debug/capsem-mock-server");
+    let cwd_candidate = current_dir.join("cache/target/cargo/debug/capsem-mock-server");
     if cwd_candidate.exists() {
         return Some(cwd_candidate);
     }
 
-    let manifest_candidate = manifest_dir.join("../../target/debug/capsem-mock-server");
+    let manifest_candidate = manifest_dir.join("../../cache/target/cargo/debug/capsem-mock-server");
     if manifest_candidate.exists() {
         return Some(manifest_candidate);
     }
@@ -153,7 +153,7 @@ fn mock_server_binary_path() -> Result<PathBuf> {
 
     find_mock_server_binary(&executable, &current_dir, &manifest_dir).ok_or_else(|| {
         anyhow!(
-            "capsem-mock-server not found beside the Capsem executable or under target/debug; \
+            "capsem-mock-server not found beside the Capsem executable or under cache/target/cargo/debug; \
          reinstall Capsem or run cargo build -p capsem-mock-server"
         )
     })

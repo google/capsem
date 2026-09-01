@@ -127,7 +127,7 @@ MCP tools use **camelCase** on the wire (ramMb, cpuCount) because that is the MC
 
 Registered in AI CLI settings:
 ```json
-{ "mcpServers": { "capsem": { "command": "target/debug/capsem-mcp" } } }
+{ "mcpServers": { "capsem": { "command": "cache/target/cargo/debug/capsem-mcp" } } }
 ```
 
 ### Environment variables

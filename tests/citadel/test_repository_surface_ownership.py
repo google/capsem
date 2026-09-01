@@ -49,7 +49,7 @@ EXPECTED_TARGETS = frozenset(
         "web/docs/",
         "web/marketing/",
         "web/graphics/",
-        "target/",
+        "cache/target/",
     }
 )
 KNOWN_CI_JOBS = frozenset(

@@ -48,7 +48,7 @@ The release gate reads `config/storage-policy.toml`: it retains 24GB of hot
 BuildKit data, keeps 24GB free for the active rail, supports existing 96GB
 Colima disks, and recommends 128GB for new runtimes. Cache/image release
 happens only after the declared last consumer. `just test` preserves a bounded
-storage report and IronBank logs under `target/test-artifacts/` on failure.
+storage report and IronBank logs under `cache/target/test-artifacts/` on failure.
 
 If an existing Colima disk is below 96GB, expand it before the complete gate:
 

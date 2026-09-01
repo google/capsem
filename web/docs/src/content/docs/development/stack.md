@@ -104,7 +104,7 @@ The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. T
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
 6. `_materialize-config` uses the updated manifest to generate
-   `target/config/profiles/code/profile.toml`
+   `cache/target/config/profiles/code/profile.toml`
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
@@ -154,10 +154,10 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads the selected profile from `target/config/profiles` in
+The service loads the selected profile from `cache/target/config/profiles` in
 development and the installed profile directory in packaged builds. That
 profile selects three assets from `~/.capsem/assets/` (installed) or
-`target/assets/{arch}/` (development):
+`cache/target/assets/{arch}/` (development):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|

@@ -113,7 +113,7 @@ These read post-W2 JSON logs (`~/.capsem/run/{service,mcp,gateway,tray}.log` + c
 
 
 
-**Integration-test failures: read the preserved service log.** When any integration test fails, the test fixture (`tests/helpers/service.py::ServiceInstance`, the e2e `RealService`, and the MCP `_start_capsem_service`) archives its tmp_dir to `target/test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` **before** the usual rmtree. The failing test's stderr has the exact path: look for a line `ARTIFACT: preserved /var/folders/... -> target/test-artifacts/...`. Inside that directory:
+**Integration-test failures: read the preserved service log.** When any integration test fails, the test fixture (`tests/helpers/service.py::ServiceInstance`, the e2e `RealService`, and the MCP `_start_capsem_service`) archives its tmp_dir to `cache/target/test-artifacts/<timestamp>-<worker>-<nodeid>/<tmp-basename>/` **before** the usual rmtree. The failing test's stderr has the exact path: look for a line `ARTIFACT: preserved /var/folders/... -> cache/target/test-artifacts/...`. Inside that directory:
 
 ```
 service.log                     host-side capsem-service debug log (RUST_LOG=debug)
@@ -125,7 +125,7 @@ sessions/<vm-id>/session.db     SQLite telemetry DB (net_events, model_calls, ..
 persistent/<name>/...           persistent-VM state (checkpoint.vzsave, workspace)
 ```
 
-`target/test-artifacts/` is gitignored. Multiple failures sharing a session-scoped service land in different subdirs but the latest run's name tags them by the most recent failing nodeid. First place to look for "VM didn't become exec-ready" style failures: `sessions/<id>/serial.log` (did the VM boot?) and `sessions/<id>/process.log` (did the agent come up + IPC handshake?). For "provision hung" or service-side contention: `service.log`, grep for the VM id.
+`cache/target/test-artifacts/` is gitignored. Multiple failures sharing a session-scoped service land in different subdirs but the latest run's name tags them by the most recent failing nodeid. First place to look for "VM didn't become exec-ready" style failures: `sessions/<id>/serial.log` (did the VM boot?) and `sessions/<id>/process.log` (did the agent come up + IPC handshake?). For "provision hung" or service-side contention: `service.log`, grep for the VM id.
 
 **Rust code**: Read the code path the test exercises. Trace the data flow. Add `tracing` instrumentation if needed (`RUST_LOG=capsem=debug`). Check if the issue is in capsem-core, capsem-app, or capsem-agent.
 
@@ -148,12 +148,12 @@ python3 build_system/scripts/doctor/check_session.py   # Check net_events for do
 
 **Frontend issues**: Run `just dev ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
 
-**Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`build_system/packaging/macos/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
+**Build pipeline issues**: Check `cache/target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`build_system/packaging/macos/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
 For a Python gate or release failure, inspect the recorded run first. Step
 labels, argv, timing, captured output, resource events, and the first failed
-action live under `target/gate-runs/`; `capsem-gate runs last --failed` is the
-supported reader. `target/build.log` is supporting build evidence, not the
+action live under `cache/target/gate-runs/`; `capsem-gate runs last --failed` is the
+supported reader. `cache/target/build.log` is supporting build evidence, not the
 gate's execution ledger.
 
 Do not retry a release through its script, `capsem-admin release`, or a GitHub

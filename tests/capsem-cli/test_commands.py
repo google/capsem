@@ -10,7 +10,7 @@ from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 #: Where this lane's binaries are, built or pulled. A release qualifies from
-#: a prefix carrying only tracked files, so `target/debug` there is a
+#: a prefix carrying only tracked files, so `cache/target/cargo/debug` there is a
 #: directory nothing ever wrote -- which is how five CLI tests took down the
 #: twelfth binary-release dispatch after every install had passed.
 CLI_BINARY = BIN_DIR / "capsem"

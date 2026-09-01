@@ -35,18 +35,18 @@ EXPECTED = {
     "vitest.config.ts",
 }
 LEGACY = re.compile(
-    r"(?<![A-Za-z0-9_./-])release-site/|target/release-channel(?=$|[/\'\"\s])"
+    r"(?<![A-Za-z0-9_./-])release-site/|cache/target/release-channel(?=$|[/\'\"\s])"
 )
 LEGACY_LOCAL_OUTPUT = re.compile(
-    r"target/(?:install-test-channel|release-rehearsal/dist)(?=$|[/\'\"\s])"
+    r"cache/target/(?:install-test-channel|release-rehearsal/dist)(?=$|[/\'\"\s])"
 )
 RATIONALE = """\
 The Astro release site is a build-time distribution generator, not an
 independent product website. Its source and unit tests belong to build_system,
 while cross-system deployment acceptance stays under root tests. Generated
-distribution bytes have one repository output root, target/distribution. Old
+distribution bytes have one repository output root, cache/target/distribution. Old
 source or output literals can make local, CI, package, and deployment lanes
-build different trees. See T3 and target/ in the repository cleanup proposal.
+build different trees. See T3 and cache/target/ in the repository cleanup proposal.
 """
 
 
@@ -111,8 +111,8 @@ def test_legacy_literal_detector_observes_both_old_owners() -> None:
     found = _legacy_literals(
         {
             "source": "release-site/package.json",
-            "output": "--out-dir target/release-channel",
-            "valid": "build_system/release_site and target/distribution",
+            "output": "--out-dir cache/target/release-channel",
+            "valid": "build_system/release_site and cache/target/distribution",
         }
     )
     assert found == ["output", "source"], RATIONALE
@@ -121,10 +121,10 @@ def test_legacy_literal_detector_observes_both_old_owners() -> None:
 def test_local_output_detector_observes_pre_convergence_paths() -> None:
     found = _legacy_local_outputs(
         {
-            "install": 'channel = "target/install-test-channel"',
-            "rehearsal": "target/release-rehearsal/dist/assets/stable/manifest.json",
-            "valid": "target/distribution/rehearsal/dist/assets/stable/manifest.json",
-            "crates/capsem/src/tests.rs": "target/install-test-channel",
+            "install": 'channel = "cache/target/install-test-channel"',
+            "rehearsal": "cache/target/release-rehearsal/dist/assets/stable/manifest.json",
+            "valid": "cache/target/distribution/rehearsal/dist/assets/stable/manifest.json",
+            "crates/capsem/src/tests.rs": "cache/target/install-test-channel",
         }
     )
     assert found == ["crates/capsem/src/tests.rs", "install", "rehearsal"], RATIONALE
@@ -180,8 +180,8 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
     disk = config["disk"]
     assert isinstance(disk, dict)
     reclaimable = disk["reclaimable"]
-    assert "target/distribution" in reclaimable, RATIONALE
-    assert "target/release-channel" not in reclaimable, RATIONALE
+    assert "cache/target/distribution" in reclaimable, RATIONALE
+    assert "cache/target/release-channel" not in reclaimable, RATIONALE
 
 
 def test_no_old_release_source_or_distribution_output_literal_remains() -> None:

@@ -6,7 +6,7 @@ export default defineConfig({
       include: ['scripts/**/*.mjs', 'src/**/*.ts'],
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      reportsDirectory: '../../target/coverage/distribution-site',
+      reportsDirectory: '../../cache/target/coverage/distribution-site',
     },
     include: ['../tests/release_site/**/*.test.ts'],
   },

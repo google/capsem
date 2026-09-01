@@ -109,7 +109,7 @@ jobs:
           tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Prepare test output owners
-        run: mkdir -p target/coverage/linux target/test-artifacts
+        run: mkdir -p cache/target/coverage/linux cache/target/test-artifacts
 
       # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
@@ -122,7 +122,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/linux/codecov.json
+          files: cache/target/coverage/linux/codecov.json
           flags: linux-unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -131,7 +131,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: target/coverage/linux/nextest/ci/junit.xml
+          files: cache/target/coverage/linux/nextest/ci/junit.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -153,7 +153,7 @@ jobs:
         run: |
           KVM_STATUS="available"
           [ -e /dev/kvm ] || KVM_STATUS="not available"
-          COV=$(grep 'TOTAL' target/coverage/linux/summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+          COV=$(grep 'TOTAL' cache/target/coverage/linux/summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Linux Test Results
@@ -172,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-linux-${{ github.run_attempt }}
-          path: target/test-artifacts/
+          path: cache/target/test-artifacts/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -236,8 +236,8 @@ jobs:
 
       - name: Prepare test output owners
         run: |
-          mkdir -p target/coverage/python target/coverage/rust target/coverage/junit target/test-artifacts
-          echo "COVERAGE_FILE=$GITHUB_WORKSPACE/target/coverage/.coverage" >> "$GITHUB_ENV"
+          mkdir -p cache/target/coverage/python cache/target/coverage/rust cache/target/coverage/junit cache/target/test-artifacts
+          echo "COVERAGE_FILE=$GITHUB_WORKSPACE/cache/target/coverage/.coverage" >> "$GITHUB_ENV"
 
       - name: Install sha256sum compatibility wrapper
         run: |
@@ -254,20 +254,20 @@ jobs:
       - name: Unit tests with coverage
         run: |
           set -o pipefail
-          cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci-unit --codecov --output-path target/coverage/rust/unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
-          cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee target/coverage/rust/summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci-integration --codecov --output-path target/coverage/rust/integration.json -p capsem-core --test '*'
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci-integration --codecov --output-path cache/target/coverage/rust/integration.json -p capsem-core --test '*'
 
       # Frontend tests with coverage + JUnit output. The bundle this used to
       # build as a third stage comes from the `frontend-build` job above, and
       # nothing in this job reads it.
       - name: Frontend type-check and test
         env:
-          CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/target/coverage/junit/frontend.xml
+          CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/cache/target/coverage/junit/frontend.xml
         run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
 
       # Python schema tests with coverage
@@ -285,7 +285,7 @@ jobs:
           tests/test_settings_spec.py
           tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py
           --cov=build_system/builder --cov-report= --cov-fail-under=0
-          --junitxml=target/coverage/junit/python-cross-system.xml
+          --junitxml=cache/target/coverage/junit/python-cross-system.xml
 
       - name: Build-system Python schema tests with coverage
         run: >-
@@ -306,14 +306,14 @@ jobs:
           build_system/tests/image/test_validate.py
           build_system/tests/scripts/test_clean_stale.py
           --cov=build_system/builder --cov-append --cov-report= --cov-fail-under=0
-          --junitxml=target/coverage/junit/python-build-system.xml
+          --junitxml=cache/target/coverage/junit/python-build-system.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)
         run: |
           bash build_system/scripts/test/prepare-install-test-assets.sh
           cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp -p capsem-mock-server -p capsem-bench
-          for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench-rs; do
+          for bin in cache/target/cargo/debug/capsem-process cache/target/cargo/debug/capsem-service cache/target/cargo/debug/capsem cache/target/cargo/debug/capsem-mcp cache/target/cargo/debug/capsem-mock-server cache/target/cargo/debug/capsem-bench-rs; do
             codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force "$bin"
           done
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/ \
@@ -323,7 +323,7 @@ jobs:
             -v --tb=short \
             --cov=build_system/builder \
             --cov-append \
-            --cov-report=xml:target/coverage/python/codecov.xml \
+            --cov-report=xml:cache/target/coverage/python/codecov.xml \
             --cov-fail-under=0
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
@@ -344,7 +344,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/rust/unit.json
+          files: cache/target/coverage/rust/unit.json
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -353,7 +353,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/rust/integration.json
+          files: cache/target/coverage/rust/integration.json
           flags: integration
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -362,7 +362,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/web-app/coverage-final.json
+          files: cache/target/coverage/web-app/coverage-final.json
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -371,7 +371,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/python/codecov.xml
+          files: cache/target/coverage/python/codecov.xml
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -381,21 +381,21 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: target/coverage/nextest/ci-unit/junit.xml,target/coverage/nextest/ci-integration/junit.xml,target/coverage/junit/frontend.xml,target/coverage/junit/python-cross-system.xml,target/coverage/junit/python-build-system.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
       # T5: preserve every test artifact (service.log / process.log /
       # session.db etc.) on failure so PR reviewers can debug without
       # rerunning. preserve_tmp_dir_on_failure() in tests/helpers/service.py
-      # populates `target/test-artifacts/` only on red runs; if-no-files-found
+      # populates `cache/target/test-artifacts/` only on red runs; if-no-files-found
       # is "ignore" so green runs don't bloat the workflow.
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-${{ runner.os }}-${{ github.run_attempt }}
-          path: target/test-artifacts/
+          path: cache/target/test-artifacts/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -408,7 +408,7 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          COV=$(grep 'TOTAL' target/coverage/rust/summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+          COV=$(grep 'TOTAL' cache/target/coverage/rust/summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Test Results
@@ -475,7 +475,7 @@ jobs:
               # The package derives public/corporate lock policy from this
               # canonical URL shape. Keep a retired first-party fixture public
               # so the install gate may hand it its generated local manifest.
-              output="$PWD/target/ci-install-selection/assets/stable/manifest.json"
+              output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"
               python3 build_system/scripts/release/fetch-channel-source-manifest.py \
                 --channel stable \
                 --repository "$GITHUB_REPOSITORY" \
@@ -495,19 +495,19 @@ jobs:
           manifest-url: ${{ steps.install-manifest.outputs.manifest-url }}
           kind: profiles
           architecture: x86_64
-          output: target/ci-install-content/inputs
+          output: cache/target/ci-install-content/inputs
 
       - name: Stage one exact install content pair
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/ci-install-content/inputs \
-            --assets-dir target/ci-install-content/assets \
-            --config-root target/ci-install-source-config \
+            --input-dir cache/target/ci-install-content/inputs \
+            --assets-dir cache/target/ci-install-content/assets \
+            --config-root cache/target/ci-install-source-config \
             --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="$PWD/target/ci-install-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/target/ci-install-content/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/ci-install-source-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/ci-install-content/config" \
+          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/ci-install-content/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/cache/target/ci-install-content/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/cache/target/ci-install-source-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/ci-install-content/config" \
           CAPSEM_ARCH=x86_64 \
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
@@ -517,14 +517,14 @@ jobs:
           CAPSEM_INSTALL_CHANNEL: stable
         run: |
           uv run --project build_system --frozen capsem-gate cross-compile x86_64 \
-            --content-root target/ci-install-content \
+            --content-root cache/target/ci-install-content \
             --defer-proof
 
       - name: Run install e2e tests
         id: install_e2e
         run: |
           uv run --project build_system --frozen capsem-gate install \
-            --selected-content-root target/ci-install-content
+            --selected-content-root cache/target/ci-install-content
 
       - name: Upload install and glow-up evidence on failure
         if: failure()
@@ -532,8 +532,8 @@ jobs:
         with:
           name: install-glowup-evidence-${{ github.run_attempt }}
           path: |
-            target/gate-runs/
-            target/local-release-glowup-evidence/
+            cache/target/gate-runs/
+            cache/target/local-release-glowup-evidence/
           retention-days: 7
           # Input resolution can fail before a gate exists. Preserve that
           # primary failure without adding a misleading upload failure, while
@@ -629,7 +629,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: target/coverage/distribution-site/lcov.info
+          files: cache/target/coverage/distribution-site/lcov.info
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

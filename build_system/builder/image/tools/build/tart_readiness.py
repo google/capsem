@@ -68,7 +68,7 @@ def main() -> int:
     parser.add_argument(
         "--report",
         type=Path,
-        default=ROOT / "target" / "tart-readiness" / "report.json",
+        default=ROOT / "cache" / "target" / "tart-readiness" / "report.json",
     )
     args = parser.parse_args()
 

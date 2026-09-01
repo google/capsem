@@ -1,4 +1,4 @@
-"""What a prefix's `target/` points at: the shared build root, or a pulled tree.
+"""What a prefix's `cache/target/` points at: the shared build root, or a pulled tree.
 
 Split out of `prefix`, which had grown past the module ceiling this project
 holds itself to -- and the seam is a real one rather than a line count.
@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 from typing import NamedTuple
 
+from . import cachelayout
 from .config import GateConfig
 from .errors import GateError
 
@@ -38,7 +39,11 @@ class Size(NamedTuple):
 
 def path(config: GateConfig) -> Path:
     """The one build directory every run compiles into."""
-    return Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser()
+    return cachelayout.shared_path(config, config.prefix.cargo_target)
+
+
+def _generated_root(prefix: Path) -> Path:
+    return prefix / "cache" / "target"
 
 
 def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> None:
@@ -46,7 +51,7 @@ def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> Non
 
     A pulled lane's binaries are staged outside the prefix, and roughly
     twenty-five checked-in test modules resolve a host binary as
-    `PROJECT_ROOT/target/debug/<name>`. Those paths are not wrong -- a test
+    `PROJECT_ROOT/cache/target/cargo/debug/<name>`. Those paths are not wrong -- a test
     should not have to know that this run was handed its binaries instead of
     building them -- but in a prefix carrying only tracked files they name a
     directory nothing ever wrote.
@@ -57,7 +62,7 @@ def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> Non
     fix applied twenty-five times and forgotten on the twenty-sixth; a link is
     the mechanism, and it is the same one the compiler output already uses.
     """
-    root = prefix / "target"
+    root = _generated_root(prefix) / "cargo"
     root.mkdir(parents=True, exist_ok=True)
     link = root / config.modules.default_bin_dir.rsplit("/", 1)[-1]
     if link.is_symlink():
@@ -76,23 +81,23 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
     """Point this prefix's profile directories at the shared build root.
 
     Cargo is told where to write by `CARGO_TARGET_DIR`; these symlinks are for
-    everything else. Roughly thirty checked-in paths name `target/debug/...` or
-    `target/release/...` relative to the tree a step runs in, and they are
+    everything else. Roughly thirty checked-in paths name `cache/target/cargo/debug/...` or
+    `cache/target/cargo/release/...` relative to the tree a step runs in, and they are
     correct -- a step should not have to know that compiler output is a
     property of the machine rather than of the run.
 
-    Only the profile directories. The rest of `target/` is the run's own: the
+    Only the profile directories. The rest of `cache/target/` is the run's own: the
     journal it is writing, the config it materialized, the homes its VMs boot
     from. Sharing those would make two runs one run.
     """
     shared = path(config)
-    root = prefix / "target"
+    root = _generated_root(prefix) / "cargo"
     root.mkdir(parents=True, exist_ok=True)
     for profile in config.prefix.cargo_profiles:
         (shared / profile).mkdir(parents=True, exist_ok=True)
         link = root / profile
         # A resumed prefix already has the link, and a populated one cannot:
-        # `snapshot` copies tracked files, and `target/` is gitignored.
+        # `snapshot` copies tracked files, and `cache/target/` is gitignored.
         if link.is_symlink():
             if link.readlink() == shared / profile:
                 continue
@@ -106,12 +111,12 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
 
 
 def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
-    """Decide what this prefix's `target/` points at, once, in one place.
+    """Decide what this prefix's `cache/target/` points at, once, in one place.
 
     Two lanes and one answer. Ordinary runs compile into the shared build root;
     a release lane reads binaries and config a manifest selected and something
     else staged. Either way the checked-in tests resolve
-    `PROJECT_ROOT/target/...` and are right to, so the prefix is what makes that
+    `PROJECT_ROOT/cache/target/...` and are right to, so the prefix is what makes that
     resolve to the correct tree.
     """
     pulled = os.environ.get(config.modules.release_bin_dir)
@@ -125,24 +130,24 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     # set when the prefix is built -- keying on it meant this never fired, and
     # a test that set it first agreed with the assumption instead of checking
     # it.
-    staged = config.root / "target" / "config"
+    staged = _generated_root(config.root) / "config"
     if staged.is_dir():
         link_pulled_tree(config, prefix, "config", staged.resolve())
 
 
 def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:
-    """Point one path under the prefix's `target/` at a tree staged outside it.
+    """Point one path under the prefix's `cache/target/` at a tree staged outside it.
 
     The same fix as the binaries and for the same reason. A release lane
     qualifies from a prefix carrying only tracked files, while the checked-in
-    tests resolve `PROJECT_ROOT/target/<something>` because a test should not
+    tests resolve `PROJECT_ROOT/cache/target/<something>` because a test should not
     have to know whether this run built its inputs or was handed them. Linking
     is what makes both true at once.
 
     Refuses a real directory rather than preferring it: a lane that exists to
     prove manifest-selected content must not quietly read content it made.
     """
-    link = prefix / "target" / relative
+    link = _generated_root(prefix) / relative
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
         if link.readlink() == target:

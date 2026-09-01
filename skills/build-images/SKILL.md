@@ -38,9 +38,9 @@ config/
     build.sh              Profile image build hook
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
-target/config/            Generated runtime config with asset/file evidence
-target/assets/            Generated VM assets
-target/packages/          Generated native packages
+cache/target/config/            Generated runtime config with asset/file evidence
+cache/target/assets/            Generated VM assets
+cache/target/packages/          Generated native packages
 guest/artifacts/          Core guest payloads: init, doctor, diagnostics, bench
 ```
 
@@ -90,7 +90,7 @@ just _build-rootfs arm64
 ## Per-arch asset layout
 
 ```
-target/assets/
+cache/target/assets/
   manifest.json          Version, checksums, asset list
   B3SUMS                 BLAKE3 checksums
   arm64/
@@ -130,7 +130,7 @@ rules, MCP declarations, tips, or root seed files makes
 `capsem-admin profile check` fail, fix the source contract or the
 validation/materialization rail with tests. Do not "just fix the hash" in TOML.
 
-Generated runtime asset URLs/hashes belong in `target/config` after
+Generated runtime asset URLs/hashes belong in `cache/target/config` after
 `capsem-admin profile materialize`, not in checked-in source TOML. Profile
 materialization must recopy descriptor files and `root/` payloads from source
 on every run; stale generated roots are a release blocker, not a cache.

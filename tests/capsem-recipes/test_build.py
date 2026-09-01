@@ -30,7 +30,7 @@ def test_expected_binaries_after_build():
         "capsem",
         "capsem-mcp",
     ]
-    target_dir = PROJECT_ROOT / "target" / "debug"
+    target_dir = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
     for name in expected:
         binary = target_dir / name
         assert binary.exists(), f"Expected binary not found: {binary}"

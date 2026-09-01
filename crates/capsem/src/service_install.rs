@@ -156,7 +156,7 @@ pub fn is_service_installed() -> bool {
 /// `--assets-dir` argument is resolved at install time from
 /// `capsem_core::paths::capsem_assets_dir()`. That helper honors
 /// `CAPSEM_HOME` / `CAPSEM_ASSETS_DIR` / `CAPSEM_RUN_DIR`, which the test
-/// harness sets to transient paths like `target/test-home/.capsem`. If
+/// harness sets to transient paths like `cache/target/test-home/.capsem`. If
 /// the install inherits any of them the generated unit permanently points
 /// at a directory that gets wiped on every subsequent `just test`,
 /// leaving the installed service pointing at non-existent assets. Fail
@@ -173,7 +173,7 @@ fn reject_test_isolation_env() -> Result<()> {
     }
     anyhow::bail!(
         "refusing to install service with test-isolation env vars set: {}.\n\
-         These point at transient test directories (e.g. target/test-home) \
+         These point at transient test directories (e.g. cache/target/test-home) \
          that are wiped by `just test`, so an install that inherits them \
          permanently embeds a non-existent path in the LaunchAgent / systemd \
          unit. Unset them and retry: `unset {}`.",
@@ -447,7 +447,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     //
     // Scope by the installed prefix so we only kill processes from this
     // installation -- `-x <name>` matches every capsem-service on the box,
-    // including parallel pytest workers running target/debug binaries.
+    // including parallel pytest workers running cache/target/cargo/debug binaries.
     let install_dir = capsem_paths.service_bin.parent().map(|p| p.to_path_buf());
     let scoped_name = |name: &str| -> String {
         install_dir

@@ -71,7 +71,7 @@ def _inventories(
 
 @pytest.fixture(scope="module")
 def cargo_target_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tmp_path_factory.mktemp("rust-test-inventory") / "target"
+    return tmp_path_factory.mktemp("rust-test-inventory") / "cache" / "target"
 
 
 def test_cargo_and_nextest_agree_on_every_native_target(cargo_target_dir: Path) -> None:

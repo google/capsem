@@ -47,7 +47,7 @@ PYCACHE = "PYTHONPYCACHEPREFIX"
 #: Where the per-invocation caches live, under the tree the gate already
 #: reclaims. Spelled here rather than read from `config/gate.toml`, because
 #: loading that config means importing the package this runs before.
-ROOT = "target/gate-pycache"
+ROOT = "cache/target/gate-pycache"
 
 #: A prefix older than this belongs to an invocation that is long over. Pruned
 #: opportunistically on the way in, which keeps the directory bounded without

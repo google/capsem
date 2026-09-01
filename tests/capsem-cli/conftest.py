@@ -7,7 +7,7 @@ import pytest
 from helpers.service import ServiceInstance
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
+CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
 
 pytestmark = pytest.mark.integration
 

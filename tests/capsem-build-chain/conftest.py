@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ASSETS_DIR = PROJECT_ROOT / "target" / "assets"
-TARGET_DIR = PROJECT_ROOT / "target" / "debug"
+ASSETS_DIR = PROJECT_ROOT / "cache" / "target" / "assets"
+TARGET_DIR = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
 ENTITLEMENTS = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
 
 IS_MACOS = os.uname().sysname == "Darwin"

@@ -1315,11 +1315,11 @@ def command_capture_failure(args: argparse.Namespace, policy: dict[str, Any]) ->
         outcome = copy_small_file(source, target, maximum_bytes)
         collected.append({"source": str(source), "outcome": outcome})
 
-    collect(ROOT / "target" / "build.log", destination / "build.log")
+    collect(ROOT / "cache" / "target" / "build.log", destination / "build.log")
     collect(report_path(policy), destination / "docker-storage.jsonl")
-    collect(ROOT / "target" / "storage" / "host-cleanup.jsonl", destination / "host-cleanup.jsonl")
+    collect(ROOT / "cache" / "target" / "storage" / "host-cleanup.jsonl", destination / "host-cleanup.jsonl")
 
-    ironbank = ROOT / "target" / "ironbank-assets"
+    ironbank = ROOT / "cache" / "target" / "ironbank-assets"
     # Named even when the glob is empty. A build that never ran and a
     # collector that never looked produce the same silence otherwise, and the
     # difference is the whole point of preserving evidence.

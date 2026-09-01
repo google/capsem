@@ -2,7 +2,7 @@
 
 Six consecutive `just test` runs were spent proving the same twenty minutes of
 work to reach a new failure one step further on. The private checkout made that
-worse, not better: a fresh copy per run starts with no `target/`, so every
+worse, not better: a fresh copy per run starts with no `cache/target/`, so every
 replay is cold.
 
 Working-tree `--prefix <tree> --from <step>` is diagnostic continuation and

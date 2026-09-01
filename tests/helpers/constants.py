@@ -17,13 +17,13 @@ BIN_VARIABLE = "CAPSEM_RELEASE_BIN_DIR"
 def content_assets_root(environment: Mapping[str, str] | None = None) -> Path:
     """The manifest-selected asset root for this test process."""
     source = os.environ if environment is None else environment
-    return Path(source.get(ASSETS_VARIABLE) or PROJECT_ROOT / "target" / "assets")
+    return Path(source.get(ASSETS_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "assets")
 
 
 def content_profiles_root(environment: Mapping[str, str] | None = None) -> Path:
     """The profile catalog paired with the selected asset manifest."""
     source = os.environ if environment is None else environment
-    return Path(source.get(PROFILES_VARIABLE) or PROJECT_ROOT / "target" / "config" / "profiles")
+    return Path(source.get(PROFILES_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "config" / "profiles")
 
 
 def host_bin_root(environment: Mapping[str, str] | None = None) -> Path:
@@ -31,16 +31,16 @@ def host_bin_root(environment: Mapping[str, str] | None = None) -> Path:
 
     The third of these, and for the same reason as the first two: a release
     lane qualifies from a private prefix carrying only tracked files, so
-    `target/debug` is a directory nothing ever wrote. The gate already answers
+    `cache/target/cargo/debug` is a directory nothing ever wrote. The gate already answers
     this question -- `qualification.py` resolves `CAPSEM_RELEASE_BIN_DIR` or
-    falls back to `target/debug` -- and helpers that spelled the fallback out
+    falls back to `cache/target/cargo/debug` -- and helpers that spelled the fallback out
     for themselves were reading past a lane that had told them otherwise.
 
     That cost the tenth binary-release dispatch, which died on
-    `target/debug/capsem-service` after every other job in the run had passed.
+    `cache/target/cargo/debug/capsem-service` after every other job in the run had passed.
     """
     source = os.environ if environment is None else environment
-    return Path(source.get(BIN_VARIABLE) or PROJECT_ROOT / "target" / "debug")
+    return Path(source.get(BIN_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "cargo" / "debug")
 
 
 ASSETS_DIR = content_assets_root()

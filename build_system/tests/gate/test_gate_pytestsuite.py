@@ -149,8 +149,8 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
         "ironbank",
     )
     forbidden = (
-        'ASSETS_DIR = PROJECT_ROOT / "target" / "assets"',
-        'PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"',
+        'ASSETS_DIR = PROJECT_ROOT / "cache" / "target" / "assets"',
+        'PROFILES_DIR = PROJECT_ROOT / "cache" / "target" / "config" / "profiles"',
     )
     offenders = [
         f"{path.relative_to(PROJECT_ROOT)}: {needle}"
@@ -282,7 +282,7 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
         # unit test cannot mistake itself for a release -- and the child then
         # inherits an environment that still says artifacts are required while
         # no longer saying which lane is running. It concluded it was a local
-        # build and asked for `target/linux-agent`, which a pulled lane
+        # build and asked for `cache/target/linux-agent`, which a pulled lane
         # correctly does not have, fifteen minutes into a release gate.
         env={k: v for k, v in os.environ.items() if k != "CAPSEM_REQUIRE_ARTIFACTS"},
     )

@@ -68,18 +68,18 @@ cargo build --release \
     -p capsem-admin \
     -p capsem-mock-server \
     -p capsem-bench
-bash build_system/scripts/build/check-build-provenance.sh "$ROOT/target/release/capsem"
+bash build_system/scripts/build/check-build-provenance.sh "$ROOT/cache/target/cargo/release/capsem"
 bash "$SCRIPT_DIR/build-pkg.sh" \
     --manifest "$MANIFEST_URL" \
-    "$ROOT/target/release/bundle/macos/Capsem.app" \
-    "$ROOT/target/release" \
+    "$ROOT/cache/target/cargo/release/bundle/macos/Capsem.app" \
+    "$ROOT/cache/target/release" \
     "$ASSETS_DIR" \
     "$CONFIG_ROOT" \
     "$VERSION"
 
-PKG="$ROOT/target/packages/Capsem-$VERSION.pkg"
+PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"
 test -s "$PKG"
-SBOM="$ROOT/target/macos-package-sbom.spdx.json"
+SBOM="$ROOT/cache/target/macos-package-sbom.spdx.json"
 python3 build_system/scripts/release/generate-host-binary-sbom.py --output "$SBOM" "$PKG"
 python3 - "$SBOM" <<'PY'
 import json

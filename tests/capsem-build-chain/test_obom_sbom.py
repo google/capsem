@@ -35,7 +35,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "if: ${{ inputs.dry_run == false }}" in publish_profile
     assert "build_system/scripts/release/stage-profile-publication.py" in asset_workflow
     assert "build_system/scripts/release/verify-profile-publication.py" in asset_workflow
-    assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
+    assert "subject-path: cache/target/asset-release/profile-*/*" in asset_workflow
     assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
         "Publish immutable GitHub profile release"
     )

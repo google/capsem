@@ -7,12 +7,12 @@
 #   app_path          Path to signed Capsem.app (from Tauri build)
 #   bin_dir           Directory containing companion binaries (capsem, capsem-service, etc.)
 #   assets_dir        Directory containing manifest.json when --manifest is omitted.
-#   config_root       Materialized runtime config root (usually target/config)
+#   config_root       Materialized runtime config root (usually cache/target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #   --manifest        Optional manifest URL to record for postinstall hydration.
 #
-# Output: target/packages/Capsem-<version>.pkg in the repository output root
+# Output: cache/target/packages/Capsem-<version>.pkg in the repository output root
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
@@ -262,7 +262,7 @@ find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name '._*' -delete
 
 # pkgbuild otherwise infers Capsem.app as relocatable. On a build machine where
 # the signed source bundle still exists, PackageKit then redirects the payload
-# back into target/release/bundle/macos instead of installing /Applications.
+# back into cache/target/cargo/release/bundle/macos instead of installing /Applications.
 COMPONENT_PLIST="$WORK_DIR/component.plist"
 pkgbuild --analyze --root "$WORK_DIR/payload" "$COMPONENT_PLIST"
 python3 - "$COMPONENT_PLIST" <<'PY'
@@ -332,7 +332,7 @@ productbuild \
     "$WORK_DIR/Capsem-$VERSION-unsigned.pkg"
 
 # Sign if identity provided
-OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/target/packages/Capsem-$VERSION.pkg"
+OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/cache/target/packages/Capsem-$VERSION.pkg"
 mkdir -p "$(dirname "$OUTPUT_PKG")"
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "=== Signing .pkg ==="

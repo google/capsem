@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Repository-generated and reusable state now has one hard cache root:
+  `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
+  journals, private gate worktrees, and retained prefix products no longer
+  spill across root `target/` and ambient `.cg/` directories. Gate paths resolve
+  through the typed cache library, and Citadel rejects either legacy root.
 - Complete local tests now refuse low-impact repeats until ten commits have
   accumulated since the latest successful proof and print the exact focused
   owners to run instead. High-impact and unknown changes remain eligible;

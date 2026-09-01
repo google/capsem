@@ -183,20 +183,20 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
 
     assert (
         'bash build_system/scripts/build/check-build-provenance.sh '
-        '"$ROOT/target/release/capsem"'
+        '"$ROOT/cache/target/cargo/release/capsem"'
         in macos_builder
     )
     # Was asserted against the justfile, where this lived as an escaped
     # fragment of a `docker run ... bash -c` argument.
     assert (
         'bash build_system/scripts/build/check-build-provenance.sh '
-        '"/cargo-target/$RUST_TARGET/release/capsem"'
+        '"/cargo-cache/target/$RUST_TARGET/release/capsem"'
         in linux_builder
     )
     assert (
         release_workflow.count(
             "bash build_system/scripts/build/check-build-provenance.sh "
-            "target/release/capsem"
+            "cache/target/cargo/release/capsem"
         )
         == 1
     ), "the macOS publication builder must reject stale provenance directly"

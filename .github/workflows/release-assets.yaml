@@ -107,7 +107,7 @@ jobs:
           cargo run -p capsem-admin -- validate \
             --channel "${{ inputs.channel }}" \
             --profile "${{ inputs.profile }}" \
-            --json > target/profile-release-selection.json
+            --json > cache/target/profile-release-selection.json
 
       - name: Fetch latest selected channel source manifest
         env:
@@ -118,23 +118,23 @@ jobs:
             --profile "${{ inputs.profile }}" \
             --source-commit "${{ inputs.source_commit }}" \
             --bootstrap-missing-first-party \
-            --output target/channel-source/manifest.json
+            --output cache/target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
         run: |
           python3 build_system/scripts/release/project-first-channel-before.py \
-            --source-manifest target/channel-source/manifest.json \
+            --source-manifest cache/target/channel-source/manifest.json \
             --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
             --retired "${{ steps.public-before.outputs.retired }}" \
-            --output target/channel-source/public-before.json
+            --output cache/target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing
         id: public-before-authority
         run: |
           if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
-            echo "manifest-url=file://$PWD/target/channel-source/public-before.json" \
+            echo "manifest-url=file://$PWD/cache/target/channel-source/public-before.json" \
               >> "$GITHUB_OUTPUT"
           else
             echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
@@ -147,13 +147,13 @@ jobs:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
           allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}
           kind: packages
-          output: target/profile-public-before/packages
+          output: cache/target/profile-public-before/packages
 
       - name: Check pulled package functional binary cohort
         id: functional-cohort
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir target/profile-public-before/packages \
+            --input-dir cache/target/profile-public-before/packages \
             --check-functional-cohort \
             --github-output "$GITHUB_OUTPUT"
 
@@ -164,32 +164,32 @@ jobs:
           allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
           kind: profiles
           architecture: x86_64
-          output: target/profile-public-before/profiles
+          output: cache/target/profile-public-before/profiles
 
       - name: Prove public-before cohorts use one manifest
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir target/profile-public-before/profiles
+            --input-dir cache/target/profile-public-before/profiles
           cmp \
-            target/profile-public-before/packages/manifest.json \
-            target/profile-public-before/profiles/manifest.json
+            cache/target/profile-public-before/packages/manifest.json \
+            cache/target/profile-public-before/profiles/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-public-before-packages
-          path: target/profile-public-before/packages/
+          path: cache/target/profile-public-before/packages/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-public-before-profiles
-          path: target/profile-public-before/profiles/
+          path: cache/target/profile-public-before/profiles/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-channel-source
-          path: target/channel-source/manifest.json
+          path: cache/target/channel-source/manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-release-selection
-          path: target/profile-release-selection.json
+          path: cache/target/profile-release-selection.json
 
   cloudflare-release-site-preflight:
     runs-on: ubuntu-latest
@@ -228,7 +228,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-release-selection
-          path: target/
+          path: cache/target/
 
       - name: Resolve exact prior profile asset cohort
         id: resolve
@@ -240,7 +240,7 @@ jobs:
             --workflow release-assets.yaml \
             --current-run-id "${{ github.run_id }}" \
             --source-commit "$SOURCE_COMMIT" \
-            --selection target/profile-release-selection.json \
+            --selection cache/target/profile-release-selection.json \
             --github-output "$GITHUB_OUTPUT"
 
   build-assets:
@@ -288,7 +288,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: target/assets/${{ matrix.arch }}/
+          path: cache/target/assets/${{ matrix.arch }}/
 
   reuse-assets:
     needs: [cloudflare-release-site-preflight, fast-gate, resolve-profile-assets]
@@ -302,7 +302,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: target/assets/${{ matrix.arch }}/
+          path: cache/target/assets/${{ matrix.arch }}/
           repository: ${{ github.repository }}
           run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}
           github-token: ${{ github.token }}
@@ -310,7 +310,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: target/assets/${{ matrix.arch }}/
+          path: cache/target/assets/${{ matrix.arch }}/
 
   test-profile-pairing:
     needs: [author-profile-release, resolve-current-binary]
@@ -369,19 +369,19 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-public-before-packages
-          path: target/profile-public-before/packages/
+          path: cache/target/profile-public-before/packages/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-public-before-profiles
-          path: target/profile-public-before/profiles/
+          path: cache/target/profile-public-before/profiles/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-channel-source
-          path: target/source-channel/
+          path: cache/target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-publication
-          path: target/asset-release/
+          path: cache/target/asset-release/
 
       - name: Enable KVM for complete functional proof
         run: |
@@ -408,7 +408,7 @@ jobs:
       - name: Qualify the profile assets
         run: >
           just qualify-assets
-          "$PWD/target/candidate-profile-inputs"
+          "$PWD/cache/target/candidate-profile-inputs"
           "${{ inputs.profile }}"
           "$PWD"
           "${{ needs.author-profile-release.outputs.activation_ready }}"
@@ -475,28 +475,28 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-arm64
-          path: target/assets/arm64/
+          path: cache/target/assets/arm64/
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-x86_64
-          path: target/assets/x86_64/
+          path: cache/target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-channel-source
-          path: target/source-channel/
+          path: cache/target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-public-before-profiles
-          path: target/profile-public-before/profiles/
+          path: cache/target/profile-public-before/profiles/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-release-selection
-          path: target/
+          path: cache/target/
 
       - name: Generate asset manifest
         run: |
-          cargo run -p capsem-admin -- manifest generate target/assets
+          cargo run -p capsem-admin -- manifest generate cache/target/assets
 
       - name: Verify profile release lane policy
         run: |
@@ -506,57 +506,57 @@ jobs:
 
       - name: Build complete asset channel preview
         run: |
-          PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
+          PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
           ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
-          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
+          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
-            --channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json" \
+            --channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
-            --assets-dir target/assets \
+            --assets-dir cache/target/assets \
             --asset-source-base "$ASSET_BASE" \
             --manifest-version "$MANIFEST_VERSION" \
-            --out-dir target/profile-candidate \
+            --out-dir cache/target/profile-candidate \
             --allow-mirror-missing
 
       - name: Check selected channel profile delta
         id: profile-delta
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/check-profile-release-delta.py \
-            --source-manifest target/source-channel/manifest.json \
-            --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
-            --public-manifest target/profile-public-before/profiles/manifest.json \
+            --source-manifest cache/target/source-channel/manifest.json \
+            --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
+            --public-manifest cache/target/profile-public-before/profiles/manifest.json \
             --channel "$CHANNEL" \
             --profile "${{ inputs.profile }}" \
-            --json-output target/profile-release-delta/delta.json
+            --json-output cache/target/profile-release-delta/delta.json
 
       - name: Author selected channel profile in the source manifest
         id: author-release
         if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         run: |
           set -euo pipefail
-          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
-          PUBLICATION_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
+          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
+          PUBLICATION_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
           PROFILE_VERSION=$(python3 - <<'PY'
           import json
 
           channel = "${{ inputs.channel }}"
           profile = "${{ inputs.profile }}"
-          manifest = json.load(open(f"target/profile-candidate/assets/{channel}/manifest.json"))
+          manifest = json.load(open(f"cache/target/profile-candidate/assets/{channel}/manifest.json"))
           print(manifest["profiles"][profile]["revision"])
           PY
           )
           cargo run -p capsem-admin -- release \
             --channel "$CHANNEL" \
             --profile "${{ inputs.profile }}" --source-commit "$SOURCE_COMMIT" \
-            --manifest-path target/source-channel/manifest.json \
-            --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
+            --manifest-path cache/target/source-channel/manifest.json \
+            --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
             --publication-base "$PUBLICATION_BASE" \
             --manifest-version "$MANIFEST_VERSION" \
             --profile-version "$PROFILE_VERSION" \
-            --json > target/profile-release.json
-          test "$(python3 -c 'import json; print(json.load(open("target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
-          PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("target/profile-release.json"))["compatible_with_current_binary"]).lower())')
+            --json > cache/target/profile-release.json
+          test "$(python3 -c 'import json; print(json.load(open("cache/target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
+          PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("cache/target/profile-release.json"))["compatible_with_current_binary"]).lower())')
           FUNCTIONAL_READY="${{ needs.resolve-current-binary.outputs.functional_ready }}"
           ACTIVATION_READY=false
           if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
@@ -574,11 +574,11 @@ jobs:
         run: |
           set -euo pipefail
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
-          RELEASE_DIR="target/asset-release/$PUBLICATION_IDENTITY"
+          RELEASE_DIR="cache/target/asset-release/$PUBLICATION_IDENTITY"
           uv run --project build_system --frozen python build_system/scripts/release/stage-profile-publication.py \
-            --manifest target/source-channel/manifest.json \
+            --manifest cache/target/source-channel/manifest.json \
             --profile "${{ inputs.profile }}" \
-            --assets-dir target/assets \
+            --assets-dir cache/target/assets \
             --config-root config \
             --release-dir "$RELEASE_DIR"
           uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
@@ -590,29 +590,29 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: authored-profile-channel-source
-          path: target/source-channel/manifest.json
+          path: cache/target/source-channel/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: authored-profile-candidate
-          path: target/profile-candidate/
+          path: cache/target/profile-candidate/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         with:
           name: authored-profile-publication
-          path: target/asset-release/
+          path: cache/target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-release-delta
-          path: target/profile-release-delta/
+          path: cache/target/profile-release-delta/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         with:
           name: authored-profile-release-report
-          path: target/profile-release.json
+          path: cache/target/profile-release.json
 
   publish-profile-release:
     needs: [author-profile-release, test-profile-pairing]
@@ -652,44 +652,44 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-arm64
-          path: target/assets/arm64/
+          path: cache/target/assets/arm64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-x86_64
-          path: target/assets/x86_64/
+          path: cache/target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-channel-source
-          path: target/source-channel/
+          path: cache/target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-candidate
-          path: target/profile-candidate/
+          path: cache/target/profile-candidate/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-publication
-          path: target/asset-release/
+          path: cache/target/asset-release/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-release-selection
-          path: target/
+          path: cache/target/
 
       - name: Build deployable channel from authored source manifest
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
-            --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
+            --channel-source "$CHANNEL=file://$PWD/cache/target/source-channel/manifest.json" \
             --primary-channel "$CHANNEL" \
-            --assets-dir target/assets \
-            --manifest-version "$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')" \
-            --profile-source-root target/profile-candidate \
-            --out-dir target/distribution
+            --assets-dir cache/target/assets \
+            --manifest-version "$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')" \
+            --profile-source-root cache/target/profile-candidate \
+            --out-dir cache/target/distribution
 
       - name: Attest VM asset provenance
         if: ${{ inputs.dry_run == false }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
-          subject-path: target/asset-release/profile-*/*
+          subject-path: cache/target/asset-release/profile-*/*
 
       - name: Publish immutable GitHub profile release
         env:
@@ -698,9 +698,9 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ needs.author-profile-release.outputs.publication_identity }}"
-          PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["profile_revision"])')
-          RELEASE_DIR="target/asset-release/$TAG"
-          NOTES_FILE="target/asset-release/profile-release-notes.md"
+          PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["profile_revision"])')
+          RELEASE_DIR="cache/target/asset-release/$TAG"
+          NOTES_FILE="cache/target/asset-release/profile-release-notes.md"
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
           uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
@@ -737,19 +737,19 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: asset-channel-source
-          path: target/source-channel/manifest.json
+          path: cache/target/source-channel/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ inputs.dry_run == true }}
         with:
           name: asset-release-plan
-          path: target/asset-release/
+          path: cache/target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         with:
           name: asset-channel-preview
-          path: target/distribution/
+          path: cache/target/distribution/
 
   deploy-channel:
     needs: publish-profile-release

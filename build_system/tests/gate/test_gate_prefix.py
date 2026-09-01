@@ -33,6 +33,18 @@ def _config():
     return gate_config.load(PROJECT_ROOT)
 
 
+def _relocated_prefix(tmp_path: Path, *, keep: int | None = None):
+    values = {
+        "parent": str(tmp_path),
+        "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+        "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+        "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
+    }
+    if keep is not None:
+        values["keep"] = keep
+    return _config().prefix.model_copy(update=values)
+
+
 def _context(config):
     """A real `Context`, so the guard is exercised through its own signature.
 
@@ -67,12 +79,12 @@ def source(tmp_path: Path) -> Path:
     root = tmp_path / "src"
     (root / "crates" / "capsem-core").mkdir(parents=True)
     (root / "private" / "tauri").mkdir(parents=True)
-    (root / "target" / "debug").mkdir(parents=True)
+    (root / "cache" / "target" / "cargo" / "debug").mkdir(parents=True)
 
     # `.venv/` too, as the real checkout does: it is where an earlier run's
     # interpreter lives, and whether it is ignored decides whether a refresh
     # may delete it.
-    (root / ".gitignore").write_text("target/\nprivate/\n.venv/\n", encoding="utf-8")
+    (root / ".gitignore").write_text("cache/target/\nprivate/\n.venv/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("committed\n", encoding="utf-8")
     (root / "crates" / "capsem-core" / "lib.rs").write_text("fn main() {}\n", encoding="utf-8")
     # Gitignored, invisible to the digest, and load-bearing: this is the shape
@@ -80,7 +92,7 @@ def source(tmp_path: Path) -> Path:
     (root / "private" / "tauri" / "key.pem").write_text("SECRET\n", encoding="utf-8")
     # Build output, which the prefix must not carry -- 164 GB and 84s in the
     # real checkout, against 186 MB and 2.2s without it.
-    (root / "target" / "debug" / "huge.bin").write_text("x" * 4096, encoding="utf-8")
+    (root / "cache" / "target" / "cargo" / "debug" / "huge.bin").write_text("x" * 4096, encoding="utf-8")
 
     # A tracked symlink pointing at a directory. `git ls-files` lists it like
     # any other entry, and this repository really has them -- `.agents/skills`
@@ -122,7 +134,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
     Worth stating as its own property, because the obvious reading is wrong:
     the *workspace* run dir is relative to the checkout root, and at
-    `<root>/target/test-home/.capsem/run` it is already 105 bytes with the
+    `<root>/cache/target/test-home/.capsem/run` it is already 105 bytes with the
     gateway suffix -- over the limit today, prefix or no prefix. It is not the
     binding path, and a test that measured it would fail for a reason that has
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
@@ -176,7 +188,7 @@ def test_the_prefix_carries_the_working_tree_and_not_build_output(source: Path) 
     assert (target / "tracked.txt").read_text(encoding="utf-8") == "edited\n"
     assert (target / "untracked.txt").is_file()
     assert (target / "crates" / "capsem-core" / "lib.rs").is_file()
-    assert not (target / "target" / "debug" / "huge.bin").exists()
+    assert not (target / "cache" / "target" / "cargo" / "debug" / "huge.bin").exists()
 
 
 def test_the_prefix_accepts_a_tracked_deletion(source: Path) -> None:
@@ -360,8 +372,8 @@ def test_a_refresh_keeps_what_the_earlier_run_built(source: Path) -> None:
     # What an earlier run would have built: all ignored, none in the subject.
     (target / ".venv" / "bin").mkdir(parents=True)
     (target / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-    (target / "target" / "debug").mkdir(parents=True, exist_ok=True)
-    (target / "target" / "debug" / "built.bin").write_text("artifact\n", encoding="utf-8")
+    (target / "cache" / "target" / "cargo" / "debug").mkdir(parents=True, exist_ok=True)
+    (target / "cache" / "target" / "cargo" / "debug" / "built.bin").write_text("artifact\n", encoding="utf-8")
 
     (source / "untracked.txt").unlink()
     snapshot.refresh(source, target, _config())
@@ -370,7 +382,7 @@ def test_a_refresh_keeps_what_the_earlier_run_built(source: Path) -> None:
         "the venv an earlier run built was deleted, so the resumed run has no "
         "interpreter -- which is the entire cost the prefix exists to avoid"
     )
-    assert (target / "target" / "debug" / "built.bin").is_file()
+    assert (target / "cache" / "target" / "cargo" / "debug" / "built.bin").is_file()
     assert not (target / "untracked.txt").exists(), "and the deletion pass still works"
 
 
@@ -423,7 +435,7 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     """The private gate selects a verified profile with a top-level symlink.
 
     Export must dereference that one selector into the checkout while retaining
-    the self-contained ``target/assets/current`` architecture selector. Dereferencing
+    the self-contained ``cache/target/assets/current`` architecture selector. Dereferencing
     both materializes a second multi-gigabyte asset tree.
     """
     from capsem_builder.gate import config as gate_config
@@ -432,29 +444,30 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     private = tmp_path / "private"
     for root in (checkout, private):
         (root / "config").mkdir(parents=True)
-        (root / "config" / "gate.toml").write_text(
-            (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-    selected = private / "target" / "ironbank-assets" / "code" / "assets"
+        for name in ("cache.toml", "gate.toml"):
+            (root / "config" / name).write_text(
+                (PROJECT_ROOT / "config" / name).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+    selected = private / "cache" / "target" / "ironbank-assets" / "code" / "assets"
     architecture = selected / "x86_64"
     architecture.mkdir(parents=True)
     (architecture / "rootfs.erofs").write_bytes(b"fresh")
     (selected / "manifest.json").write_text('{"fresh":true}\n')
     (selected / "current").symlink_to("x86_64")
-    private_assets = private / "target" / "assets"
+    private_assets = private / "cache" / "target" / "assets"
     private_assets.parent.mkdir(exist_ok=True)
     private_assets.symlink_to("ironbank-assets/code/assets")
-    private_config = private / "target" / "config"
+    private_config = private / "cache" / "target" / "config"
     private_config_manifest = private_config / "assets" / "manifest.json"
     private_config_manifest.parent.mkdir(parents=True)
     private_config_manifest.write_text('{"fresh":true}\n')
 
-    old = checkout / "target" / "assets"
+    old = checkout / "cache" / "target" / "assets"
     (old / "current").mkdir(parents=True)
     (old / "current" / "stale").write_text("stale\n")
     (old / "stale").write_text("stale\n")
-    old_config = checkout / "target" / "config"
+    old_config = checkout / "cache" / "target" / "config"
     old_config_manifest = old_config / "assets" / "manifest.json"
     old_config_manifest.parent.mkdir(parents=True)
     old_config_manifest.write_text('{"stale":true}\n')
@@ -486,7 +499,7 @@ def test_a_finished_run_leaves_no_prefix(tmp_path: Path, source: Path) -> None:
     from capsem_builder.gate import prefix, snapshot
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={"prefix": _relocated_prefix(tmp_path)}
     )
     target = tmp_path / "abcd1234"
     snapshot.populate(source, target, config)
@@ -509,7 +522,7 @@ def test_reclaim_refuses_anything_that_is_not_a_prefix(tmp_path: Path) -> None:
     from capsem_builder.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={"prefix": _relocated_prefix(tmp_path)}
     )
     outsider = tmp_path.parent / "not-a-prefix"
     outsider.mkdir()
@@ -624,20 +637,20 @@ def test_the_release_guard_still_sees_the_real_tree_edited(
 def test_the_export_list_covers_what_a_release_publishes() -> None:
     """Everything built inside the prefix dies with it unless it is named here.
 
-    `target/packages/` is the one that matters most and is easiest to forget:
+    `cache/target/packages/` is the one that matters most and is easiest to forget:
     the signed `.pkg` a release publishes is built inside the run, so omitting
     it means a release that passes every gate and has nothing to ship.
     """
     exports = set(_config().prefix.exports)
 
     assert {
-        "target/assets",
-        "target/config",
-        "target/coverage",
-        "target/packages",
-        "target/test-artifacts",
+        "cache/target/assets",
+        "cache/target/config",
+        "cache/target/coverage",
+        "cache/target/packages",
+        "cache/target/test-artifacts",
     } <= exports
-    assert any(export.startswith("target/gate-runs") for export in exports), (
+    assert any(export.startswith("cache/target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
     )
 
@@ -707,7 +720,7 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     from capsem_builder.gate import prefix
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={"prefix": _relocated_prefix(tmp_path, keep=1)}
     )
     older, newer = tmp_path / "aaaaaaaa", tmp_path / "bbbbbbbb"
     for path in (older, newer):
@@ -752,7 +765,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
     reused = tmp_path / "aaaaaaaa"
     reused.mkdir()
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={"prefix": _relocated_prefix(tmp_path, keep=1)}
     )
     reclaimed: list[Path] = []
 
@@ -784,7 +797,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 ) -> None:
     """Retaining a journal without its selected assets cannot resume.
 
-    ``target/assets`` selects ``target/ironbank-assets/<profile>/assets``.
+    ``cache/target/assets`` selects ``cache/target/ironbank-assets/<profile>/assets``.
     Salvaging the selector follows it and moves the real directory into the
     shared cache, leaving the retained prefix with neither path. The next
     exact-source attempt then carries ``assets.assemble`` and fails before its
@@ -795,7 +808,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 
     failed = tmp_path / "aaaaaaaa"
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={"prefix": _relocated_prefix(tmp_path, keep=1)}
     )
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
 
@@ -805,10 +818,10 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {failed}"
 
         def run(self, *args, **kwargs) -> int:
-            selected = failed / "target" / "ironbank-assets" / "code" / "assets"
+            selected = failed / "cache" / "target" / "ironbank-assets" / "code" / "assets"
             selected.mkdir(parents=True)
             (selected / "manifest.json").write_text("{}", encoding="utf-8")
-            (failed / "target" / "assets").symlink_to("ironbank-assets/code/assets")
+            (failed / "cache" / "target" / "assets").symlink_to("ironbank-assets/code/assets")
             return 1
 
     monkeypatch.setattr(prefix, "allocate", lambda *args: failed)
@@ -817,8 +830,8 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
 
     assert prefix.run_from_private_copy(FailedRunner(), config, ["candidate"]) == 1
-    assert (failed / "target" / "assets").is_symlink()
-    assert (failed / "target" / "ironbank-assets" / "code" / "assets").is_dir()
+    assert (failed / "cache" / "target" / "assets").is_symlink()
+    assert (failed / "cache" / "target" / "ironbank-assets" / "code" / "assets").is_dir()
 
 
 def test_a_fresh_successful_prefix_is_still_reclaimed(
@@ -830,7 +843,7 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
 
     fresh = tmp_path / "bbbbbbbb"
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={"prefix": _relocated_prefix(tmp_path, keep=1)}
     )
     reclaimed: list[Path] = []
 
@@ -866,7 +879,7 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
     from capsem_builder.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={"prefix": _relocated_prefix(tmp_path, keep=1)}
     )
     stubborn = tmp_path / "cccccccc"
     stubborn.mkdir()
@@ -976,7 +989,7 @@ def _git(cwd: Path, *args: str) -> str:
 def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     """An export must never follow a symlink, on either side.
 
-    This destroyed run logs. `target/gate-runs/latest` points at the newest
+    This destroyed run logs. `cache/target/gate-runs/latest` points at the newest
     run, in the private tree and on the host alike, and
     `shutil.copytree(..., dirs_exist_ok=True)` dereferences the source link and
     then writes the contents through the destination link -- into an unrelated
@@ -1096,7 +1109,7 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
 
     The write-through defect cannot occur here -- the target is removed first,
     so nothing is left to write through. Dereferencing the *source* is the
-    separate hazard: `target/assets/current` is a relative selector into a
+    separate hazard: `cache/target/assets/current` is a relative selector into a
     multi-gigabyte architecture, and materializing it copies the whole tree for
     no new bytes.
 
@@ -1126,7 +1139,11 @@ def _shared_target_config(tmp_path: Path, warning_gb: float):
             "prefix": original.prefix.model_copy(
                 update={
                     "parent": str(tmp_path / "prefixes"),
-                    "cargo_target": "{parent}-target",
+                    "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+                    "vm_image_cache": str(
+                        tmp_path / "cache" / "target" / "assets" / "generations"
+                    ),
+                    "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
                     "cargo_target_warning_gb": warning_gb,
                 }
             )
@@ -1171,7 +1188,7 @@ def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
 ) -> None:
     """Every prefix points into this tree; counting through them double-bills.
 
-    `target/debug` in each prefix is a symlink to the shared root. A size that
+    `cache/target/cargo/debug` in each prefix is a symlink to the shared root. A size that
     followed links would bill the same bytes once per run on disk and report
     growth that had not happened.
     """
@@ -1185,7 +1202,7 @@ def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
 
     prefix_path = tmp_path / "prefixes" / ("0" * 8)
     cargotarget.link_profiles(config, prefix_path)
-    assert (prefix_path / "target" / "debug").is_symlink()
+    assert (prefix_path / "cache" / "target" / "cargo" / "debug").is_symlink()
     # The link now resolves into the shared tree; the measurement must not.
     assert cargotarget.measure(config).gb == alone
 
@@ -1239,9 +1256,9 @@ def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> 
 
 
 def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path) -> None:
-    """`target/debug` is the one place the test tree resolves a host binary.
+    """`cache/target/cargo/debug` is the one place the test tree resolves a host binary.
 
-    Roughly twenty-five checked-in modules spell `PROJECT_ROOT/target/debug/
+    Roughly twenty-five checked-in modules spell `PROJECT_ROOT/cache/target/cargo/debug/
     <name>`, and they are not wrong to: a test should not have to know whether
     this run built its binaries or was handed them. In a prefix carrying only
     tracked files that directory is empty, which took down three binary-release
@@ -1258,9 +1275,9 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
 
     cargotarget.link_pulled_binaries(config, prefix_path, pulled)
 
-    resolved = prefix_path / "target" / "debug" / "capsem"
-    assert resolved.is_file(), "a hardcoded target/debug path must resolve to the pulled binary"
-    assert (prefix_path / "target" / "debug").readlink() == pulled
+    resolved = prefix_path / "cache" / "target" / "cargo" / "debug" / "capsem"
+    assert resolved.is_file(), "a hardcoded cache/target/cargo/debug path must resolve to the pulled binary"
+    assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == pulled
 
 
 def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) -> None:
@@ -1272,7 +1289,7 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
     pulled = tmp_path / "pulled"
     pulled.mkdir()
     prefix_path = tmp_path / "prefixes" / ("b" * 8)
-    (prefix_path / "target" / "debug").mkdir(parents=True)
+    (prefix_path / "cache" / "target" / "cargo" / "debug").mkdir(parents=True)
 
     with pytest.raises(GateError, match="rather than the ones the manifest selected"):
         cargotarget.link_pulled_binaries(config, prefix_path, pulled)
@@ -1281,18 +1298,18 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
 def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`target/config/profiles` is resolved directly by checked-in tests too.
+    """`cache/target/config/profiles` is resolved directly by checked-in tests too.
 
     The same gap as the binaries, one directory over, and found the same
     expensive way: `test_generated_target_profiles_are_the_only_checked_
-    materialized_profiles` reads `PROJECT_ROOT/target/config/profiles` and does
+    materialized_profiles` reads `PROJECT_ROOT/cache/target/config/profiles` and does
     not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
     every binary had built and installed.
     """
     from capsem_builder.gate import cargotarget
 
     checkout = tmp_path / "checkout"
-    (checkout / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    (checkout / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
     config = _shared_target_config(tmp_path, warning_gb=1.0).model_copy(
         update={"root": checkout}
     )
@@ -1307,8 +1324,8 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     monkeypatch.delenv(config.environment.profiles_dir, raising=False)
     cargotarget.link_prefix_trees(config, prefix_path)
 
-    assert (prefix_path / "target" / "config" / "profiles" / "code").is_dir()
-    assert (prefix_path / "target" / "debug").readlink() == binaries
+    assert (prefix_path / "cache" / "target" / "config" / "profiles" / "code").is_dir()
+    assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == binaries
 
 
 def test_an_ordinary_run_still_compiles_into_the_shared_root(
@@ -1323,14 +1340,14 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
 
     cargotarget.link_prefix_trees(config, prefix_path)
 
-    assert (prefix_path / "target" / "debug").readlink() == cargotarget.path(config) / "debug"
-    assert not (prefix_path / "target" / "config").exists()
+    assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == cargotarget.path(config) / "debug"
+    assert not (prefix_path / "cache" / "target" / "config").exists()
 
 
 def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) -> None:
     """A link out of the prefix names input; exporting it claims authorship.
 
-    A release lane points `target/config` at the cohort it was handed. Copying
+    A release lane points `cache/target/config` at the cohort it was handed. Copying
     that into the checkout would export an input as though the run produced it,
     and dies outright if the tree it names has since gone -- which is how a
     local replay of the pairing lane ended, in `shutil.copytree`, naming a path
@@ -1346,17 +1363,18 @@ def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) ->
     private = tmp_path / "private"
     for root in (checkout, private):
         (root / "config").mkdir(parents=True)
-        (root / "config" / "gate.toml").write_text(
-            (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
+        for name in ("cache.toml", "gate.toml"):
+            (root / "config" / name).write_text(
+                (PROJECT_ROOT / "config" / name).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
     handed = tmp_path / "staged-cohort" / "config"
     (handed / "profiles" / "code").mkdir(parents=True)
-    (private / "target").mkdir(parents=True, exist_ok=True)
-    (private / "target" / "config").symlink_to(handed, target_is_directory=True)
+    (private / "cache" / "target").mkdir(parents=True, exist_ok=True)
+    (private / "cache" / "target" / "config").symlink_to(handed, target_is_directory=True)
 
     buildcache.export(private, checkout, gate_config.load(private))
 
-    assert not (checkout / "target" / "config").exists(), (
+    assert not (checkout / "cache" / "target" / "config").exists(), (
         "a tree the run was handed must not be exported as though it built it"
     )

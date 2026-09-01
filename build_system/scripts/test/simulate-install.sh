@@ -28,7 +28,7 @@ RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 # capsem-process children) holding Apple VZ memory.
 #
 # Scoped to ``$INSTALL_DIR/`` so parallel pytest workers running
-# ``target/debug/capsem-*`` are not caught in the blast. A bare
+# ``cache/target/cargo/debug/capsem-*`` are not caught in the blast. A bare
 # ``pkill -x capsem-service`` matches every capsem-service on the box, which
 # poisoned the full test suite whenever any install fixture fired this script.
 for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do

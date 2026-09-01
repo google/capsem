@@ -292,7 +292,7 @@ def wait_for_guest_ip(
         if returncode is not None:
             raise RuntimeError(
                 f"Tart VM runner exited before boot (status {returncode}); "
-                "inspect target/macos-tart-glowup/tart-run.log"
+                "inspect cache/target/macos-tart-glowup/tart-run.log"
             )
         result = subprocess.run(
             tart_ip_command(vm_name, 5),
@@ -394,7 +394,7 @@ def main() -> int:
     parser.add_argument(
         "--work-dir",
         type=Path,
-        default=PROJECT_ROOT / "target" / "macos-tart-glowup",
+        default=PROJECT_ROOT / "cache" / "target" / "macos-tart-glowup",
     )
     args = parser.parse_args()
 

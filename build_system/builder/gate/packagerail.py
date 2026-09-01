@@ -216,7 +216,7 @@ class PackageRail:
             docker.remove(container)
 
     def resolve(self) -> Path:
-        """The exact package this run produced, not whatever `target/packages/` holds.
+        """The exact package this run produced, not whatever `cache/target/packages/` holds.
 
         The builder writes the basename it just created. Globbing the package
         output root instead would happily prove and publish a package left by

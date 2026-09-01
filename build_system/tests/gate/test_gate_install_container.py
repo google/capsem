@@ -326,7 +326,7 @@ def test_a_degraded_system_is_accepted(tmp_path: Path, monkeypatch: pytest.Monke
 def test_only_the_target_directory_entry_is_granted_not_its_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`rm -rf target/install-test-*` needs write permission on the parent
+    """`rm -rf cache/target/install-test-*` needs write permission on the parent
     entry, not on the entries themselves. A recursive chown here would walk
     every cargo artifact in the checkout."""
     _on(monkeypatch, "Darwin")
@@ -334,8 +334,8 @@ def test_only_the_target_directory_entry_is_granted_not_its_contents(
 
     container.start(options=[])
 
-    assert runner.ran(r"chown capsem:capsem /src/target$")
-    assert not runner.ran(r"chown -R capsem:capsem /src/target$")
+    assert runner.ran(r"chown capsem:capsem /src/cache/target$")
+    assert not runner.ran(r"chown -R capsem:capsem /src/cache/target$")
 
 
 def test_writes_are_handed_back_to_the_host_user(
@@ -527,9 +527,9 @@ def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
         helper_id="sha256:helper",
         source=source,
     )
-    selected = tmp_path / "target" / "ironbank-assets" / "code" / "assets"
+    selected = tmp_path / "cache" / "target" / "ironbank-assets" / "code" / "assets"
     selected.mkdir(parents=True)
-    (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
+    (tmp_path / "assets").symlink_to("cache/target/ironbank-assets/code/assets")
 
     assert (
         installimage.source_image_tag(

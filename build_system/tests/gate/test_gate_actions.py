@@ -53,7 +53,7 @@ def test_rendering_executes_nothing(context: Context, runner: RecordingRunner) -
     """A dry run with side effects is not a dry run."""
     Run(["docker", "system", "prune", "-af"]).render()
     Script(context.config, "build_system/scripts/build/clean_stale.py").render()
-    Shell("rm -rf target/*").render()
+    Shell("rm -rf cache/target/*").render()
 
     assert runner.commands == []
 

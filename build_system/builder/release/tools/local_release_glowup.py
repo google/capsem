@@ -143,7 +143,7 @@ def main() -> int:
         "--install-script", default=PROJECT_ROOT / "web/marketing/public/install.sh", type=Path
     )
     parser.add_argument(
-        "--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path
+        "--work-dir", default=PROJECT_ROOT / "cache/target/local-release-glowup", type=Path
     )
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--skip-install", action="store_true")
@@ -1831,7 +1831,7 @@ def run_installed_glowup(
     fresh_nightly_channel = packaged_identity["channel"] if packaged_identity else "nightly"
 
     installed_evidence = (
-        evidence_out or PROJECT_ROOT / "target" / "local-release-glowup-evidence.json"
+        evidence_out or PROJECT_ROOT / "cache" / "target" / "local-release-glowup-evidence.json"
     )
     evidence_arg = shlex.quote(str(installed_evidence))
     transition_evidence_dir = installed_evidence.parent / "channel-transition-evidence"

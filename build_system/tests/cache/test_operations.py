@@ -27,7 +27,7 @@ def plan(path: Path) -> PrunePlan:
 
 def test_apply_removes_only_planned_entries_and_journals_the_reason(tmp_path: Path) -> None:
     root = tmp_path / "cache"
-    target = root / "target/objects/old"
+    target = root / "cache/target/objects/old"
     target.mkdir(parents=True)
     (target / "payload").write_bytes(b"abc")
 

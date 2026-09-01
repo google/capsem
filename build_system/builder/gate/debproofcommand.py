@@ -29,7 +29,7 @@ def _content(config, value: str) -> ProfileContent:
 class ProveDebCommand(
     GateCommand,
     name="prove-deb",
-    help="install one exact target/packages/*.deb in a clean container and prove it",
+    help="install one exact cache/target/packages/*.deb in a clean container and prove it",
 ):
     exclusive = True
 

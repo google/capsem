@@ -44,7 +44,7 @@ def _rust_production_sources() -> list[Path]:
     return sorted(
         path
         for path in (PROJECT_ROOT / "crates").rglob("*.rs")
-        if path.name != "tests.rs" and "/target/" not in str(path)
+        if path.name != "tests.rs" and "/cache/target/" not in str(path)
     )
 
 

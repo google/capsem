@@ -20,7 +20,7 @@ fn staging_checked_in_source_into_output_copies_instead_of_linking() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("target/distribution/root.manifest.json");
+    let published = root.join("cache/target/distribution/root.manifest.json");
 
     stage(&seed, &published, root).unwrap();
 
@@ -46,7 +46,7 @@ fn a_chmod_on_the_published_artifact_cannot_reach_the_source() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("target/distribution/root.manifest.json");
+    let published = root.join("cache/target/distribution/root.manifest.json");
     stage(&seed, &published, root).unwrap();
 
     fs::set_permissions(&published, fs::Permissions::from_mode(0o000)).unwrap();
@@ -63,10 +63,10 @@ fn staging_build_output_into_build_output_still_hardlinks() {
     // small checked-in seeds would trade one defect for an hour of I/O.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let built = root.join("target/assets/rootfs.erofs");
+    let built = root.join("cache/target/assets/rootfs.erofs");
     fs::create_dir_all(built.parent().unwrap()).unwrap();
     fs::write(&built, b"image").unwrap();
-    let staged = root.join("target/distribution/rootfs.erofs");
+    let staged = root.join("cache/target/distribution/rootfs.erofs");
 
     stage(&built, &staged, root).unwrap();
 
@@ -83,13 +83,13 @@ fn a_cross_device_link_falls_back_to_copying() {
     // dropping it would break staging onto a different filesystem.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let built = root.join("target/assets/x");
+    let built = root.join("cache/target/assets/x");
     fs::create_dir_all(built.parent().unwrap()).unwrap();
     fs::write(&built, b"bytes").unwrap();
 
     // A destination whose parent does not exist yet exercises the same path
     // the release staging takes.
-    let staged = root.join("target/deep/nested/x");
+    let staged = root.join("cache/target/deep/nested/x");
     stage(&built, &staged, root).unwrap();
     assert_eq!(fs::read(&staged).unwrap(), b"bytes");
 }
@@ -108,7 +108,7 @@ fn a_relative_source_path_is_not_assumed_to_be_build_output() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("target/distribution/root.manifest.json");
+    let published = root.join("cache/target/distribution/root.manifest.json");
 
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(root).unwrap();
@@ -135,7 +135,7 @@ fn a_source_that_cannot_be_classified_is_copied() {
     let elsewhere = tempfile::tempdir().unwrap();
     let source = elsewhere.path().join("unknown.bin");
     fs::write(&source, b"bytes").unwrap();
-    let published = root.join("target/out.bin");
+    let published = root.join("cache/target/out.bin");
 
     stage(&source, &published, root).unwrap();
 

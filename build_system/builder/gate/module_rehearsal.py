@@ -32,7 +32,7 @@ This is not a shortcut around the release, and it does not become one. It runs
 only in the local lane -- a release *is* the pulled path, and rehearsing it
 inside itself would double an hour of work to prove something it is already
 proving. Nothing here publishes: the cohort's URLs are `file://` paths under
-`target/`, and no step in this phase reaches a network or a tag.
+`cache/target/`, and no step in this phase reaches a network or a tag.
 """
 
 from __future__ import annotations
@@ -169,7 +169,7 @@ def rehearsal(
     # locally, but `functional` is where four of the eight pairing failures
     # actually happened -- a profile axis reading the checkout, suites handed no
     # content selection, a gitignored generated file, and host binaries resolved
-    # from `target/debug` in a prefix that carries only tracked files. Each cost
+    # from `cache/target/cargo/debug` in a prefix that carries only tracked files. Each cost
     # a dispatch to see and four seconds to fail.
     #
     # The base profile only. The pulled path is the same for every profile, and

@@ -233,10 +233,10 @@ def test_materializer_custom_output_preserves_shared_default_config(
     tmp_path: Path,
 ) -> None:
     repo, fake_bin = _fake_materializer_repo(tmp_path)
-    shared_marker = repo / "target" / "config" / "profiles" / "shared.marker"
+    shared_marker = repo / "cache" / "target" / "config" / "profiles" / "shared.marker"
     shared_marker.parent.mkdir(parents=True)
     shared_marker.write_text("functional cohort")
-    isolated_output = repo / "target" / "install-test-config"
+    isolated_output = repo / "cache" / "target" / "install-test-config"
     isolated_marker = isolated_output / "stale.marker"
     isolated_output.mkdir(parents=True)
     isolated_marker.write_text("replace me")
@@ -279,7 +279,7 @@ def test_materializer_custom_output_preserves_shared_default_config(
 
 def test_materializer_finalizes_one_exact_runtime_content_pair(tmp_path: Path) -> None:
     repo, fake_bin = _fake_materializer_repo(tmp_path)
-    pair = repo / "target" / "paired-content"
+    pair = repo / "cache" / "target" / "paired-content"
     assets = pair / "assets"
     config = pair / "config"
     inputs = pair / "inputs"

@@ -40,8 +40,8 @@ pytestmark = pytest.mark.integration
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-TRAY_BIN = PROJECT_ROOT / "target/debug/capsem-tray"
-GATEWAY_BIN = PROJECT_ROOT / "target/debug/capsem-gateway"
+TRAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-tray"
+GATEWAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-gateway"
 
 # Parent-watch poll interval is 500ms in capsem-guard; give a generous factor
 # for loaded CI while still catching real regressions.

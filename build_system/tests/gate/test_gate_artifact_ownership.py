@@ -145,7 +145,7 @@ def _two_producers(shared: tuple[bool, bool]):
     from capsem_builder.gate.plan import Plan
 
     config = gate_config.load(PROJECT_ROOT)
-    artifact = PROJECT_ROOT / "target" / "contested.bin"
+    artifact = PROJECT_ROOT / "cache" / "target" / "contested.bin"
     plan = Plan("synthetic")
     for index, is_shared in enumerate(shared):
         claim = config.shared("docker_daemon") if is_shared else config.exclusive("docker_daemon")

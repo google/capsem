@@ -46,9 +46,9 @@ def _lanes():
     config = gate_config.load(ROOT)
     settings = config.modules
     release = {
-        settings.release_input_dir: str(STAGED / "target/candidate-profile-inputs"),
+        settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
         settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
-        settings.release_bin_dir: str(STAGED / "target/debug"),
+        settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
     }
     binary = from_environment(config, release)
     profile = from_environment(config, {**release, settings.release_profile: "code"})
@@ -58,7 +58,7 @@ def _lanes():
         (
             "qualify-assets",
             (
-                ("input_dir", STAGED / "target/candidate-profile-inputs"),
+                ("input_dir", STAGED / "cache/target/candidate-profile-inputs"),
                 ("profile", "code"),
                 ("workspace_root", STAGED),
                 ("activation_ready", "true"),

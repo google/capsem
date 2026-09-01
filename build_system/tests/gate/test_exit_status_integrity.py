@@ -139,7 +139,7 @@ REQUIRED_JUST_STEPS = (
         "test-profile-pairing",
         "Qualify the profile assets",
         (
-            'just qualify-assets "$PWD/target/candidate-profile-inputs" '
+            'just qualify-assets "$PWD/cache/target/candidate-profile-inputs" '
             '"${{ inputs.profile }}" '
             '"$PWD" '
             '"${{ needs.author-profile-release.outputs.activation_ready }}"',

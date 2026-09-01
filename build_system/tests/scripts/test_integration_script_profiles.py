@@ -58,7 +58,7 @@ def test_integration_script_uses_materialized_profiles_dir(monkeypatch):
     monkeypatch.delenv("CAPSEM_PROFILES_DIR", raising=False)
     module = load_integration_script()
 
-    assert module.default_materialized_profiles_dir().endswith("target/config/profiles")
+    assert module.default_materialized_profiles_dir().endswith("cache/target/config/profiles")
     assert module._profile_env()["CAPSEM_PROFILES_DIR"] == module.default_materialized_profiles_dir()
 
 
@@ -73,17 +73,17 @@ def test_integration_script_pins_every_cli_run_to_the_selected_profile():
     module = load_integration_script()
 
     assert module._profile_run_prefix(
-        "target/debug/capsem", "experimental", timeout=300
+        "cache/target/cargo/debug/capsem", "experimental", timeout=300
     ) == [
-        "target/debug/capsem",
+        "cache/target/cargo/debug/capsem",
         "run",
         "--timeout",
         "300",
         "--profile",
         "experimental",
     ]
-    assert module._profile_run_prefix("target/debug/capsem", "co-work") == [
-        "target/debug/capsem",
+    assert module._profile_run_prefix("cache/target/cargo/debug/capsem", "co-work") == [
+        "cache/target/cargo/debug/capsem",
         "run",
         "--profile",
         "co-work",
@@ -174,7 +174,7 @@ def test_integration_script_service_paths_use_process_scoped_isolated_home():
     module = load_integration_script()
 
     assert (
-        module.PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
+        module.PROJECT_ROOT / "cache" / "target" / f"integration-capsem-home-{os.getpid()}"
     ) == module.INTEGRATION_HOME
     assert module.CAPSEM_HOME == module.INTEGRATION_HOME
     assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"

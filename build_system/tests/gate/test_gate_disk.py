@@ -47,7 +47,7 @@ def _occupy(config: gate_config.GateConfig, relative: str, *, size: int = 1024) 
 
 def test_reclaiming_removes_the_declared_trees(tmp_path: Path) -> None:
     config = _checkout(tmp_path)
-    built = _occupy(config, "target/test-home")
+    built = _occupy(config, "cache/target/test-home")
 
     recovered = reclaim(config)
 
@@ -58,24 +58,24 @@ def test_reclaiming_removes_the_declared_trees(tmp_path: Path) -> None:
 def test_reclaiming_reports_what_each_tree_gave_back(tmp_path: Path) -> None:
     """So `gc --dry-run` can say where the space actually is."""
     config = _checkout(tmp_path)
-    _occupy(config, "target/test-home", size=4096)
-    _occupy(config, "target/image-workspace", size=1024)
+    _occupy(config, "cache/target/test-home", size=4096)
+    _occupy(config, "cache/target/image-workspace", size=1024)
 
     recovered = reclaim(config)
 
-    assert recovered.trees["target/test-home"] > recovered.trees["target/image-workspace"]
+    assert recovered.trees["cache/target/test-home"] > recovered.trees["cache/target/image-workspace"]
 
 
 def test_a_tree_the_run_still_needs_is_kept(tmp_path: Path) -> None:
     """Reclaiming during a run must not take the run's own log with it."""
     config = _checkout(tmp_path)
-    _occupy(config, "target/gate-runs")
-    _occupy(config, "target/test-home")
+    _occupy(config, "cache/target/gate-runs")
+    _occupy(config, "cache/target/test-home")
 
-    reclaim(config, keep=("target/gate-runs",))
+    reclaim(config, keep=("cache/target/gate-runs",))
 
-    assert config.path("target/gate-runs").exists()
-    assert not config.path("target/test-home").exists()
+    assert config.path("cache/target/gate-runs").exists()
+    assert not config.path("cache/target/test-home").exists()
 
 
 def test_reclaiming_what_is_not_there_is_harmless(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_a_symlink_inside_a_reclaimed_tree_is_unlinked_not_followed(
 ) -> None:
     """The failure mode that would make this feature not worth having.
 
-    Somebody's `target/test-home/assets` pointing at a real asset tree, or a
+    Somebody's `cache/target/test-home/assets` pointing at a real asset tree, or a
     developer's link into their home directory, must cost them the link and
     nothing else.
     """
@@ -104,7 +104,7 @@ def test_a_symlink_inside_a_reclaimed_tree_is_unlinked_not_followed(
     precious.mkdir()
     (precious / "irreplaceable").write_text("years of work")
 
-    home = config.path("target/test-home")
+    home = config.path("cache/target/test-home")
     home.mkdir(parents=True)
     (home / "shortcut").symlink_to(precious)
 
@@ -117,14 +117,14 @@ def test_a_symlink_inside_a_reclaimed_tree_is_unlinked_not_followed(
 def test_a_reclaimable_root_that_is_itself_a_symlink_is_only_unlinked(
     tmp_path: Path,
 ) -> None:
-    """Someone points `target/test-home` at a scratch volume; reclaiming it
+    """Someone points `cache/target/test-home` at a scratch volume; reclaiming it
     should return the link, not empty the volume."""
     config = _checkout(tmp_path)
     volume = tmp_path / "scratch-volume"
     (volume / "data").mkdir(parents=True)
     (volume / "data" / "blob").write_bytes(b"x" * 512)
 
-    link = config.path("target/test-home")
+    link = config.path("cache/target/test-home")
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(volume)
 
@@ -166,7 +166,7 @@ def test_a_run_with_room_reclaims_nothing(tmp_path: Path) -> None:
     """Deleting caches nobody asked about, on a machine with space, is how a
     gate earns a reputation for being slow."""
     config = _checkout(tmp_path, required_free_gb=0)
-    built = _occupy(config, "target/test-home")
+    built = _occupy(config, "cache/target/test-home")
 
     ensure_space(config, "assets")
 
@@ -176,7 +176,7 @@ def test_a_run_with_room_reclaims_nothing(tmp_path: Path) -> None:
 def test_running_short_reclaims_before_refusing(tmp_path: Path) -> None:
     """Failing having deleted nothing is the worst of both."""
     config = _checkout(tmp_path, required_free_gb=10**9)
-    built = _occupy(config, "target/test-home")
+    built = _occupy(config, "cache/target/test-home")
 
     with pytest.raises(GateError):
         ensure_space(config, "assets")
@@ -193,7 +193,7 @@ def test_reclaiming_enough_lets_the_phase_proceed(
     tight before the reclaim, comfortable after.
     """
     config = _checkout(tmp_path, required_free_gb=50)
-    built = _occupy(config, "target/test-home")
+    built = _occupy(config, "cache/target/test-home")
     readings = iter([10.0, 10.0, 80.0, 80.0, 80.0])
     monkeypatch.setattr("capsem_builder.gate.disk.free_gb", lambda _root: next(readings))
 
@@ -219,12 +219,12 @@ def test_refusing_says_what_is_needed_and_what_is_left(tmp_path: Path) -> None:
 def test_the_run_log_survives_making_room(tmp_path: Path) -> None:
     """The record of the run doing the reclaiming is not spare capacity."""
     config = _checkout(tmp_path, required_free_gb=10**9)
-    _occupy(config, "target/gate-runs")
+    _occupy(config, "cache/target/gate-runs")
 
     with pytest.raises(GateError):
         ensure_space(config, "assets")
 
-    assert config.path("target/gate-runs").exists()
+    assert config.path("cache/target/gate-runs").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -235,16 +235,16 @@ def test_the_run_log_survives_making_room(tmp_path: Path) -> None:
 def test_footprint_measures_each_tree_separately(tmp_path: Path) -> None:
     """`gc --dry-run` has to say where the space is, not just how much."""
     config = _checkout(tmp_path)
-    _occupy(config, "target/test-home", size=2048)
+    _occupy(config, "cache/target/test-home", size=2048)
 
     measured = footprint(config)
 
-    assert measured["target/test-home"] >= 2048
-    assert "target/image-workspace" not in measured, "absent trees are not zero rows"
+    assert measured["cache/target/test-home"] >= 2048
+    assert "cache/target/image-workspace" not in measured, "absent trees are not zero rows"
 
 
 def test_a_reclaim_does_not_delete_the_run_it_is_writing(tmp_path: Path) -> None:
-    """`gc` reclaims `target/gate-runs`, and records into it.
+    """`gc` reclaims `cache/target/gate-runs`, and records into it.
 
     Those were compatible only while `gc` recorded nothing. Making a real
     reclaim leave durable evidence -- which it should, since it deletes whole
@@ -336,7 +336,7 @@ def test_scratch_is_refused_before_anything_is_reclaimed(
     is inside the checkout by construction. So deleting them first would cost
     the next run its caches and change nothing about the refusal."""
     config = _checkout(tmp_path, required_free_gb=0, required_free_scratch_gb=15)
-    built = _occupy(config, "target/test-home")
+    built = _occupy(config, "cache/target/test-home")
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     # `gettempdir` caches, so the environment cannot steer it once something

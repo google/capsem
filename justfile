@@ -100,8 +100,8 @@ _dev-frontend: _pnpm-install _generate-settings
 # IMPORTANT: the Tauri binary embeds web/app/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect
 # on the running binary. This recipe keeps the two in lockstep.
-#   just build          # debug binary at ./target/debug/capsem-app
-#   just build release  # release binary at ./target/release/capsem-app
+#   just build          # debug binary at ./cache/target/cargo/debug/capsem-app
+#   just build release  # release binary at ./cache/target/cargo/release/capsem-app
 _build-ui profile="debug": _pnpm-install _generate-settings
     uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
@@ -164,13 +164,13 @@ _build-assets profile="" arch="":
 # performed by release-assets.yaml: every checked-in profile, both published
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
-# Outputs stay under target/ so the gate never mutates a source-owned directory.
+# Outputs stay under cache/target/ so the gate never mutates a source-owned directory.
 _gate-assets: _bootstrap _install-tools _generate-settings _sign
     @uv run --project build_system --frozen capsem-gate assets
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 #
-# Runs against an isolated CAPSEM_HOME under target/test-home/ so the suite
+# Runs against an isolated CAPSEM_HOME under cache/target/test-home/ so the suite
 # never kills or mutates the user's locally installed capsem. The flock is
 # still honored for multi-agent coordination but now lives inside the test
 # home, not the shared ~/.capsem/run.
@@ -267,7 +267,7 @@ _release-completed-package-rails:
 _release-deferred-install-target:
     @uv run --project build_system --frozen capsem-gate storage release deferred-install-target
 
-# repack-deb.sh below reads the materialized profile catalog from target/config,
+# repack-deb.sh below reads the materialized profile catalog from cache/target/config,
 # so this recipe owns filling it rather than leaving each call site to remember.
 # Release CI never enters here: it consumes an already-built package with its
 # staged profile cohort, so nothing it pulled can be clobbered.
@@ -278,7 +278,7 @@ _release-deferred-install-target:
 # The image runs natively on the host arch and cross-compiles via
 # Rust --target + multiarch system libs. Named volumes cache cargo
 # registry and build artifacts between runs. CARGO_TARGET_DIR=/cargo-target
-# inside the container isolates from host macOS target/ directory.
+# inside the container isolates from host macOS cache/target/ directory.
 #
 # CI vs local divergences (keep in sync when changing either):
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker

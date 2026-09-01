@@ -11,6 +11,17 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _relocated_prefix(original, tmp_path: Path):
+    return original.prefix.model_copy(
+        update={
+            "parent": str(tmp_path),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
+        }
+    )
+
+
 def _git(root: Path, *args: str, check: bool = True) -> str:
     return subprocess.run(
         ["git", *args],
@@ -32,7 +43,7 @@ def committed_source(tmp_path: Path) -> tuple[Path, str, str]:
     _git(root, "config", "user.name", "Gate")
     _git(root, "config", "commit.gpgsign", "false")
 
-    (root / ".gitignore").write_text("private/\ntarget/\n", encoding="utf-8")
+    (root / ".gitignore").write_text("private/\ncache/target/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("first\n", encoding="utf-8")
     _git(root, "add", ".gitignore", "tracked.txt")
     _git(root, "commit", "-qm", "first")
@@ -176,7 +187,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
     config = original.model_copy(
-        update={"prefix": original.prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={"prefix": _relocated_prefix(original, tmp_path)}
     )
     populated: list[tuple[Path, SourceCommit]] = []
     environments: list[dict[str, str]] = []
@@ -226,7 +237,7 @@ def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Pat
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
     config = original.model_copy(
-        update={"prefix": original.prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={"prefix": _relocated_prefix(original, tmp_path)}
     )
     path = prefix.for_source_commit(config, commit)
 
@@ -267,7 +278,7 @@ def test_forged_source_marker_cannot_bypass_exact_prefix_materialization(
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
     config = original.model_copy(
-        update={"prefix": original.prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={"prefix": _relocated_prefix(original, tmp_path)}
     )
 
     monkeypatch.setenv(config.environment.source_commit, str(commit))

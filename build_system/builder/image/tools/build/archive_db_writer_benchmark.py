@@ -8,7 +8,7 @@ import re
 import time
 from pathlib import Path
 
-DEFAULT_CRITERION_DIR = Path("target/criterion/db_writer_pressure")
+DEFAULT_CRITERION_DIR = Path("cache/target/criterion/db_writer_pressure")
 
 
 def project_version(root: Path) -> str:

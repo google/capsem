@@ -32,7 +32,7 @@ def _args(group: str, mode: str = "reuse") -> argparse.Namespace:
 @pytest.mark.parametrize(("group", "target"), sorted(focus.TARGETS.items()))
 def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> None:
     runner = RecordingRunner(ROOT)
-    qualification = LocalQualification(bin_dir="target/debug")
+    qualification = LocalQualification(bin_dir="cache/target/cargo/debug")
     alias = focus.FocusTestCommand(runner, _args(group), qualification=qualification)
     owner_args = vars(_args(group)) | {"quick": False, "dimensions": "", "commit": "unknown"}
     owner = target(
@@ -49,7 +49,7 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     plan = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("release-system"),
-        qualification=LocalQualification(bin_dir="target/debug"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     ).plan().describe()
 
     assert "contracts.release" in plan
@@ -65,7 +65,7 @@ def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> Non
     command = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("assets", "clean"),
-        qualification=LocalQualification(bin_dir="target/debug"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     )
 
     owner = command._target()

@@ -46,7 +46,7 @@ config/
     docker/
         Dockerfile.rootfs.j2
         Dockerfile.kernel.j2
-target/config/                        Generated runtime config
+cache/target/config/                        Generated runtime config
 ```
 
 ## Configuration Reference
@@ -126,11 +126,11 @@ seed files, rules, MCP declarations, and plugins are part of the image.
 | `capsem-admin profile check` | Validate profile ledger, referenced files, rules, MCP, and root seed |
 | `capsem-admin image build` | Build profile-derived kernel/rootfs assets |
 | `capsem-admin manifest generate` | Generate manifest and B3SUMS for assets |
-| `capsem-admin profile materialize` | Generate runtime `target/config` from profile and manifest |
+| `capsem-admin profile materialize` | Generate runtime `cache/target/config` from profile and manifest |
 
 ## Manifest
 
-Every repository build produces `target/assets/manifest.json` (format 2) -- a single top-level file covering every arch. It records BLAKE3 hashes and file sizes for each asset and ties asset versions to compatible binary versions:
+Every repository build produces `cache/target/assets/manifest.json` (format 2) -- a single top-level file covering every arch. It records BLAKE3 hashes and file sizes for each asset and ties asset versions to compatible binary versions:
 
 ```json
 {
@@ -171,13 +171,13 @@ gate which binary and asset versions are compatible with each other.
 
 Source profiles do not hand-author asset hashes. `capsem-admin profile
 materialize` combines source profile/corp/settings config with the generated
-asset manifest into `target/config` for local builds, CI, packages, and
+asset manifest into `cache/target/config` for local builds, CI, packages, and
 installed runtime config.
 
 The source profile is the ledger, not a generated evidence file. Do not add
 asset hashes, sibling-file hashes, package hashes, or build-output hashes to
 checked-in `profile.toml`. Evidence belongs in root seed manifests, asset
-manifests, OBOMs, build ledgers, and generated `target/config`.
+manifests, OBOMs, build ledgers, and generated `cache/target/config`.
 
 ## Corporate Deployment
 

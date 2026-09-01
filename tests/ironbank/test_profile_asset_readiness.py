@@ -88,7 +88,7 @@ def _write_manifest(source_assets: Path, arch: str, files: dict[str, bytes]) -> 
 
 
 def _ensure_capsem_admin() -> Path:
-    binary = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
+    binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-admin"
     ensure_host_test_binary(
         binary,
         source_paths=(PROJECT_ROOT / "crates" / "capsem-admin").rglob("*.rs"),

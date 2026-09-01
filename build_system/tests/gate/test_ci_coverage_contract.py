@@ -67,7 +67,7 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
         test_job, "tests/citadel/test_agent_skill_index.py"
     )
     appended = python_pytest_command_containing(
-        test_job, "--cov-report=xml:target/coverage/python/codecov.xml"
+        test_job, "--cov-report=xml:cache/target/coverage/python/codecov.xml"
     )
 
     assert "--cov=build_system/builder" in selected
@@ -77,7 +77,7 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
 
     assert "--cov=build_system/builder" in appended
     assert "--cov-append" in appended
-    assert "--cov-report=xml:target/coverage/python/codecov.xml" in appended
+    assert "--cov-report=xml:cache/target/coverage/python/codecov.xml" in appended
     assert "--cov-fail-under=0" in appended
     assert test_job.index(
         "- name: Cross-system Python schema tests with coverage"
@@ -95,7 +95,7 @@ def test_complete_gate_broad_suite_inherits_the_authoritative_coverage_floor() -
     argv = pytestsuite.broad(config, profile="code").argv(config)
 
     assert "--cov=build_system/builder" in argv
-    assert "--cov-report=xml:target/coverage/python/codecov.xml" in argv
+    assert "--cov-report=xml:cache/target/coverage/python/codecov.xml" in argv
     assert not any(argument.startswith("--cov-fail-under") for argument in argv)
 
 
@@ -312,12 +312,12 @@ def test_release_critical_crates_are_reported() -> None:
     )
 
     required_uploads = {
-        "target/coverage/linux/codecov.json",
-        "target/coverage/rust/unit.json",
-        "target/coverage/rust/integration.json",
-        "target/coverage/python/codecov.xml",
-        "target/coverage/web-app/coverage-final.json",
-        "target/coverage/distribution-site/lcov.info",
+        "cache/target/coverage/linux/codecov.json",
+        "cache/target/coverage/rust/unit.json",
+        "cache/target/coverage/rust/integration.json",
+        "cache/target/coverage/python/codecov.xml",
+        "cache/target/coverage/web-app/coverage-final.json",
+        "cache/target/coverage/distribution-site/lcov.info",
     }
     uploaded_files = codecov_upload_files(ci)
     missing_uploads = sorted(required_uploads - uploaded_files)
@@ -378,12 +378,12 @@ def test_release_binaries_and_package_rails_covered() -> None:
 
     release_integration_command = python_pytest_command_containing(
         test_job,
-        "--cov-report=xml:target/coverage/python/codecov.xml",
+        "--cov-report=xml:cache/target/coverage/python/codecov.xml",
     )
     for coverage_arg in (
         "--cov=build_system/builder",
         "--cov-append",
-        "--cov-report=xml:target/coverage/python/codecov.xml",
+        "--cov-report=xml:cache/target/coverage/python/codecov.xml",
     ):
         assert coverage_arg in release_integration_command, (
             "release/package integration tests must append to the uploaded "

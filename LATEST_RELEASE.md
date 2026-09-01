@@ -53,7 +53,7 @@ version: 1.6.1785421421
   dirs intact -- and the copy walks the run dir for host-side diagnostics,
   including the `vm/active_profile.toml` whose recorded pins are what a hash
   mismatch is argued from. It prunes `guest/` and `auto_snapshots/` so the guest
-  workspace, duplicated once per snapshot generation, stays out of `target/`.
+  workspace, duplicated once per snapshot generation, stays out of `cache/target/`.
 
 - Fixed `docker-storage-policy.py enforce` crashing with a bare
   `KeyError: 'free_bytes'` when Docker stopped reporting capacity between its

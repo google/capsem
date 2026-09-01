@@ -55,27 +55,27 @@ bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-agent
-mkdir -p "/cargo-target/linux-agent/$TARGET_ARCH"
-cp "/cargo-target/$RUST_TARGET/release/capsem-pty-agent" \
-   "/cargo-target/$RUST_TARGET/release/capsem-mcp-server" \
-   "/cargo-target/$RUST_TARGET/release/capsem-net-proxy" \
-   "/cargo-target/$RUST_TARGET/release/capsem-dns-proxy" \
-   "/cargo-target/$RUST_TARGET/release/capsem-sysutil" \
-   "/cargo-target/linux-agent/$TARGET_ARCH/"
+mkdir -p "/cargo-cache/target/linux-agent/$TARGET_ARCH"
+cp "/cargo-cache/target/$RUST_TARGET/release/capsem-pty-agent" \
+   "/cargo-cache/target/$RUST_TARGET/release/capsem-mcp-server" \
+   "/cargo-cache/target/$RUST_TARGET/release/capsem-net-proxy" \
+   "/cargo-cache/target/$RUST_TARGET/release/capsem-dns-proxy" \
+   "/cargo-cache/target/$RUST_TARGET/release/capsem-sysutil" \
+   "/cargo-cache/target/linux-agent/$TARGET_ARCH/"
 
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
     -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
-bash build_system/scripts/build/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem" \
+bash build_system/scripts/build/check-build-provenance.sh "/cargo-cache/target/$RUST_TARGET/release/capsem" \
     "${CAPSEM_BUILD_REVISION:-}"
 
 echo "--- Resolve Tauri signing key ---"
 # The authoritative release keys live in GitHub Actions secrets and are applied
 # only on publish. A local build just needs SOME key for `cargo tauri build` to
 # complete, so one throwaway dev key is generated and reused.
-DEV_KEY=/cargo-target/dev-tauri-private
+DEV_KEY=/cargo-cache/target/dev-tauri-private
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
     if [ ! -f "$DEV_KEY" ]; then
         echo "    no host signing key; generating dev-only key (not for release distribution)"
@@ -91,21 +91,21 @@ else
 fi
 
 echo "--- Build Tauri app ---"
-rm -rf "/cargo-target/$RUST_TARGET/release/bundle/deb"
+rm -rf "/cargo-cache/target/$RUST_TARGET/release/bundle/deb"
 (cd crates/capsem-app && cargo tauri build --target "$RUST_TARGET" --bundles deb \
     -- --locked --offline)
 
 echo "--- Repack Debian package ---"
-DEB=$(ls -t "/cargo-target/$RUST_TARGET/release/bundle/deb/"*.deb | head -n1)
+DEB=$(ls -t "/cargo-cache/target/$RUST_TARGET/release/bundle/deb/"*.deb | head -n1)
 bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB" \
-    "/cargo-target/$RUST_TARGET/release" "target/config" "assets"
+    "/cargo-cache/target/$RUST_TARGET/release" "cache/target/config" "assets"
 
 echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"
 dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
 
 cp "$DEB" "$OUT/"
-# Record the exact package this run produced, so a stale target/packages entry
+# Record the exact package this run produced, so a stale cache/target/packages entry
 # from an earlier build can never be the one that gets proved and published.
 basename "$DEB" > "$OUT/.cross-compile-$TARGET_ARCH-deb"
-cp "/cargo-target/linux-agent/$TARGET_ARCH/"* "$OUT/"
+cp "/cargo-cache/target/linux-agent/$TARGET_ARCH/"* "$OUT/"

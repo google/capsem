@@ -371,7 +371,7 @@ def test_an_observed_plan_touches_nothing(tmp_path: Path, monkeypatch: pytest.Mo
     """`tests/helpers/gate.py` runs the real candidate plan against a
     recording runner to read back the argv it would issue. That stubs
     subprocesses -- it does not stub filesystem actions, so `source.record`
-    wrote the gate's own `target/gate-source-state.json` with the recorder's
+    wrote the gate's own `cache/target/gate-source-state.json` with the recorder's
     empty output, and the gate's `source.verify` then reported
 
         source HEAD changed while the gate was running:  -> <head>
@@ -444,7 +444,7 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
     would then rewrite identical bytes and go unnoticed.
 
     It is written to a *private* path, and that is not incidental. Planting the
-    sentinel in the real `target/gate-source-state.json` made this test the one
+    sentinel in the real `cache/target/gate-source-state.json` made this test the one
     thing in the suite that deliberately writes a file the whole suite shares.
     Under `pytest -n 4 --dist=loadfile` that raced: this test wrote the
     sentinel, a test in another worker had snapshotted the file before that
@@ -455,7 +455,7 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
     these paths -- is true again, so a future writer is correctly blamed.
     """
     config = gate_config.load(PROJECT_ROOT)
-    # Inside `target/`, so it is build output rather than tracked source, and
+    # Inside `cache/target/`, so it is build output rather than tracked source, and
     # per-process, so four xdist workers cannot collide on it either.
     probe = f"{config.candidate.source_state_file}.probe-{os.getpid()}"
     recorded = config.path(probe)
@@ -556,7 +556,7 @@ def test_issued_command_introspection_cannot_clear_live_asset_outputs(
     ``gate_issued`` used a recording subprocess runner against the checkout it
     was inspecting.  That records ``Run`` actions safely, but an opaque
     ``Call`` executes Python directly.  The assets preflight therefore cleared
-    the live ``target/ironbank-assets`` tree halfway through broad pytest,
+    the live ``cache/target/ironbank-assets`` tree halfway through broad pytest,
     deleting the exact profile catalog the same pytest process was consuming.
     """
     from capsem_builder.gate import snapshot

@@ -72,7 +72,7 @@ The fixture (`tests/fixtures/session/test.db`) is a real session DB shared by fr
 
 ```bash
 # 1. Run integration test to generate a rich session
-python3 build_system/scripts/test/integration_test.py --binary target/debug/capsem --assets assets
+python3 build_system/scripts/test/integration_test.py --binary cache/target/cargo/debug/capsem --assets assets
 
 # 2. Inspect completeness
 python3 build_system/scripts/doctor/check_session.py <session-id>

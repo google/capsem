@@ -53,7 +53,7 @@ byte, then fails if either changes while the gate runs. Generated output stays
 under ignored build directories. The local proof therefore covers the exact
 source state the developer asked to test without forcing commit choreography.
 Automatic gate benchmark output belongs under ignored
-`target/test-benchmarks/`. Historical benchmark publication uses the owning
+`cache/target/test-benchmarks/`. Historical benchmark publication uses the owning
 pytest/benchmark command and an explicit review; it is not a Just convenience
 recipe.
 
@@ -261,9 +261,9 @@ The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each
 
 ### Orphan processes across runs are a product bug (not a test bug)
 
-If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
+If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
 
-**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
+**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
 ### Apple VZ lifecycle serialization is part of the product
 
@@ -558,8 +558,8 @@ Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_man
 shell and fails in the gate:
 
 ```bash
-CAPSEM_HOME="$PWD/target/test-home/.capsem" \
-CAPSEM_RUN_DIR="$PWD/target/test-home/.capsem/run" \
+CAPSEM_HOME="$PWD/cache/target/test-home/.capsem" \
+CAPSEM_RUN_DIR="$PWD/cache/target/test-home/.capsem/run" \
   cargo test -p <crate>
 ```
 

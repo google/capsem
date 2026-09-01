@@ -19,7 +19,7 @@ from .render import inventory_text, plan_text
 def _state(repository: Path):
     root = repository.resolve()
     policy = load_policy(root)
-    paths = CachePaths(root, policy)
+    paths = CachePaths(repository_root=root, policy=policy)
     return policy, paths, scan_inventory(paths, policy)
 
 

@@ -68,7 +68,7 @@ class StorageConfig(Strict):
 
 
 class OutputRootsConfig(Strict):
-    """Canonical repository-generated output owners inside ``target/``."""
+    """Canonical repository-generated output owners inside ``cache/target/``."""
 
     assets: str
     benchmarks: str
@@ -83,8 +83,12 @@ class OutputRootsConfig(Strict):
     @classmethod
     def _is_target_owned(cls, value: str) -> str:
         path = PurePosixPath(value)
-        if path.is_absolute() or ".." in path.parts or path.parts[:1] != ("target",):
-            raise ValueError(f"generated output root {value!r} must stay under target/")
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or path.parts[:2] != ("cache", "target")
+        ):
+            raise ValueError(f"generated output root {value!r} must stay under cache/target/")
         return value
 
     @model_validator(mode="after")

@@ -34,6 +34,9 @@ def _relocated(tmp_path: Path):
     settings = config.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
+            "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
+            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
+            "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
     return config.model_copy(update={"prefix": settings})
@@ -113,7 +116,7 @@ def test_scaffolding_is_never_copied_back_into_the_checkout() -> None:
 def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path) -> None:
     """Profile content reaches the assets through a relative symlink.
 
-    `target/ironbank-assets/<profile>/assets` is a link to `target/assets`,
+    `cache/target/ironbank-assets/<profile>/assets` is a link to `cache/target/assets`,
     so what a run leaves behind is one real directory and several pointers at
     it. Moving a pointer instead of the directory would fill the cache with
     links into a prefix that no longer exists, and the next run would be lent a
@@ -121,7 +124,7 @@ def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path
     """
     config = _relocated(tmp_path)
     finished = _produced(config, "cccccccc")
-    pointer = finished / "target" / "ironbank-assets" / "code"
+    pointer = finished / "cache" / "target" / "ironbank-assets" / "code"
     pointer.mkdir(parents=True)
     (pointer / "assets").symlink_to("../../assets")
 
@@ -320,14 +323,14 @@ def test_the_very_first_run_is_lent_what_the_checkout_exported(tmp_path, monkeyp
 def test_the_cache_never_holds_a_link_where_a_tree_should_be(tmp_path: Path) -> None:
     """A moved symlink points into a prefix that is about to stop existing.
 
-    This happened. `~/.cg-build/assets` was a dangling link for most of a night:
+    This happened. The old ambient build cache held a dangling link for most of a night:
     `du` reported it as a directory of zero bytes and `Path.exists()` followed it
     and answered False, so the cache read as populated to a person and as empty
     to the code. Every run then adopted the checkout again, and the one thing
     the cache is for -- carrying a finished run's work -- never happened once.
 
     A prefix legitimately reaches its assets through links; `[prefix] exports`
-    says as much, and `target/ironbank-assets/<profile>/assets` is one. So the
+    says as much, and `cache/target/ironbank-assets/<profile>/assets` is one. So the
     salvage has to move what a link points at, not the link.
     """
     config = _relocated(tmp_path)
@@ -343,7 +346,7 @@ def test_the_cache_never_holds_a_link_where_a_tree_should_be(tmp_path: Path) -> 
             (link / "x86_64").mkdir(parents=True)
             (link / "x86_64" / "rootfs.erofs").write_bytes(PAYLOAD)
             continue
-        # A lent path may be nested -- `target/ironbank-assets` is -- so the
+        # A lent path may be nested -- `cache/target/ironbank-assets` is -- so the
         # link needs its parent to exist, and a target that resolves from
         # where the link actually sits rather than from the prefix root.
         link.parent.mkdir(parents=True, exist_ok=True)

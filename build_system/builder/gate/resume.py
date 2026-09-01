@@ -4,14 +4,14 @@ A gate run is long and the graph is deep, so a fix to a step near the end used
 to cost a full replay of everything before it. Six consecutive `just test` runs
 were spent that way: each stopped one step later than the last, and each paid
 twenty-odd minutes to reach the new frontier. The private checkout made it
-worse rather than better -- a fresh copy per run starts with no `target/`, so
+worse rather than better -- a fresh copy per run starts with no `cache/target/`, so
 every replay is cold.
 
 Resuming names two things: the prefix to work in, which still holds the earlier
 run's build output, and the step to start at. Everything the graph puts *before*
 that step is carried; that step and everything after it runs.
 
-    capsem-gate candidate --prefix ~/.cg/a025fce7 --from artifacts.build-chain
+    capsem-gate candidate --prefix cache/worktrees/a025fce7 --from artifacts.build-chain
 
 Derived from the graph rather than from a previous run's log, so the answer is
 the same every time and can be checked before anything executes -- what comes

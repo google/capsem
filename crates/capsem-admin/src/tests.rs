@@ -55,9 +55,9 @@ fn cli_accepts_materialized_profile_validation() {
         "capsem-admin",
         "profile",
         "validate",
-        "target/config/profiles/co-work/profile.toml",
+        "cache/target/config/profiles/co-work/profile.toml",
         "--config-root",
-        "target/config",
+        "cache/target/config",
         "--materialized",
     ]);
     match cli.command {
@@ -1077,8 +1077,8 @@ fn image_build_workspaces_are_isolated_by_profile_and_architecture() {
     let x86_64 = image_build_workspace_path(&profile, Some("x86_64"));
 
     assert_ne!(arm64, x86_64);
-    assert_eq!(arm64, PathBuf::from("target/image-workspace/code/arm64"));
-    assert_eq!(x86_64, PathBuf::from("target/image-workspace/code/x86_64"));
+    assert_eq!(arm64, PathBuf::from("cache/target/image-workspace/code/arm64"));
+    assert_eq!(x86_64, PathBuf::from("cache/target/image-workspace/code/x86_64"));
 }
 
 #[test]
@@ -1471,7 +1471,7 @@ fn profile_materialize_writes_generated_config_from_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let source_profile = repo_root.join("config/profiles/code/profile.toml");
     let original_source = fs::read_to_string(&source_profile).expect("read source profile");
 
@@ -1553,7 +1553,7 @@ fn profile_materialize_remote_manifest_derives_release_site_asset_urls() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_json = fs::read_to_string(&manifest_path).expect("manifest");
     let manifest_url = serve_manifest_once(manifest_json);
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
 
     materialize_profile_config(&ProfileMaterializeArgs {
         profile: repo_root.join("config/profiles/code/profile.toml"),
@@ -1609,7 +1609,7 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
         .and_then(Path::parent)
         .expect("repo root");
     let temp = tempfile::tempdir().expect("tempdir");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let local_obom = temp.path().join("resolved-obom.cdx.json");
     fs::write(&local_obom, test_obom_json()).expect("write resolved OBOM");
     let local_obom_url = file_url(&local_obom);
@@ -1777,7 +1777,7 @@ fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
     let temp = tempfile::tempdir().expect("tempdir");
     let assets_dir = temp.path().join("assets");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let output_root = temp.path().join("target/config");
+    let output_root = temp.path().join("cache/target/config");
     let config_root = repo_root.join("config");
 
     materialize_profile_config(&ProfileMaterializeArgs {
@@ -1850,7 +1850,7 @@ fn profile_materialize_rejects_arch_missing_from_manifest() {
         config_root: repo_root.join("config"),
         manifest: file_url(&manifest_path),
         assets_dir: temp.path().join("assets"),
-        output_root: temp.path().join("target/config"),
+        output_root: temp.path().join("cache/target/config"),
         arch: Some("x86_64".to_string()),
         clean: true,
         json: false,
@@ -1878,7 +1878,7 @@ fn profile_materialize_manifest_source_must_be_url() {
         config_root: repo_root.join("config"),
         manifest: manifest_path.display().to_string(),
         assets_dir: temp.path().join("assets"),
-        output_root: temp.path().join("target/config"),
+        output_root: temp.path().join("cache/target/config"),
         arch: Some("arm64".to_string()),
         clean: true,
         json: false,
@@ -1898,7 +1898,7 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     let report = build_assets_channel(
         &manifest_url,
@@ -2165,7 +2165,7 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
 fn release_graph_manifest_version_is_independent_from_package_and_assets() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &file_url(&manifest_path),
@@ -2234,7 +2234,7 @@ fn assets_channel_build_preserves_existing_channels_when_adding_nightly() {
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &manifest_url,
@@ -2317,7 +2317,7 @@ fn assets_channel_build_bootstraps_without_binary_files() {
         serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
     )
     .expect("write manifest");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
 
     build_assets_channel(
         &file_url(&manifest_path),
@@ -3053,7 +3053,7 @@ fn append_ar_member(out: &mut Vec<u8>, name: &str, contents: &[u8]) {
 fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     let asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
 
     let report = build_assets_channel(
@@ -3100,7 +3100,7 @@ fn assets_channel_check_rejects_bad_health_schema() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
@@ -3133,7 +3133,7 @@ fn assets_channel_check_rejects_bad_health_schema() {
 fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3168,7 +3168,7 @@ fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
 fn assets_channel_check_rejects_missing_asset_release_date() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3205,7 +3205,7 @@ fn assets_channel_check_rejects_missing_asset_release_date() {
 fn assets_channel_check_rejects_missing_evidence_vm_obom() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3238,7 +3238,7 @@ fn assets_channel_check_rejects_missing_evidence_vm_obom() {
 fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3282,7 +3282,7 @@ fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
 fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3329,7 +3329,7 @@ fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
 fn assets_channel_check_rejects_missing_host_sbom_attestation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3400,7 +3400,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
         serde_json::to_string_pretty(&manifest).expect("manifest json"),
     )
     .expect("write manifest with deb");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3448,7 +3448,7 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
 fn assets_channel_check_rejects_attestation_without_verification_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
@@ -3487,7 +3487,7 @@ fn assets_channel_check_rejects_missing_current_asset_blob() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
     let profiles_dir = repo_config_profiles_dir();
-    let out_dir = temp.path().join("target/distribution");
+    let out_dir = temp.path().join("cache/target/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
@@ -3524,7 +3524,7 @@ fn assets_channel_rejects_unsafe_channel_names() {
             &profiles_dir,
             channel,
             "1.0.2",
-            &temp.path().join("target/distribution"),
+            &temp.path().join("cache/target/distribution"),
             "2030-01-01T00:00:00Z",
             None,
         )
@@ -3544,7 +3544,7 @@ fn assets_channel_manifest_source_must_be_url() {
         &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
-        &temp.path().join("target/distribution"),
+        &temp.path().join("cache/target/distribution"),
         "2030-01-01T00:00:00Z",
         None,
     )

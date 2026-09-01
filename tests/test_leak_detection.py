@@ -253,7 +253,7 @@ def test_missing_required_artifacts_lists_missing_when_env_set(tmp_path):
 
 
 def test_required_artifacts_manifest_path_is_flat():
-    """The asset manifest lives at target/assets/manifest.json, not per-arch.
+    """The asset manifest lives at cache/target/assets/manifest.json, not per-arch.
 
     Every production reader (capsem-service boot, capsem setup, gen_manifest,
     release workflow) and the builder's generate_checksums writer agree on
@@ -264,8 +264,8 @@ def test_required_artifacts_manifest_path_is_flat():
     from conftest import _REQUIRED_ARTIFACTS
     from helpers.constants import ASSETS_DIR
 
-    assert "target/assets/manifest.json" in _REQUIRED_ARTIFACTS
-    assert _REQUIRED_ARTIFACTS["target/assets/manifest.json"] == ASSETS_DIR / "manifest.json"
+    assert "cache/target/assets/manifest.json" in _REQUIRED_ARTIFACTS
+    assert _REQUIRED_ARTIFACTS["cache/target/assets/manifest.json"] == ASSETS_DIR / "manifest.json"
 
 
 # ---------------------------------------------------------------------------

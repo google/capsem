@@ -214,7 +214,7 @@ def _observe() -> Observed:
     recordings = tuple(
         f"tracked generated recording: {path}"
         for path in tracked
-        if path.startswith("target/test-benchmarks/")
+        if path.startswith("cache/target/test-benchmarks/")
     )
     assets = _tauri_problems(
         json.loads(TAURI_CONFIG.read_text(encoding="utf-8")), tracked_set
@@ -305,7 +305,7 @@ def _empty_policy() -> dict[str, Any]:
         (
             _synthetic(
                 tracked_recording_problems=(
-                    "tracked generated recording: target/test-benchmarks/new.json",
+                    "tracked generated recording: cache/target/test-benchmarks/new.json",
                 )
             ),
             "tracked generated recording",

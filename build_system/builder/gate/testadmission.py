@@ -37,7 +37,7 @@ def admit(command: CandidateLike, commit: SourceCommit | None) -> None:
         return
     cache_policy = load_policy(command._config.root)
     authority = qualificationevidence.authority(command._config)
-    paths = CachePaths(authority.root, cache_policy)
+    paths = CachePaths(repository_root=authority.root, policy=cache_policy)
     latest = qualificationevidence.latest_complete(authority)
     target = _identity(command, commit)
     if latest is None:
@@ -85,7 +85,7 @@ def complete(command: CandidateLike, commit: SourceCommit | None) -> None:
         return
     cache_policy = load_policy(command._config.root)
     authority = qualificationevidence.authority(command._config)
-    paths = CachePaths(authority.root, cache_policy)
+    paths = CachePaths(repository_root=authority.root, policy=cache_policy)
     record_admission_event(
         paths.root,
         cache_policy.test_admission.state_path,
