@@ -201,6 +201,19 @@ def test_benchmark_fitness_precedes_expensive_assets_and_timing() -> None:
     assert fitness < labels.index("functional.pytest.timing.code")
 
 
+def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
+    """Snapshot outages fail before asset builds, VMs, and the broad matrix."""
+    plan = _plan()
+    labels = list(plan.labels)
+    dependencies = [f"prepare.package-dependencies.{arch}" for arch in CONFIG.architectures]
+
+    assert all(label in labels for label in dependencies)
+    assert labels.index("prepare.benchmark-fitness") < labels.index(dependencies[0])
+    assert labels.index(dependencies[-1]) < labels.index("assets.build.arm64")
+    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad.code")
+    assert all(("host-image", label) in plan.edges for label in dependencies)
+
+
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:
     """A phase is finished when every independent branch of it is finished.
 

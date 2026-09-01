@@ -437,6 +437,8 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert f"APT_SNAPSHOT_ID={CONFIG.apt_snapshot.id}" in str(helper)
     assert f"RUST_TARGET={CONFIG.host_arch().rust_target}" in str(helper)
     assert f"CARGO_STORE={CONFIG.install.builder.cargo_store}" in str(helper)
+    assert f"APT_LISTS_CACHE_ID={CONFIG.install.builder.apt_lists_cache_id}" in str(helper)
+    assert f"APT_ARCHIVES_CACHE_ID={CONFIG.install.builder.apt_archives_cache_id}" in str(helper)
     assert "INPUT_IDENTITY=capsem-install-builder:" in str(helper)
     assert "--platform linux/amd64" in str(source)
     assert "--network none" in str(source)

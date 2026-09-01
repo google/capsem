@@ -52,6 +52,8 @@ ARG CROSS_DEV_PACKAGES
 ARG HOST_PACKAGES
 ARG CARGO_STORE
 ARG PNPM_STORE
+ARG APT_LISTS_CACHE_ID
+ARG APT_ARCHIVES_CACHE_ID
 ARG ORT_LIB_LOCATION
 ARG INPUT_IDENTITY
 
@@ -67,7 +69,12 @@ RUN test -n "${APT_SNAPSHOT_BASE}" \
     && test -n "${HOST_PACKAGES}" \
     && test -n "${CARGO_STORE}" \
     && test -n "${PNPM_STORE}" \
-    && test -n "${ORT_LIB_LOCATION}" \
+    && test -n "${APT_LISTS_CACHE_ID}" \
+    && test -n "${APT_ARCHIVES_CACHE_ID}" \
+    && test -n "${ORT_LIB_LOCATION}"
+RUN --mount=type=cache,id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
     && swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" \
         "${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}" "${HOST_PACKAGES}"
 

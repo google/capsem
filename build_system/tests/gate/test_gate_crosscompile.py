@@ -898,6 +898,8 @@ def test_package_helper_is_host_native_and_target_specific(
     assert "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages) in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
+    assert f"APT_LISTS_CACHE_ID={config.package.builder.apt_lists_cache_id}" in build
+    assert f"APT_ARCHIVES_CACHE_ID={config.package.builder.apt_archives_cache_id}" in build
     assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build
     assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build

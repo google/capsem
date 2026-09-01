@@ -35,7 +35,11 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     # those later steps back onto it would create a cycle. Standalone plans
     # still get the same root step here.
     recorded = plan.shared(record_step(config))
-    built = hostimage.fragment(plan, config, after=after)
+    # Groundwork has no ordering of its own. The capacity consumer waits for
+    # both the builder and this fragment's caller; pushing `after` into a
+    # shared producer lets a later consumer add a backwards edge and cycle the
+    # candidate graph once another lane has already materialized the producer.
+    built = hostimage.fragment(plan, config)
 
     capacity = plan.shared(
         step(

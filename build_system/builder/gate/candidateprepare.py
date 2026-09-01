@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import bench, host, hostpackage, imagebuild, initrd
+from . import bench, host, hostpackage, imagebuild, initrd, packagepreflight
 from .actions import Call, Run, Script
 from .cachecontrol import CacheControl
 from .config import GateConfig
@@ -94,7 +94,8 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
     harness, fitness = bench.fitness(config)
     built_harness = phase.add(harness, after=(checked,))
     fit = phase.add(fitness, after=(built_harness,))
-    return _runtime(plan, config, after=(fit,))
+    dependencies = packagepreflight.fragment(plan, config, after=(fit,))
+    return _runtime(plan, config, after=(dependencies,))
 
 
 def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:

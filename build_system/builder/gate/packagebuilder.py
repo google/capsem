@@ -113,6 +113,8 @@ def image_tag(
         " ".join(config.toolchain.linux.cross_host_packages),
         settings.cargo_store,
         settings.pnpm_store,
+        settings.apt_lists_cache_id,
+        settings.apt_archives_cache_id,
         settings.ort_lib_location,
     ):
         digest.update(value.encode())
@@ -171,6 +173,8 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
                 "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages),
                 f"CARGO_STORE={settings.cargo_store}",
                 f"PNPM_STORE={settings.pnpm_store}",
+                f"APT_LISTS_CACHE_ID={settings.apt_lists_cache_id}",
+                f"APT_ARCHIVES_CACHE_ID={settings.apt_archives_cache_id}",
                 f"ORT_URL={ort.url}",
                 f"ORT_SHA256={ort.sha256}",
                 f"ORT_LIB_LOCATION={settings.ort_lib_location}",
