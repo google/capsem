@@ -7,7 +7,9 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = re.compile(r"(?:~?/)?\.cg(?:-[A-Za-z0-9_-]+)?/|(?<!cache/)target/")
+LEGACY = re.compile(
+    r"(?:~?/)?\.cg(?:-[A-Za-z0-9_-]+)?/|(?<!cache/)(?<!/build/)target/"
+)
 RETIRED_CONTROL = (
     "config/storage-policy.toml",
     "docker-storage-policy.py",
@@ -72,6 +74,14 @@ def test_legacy_cache_roots_are_observed_red() -> None:
     )
 
     assert len(records) == 2, RATIONALE
+
+
+def test_an_isolated_container_target_is_not_repository_state() -> None:
+    records = _legacy_records(
+        {"builder.py": 'run("cp /build/target/x86_64/release/agent /output/agent")'}
+    )
+
+    assert not records, RATIONALE
 
 
 def test_generated_state_has_one_root() -> None:

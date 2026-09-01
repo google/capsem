@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from capsem_builder.image.componentcache import (
@@ -12,6 +13,7 @@ from capsem_builder.image.componentcache import (
     store,
 )
 from capsem_builder.image.guestbinarycache import materialize
+from capsem_builder.image.models import BuildConfig
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -84,8 +86,9 @@ def test_guest_binary_generation_is_compiled_once_for_two_consumers(tmp_path: Pa
     repo = repository(tmp_path)
     source = repo / "guest-input"
     source.write_text("source", encoding="utf-8")
-    build = SimpleNamespace(
-        guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))
+    build = cast(
+        BuildConfig,
+        SimpleNamespace(guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))),
     )
     names = ("capsem-agent", "capsem-bench")
     calls = 0
