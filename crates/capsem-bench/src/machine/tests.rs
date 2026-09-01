@@ -80,17 +80,38 @@ fn the_doctor_does_not_report_itself_as_contention() {
     // `capsem-bench-rs` matches `^capsem`, so without this it would find
     // itself and declare every machine unfit.
     let listing = "111 capsem-service\n222 capsem-bench-rs\n333 capsem-gateway\n";
-    let strays = super::strays_from_pgrep(listing, "222");
+    let strays = super::strays_from_pgrep(listing, &["222".to_string()]);
     assert_eq!(strays, ["capsem-service", "capsem-gateway"]);
 }
 
 #[test]
 fn an_empty_listing_finds_nothing() {
-    assert!(super::strays_from_pgrep("", "222").is_empty());
+    assert!(super::strays_from_pgrep("", &["222".to_string()]).is_empty());
 }
 
 #[test]
 fn a_malformed_line_is_skipped_rather_than_panicking() {
-    let strays = super::strays_from_pgrep("garbage\n111 capsem-service\n", "999");
+    let strays = super::strays_from_pgrep("garbage\n111 capsem-service\n", &["999".to_string()]);
     assert_eq!(strays, ["capsem-service"]);
+}
+
+#[test]
+fn the_doctor_ignores_its_gate_ancestry_but_not_an_unrelated_gate() {
+    let processes = "100 1\n200 100\n300 200\n400 1\n";
+    let ancestry = super::ancestry_from_ps(processes, "300");
+    let listing = "100 capsem-gate\n300 capsem-bench-rs\n400 capsem-gate\n";
+
+    assert_eq!(ancestry, ["300", "200", "100", "1"]);
+    assert_eq!(
+        super::strays_from_pgrep(listing, &ancestry),
+        ["capsem-gate"]
+    );
+}
+
+#[test]
+fn a_cyclic_process_snapshot_cannot_loop_forever() {
+    assert_eq!(
+        super::ancestry_from_ps("100 200\n200 100\n", "100"),
+        ["100", "200"]
+    );
 }

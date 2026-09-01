@@ -10,7 +10,6 @@ mod scenarios;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::process::Command as StdCommand;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
@@ -232,7 +231,7 @@ async fn main() -> Result<()> {
                     &channel,
                     &commit,
                     &profile,
-                    running_capsem_processes(),
+                    machine::running_capsem_processes(),
                 );
                 let mut connection = store::open(&root)?;
                 let run_id = store::insert(&mut connection, &record)?;
@@ -256,7 +255,9 @@ async fn main() -> Result<()> {
             return commands::report(&args.store, std::env::consts::ARCH, &args.profile)
         }
         Command::List => commands::list_dimensions(),
-        Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
+        Command::Doctor(args) => {
+            return commands::doctor(args.json, machine::running_capsem_processes())
+        }
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
             return commands::compare(
@@ -281,24 +282,12 @@ async fn main() -> Result<()> {
                 &args.channel,
                 &args.commit,
                 &args.profile,
-                running_capsem_processes(),
+                machine::running_capsem_processes(),
             );
         }
     }
     Ok(())
 }
-
-/// Capsem processes already running, which compete for the CPU being measured.
-fn running_capsem_processes() -> Vec<String> {
-    let Ok(output) = StdCommand::new("pgrep").args(["-l", "^capsem"]).output() else {
-        return Vec::new();
-    };
-    machine::strays_from_pgrep(
-        &String::from_utf8_lossy(&output.stdout),
-        &std::process::id().to_string(),
-    )
-}
-
 
 #[cfg(test)]
 mod tests;

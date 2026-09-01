@@ -9,6 +9,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -114,21 +115,58 @@ pub fn assess(
     objections
 }
 
-/// The capsem processes named by `pgrep -l`, excluding this one.
+/// PIDs in this process's ancestry, including itself.
 ///
-/// Pure so the exclusion is testable: `capsem-bench-rs` matches its own
-/// pattern, and a doctor that counts itself as contention refuses every
-/// machine forever.
-pub fn strays_from_pgrep(stdout: &str, self_pid: &str) -> Vec<String> {
+/// The doctor runs both directly and as a child of `capsem-gate`. Its own gate
+/// is measurement infrastructure, while another Capsem process is contention.
+/// Deriving ancestry from one `ps` snapshot distinguishes those cases without
+/// exempting every process named `capsem-gate`.
+fn ancestry_from_ps(stdout: &str, self_pid: &str) -> Vec<String> {
+    let parents = stdout
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.to_string(), fields.next()?.to_string()))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut ancestry = Vec::new();
+    let mut current = self_pid.to_string();
+    while !ancestry.contains(&current) {
+        ancestry.push(current.clone());
+        let Some(parent) = parents.get(&current) else {
+            break;
+        };
+        current = parent.clone();
+    }
+    ancestry
+}
+
+/// The capsem processes named by `pgrep -l`, excluding this process's ancestry.
+fn strays_from_pgrep(stdout: &str, ancestry: &[String]) -> Vec<String> {
     stdout
         .lines()
         .filter_map(|line| {
             let mut fields = line.split_whitespace();
             let pid = fields.next()?;
             let name = fields.next()?;
-            (pid != self_pid).then(|| name.to_string())
+            (!ancestry.iter().any(|ancestor| ancestor == pid)).then(|| name.to_string())
         })
         .collect()
+}
+
+/// Capsem processes already running, which compete for the CPU being measured.
+pub fn running_capsem_processes() -> Vec<String> {
+    let self_pid = std::process::id().to_string();
+    let ancestry = Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+        .ok()
+        .map(|output| ancestry_from_ps(&String::from_utf8_lossy(&output.stdout), &self_pid))
+        .unwrap_or_else(|| vec![self_pid]);
+    let Ok(output) = Command::new("pgrep").args(["-l", "^capsem"]).output() else {
+        return Vec::new();
+    };
+    strays_from_pgrep(&String::from_utf8_lossy(&output.stdout), &ancestry)
 }
 
 /// Observe this machine and judge it.
