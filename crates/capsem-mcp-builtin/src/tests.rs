@@ -409,3 +409,40 @@ fn a_non_boolean_is_error_does_not_signal_failure() {
         );
     }
 }
+
+async fn spawn_redirecting_http_server() -> String {
+    // Responds 302 to an unrelated host. If the client follows redirects it
+    // would leave the originally-checked domain (SSRF); a safe client returns
+    // the 302 to the caller instead.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind redirect fixture");
+    let addr = listener.local_addr().expect("fixture local addr");
+    tokio::spawn(async move {
+        while let Ok((mut socket, _peer)) = listener.accept().await {
+            let mut buf = [0_u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = concat!(
+                "HTTP/1.1 302 Found\r\n",
+                "location: http://blocked.invalid/secret\r\n",
+                "content-length: 0\r\n",
+                "\r\n"
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    format!("http://{addr}/")
+}
+
+#[tokio::test]
+async fn builtin_http_client_does_not_follow_redirects() {
+    let client = build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT).expect("build client");
+    let url = spawn_redirecting_http_server().await;
+
+    let resp = client.get(url).send().await.expect("request completes without following redirect");
+    assert_eq!(
+        resp.status().as_u16(),
+        302,
+        "redirects must not be followed -- a 3xx to another host would bypass the domain policy check"
+    );
+}

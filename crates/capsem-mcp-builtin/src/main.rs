@@ -36,6 +36,11 @@ fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> re
     reqwest::Client::builder()
         .timeout(request_timeout)
         .connect_timeout(connect_timeout)
+        // Do not follow redirects. The security boundary evaluates only the
+        // originally-requested URL's domain; transparently following a 3xx to
+        // another host would reach a domain the policy never checked (SSRF) and
+        // log the wrong domain. A 3xx is returned to the caller as-is.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
 }
 

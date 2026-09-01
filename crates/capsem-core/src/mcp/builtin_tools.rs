@@ -32,6 +32,35 @@ const DEFAULT_CONTEXT_LINES: u64 = 3;
 const DEFAULT_MAX_MATCHES: u64 = 50;
 const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
 
+/// Ceiling on an HTTP response body read by the builtin tools. `resp.text()`
+/// buffers the whole body, so an unbounded (or hostile) response would OOM the
+/// builtin subprocess. Bodies larger than this are truncated; the tools already
+/// paginate their output, so a generous cap never affects normal pages.
+const MAX_FETCH_BODY_BYTES: usize = 25 * 1024 * 1024;
+
+/// Read an HTTP response body into a String, reading at most `cap` bytes.
+///
+/// Streams chunks and stops once the cap is reached, so a multi-gigabyte or
+/// never-ending response cannot exhaust memory. Bytes are decoded lossily,
+/// matching the text-oriented builtin tools (binary content is rejected
+/// upstream by content-type).
+async fn read_body_capped(mut resp: reqwest::Response, cap: usize) -> Result<String, String> {
+    let mut buf: Vec<u8> = Vec::new();
+    while buf.len() < cap {
+        match resp.chunk().await.map_err(|e| e.to_string())? {
+            Some(chunk) => {
+                let take = (cap - buf.len()).min(chunk.len());
+                buf.extend_from_slice(&chunk[..take]);
+                if take < chunk.len() {
+                    break; // cap reached mid-chunk; stop pulling the body
+                }
+            }
+            None => break,
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// Build a JSON schema property for an integer parameter.
 fn schema_int(description: &str) -> Value {
     serde_json::json!({"type": "integer", "description": description})
@@ -327,7 +356,7 @@ async fn handle_fetch_http(
         );
     }
 
-    let body = match resp.text().await {
+    let body = match read_body_capped(resp, MAX_FETCH_BODY_BYTES).await {
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
@@ -498,7 +527,7 @@ async fn handle_grep_http(
         );
     }
 
-    let body = match resp.text().await {
+    let body = match read_body_capped(resp, MAX_FETCH_BODY_BYTES).await {
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };

@@ -1744,3 +1744,39 @@ fn collect_grep_matches_below_cap_returns_all() {
     assert_eq!(total, 2);
     assert_eq!(blocks.len(), 2);
 }
+
+// -- capped HTTP body reads --
+
+#[tokio::test]
+async fn read_body_capped_truncates_oversized_body() {
+    let recorder = crate::test_support::http::spawn_static_http_recorder(vec![(
+        "/",
+        crate::test_support::http::RecordedHttpResponse::text("a".repeat(5000)),
+    )])
+    .await
+    .unwrap();
+    let resp = test_client()
+        .get(format!("{}/", recorder.base_url))
+        .send()
+        .await
+        .unwrap();
+    let body = read_body_capped(resp, 1000).await.unwrap();
+    assert_eq!(body.len(), 1000, "an oversized response body must be truncated at the cap");
+}
+
+#[tokio::test]
+async fn read_body_capped_returns_full_body_under_cap() {
+    let recorder = crate::test_support::http::spawn_static_http_recorder(vec![(
+        "/",
+        crate::test_support::http::RecordedHttpResponse::text("hello world"),
+    )])
+    .await
+    .unwrap();
+    let resp = test_client()
+        .get(format!("{}/", recorder.base_url))
+        .send()
+        .await
+        .unwrap();
+    let body = read_body_capped(resp, 1_000_000).await.unwrap();
+    assert_eq!(body, "hello world");
+}
