@@ -12,6 +12,21 @@ fn handler_without_snapshots() -> BuiltinHandler {
     }
 }
 
+fn handler_with_snapshots(root: &std::path::Path) -> BuiltinHandler {
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    BuiltinHandler {
+        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
+            root.to_path_buf(),
+            2,
+            2,
+            Duration::from_secs(60),
+        )))),
+        workspace_dir: Some(workspace),
+        ..handler_without_snapshots()
+    }
+}
+
 #[test]
 fn snapshot_pagination_params_preserve_include_changes() {
     let params: SnapshotPaginationParams = serde_json::from_value(serde_json::json!({
@@ -67,6 +82,65 @@ async fn echo_handler_returns_input_without_touching_io() {
         .await
         .unwrap();
     assert_eq!(value, "transport fixture");
+}
+
+#[tokio::test]
+async fn snapshot_handlers_operate_on_real_scheduler_state() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler_with_snapshots(root.path());
+    let pagination = || SnapshotPaginationParams {
+        start_index: None,
+        max_length: None,
+        format: Some("json".to_string()),
+        include_changes: Some(true),
+    };
+
+    assert!(!handler
+        .snapshots_changes(Parameters(pagination()))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!handler
+        .snapshots_list(Parameters(pagination()))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(handler
+        .snapshots_history(Parameters(SnapshotHistoryParams {
+            path: "missing.txt".to_string(),
+            start_index: None,
+            max_length: None,
+            format: Some("json".to_string()),
+        }))
+        .await
+        .is_ok());
+
+    let created = handler
+        .snapshots_create(Parameters(SnapshotNameParams {
+            name: "fixture".to_string(),
+        }))
+        .await;
+    assert!(created.is_ok(), "manual snapshot failed: {created:?}");
+    assert!(handler
+        .snapshots_revert(Parameters(SnapshotRevertParams {
+            path: "missing.txt".to_string(),
+            checkpoint: None,
+        }))
+        .await
+        .is_err());
+    assert!(handler
+        .snapshots_delete(Parameters(SnapshotDeleteParams {
+            checkpoint: "cp-missing".to_string(),
+        }))
+        .await
+        .is_err());
+    assert!(handler
+        .snapshots_compact(Parameters(SnapshotCompactParams {
+            checkpoints: vec!["cp-missing".to_string()],
+            name: Some("compacted".to_string()),
+        }))
+        .await
+        .is_err());
 }
 
 #[test]
