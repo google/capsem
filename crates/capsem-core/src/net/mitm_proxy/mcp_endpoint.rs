@@ -118,7 +118,7 @@ impl McpEndpointState {
         }
 
         let timeout = self.timeout_for_request(&req.method, param_str(req, "name")).await;
-        match tokio::time::timeout(timeout, self.dispatch(req)).await {
+        match tokio::time::timeout(timeout, self.dispatch(req, timeout)).await {
             Ok(response) => Some(response),
             Err(_) => Some(JsonRpcResponse::err(
                 req.id.clone(),
@@ -128,7 +128,10 @@ impl McpEndpointState {
         }
     }
 
-    async fn dispatch(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+    /// `timeout` is forwarded to the aggregator so it cancels the upstream
+    /// request when the endpoint stops waiting; the `tokio::time::timeout`
+    /// around this call is the backstop for a dead aggregator.
+    async fn dispatch(&self, req: &JsonRpcRequest, timeout: Duration) -> JsonRpcResponse {
         match req.method.as_str() {
             "initialize" => JsonRpcResponse::ok(
                 req.id.clone(),
@@ -180,7 +183,7 @@ impl McpEndpointState {
                     .and_then(|params| params.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
-                match self.aggregator.call_tool(tool_name, arguments).await {
+                match self.aggregator.call_tool(tool_name, arguments, Some(timeout)).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("tool call failed: {e}")),
                 }
@@ -210,7 +213,7 @@ impl McpEndpointState {
                     return JsonRpcResponse::err(req.id.clone(), -32602, "missing resource URI");
                 }
 
-                match self.aggregator.read_resource(uri).await {
+                match self.aggregator.read_resource(uri, Some(timeout)).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("resource read failed: {e}")),
                 }
@@ -245,7 +248,7 @@ impl McpEndpointState {
                     .and_then(|params| params.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
-                match self.aggregator.get_prompt(prompt_name, arguments).await {
+                match self.aggregator.get_prompt(prompt_name, arguments, Some(timeout)).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("prompt get failed: {e}")),
                 }

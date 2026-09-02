@@ -101,6 +101,12 @@ pub enum AggregatorMethod {
         name: String,
         /// Tool arguments as a JSON object.
         arguments: serde_json::Value,
+        /// How long the aggregator may wait on the upstream server before it
+        /// cancels the request there and answers with an error. Without it a
+        /// server that never answered left one aggregator task and one
+        /// pending rmcp request behind for every call the endpoint gave up on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
     },
 
     /// Read a resource from an external MCP server.
@@ -108,6 +114,9 @@ pub enum AggregatorMethod {
     ReadResource {
         /// Namespaced resource URI.
         uri: String,
+        /// See `CallTool::timeout_ms`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
     },
 
     /// Get a prompt from an external MCP server.
@@ -117,6 +126,9 @@ pub enum AggregatorMethod {
         name: String,
         /// Prompt arguments as a JSON object.
         arguments: serde_json::Value,
+        /// See `CallTool::timeout_ms`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
     },
 
     /// Disconnect from all servers, reload definitions, and reconnect.
@@ -271,12 +283,20 @@ impl AggregatorClient {
         }
     }
 
-    /// Call a tool on an external MCP server.
-    pub async fn call_tool(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
+    /// Call a tool on an external MCP server. `timeout` bounds the upstream
+    /// wait inside the aggregator, which cancels the request there when it
+    /// elapses.
+    pub async fn call_tool(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<serde_json::Value> {
         match self
             .request(AggregatorMethod::CallTool {
                 name: namespaced_name.to_string(),
                 arguments,
+                timeout_ms: timeout.map(|t| t.as_millis() as u64),
             })
             .await?
         {
@@ -286,11 +306,16 @@ impl AggregatorClient {
         }
     }
 
-    /// Read a resource from an external MCP server.
-    pub async fn read_resource(&self, namespaced_uri: &str) -> Result<serde_json::Value> {
+    /// Read a resource from an external MCP server. See `call_tool` for `timeout`.
+    pub async fn read_resource(
+        &self,
+        namespaced_uri: &str,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<serde_json::Value> {
         match self
             .request(AggregatorMethod::ReadResource {
                 uri: namespaced_uri.to_string(),
+                timeout_ms: timeout.map(|t| t.as_millis() as u64),
             })
             .await?
         {
@@ -300,12 +325,18 @@ impl AggregatorClient {
         }
     }
 
-    /// Get a prompt from an external MCP server.
-    pub async fn get_prompt(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<serde_json::Value> {
+    /// Get a prompt from an external MCP server. See `call_tool` for `timeout`.
+    pub async fn get_prompt(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<serde_json::Value> {
         match self
             .request(AggregatorMethod::GetPrompt {
                 name: namespaced_name.to_string(),
                 arguments,
+                timeout_ms: timeout.map(|t| t.as_millis() as u64),
             })
             .await?
         {

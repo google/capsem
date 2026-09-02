@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An MCP tool call to a server that never answers is now cancelled upstream
+  when the sandbox stops waiting for it. Each such call used to leave a task
+  and a pending request behind in the MCP aggregator for the life of the VM.
 - The service, the CLI, and the per-VM process no longer block an async
   worker on a synchronous IPC handshake or on joining a terminal reader
   thread. A slow handshake stalled every request scheduled on that worker,
