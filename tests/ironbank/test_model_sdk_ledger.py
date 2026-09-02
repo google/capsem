@@ -23,8 +23,16 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
-from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, HERMETIC_OPENAI_COMPAT_MODEL
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
+from ironbank.model_client_config import (
+    HERMETIC_ANTHROPIC_MODEL,
+    HERMETIC_OPENAI_COMPAT_MODEL,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -710,13 +718,22 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
 
+                [ai.openai]
+                allowed_remote_targets = ["api.openai.com:443", "localhost:3713"]
+
+                [ai.openai.rules.ironbank_broker_replay_binding]
+                name = "ironbank_broker_replay_binding"
+                action = "allow"
+                detection_level = "informational"
+                match = 'http.host == "localhost" && tcp.port == "3713"'
+
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
                 action = "allow"
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+                match = '(http.host == "127.0.0.1" || http.host == "localhost") && tcp.port == "3713"'
 
                 [corp.rules.allow_ironbank_mock_mcp_server]
                 name = "allow_ironbank_mock_mcp_server"
@@ -1002,7 +1019,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             _assert_credential_ref(credential_ref)
 
             replay_script_name = f"ironbank-broker-replay-{uuid.uuid4().hex[:8]}.py"
-            replay_script = _broker_replay_script(mock_base_url, credential_ref).encode()
+            replay_base_url = mock_base_url.replace("127.0.0.1", "localhost")
+            replay_script = _broker_replay_script(replay_base_url, credential_ref).encode()
             replay_upload = client.post_bytes(
                 f"/vms/{vm_id}/files/content?path={replay_script_name}",
                 replay_script,
@@ -1055,12 +1073,16 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 ).fetchall(),
                 lambda rows: len(rows) >= 3,
             )
+            assert [row["domain"] for row in net_rows] == [
+                "127.0.0.1",
+                "127.0.0.1",
+                "localhost",
+            ]
             for row in net_rows:
                 _assert_event_id(row["event_id"])
                 assert row["method"] == "POST"
                 assert row["status_code"] == 200
                 assert row["decision"] == "allowed"
-                assert row["domain"] == "127.0.0.1"
                 assert row["port"] == 3713
                 assert row["bytes_sent"] > 0
                 assert row["bytes_received"] > 0
@@ -1162,12 +1184,16 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 lambda rows: len(rows) >= 3,
             )
             assert len(model_rows) >= 3
+            assert [row["provider"] for row in model_rows] == [
+                "unknown",
+                "unknown",
+                "openai",
+            ]
             model_trace_ids = {row["trace_id"] for row in model_rows}
             net_trace_ids = {row["trace_id"] for row in net_rows}
             assert model_trace_ids <= net_trace_ids
             for row in model_rows:
                 _assert_event_id(row["event_id"])
-                assert row["provider"] == "unknown"
                 assert row["model"] == "gemma4:latest"
                 assert row["method"] == "POST"
                 assert row["status_code"] == 200
@@ -1511,10 +1537,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             for row in model_rows:
                 rows = security_by_event[row["event_id"]]
                 assert {item["rule_action"] for item in rows} == {"allow"}
-                assert {
-                    "profiles.rules.default_unknown_model_provider",
-                    "profiles.rules.default_model",
-                } <= {item["rule_id"] for item in rows}
+                rule_ids = {item["rule_id"] for item in rows}
+                assert "profiles.rules.default_model" in rule_ids
+                if row["provider"] == "unknown":
+                    assert "profiles.rules.default_unknown_model_provider" in rule_ids
+                else:
+                    assert row["provider"] == "openai"
+                    assert "profiles.rules.ai_openai_model_api" in rule_ids
             shape_security_rows = security_by_event[unknown_shape["event_id"]]
             assert {item["rule_action"] for item in shape_security_rows} == {"allow"}
             assert {
@@ -1878,7 +1907,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 """
                 SELECT id, event_id, domain, port, method, path, status_code
                 FROM net_events
-                WHERE domain IS NOT NULL AND domain != '127.0.0.1'
+                WHERE domain IS NOT NULL
+                  AND domain NOT IN ('127.0.0.1', 'localhost')
                 ORDER BY id
                 """
             ).fetchall()

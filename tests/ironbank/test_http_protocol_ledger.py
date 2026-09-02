@@ -870,6 +870,19 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 value = [80, 3713, 8080]
                 modified = "2026-06-14T00:00:00Z"
 
+                [ai.google]
+                allowed_remote_targets = [
+                    "generativelanguage.googleapis.com:443",
+                    "daily-cloudcode-pa.googleapis.com:443",
+                    "127.0.0.1:3713",
+                ]
+
+                [ai.google.rules.ironbank_mock_http_rewrite_binding]
+                name = "ironbank_mock_http_rewrite_binding"
+                action = "allow"
+                detection_level = "informational"
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+
                 [corp.rules.allow_ironbank_mock_http_rewrite]
                 name = "allow_ironbank_mock_http_rewrite"
                 action = "allow"
