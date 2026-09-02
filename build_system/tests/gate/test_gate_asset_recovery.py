@@ -511,6 +511,10 @@ def test_preflight_keeps_only_reusable_lane_roots(
     from capsem_builder.gate.assetlanes import Profile
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
+    # A complete gate exports the outer checkout for its private prefix. This
+    # unit owns a temporary repository and must not inherit that cache owner,
+    # or its fixture in /tmp is incorrectly paired with the live cache.
+    monkeypatch.delenv(config.environment.source_checkout, raising=False)
     profile_root = output.parent
     (profile_root / config.assets.merged_assets_dir).mkdir()
     (profile_root / config.assets.merged_config_dir).mkdir()
