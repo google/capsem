@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import platform
 import sqlite3
-import tomllib
 from pathlib import Path
 from typing import Any
 
+import tomllib
 from helpers.service import ServiceInstance, materialize_test_profiles
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,7 +151,10 @@ def test_snapshot_routes_are_file_backed_and_ignore_session_db() -> None:
 
 def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
     service_main = (ROOT / "crates/capsem-service/src/main.rs").read_text()
-    service_prod = service_main.split("\n#[cfg(test)]\nmod tests;", 1)[0]
+    service_routes = (ROOT / "crates/capsem-service/src/vm_files.rs").read_text()
+    service_prod = (
+        service_main.split("\n#[cfg(test)]\nmod tests;", 1)[0] + service_routes
+    )
     process_main = (ROOT / "crates/capsem-process/src/main.rs").read_text()
     process_prod = process_main.split("\n#[cfg(test)]\nmod tests", 1)[0]
     process_vsock = (ROOT / "crates/capsem-process/src/vsock.rs").read_text()
