@@ -137,3 +137,51 @@ async fn abandoned_callers_are_pruned_from_the_pending_map() {
     fake.reply(req.id).await;
     tokio::time::timeout(PROMPT, live).await.unwrap().unwrap().unwrap();
 }
+
+// -----------------------------------------------------------------------
+// Misbehaving aggregator output
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn unknown_and_duplicate_response_ids_are_ignored_and_live_calls_still_complete() {
+    let mut fake = spawn_fake();
+    let client = fake.client.clone();
+    let call = tokio::spawn(async move { client.request(AggregatorMethod::ListServers).await });
+    let req = fake.next_request().await;
+
+    fake.reply(u64::MAX).await;
+    fake.reply(req.id.wrapping_add(1)).await;
+    fake.reply(req.id).await;
+    fake.reply(req.id).await;
+
+    let body = tokio::time::timeout(PROMPT, call)
+        .await
+        .expect("prompt")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(body, AggregatorResult::Ok { ok: true }));
+    assert_eq!(fake.inflight.count(), 0, "a duplicate reply must not repark anything");
+}
+
+#[tokio::test]
+async fn a_corrupt_frame_from_the_aggregator_fails_callers_instead_of_misrouting() {
+    use tokio::io::AsyncWriteExt;
+    let mut fake = spawn_fake();
+    let client = fake.client.clone();
+    let call = tokio::spawn(async move { client.request(AggregatorMethod::ListTools).await });
+    fake.next_request().await;
+
+    let stdout = fake.stdout.as_mut().unwrap();
+    stdout.write_all(&(u32::MAX).to_be_bytes()).await.unwrap();
+    stdout.write_all(b"garbage").await.unwrap();
+
+    let result = tokio::time::timeout(PROMPT, call)
+        .await
+        .expect("a corrupt stream must not leave the caller waiting")
+        .unwrap();
+    assert!(result.is_err(), "{result:?}");
+    let late = tokio::time::timeout(PROMPT, fake.client.request(AggregatorMethod::ListPrompts))
+        .await
+        .expect("prompt");
+    assert!(late.is_err(), "the driver is closed after a framing error: {late:?}");
+}

@@ -5,6 +5,7 @@ use tower::ServiceExt;
 
 use crate::status::StatusCache;
 
+mod hostile;
 mod route_forwarding;
 
 struct EnvGuard {

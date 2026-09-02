@@ -168,11 +168,18 @@ pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
     let Some(authority) = req.headers().get(http::header::HOST) else {
         return true;
     };
-    authority
-        .to_str()
-        .ok()
-        .and_then(|value| value.parse::<http::uri::Authority>().ok())
-        .is_some_and(|authority| crate::cors::is_loopback_host(authority.host()))
+    let Ok(value) = authority.to_str() else {
+        return false;
+    };
+    // A Host header is `uri-host [":" port]`; userinfo is not part of the
+    // grammar, and the authority parser would otherwise accept
+    // `evil@localhost` and report the host as localhost.
+    if value.contains('@') || value != value.trim() {
+        return false;
+    }
+    value
+        .parse::<http::uri::Authority>()
+        .is_ok_and(|authority| crate::cors::is_loopback_host(authority.host()))
 }
 
 /// Axum middleware: refuse foreign hosts, then require a Bearer token on all

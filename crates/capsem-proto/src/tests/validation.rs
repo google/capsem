@@ -162,3 +162,86 @@ fn is_blocked_case_sensitive() {
     assert!(!is_blocked_env_var("Ld_Preload"));
     assert!(!is_blocked_env_var("ifs"));
 }
+
+// -------------------------------------------------------------------
+// Attacker-shaped control frames and payloads
+// -------------------------------------------------------------------
+
+#[test]
+fn decoding_garbage_payloads_errors_instead_of_panicking() {
+    let samples: [&[u8]; 8] = [
+        b"",
+        b"\x00",
+        b"\xc1",
+        b"\xdf\xff\xff\xff\xff",
+        b"\x81\xa4type\xa9Nonsense!",
+        b"\x92\x01\x02",
+        b"\xa5hello",
+        &[0xff; 64],
+    ];
+    for payload in samples {
+        assert!(decode_guest_msg(payload).is_err(), "{payload:?}");
+        assert!(decode_host_msg(payload).is_err(), "{payload:?}");
+        assert!(decode_audit_record(payload).is_err(), "{payload:?}");
+        assert!(decode_mcp_frame_body(payload).is_err(), "{payload:?}");
+    }
+}
+
+#[test]
+fn a_frame_exactly_at_the_limit_encodes_and_one_byte_over_does_not() {
+    // Find the largest ASCII FileContent that fits, then prove the boundary.
+    let mut lo = 0usize;
+    let mut hi = MAX_FRAME_SIZE as usize;
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let msg = GuestToHost::FileContent {
+            id: 1,
+            path: "/p".into(),
+            data: vec![b'a'; mid],
+        };
+        if guest_msg_fits_frame(&msg) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let fits = GuestToHost::FileContent {
+        id: 1,
+        path: "/p".into(),
+        data: vec![b'a'; lo],
+    };
+    let frame = encode_guest_msg(&fits).unwrap();
+    assert_eq!(frame.len() - 4, MAX_FRAME_SIZE as usize, "the boundary is exact");
+    let over = GuestToHost::FileContent {
+        id: 1,
+        path: "/p".into(),
+        data: vec![b'a'; lo + 1],
+    };
+    assert!(encode_guest_msg(&over).is_err());
+}
+
+#[test]
+fn oversized_paths_and_messages_do_not_slip_past_the_frame_limit() {
+    let path = "p".repeat(3 * 1024 * 1024);
+    assert!(encode_host_msg(&HostToGuest::FileRead {
+        id: 1,
+        path: path.clone()
+    })
+    .is_err());
+    assert!(encode_guest_msg(&GuestToHost::Error { id: 1, message: path }).is_err());
+}
+
+#[test]
+fn mcp_frame_length_prefix_extremes_are_rejected() {
+    for total_len in [
+        0u32,
+        1,
+        u32::from(MCP_FRAME_HEADER_LEN) - 1,
+        (MCP_FRAME_MAX_SIZE + 1) as u32,
+        u32::MAX,
+    ] {
+        let mut body = vec![0u8; 64];
+        body[..4].copy_from_slice(&total_len.to_be_bytes());
+        assert!(decode_mcp_frame_body(&body).is_err(), "{total_len}");
+    }
+}

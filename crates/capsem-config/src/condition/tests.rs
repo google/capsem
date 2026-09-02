@@ -124,3 +124,87 @@ fn unterminated_and_trailing_literals_still_fail() {
     assert!(CompiledCondition::parse_with(r#"http.path == "a" b"#, |_| Ok(())).is_err());
     assert!(CompiledCondition::parse_with(r#"http.path == "esc\""#, |_| Ok(())).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Attacker-shaped conditions: every malformed input is an error, never a panic
+// or a silently different rule.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn malformed_conditions_fail_to_compile_without_panicking() {
+    let long = "a".repeat(1 << 20);
+    let deep = format!("{}http.path == \"x\"{}", "(".repeat(2000), ")".repeat(2000));
+    let cases: Vec<String> = vec![
+        String::new(),
+        "   ".into(),
+        r#"http.path == "\"#.into(),
+        r#"http.path == "\u""#.into(),
+        r#"http.path == "\uD800A""#.into(),
+        r#"http.path == "\x4""#.into(),
+        r#"http.path == "\U110000""#.into(),
+        r#"http.path == 'a" b'x"#.into(),
+        r#"http.path.matches("(")"#.into(),
+        r#"http.path.matches("[")"#.into(),
+        r#"http.path.matches("(?P<n>")"#.into(),
+        r#"http.path.matches(")")"#.into(),
+        r#"http.path == "a" &&"#.into(),
+        r#"|| http.path == "a""#.into(),
+        r#"http.path == "a" || || http.path == "b""#.into(),
+        r#"has()"#.into(),
+        r#"has(http.path"#.into(),
+        r#"http.path.contains()"#.into(),
+        r#"http.path.contains("a", "b")"#.into(),
+        r#"http.path.unknown("a")"#.into(),
+        r#"http.path ~= "a""#.into(),
+        r#"http.path == "a" == "b""#.into(),
+        format!("http.path == \"{long}"),
+    ];
+    for condition in cases {
+        let result = std::panic::catch_unwind(|| CompiledCondition::parse_with(&condition, |_| Ok(())));
+        let shown: String = condition.chars().take(60).collect();
+        let result = result.unwrap_or_else(|_| panic!("{shown:?} panicked the parser"));
+        assert!(result.is_err(), "{shown:?} must not compile");
+    }
+    // Deep but balanced grouping is valid and must neither overflow the
+    // stack nor change the meaning.
+    let deep_cond = std::panic::catch_unwind(|| compile(&deep)).expect("deep grouping must not overflow");
+    assert!(deep_cond.evaluate(&json!({ "http": { "path": "x" } })).unwrap());
+}
+
+#[test]
+fn operators_inside_string_literals_do_not_split_the_condition() {
+    assert!(path_matches(r#"http.path == "a || b""#, "a || b"));
+    assert!(path_matches(r#"http.path == "a && b""#, "a && b"));
+    assert!(path_matches(r#"http.path == "(a)""#, "(a)"));
+    assert!(path_matches(r#"http.path == "a == b""#, "a == b"));
+    assert!(path_matches(r#"http.path.contains(")")"#, "x)y"));
+    assert!(!path_matches(r#"http.path == "a || b""#, "a"));
+}
+
+#[test]
+fn hostile_regexes_are_bounded_by_the_engine() {
+    // The regex crate guarantees linear time; a classic catastrophic pattern
+    // over a long subject must still return promptly.
+    let subject = format!("{}!", "a".repeat(100_000));
+    let started = std::time::Instant::now();
+    assert!(!path_matches(r#"http.path.matches("^(a+)+$")"#, &subject));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    // A very large regex either compiles and stays linear or is refused; it
+    // never hangs compilation or matching.
+    let huge = format!("http.path.matches(\"{}\")", "a{1000}".repeat(200));
+    let started = std::time::Instant::now();
+    if let Ok(cond) = CompiledCondition::parse_with(&huge, |_| Ok(())) {
+        let _ = cond.evaluate(&json!({ "http": { "path": subject } }));
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn absent_and_non_string_fields_never_match_equality() {
+    let cond = compile(r#"http.path == """#);
+    assert!(!cond
+        .evaluate(&json!({ "http": { "other": "" } }))
+        .expect("absent field evaluates"));
+    assert!(!cond.evaluate(&json!({ "http": { "path": 0 } })).unwrap_or(false));
+    assert!(!cond.evaluate(&json!({ "http": { "path": null } })).unwrap_or(false));
+}

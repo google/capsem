@@ -118,6 +118,7 @@ impl ConditionAtom {
     {
         if let Some(inner) = atom.strip_prefix("has(").and_then(|s| s.strip_suffix(')')) {
             let field = inner.trim();
+            validate_field_name(field)?;
             validate(field)?;
             return Ok(Self::Has {
                 field: field.to_string(),
@@ -126,6 +127,7 @@ impl ConditionAtom {
 
         for method in ["matches", "contains", "endsWith", "startsWith"] {
             if let Some((field, argument)) = parse_method_call(atom, method)? {
+                validate_field_name(field)?;
                 validate(field)?;
                 let expected = parse_string_literal(argument)?;
                 let method = match method {
@@ -145,6 +147,7 @@ impl ConditionAtom {
         }
 
         if let Some(field) = parse_zero_arg_method_call(atom, "contains_pii")? {
+            validate_field_name(field)?;
             validate(field)?;
             return Ok(Self::ContainsPii {
                 field: field.to_string(),
@@ -152,6 +155,7 @@ impl ConditionAtom {
         }
 
         if let Some((field, operator, value)) = parse_comparison(atom)? {
+            validate_field_name(field)?;
             validate(field)?;
             return Ok(Self::Comparison {
                 field: field.to_string(),
@@ -462,6 +466,22 @@ fn find_operator(atom: &str, operator: &str) -> Result<Option<usize>, String> {
         return Err("policy condition has an unterminated string literal".into());
     }
     Ok(None)
+}
+
+/// A field name must be present and shaped like a dotted path; `has()` or
+/// `== "x"` with nothing in front compiled to an atom that could never match.
+fn validate_field_name(field: &str) -> Result<(), String> {
+    if field.is_empty() {
+        return Err("policy condition names an empty field".into());
+    }
+    if field.split('.').any(|segment| segment.is_empty())
+        || !field
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    {
+        return Err(format!("policy condition field {field:?} is not a dotted identifier"));
+    }
+    Ok(())
 }
 
 /// Decode one quoted CEL string literal.
