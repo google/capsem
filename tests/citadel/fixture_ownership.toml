@@ -7,7 +7,10 @@ target = "tests/fixtures/mcp/html/elie_about.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
-consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+consumers = [
+  "crates/capsem-core/src/mcp/builtin_tools/tests.rs",
+  "crates/capsem-core/src/mcp/builtin_tools/tests/markdown.rs",
+]
 symbols = [
   "extract_elie_about_has_real_content",
   "grep_elie_about_finds_bursztein",
@@ -31,7 +34,10 @@ target = "tests/fixtures/mcp/html/wiki_turing_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
-consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+consumers = [
+  "crates/capsem-core/src/mcp/builtin_tools/tests.rs",
+  "crates/capsem-core/src/mcp/builtin_tools/tests/markdown.rs",
+]
 symbols = [
   "extract_wiki_turing_has_real_content",
   "grep_wiki_turing_finds_turing",
