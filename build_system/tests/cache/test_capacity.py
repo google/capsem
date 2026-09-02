@@ -187,3 +187,61 @@ def test_capacity_failure_names_the_floor(tmp_path: Path) -> None:
     )
 
     assert any("requires 10 free bytes" in violation for violation in decision.violations)
+
+
+def test_advisory_prune_is_tightened_until_the_measured_floor_is_real(
+    tmp_path: Path,
+) -> None:
+    issued = []
+    capacities = iter(("200 200 0", "200 191 9", "200 184 16"))
+    storage = iter(("50000B", "50000B", "40784B"))
+
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        issued.append(argv)
+        if argv[1] == "run":
+            return result(argv, next(capacities))
+        if argv[1:3] == ("system", "df"):
+            size = next(storage)
+            return result(
+                argv,
+                '{"Type":"Build Cache","TotalCount":"1","Active":"0",'
+                f'"Size":"{size}","Reclaimable":"40000B"}}',
+            )
+        if argv[1:3] == ("container", "ls") or argv[1:3] == ("image", "ls"):
+            return result(argv)
+        if argv[1:3] == ("builder", "prune"):
+            return result(argv, "reclaimed")
+        raise AssertionError(argv)
+
+    policy = controlled_policy()
+    assert policy.control is not None
+    runtime = policy.runtimes["docker"].model_copy(
+        update={"build_cache_keep_bytes": 100_000}
+    )
+    rail = policy.control.docker.rails["default"].model_copy(
+        update={
+            "minimum_free_bytes": 10 * 1024,
+            "build_cache_keep_bytes": 80_000,
+            "reclaim_headroom_bytes": 5 * 1024,
+        }
+    )
+    docker = policy.control.docker.model_copy(update={"rails": {"default": rail}})
+    policy = policy.model_copy(
+        update={
+            "runtimes": {"docker": runtime},
+            "control": policy.control.model_copy(update={"docker": docker}),
+        }
+    )
+
+    decision = ensure_capacity(
+        CachePaths(repository_root=tmp_path, policy=policy),
+        policy,
+        "default",
+        reason="test advisory target",
+        runner=runner,
+    )
+
+    prune_commands = [argv for argv in issued if argv[1:3] == ("builder", "prune")]
+    assert decision.after.free_bytes == 16 * 1024
+    assert decision.violations == ()
+    assert [argv[-1] for argv in prune_commands] == ["34640B", "28496B"]

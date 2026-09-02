@@ -32,6 +32,7 @@ class CapacityRail(BaseModel):
     minimum_free_bytes: PositiveInt
     build_cache_keep_bytes: PositiveInt
     reclaim_headroom_bytes: NonNegativeInt
+    reclaim_attempts: PositiveInt
 
 
 class ImageCachePolicy(BaseModel):

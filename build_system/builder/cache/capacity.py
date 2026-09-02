@@ -143,7 +143,16 @@ def ensure_capacity(
         )
         if pruned and not failures:
             after = probe_capacity(policy, runner=runner)
-    if pressured and not failures and after.free_bytes < rail.minimum_free_bytes:
+    keep_ceiling = rail.build_cache_keep_bytes
+    attempts = 0
+    target_free = rail.minimum_free_bytes + rail.reclaim_headroom_bytes
+    while (
+        pressured
+        and not failures
+        and after.available
+        and after.free_bytes < target_free
+        and attempts < rail.reclaim_attempts
+    ):
         try:
             storage = categories(runtime, runner=runner)
             build_cache = next(row for row in storage if row.name == "Build Cache")
@@ -155,21 +164,20 @@ def ensure_capacity(
                 pruned=pruned,
                 violations=(f"BuildKit capacity inventory failed: {error}",),
             )
-        required = rail.minimum_free_bytes - after.free_bytes
-        pressure = required + rail.reclaim_headroom_bytes
-        keep_bytes = min(
-            rail.build_cache_keep_bytes,
-            max(0, build_cache.logical_bytes - pressure),
-        )
+        pressure = target_free - after.free_bytes
+        reclaim_bytes = min(build_cache.reclaimable_bytes, pressure)
+        if reclaim_bytes <= 0:
+            break
+        keep_bytes = max(0, min(keep_ceiling, build_cache.logical_bytes) - pressure)
         plan = RuntimePrunePlan(
             generated_ns=time.time_ns(),
-            reclaim_bytes=min(build_cache.reclaimable_bytes, pressure),
+            reclaim_bytes=reclaim_bytes,
             actions=(
                 RuntimePruneAction(
                     runtime_id=control.runtime_id,
                     operation=RuntimeOperation.PRUNE_BUILD_CACHE,
                     target="buildkit",
-                    logical_bytes=min(build_cache.reclaimable_bytes, pressure),
+                    logical_bytes=reclaim_bytes,
                     reason=(
                         f"Docker free space is below the {rail_id} rail; retain the hottest "
                         f"{keep_bytes} bytes and recover the configured headroom"
@@ -187,6 +195,8 @@ def ensure_capacity(
             if item.returncode != 0
         )
         pruned = True
+        keep_ceiling = keep_bytes
+        attempts += 1
         if not failures:
             after = probe_capacity(policy, runner=runner)
     violations = list(failures)

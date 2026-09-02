@@ -345,6 +345,8 @@ kind = "docker"
 command = "docker"
 timeout_seconds = 30
 mutation_timeout_seconds = 600
+inventory_retry_attempts = 3
+inventory_retry_delay_milliseconds = 250
 receipt_stage = "container-receipts"
 log_stage = "container-logs"
 image_prefixes = ["capsem-"]
@@ -376,26 +378,31 @@ recommended_disk_bytes = 214748364800 # 200 GiB
 minimum_free_bytes = 64424509440
 build_cache_keep_bytes = 85899345920
 reclaim_headroom_bytes = 8589934592
+reclaim_attempts = 3
 
 [control.docker.rails.assets]
 minimum_free_bytes = 64424509440
 build_cache_keep_bytes = 85899345920
 reclaim_headroom_bytes = 8589934592
+reclaim_attempts = 3
 
 [control.docker.rails.package]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
 reclaim_headroom_bytes = 8589934592
+reclaim_attempts = 3
 
 [control.docker.rails.install-preflight]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
 reclaim_headroom_bytes = 8589934592
+reclaim_attempts = 3
 
 [control.docker.rails.install]
 minimum_free_bytes = 42949672960
 build_cache_keep_bytes = 85899345920
 reclaim_headroom_bytes = 8589934592
+reclaim_attempts = 3
 
 [control.docker.images.capsem-linux-rust-base]
 repository = "capsem-linux-rust-base"

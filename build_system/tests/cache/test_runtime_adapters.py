@@ -27,6 +27,8 @@ def docker_policy() -> DockerRuntimePolicy:
         command="docker",
         timeout_seconds=30,
         mutation_timeout_seconds=600,
+        inventory_retry_attempts=3,
+        inventory_retry_delay_milliseconds=0,
         receipt_stage="receipts",
         log_stage="logs",
         image_prefixes=("capsem-",),
@@ -99,6 +101,35 @@ def test_docker_unavailable_is_typed_without_guessing_empty_state() -> None:
     assert report.available is False
     assert report.error == "unavailable"
     assert report.resources == ()
+
+
+def test_docker_inventory_retries_only_transient_snapshot_accounting() -> None:
+    attempts = 0
+
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return RuntimeCommandResult(
+                argv=argv,
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "failed to calculate image disk usage: NotFound: "
+                    "snapshot stale-view does not exist: not found"
+                ),
+                duration_ms=1,
+            )
+        return command(
+            argv,
+            '{"Type":"Build Cache","TotalCount":"1","Active":"0",'
+            '"Size":"50B","Reclaimable":"40B"}',
+        )
+
+    storage = dockeradapter.categories(docker_policy(), runner=runner)
+
+    assert attempts == 2
+    assert storage[0].name == "Build Cache"
 
 
 def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> None:

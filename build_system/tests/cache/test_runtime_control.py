@@ -59,6 +59,8 @@ def policy() -> CachePolicy:
                 command="docker",
                 timeout_seconds=30,
                 mutation_timeout_seconds=600,
+                inventory_retry_attempts=3,
+                inventory_retry_delay_milliseconds=0,
                 receipt_stage="receipts",
                 log_stage="logs",
                 image_prefixes=("capsem-",),
@@ -85,6 +87,7 @@ def controlled_policy() -> CachePolicy:
                     minimum_free_bytes=10,
                     build_cache_keep_bytes=80,
                     reclaim_headroom_bytes=5,
+                    reclaim_attempts=3,
                 )
             },
             images={

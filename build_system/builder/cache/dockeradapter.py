@@ -77,12 +77,20 @@ def categories(
     policy: DockerRuntimePolicy, *, runner: CommandRunner = execute
 ) -> tuple[RuntimeCategory, ...]:
     """Read Docker's typed top-level storage inventory without image traversal."""
-    summary = runner(
-        (policy.command, "system", "df", "--format", "{{json .}}"),
-        policy.timeout_seconds,
-    )
-    if summary.returncode != 0:
-        raise ValueError(summary.stderr or summary.stdout or "Docker unavailable")
+    command = (policy.command, "system", "df", "--format", "{{json .}}")
+    for attempt in range(policy.inventory_retry_attempts):
+        summary = runner(command, policy.timeout_seconds)
+        if summary.returncode == 0:
+            break
+        error = summary.stderr or summary.stdout or "Docker unavailable"
+        transient = (
+            "failed to calculate image disk usage" in error
+            and "snapshot" in error
+            and "does not exist" in error
+        )
+        if not transient or attempt + 1 == policy.inventory_retry_attempts:
+            raise ValueError(error)
+        time.sleep(policy.inventory_retry_delay_milliseconds / 1000)
     try:
         return _categories(summary.stdout)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:

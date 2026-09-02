@@ -49,6 +49,8 @@ class DockerRuntimePolicy(BaseModel):
     command: StrictStr
     timeout_seconds: PositiveInt
     mutation_timeout_seconds: PositiveInt
+    inventory_retry_attempts: PositiveInt
+    inventory_retry_delay_milliseconds: NonNegativeInt
     receipt_stage: StrictStr
     log_stage: StrictStr
     image_prefixes: tuple[StrictStr, ...]

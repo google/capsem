@@ -82,6 +82,8 @@ def test_checked_in_policy_loads_and_names_stage_owned_directories() -> None:
     assert policy.control is not None
     assert policy.control.docker.rails["default"].minimum_free_bytes == 60 * 1024**3
     assert policy.control.docker.rails["assets"].minimum_free_bytes == 60 * 1024**3
+    assert policy.runtimes["docker"].inventory_retry_attempts == 3
+    assert policy.control.docker.rails["assets"].reclaim_attempts == 3
 
 
 def test_bootstrap_consumes_the_validated_cache_policy() -> None:
@@ -99,6 +101,8 @@ def test_runtime_policy_references_owned_receipt_and_log_stages() -> None:
         command="docker",
         timeout_seconds=30,
         mutation_timeout_seconds=600,
+        inventory_retry_attempts=3,
+        inventory_retry_delay_milliseconds=0,
         receipt_stage="receipts",
         log_stage="missing",
         image_prefixes=("capsem-",),
