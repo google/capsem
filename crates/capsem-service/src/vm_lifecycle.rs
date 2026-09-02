@@ -325,13 +325,13 @@ pub(super) async fn shutdown_vm_process(
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
-            if let Ok(mut std_stream) = stream.into_std() {
-                if capsem_foundation::ipc_handshake::negotiate_initiator(
-                    &mut std_stream,
+            if let Ok(std_stream) = stream.into_std() {
+                if let Ok((std_stream, _)) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+                    std_stream,
                     "capsem-service",
                     capsem_foundation::telemetry::current_parent_traceparent(),
                 )
-                .is_ok()
+                .await
                 {
                     if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
                         capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
@@ -447,17 +447,18 @@ pub(super) async fn handle_suspend(
             format!("failed to connect to VM IPC: {e}"),
         )
     })?;
-    let mut std_stream = stream.into_std().map_err(|e| {
+    let std_stream = stream.into_std().map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to convert stream: {e}"),
         )
     })?;
-    capsem_foundation::ipc_handshake::negotiate_initiator(
-        &mut std_stream,
+    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+        std_stream,
         "capsem-service",
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
+    .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
     let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
         AppError(

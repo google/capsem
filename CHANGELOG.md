@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The service, the CLI, and the per-VM process no longer block an async
+  worker on a synchronous IPC handshake or on joining a terminal reader
+  thread. A slow handshake stalled every request scheduled on that worker,
+  and a half-open terminal socket after a resume could park a worker
+  indefinitely and leave the new terminal connection unused.
 - Asset downloads stop as soon as the origin sends more bytes than the manifest
   declares, and a local asset copy hashes the bytes it actually installs. An
   endless or oversized response used to be written to disk in full before the

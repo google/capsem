@@ -426,7 +426,8 @@ pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
         )
     } else if e.kind() == std::io::ErrorKind::NotFound {
         AppError(StatusCode::NOT_FOUND, "path not found".into())
-    } else if e.kind() == std::io::ErrorKind::InvalidInput || e.raw_os_error() == Some(nix::errno::Errno::ENOTDIR as i32)
+    } else if e.kind() == std::io::ErrorKind::InvalidInput
+        || e.raw_os_error() == Some(nix::errno::Errno::ENOTDIR as i32)
     {
         AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
     } else {
@@ -2104,14 +2105,15 @@ pub(super) async fn send_ipc_command(
     let stream = tokio::net::UnixStream::connect(uds_path)
         .await
         .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
-    let mut std_stream = stream
+    let std_stream = stream
         .into_std()
         .map_err(|e| format!("failed to convert stream: {e}"))?;
-    capsem_foundation::ipc_handshake::negotiate_initiator(
-        &mut std_stream,
+    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+        std_stream,
         "capsem-service",
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
+    .await
     .map_err(|e| format!("IPC handshake failed: {e}"))?;
     let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
         channel_from_std(std_stream).map_err(|e| format!("failed to create IPC channel: {e}"))?;

@@ -2245,12 +2245,13 @@ async fn main() -> Result<()> {
                             return None;
                         }
                         let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
-                        let mut std_stream = stream.into_std().ok()?;
-                        capsem_foundation::ipc_handshake::negotiate_initiator(
-                            &mut std_stream,
+                        let std_stream = stream.into_std().ok()?;
+                        let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+                            std_stream,
                             "capsem-cli",
                             capsem_foundation::telemetry::current_parent_traceparent(),
                         )
+                        .await
                         .ok()?;
                         channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()
                     }

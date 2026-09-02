@@ -249,7 +249,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
             }
-            let _ = read_handle.join();
+            // The reader thread is parked in read() on a dup of this socket.
+            // Closing our fd does not wake it and a half-open post-restore
+            // socket never EOFs, so joining here parked a runtime worker for
+            // good and the new connection was never activated. Shut the
+            // socket down so the read returns, then join off the runtime.
+            let _ = nix::sys::socket::shutdown(conn.fd, nix::sys::socket::Shutdown::Both);
+            let _ = tokio::task::spawn_blocking(move || read_handle.join()).await;
         }
         drop(serial_log_tx);
         let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
