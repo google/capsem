@@ -14,10 +14,12 @@ from pathlib import Path
 from rust_sources import production
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SERVICE_MAIN = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs"
+SERVICE_RUNTIME = (
+    PROJECT_ROOT / "crates" / "capsem-service" / "src" / "service_runtime.rs"
+)
 GATEWAY_MAIN = PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs"
 CLI_CLIENT = PROJECT_ROOT / "crates" / "capsem" / "src" / "client.rs"
-TELEMETRY = PROJECT_ROOT / "crates" / "capsem-core" / "src" / "telemetry.rs"
+TELEMETRY = PROJECT_ROOT / "crates" / "capsem-foundation" / "src" / "telemetry.rs"
 
 # Run-dir subdirectory holding raw process stderr, kept out of the rotated
 # streams' directory so log retention cannot delete it.
@@ -32,7 +34,7 @@ def test_long_lived_daemons_route_panics_into_their_log() -> None:
     """
     assert "pub fn install_panic_logger(" in production(TELEMETRY)
 
-    for daemon in (SERVICE_MAIN, GATEWAY_MAIN):
+    for daemon in (SERVICE_RUNTIME, GATEWAY_MAIN):
         source = production(daemon)
         assert "install_panic_logger(" in source, (
             f"{daemon.name} does not install the panic logger"
