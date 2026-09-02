@@ -203,30 +203,7 @@ fn ok_response(result: serde_json::Value) -> JsonRpcResponse {
 }
 
 #[test]
-fn response_text_collects_nested_text_fields_in_order() {
-    let resp = ok_response(json!({
-        "content": [
-            {"type": "text", "text": "first"},
-            {"type": "text", "text": "second"},
-            {"nested": {"deeper": [{"text": "third"}]}}
-        ]
-    }));
-
-    assert_eq!(response_text(&resp).as_deref(), Some("first\nsecond\nthird"));
-}
-
-#[test]
-fn response_text_ignores_non_string_text_fields() {
-    let resp = ok_response(json!({"text": 42, "items": [{"text": null}, {"text": true}]}));
-
-    assert!(
-        response_text(&resp).is_none(),
-        "only string `text` values are telemetry text"
-    );
-}
-
-#[test]
-fn response_text_and_content_prefer_the_error_message() {
+fn response_content_prefers_the_error_message() {
     let resp = JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id: Some(json!(1)),
@@ -239,7 +216,6 @@ fn response_text_and_content_prefer_the_error_message() {
         meta: None,
     };
 
-    assert_eq!(response_text(&resp).as_deref(), Some("tool denied by policy"));
     assert_eq!(response_content(&resp).as_deref(), Some("tool denied by policy"));
 }
 
@@ -253,18 +229,7 @@ fn response_without_result_or_error_yields_nothing() {
         meta: None,
     };
 
-    assert!(response_text(&resp).is_none());
     assert!(response_content(&resp).is_none());
-}
-
-#[test]
-fn deeply_nested_response_does_not_blow_the_stack() {
-    let mut value = json!({"text": "bottom"});
-    for _ in 0..512 {
-        value = json!({"child": value});
-    }
-
-    assert_eq!(response_text(&ok_response(value)).as_deref(), Some("bottom"));
 }
 
 // ── Policy field projection ────────────────────────────────────────

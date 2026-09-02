@@ -34,10 +34,6 @@ pub const FILE_TOOL_NAMES: &[&str] = &[
     "snapshots_compact",
 ];
 
-pub fn is_file_tool(name: &str) -> bool {
-    FILE_TOOL_NAMES.contains(&name)
-}
-
 /// Return tool definitions for file tools.
 pub fn file_tool_defs() -> Vec<McpToolDef> {
     vec![
