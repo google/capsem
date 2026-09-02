@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Process audit events now use the security rules in force when each record
+  arrives. The guest opens its audit stream once at boot, and the host had
+  frozen the rule set at that moment, so a profile edit that reloaded every
+  other rail left process rules at their boot-time version until the VM
+  restarted.
 - A sandbox command that finishes while the guest is reconnecting to the host
   (for example right after a suspend and resume) now reports its exit code.
   The exit message used to go to the previous connection's writer, which had

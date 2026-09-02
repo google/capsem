@@ -858,6 +858,58 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     Ok(())
 }
 
+/// Serve one guest audit connection: decode records until the stream ends.
+fn serve_audit_records(
+    file: &mut impl std::io::Read,
+    db: &capsem_logger::DbWriter,
+    security_rules: &std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>,
+) {
+    while let Ok(Some(payload)) = read_bounded_frame(file) {
+        handle_audit_frame(&payload, db, security_rules);
+    }
+}
+
+/// Write one audit record and evaluate it against the rules current now.
+///
+/// The rule set is read through the reload handle per record. The guest opens
+/// the audit port exactly once at boot and streams for the life of the VM, so
+/// a snapshot taken at connect time froze process-audit policy: a profile
+/// edit reloaded every other rail while audit rows kept matching the rules
+/// from boot until the VM restarted.
+fn handle_audit_frame(
+    payload: &[u8],
+    db: &capsem_logger::DbWriter,
+    security_rules: &std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>,
+) {
+    let Ok(record) = capsem_proto::decode_audit_record(payload) else {
+        return;
+    };
+    let rules = Arc::clone(&security_rules.read().unwrap_or_else(|e| e.into_inner()));
+    let timestamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(record.timestamp_us);
+    capsem_core::security_engine::emit_process_audit_security_write_and_rules_blocking(
+        db,
+        &rules,
+        capsem_logger::AuditEvent {
+            event_id: None,
+            timestamp,
+            pid: record.pid,
+            ppid: record.ppid,
+            uid: record.uid,
+            exe: record.exe,
+            comm: record.comm,
+            argv: record.argv,
+            cwd: record.cwd,
+            tty: record.tty,
+            session_id: record.session_id,
+            audit_id: Some(record.audit_id),
+            exec_event_id: None,
+            parent_exe: record.parent_exe,
+            trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
+            credential_ref: None,
+        },
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_aux_connection(
     conn: VsockConnection,
@@ -931,7 +983,7 @@ fn dispatch_aux_connection(
         }
         Some(HostVsockService::Audit) => {
             let db_clone = Arc::clone(db);
-            let security_rules = security_rules.read().unwrap().clone();
+            let security_rules = Arc::clone(security_rules);
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
@@ -941,34 +993,7 @@ fn dispatch_aux_connection(
                     }
                 };
                 info!("audit port: connected, reading audit records");
-                while let Ok(Some(payload)) = read_bounded_frame(&mut file) {
-                    if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
-                        let timestamp =
-                            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(record.timestamp_us);
-                        capsem_core::security_engine::emit_process_audit_security_write_and_rules_blocking(
-                            &db_clone,
-                            &security_rules,
-                            capsem_logger::AuditEvent {
-                                event_id: None,
-                                timestamp,
-                                pid: record.pid,
-                                ppid: record.ppid,
-                                uid: record.uid,
-                                exe: record.exe,
-                                comm: record.comm,
-                                argv: record.argv,
-                                cwd: record.cwd,
-                                tty: record.tty,
-                                session_id: record.session_id,
-                                audit_id: Some(record.audit_id),
-                                exec_event_id: None,
-                                parent_exe: record.parent_exe,
-                                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-                                credential_ref: None,
-                            },
-                        );
-                    }
-                }
+                serve_audit_records(&mut file, &db_clone, &security_rules);
                 drop(conn);
             });
         }

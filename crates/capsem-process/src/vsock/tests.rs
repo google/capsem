@@ -1023,3 +1023,109 @@ fn exec_boundary_refuses_when_it_cannot_decide() {
         "an unevaluated boundary must not dispatch"
     );
 }
+
+// -----------------------------------------------------------------------
+// Audit port: rules are read per record, not snapshotted per connection
+// -----------------------------------------------------------------------
+
+fn audit_rules(rule_key: &str, exe: &str) -> capsem_core::net::policy_config::SecurityRuleSet {
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&format!(
+        r#"
+[profiles.rules.{rule_key}]
+name = "{rule_key}"
+action = "allow"
+detection_level = "informational"
+match = 'process.exec.path == "{exe}"'
+"#
+    ))
+    .expect("rules parse");
+    capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("rules compile")
+}
+
+fn audit_payload(exe: &str) -> Vec<u8> {
+    let frame = capsem_proto::encode_audit_record(&capsem_proto::AuditRecord {
+        timestamp_us: 1_700_000_000_000_000,
+        pid: 4242,
+        ppid: 1,
+        uid: 0,
+        exe: exe.to_string(),
+        comm: Some("cmd".to_string()),
+        argv: exe.to_string(),
+        cwd: Some("/root".to_string()),
+        tty: None,
+        session_id: None,
+        parent_exe: Some("/bin/bash".to_string()),
+        audit_id: format!("audit-{}", exe.trim_start_matches('/').replace('/', "-")),
+    })
+    .expect("audit record encodes");
+    frame[4..].to_vec()
+}
+
+fn matched_rule_ids(db_path: &std::path::Path) -> Vec<String> {
+    let reader = capsem_logger::DbReader::open(db_path).unwrap();
+    let rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw("SELECT rule_id FROM security_rule_events ORDER BY rule_id")
+            .expect("rule events readable"),
+    )
+    .unwrap();
+    rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn audit_records_are_evaluated_against_the_rules_current_at_arrival() {
+    use std::sync::{Arc, RwLock};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let handle = RwLock::new(Arc::new(audit_rules("boot_rules", "/bin/first")));
+
+    handle_audit_frame(&audit_payload("/bin/first"), &db, &handle);
+    // A profile edit reloads the rules while the audit connection stays up.
+    *handle.write().unwrap() = Arc::new(audit_rules("reloaded_rules", "/bin/second"));
+    handle_audit_frame(&audit_payload("/bin/second"), &db, &handle);
+    db.shutdown_blocking();
+
+    assert_eq!(
+        matched_rule_ids(&db_path),
+        vec![
+            "profiles.rules.boot_rules".to_string(),
+            "profiles.rules.reloaded_rules".to_string()
+        ],
+        "the second record must be judged by the reloaded rules"
+    );
+}
+
+#[test]
+fn serve_audit_records_handles_every_frame_on_the_stream() {
+    use std::sync::{Arc, RwLock};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let handle = RwLock::new(Arc::new(audit_rules("seen", "/bin/first")));
+
+    let mut stream = Vec::new();
+    for exe in ["/bin/first", "/bin/other", "/bin/first"] {
+        let payload = audit_payload(exe);
+        stream.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        stream.extend_from_slice(&payload);
+    }
+    serve_audit_records(&mut std::io::Cursor::new(stream), &db, &handle);
+    db.shutdown_blocking();
+
+    assert_eq!(
+        matched_rule_ids(&db_path),
+        vec!["profiles.rules.seen".to_string(), "profiles.rules.seen".to_string()]
+    );
+}
