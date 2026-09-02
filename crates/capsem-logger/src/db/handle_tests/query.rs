@@ -309,3 +309,29 @@ async fn db_handle_query_uses_worker_not_runtime_block() {
         "DbHandle::query must await a DB-owned worker instead of blocking the tokio runtime. {DB_BOUNDARY_RATIONALE}"
     );
 }
+
+// The query_many cache had no generation tag: a query dispatched before a
+// write and answered after it stored the pre-write rows, and every identical
+// query was served from them until the next invalidation. The service's
+// /stats route fell through its own epoch-tagged cache into this one and
+// re-cached the stale payload under the new epoch.
+#[tokio::test]
+async fn db_handle_query_many_result_from_before_an_invalidation_is_not_cached() {
+    let p = temp_db_path("query-many-stale-result");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    let key: Vec<DbQueryOwned> = vec![("SELECT 1".to_string(), Vec::new())];
+    let stale = vec![DbQueryJson::from("{\"stale\":true}".to_string())];
+
+    let epoch_before = db.read_cache_epoch();
+    db.invalidate_read_cache();
+    db.store_query_many_cache(epoch_before, key.clone(), stale);
+    assert!(
+        db.inner.query_many_cache.lock().unwrap().is_none(),
+        "a result older than the last invalidation must not be cached"
+    );
+
+    let epoch_now = db.read_cache_epoch();
+    db.store_query_many_cache(epoch_now, key, vec![DbQueryJson::from("{}".to_string())]);
+    assert!(db.inner.query_many_cache.lock().unwrap().is_some());
+}

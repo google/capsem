@@ -8,6 +8,10 @@
 //   - Port 5005: exec output (direct child process stdout, on demand)
 
 mod audit;
+mod control_writer;
+use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
+#[cfg(test)]
+use control_writer::{frame_or_drop, SharedCtrlReceiver};
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
@@ -46,28 +50,11 @@ fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
     Ok(())
 }
 
-/// Frame `msg` for the control channel. A message that cannot be framed (over
-/// `MAX_FRAME_SIZE`) is logged, evicted from the replay map, and dropped:
-/// the host would never decode or ack it, and replaying it on every
-/// reconnect is how one oversized response wedged the channel for good.
-fn frame_or_drop(msg: &GuestToHost, pending: &PendingResponses) -> Option<Vec<u8>> {
-    match encode_guest_msg(msg) {
-        Ok(frame) => Some(frame),
-        Err(e) => {
-            eprintln!("[capsem-agent] control writer: dropping unframeable message: {e}");
-            if let Some(id) = ackable_response_id(msg) {
-                pending.lock().unwrap().remove(&id);
-            }
-            None
-        }
-    }
-}
-
 /// Returns `Some(id)` for `GuestToHost` variants the agent retains in
 /// its symmetric pending_responses map and replays on every fresh
 /// control conn. Mirrors `vsock.rs::ackable_response_id` on the host
 /// side; both ends must agree on the set or AckReply / replay drift.
-fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
+pub(crate) fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     match msg {
         GuestToHost::ExecDone { id, .. }
         | GuestToHost::FileOpDone { id }
@@ -801,141 +788,6 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>;
-type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<GuestToHost>>>;
-
-/// Producer side of the serialized control-channel writer.
-///
-/// One channel outlives every connection. The exec threads hold clones and
-/// keep running across a reconnect, so an ExecDone that finishes after the
-/// old connection died must reach the new connection's writer -- with a
-/// per-connection channel it went to a dropped receiver and the host waited
-/// for the exit code forever. Each connection's writer takes its turn on the
-/// shared receiver.
-///
-/// Ackable responses are parked in `pending` here, at send time, so nothing
-/// that enters the channel can be lost with it; the host's AckReply removes
-/// them and every fresh connection replays what is left.
-#[derive(Clone)]
-struct CtrlSender {
-    tx: std::sync::mpsc::Sender<GuestToHost>,
-    pending: PendingResponses,
-}
-
-impl CtrlSender {
-    fn new(pending: PendingResponses) -> (Self, SharedCtrlReceiver) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        (Self { tx, pending }, std::sync::Arc::new(std::sync::Mutex::new(rx)))
-    }
-
-    fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
-        if let Some(id) = ackable_response_id(&msg) {
-            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            // Bound the map at 4096 to match the exec_done cap -- under
-            // transport pathology it could otherwise grow without limit.
-            if p.len() >= 4096 {
-                p.clear();
-            }
-            p.insert(id, msg.clone());
-        }
-        self.tx.send(msg)
-    }
-}
-
-/// State that outlives any one host connection and is handed to every
-/// `run_bridge`: exec bookkeeping and the serialized control writer channel.
-#[derive(Clone)]
-struct BridgeShared {
-    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
-    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    ctrl_sender: CtrlSender,
-    ctrl_rx: SharedCtrlReceiver,
-}
-
-/// How long a connection's writer waits on the shared receiver before
-/// re-checking whether its connection is still alive.
-const CTRL_WRITER_POLL: std::time::Duration = std::time::Duration::from_millis(500);
-
-/// One connection's turn at the control channel writer.
-///
-/// Replays every unacked response first, then drains the shared receiver
-/// until the connection dies. On a failed write both vsock fds are shut down
-/// so bridge_loop and control_loop wake from their polls and the outer
-/// reconnect logic runs. The message that failed is requeued for the next
-/// connection's writer, whose replay snapshot may already have been taken;
-/// the host dedups by id, so a copy that did land is harmless.
-fn control_writer_loop(
-    rx: &SharedCtrlReceiver,
-    sender: &CtrlSender,
-    control_fd: RawFd,
-    terminal_fd: RawFd,
-    alive: &std::sync::atomic::AtomicBool,
-) {
-    use std::sync::atomic::Ordering;
-    let mark_dead = || {
-        alive.store(false, Ordering::SeqCst);
-        unsafe {
-            libc::shutdown(control_fd, libc::SHUT_RDWR);
-            libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-        }
-    };
-
-    // Replay every entry still in pending_responses on the fresh control_fd.
-    // These are ackable responses (ExecDone / FileOpDone / FileContent /
-    // Error) whose host-side AckReply never arrived -- typically because the
-    // previous control conn went silent (Apple VZ post-restoreState pattern:
-    // write returned success, bytes never propagated). The host's
-    // handle_guest_msg is idempotent for already-handled ids.
-    let snap: Vec<GuestToHost> = sender
-        .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .cloned()
-        .collect();
-    if !snap.is_empty() {
-        eprintln!(
-            "[capsem-agent] control writer: replaying {} pending unacked responses",
-            snap.len()
-        );
-        for msg in &snap {
-            let Some(frame) = frame_or_drop(msg, &sender.pending) else {
-                continue;
-            };
-            if write_all_fd(control_fd, &frame).is_err() {
-                mark_dead();
-                return;
-            }
-        }
-    }
-
-    while alive.load(Ordering::SeqCst) {
-        let received = rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .recv_timeout(CTRL_WRITER_POLL);
-        let msg = match received {
-            Ok(msg) => msg,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-        };
-        // Frame first: a message that cannot be framed is a bug in the
-        // producer, not a transport loss, and must not tear the connection
-        // down.
-        let Some(frame) = frame_or_drop(&msg, &sender.pending) else {
-            continue;
-        };
-        if write_all_fd(control_fd, &frame).is_err() {
-            mark_dead();
-            if ackable_response_id(&msg).is_some() {
-                let _ = sender.tx.send(msg);
-            }
-            return;
-        }
-    }
-}
-
 fn run_bridge(
     master_fd: RawFd,
     child_pid: Pid,
@@ -957,28 +809,22 @@ fn run_bridge(
     // receiver: cleared by the writer on a failed write and below when the
     // bridge exits, so the next connection's writer can take over.
     let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    {
+    let writer = {
         let rx = std::sync::Arc::clone(&ctrl_rx);
         let sender = ctrl_sender.clone();
         let alive = std::sync::Arc::clone(&alive);
-        std::thread::spawn(move || control_writer_loop(&rx, &sender, control_fd, terminal_fd, &alive));
-    }
+        thread::spawn(move || control_writer_loop(&rx, &sender, control_fd, terminal_fd, &alive))
+    };
 
     // Heartbeat. Without periodic probes the connection is invisible until
     // the next genuine traffic, which can be hours. After a suspend/resume
     // the host process is gone; the first failed write trips the writer's
     // shutdown path and triggers reconnect within ~3s.
-    {
+    let heartbeat = {
         let hb = ctrl_sender.clone();
         let alive = std::sync::Arc::clone(&alive);
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            if !alive.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-            let _ = hb.send(GuestToHost::Pong);
-        });
-    }
+        thread::spawn(move || heartbeat_loop(&hb, &alive))
+    };
 
     // Spawn control channel handler in a background thread.
     let boot_env_owned = boot_env.to_vec();
@@ -986,7 +832,7 @@ fn run_bridge(
     let ctrl_tx = ctrl_sender;
     let inflight_for_ctrl = exec_inflight;
     let done_for_ctrl = exec_done;
-    thread::spawn(move || {
+    let control = thread::spawn(move || {
         control_loop(
             control_fd,
             master_fd,
@@ -1007,8 +853,22 @@ fn run_bridge(
     // Main I/O bridge: master PTY <-> vsock terminal port.
     bridge_loop(master_fd, terminal_fd);
 
-    // This connection is over; release the shared receiver to the next one.
+    // This connection is over. Release the shared receiver, wake the control
+    // reader out of its blocking read, and wait for every thread that holds
+    // these fd numbers before the caller closes them: the next connection
+    // gets the same numbers back, and a thread still using the old ones
+    // would read the new control stream alongside the new reader or write a
+    // frame into it between the new writer's frames.
     alive.store(false, std::sync::atomic::Ordering::SeqCst);
+    unsafe {
+        libc::shutdown(control_fd, libc::SHUT_RDWR);
+        libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+    }
+    for (name, handle) in [("writer", writer), ("heartbeat", heartbeat), ("control", control)] {
+        if handle.join().is_err() {
+            eprintln!("[capsem-agent] {name} thread panicked");
+        }
+    }
 
     // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
     // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.

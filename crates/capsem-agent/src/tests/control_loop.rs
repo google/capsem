@@ -281,3 +281,26 @@ fn ackable_response_id_covers_response_variants() {
     assert_eq!(ackable_response_id(&GuestToHost::SnapshotReady), None);
     assert_eq!(ackable_response_id(&GuestToHost::Ready { version: "x".into() }), None);
 }
+
+// Every per-connection thread must end promptly once the connection's lease
+// drops, so run_bridge can join them before the outer loop closes the fds:
+// a thread that outlived the connection kept using fd numbers the next
+// connection was handed.
+#[test]
+fn heartbeat_thread_ends_promptly_when_the_lease_drops() {
+    let (sender, _rx) = test_ctrl_channel();
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let handle = {
+        let alive = std::sync::Arc::clone(&alive);
+        thread::spawn(move || heartbeat_loop(&sender, &alive))
+    };
+    thread::sleep(std::time::Duration::from_millis(100));
+    alive.store(false, std::sync::atomic::Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    handle.join().unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the heartbeat must notice the dropped lease within one poll, took {:?}",
+        started.elapsed()
+    );
+}

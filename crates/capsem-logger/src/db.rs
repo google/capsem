@@ -381,6 +381,11 @@ impl DbHandle {
             }
         }
         let cache_key = queries.clone();
+        // The epoch the result will belong to. A write or an external
+        // invalidation that lands while the reader thread is executing bumps
+        // it, and a result from before it must not be cached: it would be
+        // served as current until the next invalidation.
+        let epoch_before = self.read_cache_epoch();
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
@@ -402,7 +407,7 @@ impl DbHandle {
             .map_err(|error| format!("db reader worker dropped query_many reply: {error}"))?;
         if !self.inner.sync_from_disk_before_query {
             if let Ok(raw) = &result {
-                *self.inner.query_many_cache.lock().unwrap() = Some((cache_key, raw.clone()));
+                self.store_query_many_cache(epoch_before, cache_key, raw.clone());
             }
         }
         match &result {
@@ -436,6 +441,21 @@ impl DbHandle {
             .map_err(|error| format!("db reader worker closed: {error}"))?;
         rx.await
             .map_err(|error| format!("db reader worker dropped session stats reply: {error}"))?
+    }
+
+    /// Cache a `query_many` result unless the read epoch moved while the
+    /// query ran, in which case the result may predate a write and is dropped.
+    pub(crate) fn store_query_many_cache(&self, epoch_before: u64, key: Vec<DbQueryOwned>, result: Vec<DbQueryJson>) {
+        let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if self.read_cache_epoch() != epoch_before {
+            tracing::debug!(
+                db_path = %self.inner.path.display(),
+                operation = "query_many",
+                "query result predates a write; not cached"
+            );
+            return;
+        }
+        *cache = Some((key, result));
     }
 
     /// Invalidate DB-owned read caches after external logger lifecycle helpers

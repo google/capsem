@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The service's cached ledger statistics can no longer be filled by a query
+  that finished after a write invalidated the cache, which had left stale
+  counts on `/stats` until the next lifecycle event. The guest agent also
+  joins its per-connection writer, heartbeat and control threads before
+  reconnecting, so a thread from the old connection can no longer read or
+  write the new connection's stream through a reused descriptor number.
 - A guest driver reset (STATUS=0) now reaches every KVM virtio device: the
   VirtioFS worker stops and hands its state back, the virtio-blk worker is
   joined instead of leaked beside a second one, the vhost-vsock backend is
