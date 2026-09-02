@@ -221,12 +221,12 @@ def measure(config: GateConfig) -> Size:
     dependency bump and deleted crate leaves output here forever. It reached
     8 GB in three days.
 
-    That growth is reported against an advisory threshold, but a normal gate
+    Its size is reported through the common cache inventory, and a normal gate
     never reclaims it. Selective deletion underneath Cargo corrupts its
     fingerprint judgement, while whole-directory deletion silently turns the
     expensive public qualification into a cold build. The operator may still
-    request that deliberately with `--clean-build`; `[disk] required_free_gb`
-    remains the fail-closed filesystem backstop.
+    request that deliberately with `--clean-build`; the typed cache contract
+    is the capacity authority for normal runs.
     """
     shared = path(config)
     if not shared.is_dir():

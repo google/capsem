@@ -186,7 +186,7 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
         PNPM_STORE: str(_policy_stage(source, authority, "node-pnpm")),
         CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
         SCCACHE_DIR: str(rust),
-        SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['hard_bytes'] // 1024**3}G",
+        SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['max_size_bytes'] // 1024**3}G",
         SCCACHE_BASEDIR: str(source),
         SCCACHE_SERVER_UDS: str(rust / toolchain["compiler_cache_socket_name"]),
     }

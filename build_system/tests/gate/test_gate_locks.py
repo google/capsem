@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.locks import ExclusiveLock
@@ -345,11 +347,13 @@ def test_the_checked_in_lock_sits_outside_every_tree_the_gate_wipes() -> None:
     a fresh inode, takes a lock on it, and starts beside the first -- both of
     them convinced they were alone.
     """
-    lock = Path(CONFIG.locks.gate.path)
-    holder = Path(CONFIG.locks.gate.holder_record)
+    lock = Path(CONFIG.locks.gate.path).expanduser()
+    holder = Path(CONFIG.locks.gate.holder_record).expanduser()
+    policy = load_policy(PROJECT_ROOT)
+    paths = CachePaths(repository_root=PROJECT_ROOT, policy=policy)
 
-    for reclaimable in CONFIG.disk.reclaimable:
-        tree = Path(reclaimable)
+    for cache_id in policy.stages:
+        tree = paths.stage(cache_id)
         assert tree not in lock.parents, f"{lock} sits inside {tree}"
         assert tree not in holder.parents, f"{holder} sits inside {tree}"
 
@@ -420,7 +424,9 @@ def test_contention_is_never_resolved_by_signalling_the_holder() -> None:
     Checked as code rather than as text, so the prose above may say "killed".
     """
     tree = ast.parse(
-        (PROJECT_ROOT / "build_system" / "builder" / "gate" / "locks.py").read_text(encoding="utf-8")
+        (PROJECT_ROOT / "build_system" / "builder" / "gate" / "locks.py").read_text(
+            encoding="utf-8"
+        )
     )
     calls = {
         node.func.attr

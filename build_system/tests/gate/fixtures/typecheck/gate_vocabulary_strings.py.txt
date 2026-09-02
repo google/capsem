@@ -13,7 +13,7 @@ from capsem_builder.gate.sandbox import mode
 from capsem_builder.gate.sourcecommit import SourceCommit, require_local_main
 
 machine_effects("process")
-_step_label("install.capacity")
+_step_label("install.cache")
 mode("off", None)
 require_local_main(Path.cwd(), "0" * 40)
 source_image_tag(cast(GateConfig, None), helper_id="sha256:raw", source="0" * 64)

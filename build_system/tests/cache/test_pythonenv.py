@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.pythonenv import PythonCacheEnvironment, select
 from pydantic import ValidationError
@@ -13,17 +13,17 @@ def _paths(root: Path) -> CachePaths:
     def stage(path: str) -> StagePolicy:
         return StagePolicy(
             path=Path(path),
-            warning_bytes=1,
-            soft_bytes=2,
-            hard_bytes=3,
-            prune=PruneMethod.LRU,
+            description="test cache",
+            scope=CacheScope.DISK,
+            warm_size_bytes=2,
+            max_size_bytes=3,
+            prune_strategy=PruneStrategy.LRU,
             maximum_age_hours=1,
         )
 
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
         stages={
             "python-pycache": stage("tools/python/pycache"),
             "python-pytest": stage("tools/python/pytest"),

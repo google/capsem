@@ -16,7 +16,6 @@ def _relocated_prefix(original, tmp_path: Path):
         update={
             "parent": str(tmp_path),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
@@ -186,9 +185,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
-    config = original.model_copy(
-        update={"prefix": _relocated_prefix(original, tmp_path)}
-    )
+    config = original.model_copy(update={"prefix": _relocated_prefix(original, tmp_path)})
     populated: list[tuple[Path, SourceCommit]] = []
     environments: list[dict[str, str]] = []
 
@@ -226,11 +223,11 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
             # environment. A release prefix that did not carry it would take a
             # cold build on every dispatch.
             config.environment.cargo_target: str(cargotarget.path(config)),
-                **cachetooling.environment(
-                    config,
-                    key=str(commit),
-                    source_root=tmp_path / str(commit),
-                ),
+            **cachetooling.environment(
+                config,
+                key=str(commit),
+                source_root=tmp_path / str(commit),
+            ),
         }
     ]
 
@@ -242,9 +239,7 @@ def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Pat
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
-    config = original.model_copy(
-        update={"prefix": _relocated_prefix(original, tmp_path)}
-    )
+    config = original.model_copy(update={"prefix": _relocated_prefix(original, tmp_path)})
     path = prefix.for_source_commit(config, commit)
 
     probe = (
@@ -283,9 +278,7 @@ def test_forged_source_marker_cannot_bypass_exact_prefix_materialization(
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
-    config = original.model_copy(
-        update={"prefix": _relocated_prefix(original, tmp_path)}
-    )
+    config = original.model_copy(update={"prefix": _relocated_prefix(original, tmp_path)})
 
     monkeypatch.setenv(config.environment.source_commit, str(commit))
     assert prefix.active(config, commit) is False
@@ -297,7 +290,9 @@ def test_forged_source_marker_cannot_bypass_exact_prefix_materialization(
 
 
 def test_ty_refuses_a_raw_string_at_source_commit_seams() -> None:
-    fixture = PROJECT_ROOT / "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.txt"
+    fixture = (
+        PROJECT_ROOT / "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.txt"
+    )
     content = fixture.read_text(encoding="utf-8")
 
     assert "SourceCommit" in content
@@ -383,9 +378,7 @@ def test_reusable_release_workflows_receive_the_same_source_commit() -> None:
         assert "source_commit:" in workflow
         assert "ref: ${{ inputs.source_commit" in workflow
 
-    channel = (PROJECT_ROOT / ".github/workflows/release-channel.yaml").read_text(
-        encoding="utf-8"
-    )
+    channel = (PROJECT_ROOT / ".github/workflows/release-channel.yaml").read_text(encoding="utf-8")
     assert "source_commit:" in channel
     assert (
         "ref: ${{ inputs.artifact_run_id != '' && github.sha || "

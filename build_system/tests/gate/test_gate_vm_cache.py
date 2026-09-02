@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.api import CacheOperation, CacheRequest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.registry import CacheRegistry
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
-from capsem_builder.policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
 from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -18,11 +20,13 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 
 
 def _config(tmp_path: Path):
+    policy = PROJECT_ROOT / "config" / "cache.toml"
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "cache.toml").write_bytes(policy.read_bytes())
     prefix = CONFIG.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
@@ -210,124 +214,53 @@ def test_a_resumable_receipt_symlink_is_refused(tmp_path: Path) -> None:
         buildcache.salvage(config, prefix_root)
 
 
-def test_vm_cache_roots_and_identities_cannot_escape_their_owned_sibling(
+def test_vm_cache_identity_and_profile_cannot_escape_the_typed_asset_store(
     tmp_path: Path,
 ) -> None:
-    from capsem_builder.gate import assetcache
-    from capsem_builder.gate.prefixschema import PrefixConfig
+    from capsem_builder.gate import assetstore
 
     config = _config(tmp_path)
-    fields = config.prefix.model_dump()
-    fields["vm_image_cache"] = "{parent}-images/../.."
-    with pytest.raises(ValueError, match="repository cache"):
-        PrefixConfig.model_validate(fields)
-
     with pytest.raises(GateError, match="canonical digest"):
-        assetcache.lane(config, "../outside", profile="code", arch=config.arch("x86_64"))
+        assetstore.lane(config, "../outside", profile="code", arch=config.arch("x86_64"))
+    with pytest.raises(GateError, match="plain name"):
+        assetstore.lane(config, "a" * 64, profile="../outside", arch=config.arch("x86_64"))
 
 
-def test_lru_reclaim_never_evicts_a_pinned_vm_product() -> None:
-    plan = plan_reclaim(
-        (
-            CacheProduct(key="old", size_bytes=40, created_at=1, last_used_at=2),
-            CacheProduct(key="recent", size_bytes=40, created_at=2, last_used_at=4),
-            CacheProduct(
-                key="pinned", size_bytes=40, created_at=1, last_used_at=1, protected=True
-            ),
-        ),
-        CacheLimits(maximum_count=2, maximum_age_seconds=100, maximum_bytes=80),
-        now=10,
+def test_common_registry_evicts_old_asset_generation_but_preserves_selector(
+    tmp_path: Path,
+) -> None:
+    configured = load_policy(PROJECT_ROOT)
+    assets = configured.stages["assets"].model_copy(
+        update={"maximum_count": 1, "warm_size_bytes": 2, "max_size_bytes": 3}
     )
-
-    assert plan.evict == ("old",)
-    assert plan.violations == ()
-
-
-def test_pinned_overflow_is_reported_instead_of_deleted() -> None:
-    plan = plan_reclaim(
-        (
-            CacheProduct(
-                key="one", size_bytes=60, created_at=1, last_used_at=1, protected=True
-            ),
-            CacheProduct(
-                key="two", size_bytes=60, created_at=1, last_used_at=2, protected=True
-            ),
-        ),
-        CacheLimits(maximum_count=1, maximum_age_seconds=5, maximum_bytes=100),
-        now=10,
+    configured = configured.model_copy(
+        update={"stages": {"assets": assets}, "runtimes": {}, "control": None}
     )
-
-    assert plan.evict == ()
-    assert plan.violations == (
-        "count 2 exceeds 1",
-        "bytes 120 exceeds 100",
-        "expired protected products: one, two",
-    )
-
-
-def test_future_cache_clocks_fail_closed() -> None:
-    plan = plan_reclaim(
-        (
-            CacheProduct(key="unpinned", size_bytes=1, created_at=20, last_used_at=20),
-            CacheProduct(
-                key="pinned", size_bytes=1, created_at=20, last_used_at=20, protected=True
-            ),
-        ),
-        CacheLimits(maximum_count=2, maximum_age_seconds=100, maximum_bytes=10),
-        now=10,
-    )
-
-    assert plan.evict == ("unpinned",)
-    assert plan.violations == ("future-dated protected products: pinned",)
-
-
-def test_asset_cache_evicts_unpinned_lru_before_a_current_vm_lane(tmp_path: Path) -> None:
-    from capsem_builder.gate import assetcache
-
-    config = _config(tmp_path)
-    cache = config.assets.cache.model_copy(
-        update={"maximum_count": 1, "maximum_age_hours": 1, "maximum_bytes": 1024}
-    )
-    config = config.model_copy(update={"assets": config.assets.model_copy(update={"cache": cache})})
-    root = assetcache.root(config)
-    old = root / ("a" * 64) / "old-profile" / "build-x86_64"
-    current = root / ("b" * 64) / "code" / "build-x86_64"
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    generations = paths.stage("assets") / assets.entry_root
+    old = generations / ("a" * 64)
+    current = generations / ("b" * 64)
     for path in (old, current):
-        path.mkdir(parents=True)
-        (path / "product").write_bytes(b"vm")
-    now = time.time()
-    os.utime(old, (now - 7200, now - 7200))
-
-    removed = assetcache.enforce(config, protected=frozenset({current}))
-
-    assert removed == (old,)
-    assert current.is_dir()
-
-
-def test_a_resumable_prefix_pins_its_vm_image_generation(tmp_path: Path) -> None:
-    from capsem_builder.gate import assetcache
-
-    config = _config(tmp_path)
-    policy = config.assets.cache.model_copy(
-        update={"maximum_count": 1, "maximum_age_hours": 1, "maximum_bytes": 1024}
-    )
-    config = config.model_copy(
-        update={"assets": config.assets.model_copy(update={"cache": policy})}
-    )
-    cached = assetcache.root(config) / ("a" * 64) / "code" / "build-x86_64"
-    cached.mkdir(parents=True)
-    (cached / "rootfs.erofs").write_bytes(b"vm")
-    old = Path(config.prefix.parent) / "deadbeef"
-    selector = old / config.assets.test_root / "code" / "build-x86_64"
+        payload = path / "code" / "build-x86_64" / "rootfs.erofs"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"vm")
+    selector = paths.root / "target" / "assets" / "code" / "build-x86_64"
     selector.parent.mkdir(parents=True)
-    selector.symlink_to(cached)
-    stale = time.time() - 7200
-    os.utime(cached, (stale, stale))
+    selector.symlink_to(current / "code" / "build-x86_64")
 
-    with pytest.raises(GateError, match="active or resumable"):
-        assetcache.enforce(config, protected=frozenset())
+    registry = CacheRegistry(paths, configured)
+    (result,) = registry.mutate(
+        CacheRequest(
+            operation=CacheOperation.ENFORCE,
+            cache_id="assets",
+            apply=True,
+            reason="test asset maximum",
+        )
+    )
 
-    assert cached.is_dir(), "a resumable qualification lost the VM image it references"
+    assert result.action_count == 1
+    assert not old.exists()
+    assert current.is_dir()
 
 
 def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
@@ -365,23 +298,30 @@ def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
     assert assetreceipt.cache_metadata(config, selector) is None
 
 
-def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(tmp_path: Path) -> None:
-    from capsem_builder.gate import assetcache
+def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem_builder.gate import assetstore
 
     base = _config(tmp_path)
+    monkeypatch.setenv(base.environment.source_checkout, str(tmp_path))
     identity = "a" * 64
     roots = tuple(Path(base.prefix.parent) / name for name in ("11111111", "22222222"))
     selected = []
     for checkout in roots:
         checkout.mkdir(parents=True)
+        (checkout / "config").mkdir()
+        (checkout / "config" / "cache.toml").write_bytes(
+            (tmp_path / "config" / "cache.toml").read_bytes()
+        )
         config = base.model_copy(update={"root": checkout})
-        assetcache.materialize(config, ("code",), identity)
+        assetstore.materialize(config, ("code",), identity)
         selected.append(config.path(config.assets.test_root) / "code" / "build-x86_64")
 
     assert selected[0].resolve() == selected[1].resolve()
     assert (
         selected[0].resolve()
-        == assetcache.lane(base, identity, profile="code", arch=base.arch("x86_64")).resolve()
+        == assetstore.lane(base, identity, profile="code", arch=base.arch("x86_64")).resolve()
     )
 
 
@@ -501,19 +441,21 @@ def test_cache_reclaim_passes_protected_receipts_to_the_policy() -> None:
     )
 
 
-def test_vm_and_asset_cache_bounds_are_declared() -> None:
+def test_vm_and_asset_cache_contracts_are_declared_through_common_api() -> None:
     from capsem_builder.gate.cachecontrol import CacheControl
 
-    assert CONFIG.assets.cache.maximum_count > len(CONFIG.architectures)
-    assert CONFIG.assets.cache.maximum_age_hours > 0
-    assert CONFIG.assets.cache.maximum_bytes > 0
+    policy = load_policy(PROJECT_ROOT)
+    registry = CacheRegistry(CachePaths(repository_root=PROJECT_ROOT, policy=policy), policy)
+    assets = registry.contract("assets")
+    assert assets.max_size_bytes == 200 * 1024**3
+    assert assets.warm_size_bytes == 200 * 1024**3
     cache = CacheControl(RecordingRunner(PROJECT_ROOT))
-    source_limits = cache.image_limits("capsem-install-test")
-    helper_limits = cache.image_limits("capsem-install-builder")
+    source_limits = cache.image_policy("capsem-install-test")
+    helper_limits = cache.image_policy("capsem-install-builder")
     ordinary_receipt_lineages = CONFIG.prefix.keep + 2
     assert source_limits.maximum_count == ordinary_receipt_lineages
     assert helper_limits.maximum_count == ordinary_receipt_lineages
     assert source_limits.maximum_age_seconds == 336 * 3600
-    assert source_limits.maximum_bytes == 96 * 1024**3
+    assert source_limits.max_size_bytes == 200 * 1024**3
     assert helper_limits.maximum_age_seconds > 0
-    assert helper_limits.maximum_bytes > 0
+    assert helper_limits.max_size_bytes > 0

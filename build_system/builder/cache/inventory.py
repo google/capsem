@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import shutil
 import stat
 import time
 from pathlib import Path
 
+from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
 from .leases import active_path
-from .models import CacheEntry, CacheInventory, CachePolicy, PruneMethod, StageInventory
+from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
 from .paths import CachePaths
 
 
@@ -54,8 +54,12 @@ def _stage_inventory(
     allocated_seen: set[tuple[int, int]],
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
-    stage_path = paths.stage(stage_id)
+    stage_root = paths.stage(stage_id)
+    stage_path = stage_root / stage_policy.entry_root
+    referenced = _referenced_keys(paths, stage_policy.selector_globs, stage_path)
     entries: list[CacheEntry] = []
+    unmanaged_logical = 0
+    unmanaged_allocated = 0
     if stage_path.is_dir():
         for child in sorted(stage_path.iterdir(), key=lambda item: item.name):
             logical, allocated = _entry_size(child, allocated_seen)
@@ -73,18 +77,46 @@ def _stage_inventory(
                     last_used_ns=stat.st_atime_ns,
                     managed=managed,
                     protected=managed
-                    and _lease_active(stage_path, stage_policy.lease_template, child.name),
+                    and (
+                        child.name in referenced
+                        or _lease_active(stage_path, stage_policy.lease_template, child.name)
+                    ),
                 )
             )
+    if stage_policy.entry_root != Path(".") and stage_root.is_dir():
+        for child in stage_root.iterdir():
+            if child == stage_path:
+                continue
+            logical, allocated = _entry_size(child, allocated_seen)
+            unmanaged_logical += logical
+            unmanaged_allocated += allocated
     return StageInventory(
         stage_id=stage_id,
         path=stage_path,
-        external=stage_policy.external,
-        logical_bytes=sum(entry.logical_bytes for entry in entries),
-        allocated_bytes=sum(entry.allocated_bytes for entry in entries),
+        logical_bytes=sum(entry.logical_bytes for entry in entries) + unmanaged_logical,
+        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + unmanaged_allocated,
         protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
         entries=tuple(entries),
     )
+
+
+def _referenced_keys(
+    paths: CachePaths, selector_globs: tuple[str, ...], entry_root: Path
+) -> frozenset[str]:
+    """Resolve configured selectors to the top-level cache generations they pin."""
+    protected = set()
+    resolved_root = entry_root.resolve()
+    for pattern in selector_globs:
+        for selector in paths.root.glob(pattern):
+            if not selector.is_symlink():
+                continue
+            try:
+                relative = selector.resolve().relative_to(resolved_root)
+            except (OSError, ValueError):
+                continue
+            if relative.parts:
+                protected.add(relative.parts[0])
+    return frozenset(protected)
 
 
 def _unclassified_inventory(
@@ -134,17 +166,32 @@ def scan_inventory(
     }
     unclassified = _unclassified_inventory(paths, policy, allocated_seen)
     stages = tuple(by_id[stage_id] for stage_id in sorted(by_id))
-    free = shutil.disk_usage(paths.root.parent).free
     return CacheInventory(
         root=paths.root,
         generated_ns=time.time_ns() if now_ns is None else now_ns,
-        filesystem_free_bytes=free,
         logical_bytes=sum(stage.logical_bytes for stage in stages)
         + sum(entry.logical_bytes for entry in unclassified),
         allocated_bytes=sum(stage.allocated_bytes for stage in stages)
         + sum(entry.allocated_bytes for entry in unclassified),
         stages=stages,
         unclassified=unclassified,
+    )
+
+
+def select_inventory(inventory: CacheInventory, stage_id: str) -> CacheInventory:
+    """Return one disk owner while preserving the typed inventory shape."""
+    if stage_id == "all":
+        return inventory
+    selected = tuple(stage for stage in inventory.stages if stage.stage_id == stage_id)
+    if not selected:
+        raise ValueError(f"unknown disk cache {stage_id!r}")
+    return inventory.model_copy(
+        update={
+            "logical_bytes": sum(stage.logical_bytes for stage in selected),
+            "allocated_bytes": sum(stage.allocated_bytes for stage in selected),
+            "stages": selected,
+            "unclassified": (),
+        }
     )
 
 
@@ -156,7 +203,7 @@ def scan_retention_inventory(
     stage_ids = sorted(
         stage_id
         for stage_id, stage in policy.stages.items()
-        if stage.prune not in {PruneMethod.NONE, PruneMethod.EXTERNAL}
+        if stage.prune_strategy is not PruneStrategy.NONE
     )
 
     stages = tuple(
@@ -165,6 +212,5 @@ def scan_retention_inventory(
     return RetentionInventory(
         root=paths.root,
         generated_ns=time.time_ns() if now_ns is None else now_ns,
-        filesystem_free_bytes=shutil.disk_usage(paths.root.parent).free,
         stages=stages,
     )

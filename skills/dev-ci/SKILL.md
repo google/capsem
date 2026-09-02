@@ -110,34 +110,19 @@ gh run download <run-id> -n test-artifacts-macOS-1
 - **Infra flake** (runner died, network timeout, artifact upload hiccup):
   one rerun, after writing the diagnosis. Second failure = not a flake.
 
-## Docker storage budget
+## Cache evidence
 
-`config/cache.toml` governs the gate's Docker footprint. The numbers
-are coupled and must stay satisfiable:
+`config/cache.toml` governs repository, Docker/Colima, and Tart caches through
+one typed contract. CI must restore only immutable verified inputs and must not
+invent workflow-local cache limits or broad cleanup steps. Diagnose cache state
+with `just cache stats --json`; use `just cache contract <id>` to inspect the
+owner's `max_size_bytes`, `warm_size_bytes`, and prune strategy.
 
-```
-build_cache_keep_bytes + minimum_free_bytes + fixed usage <= minimum_disk_bytes
-```
-
-Violate it and the floor can never be met by the one action taken to meet it —
-`docker builder prune --keep-storage <keep>` cannot free space down to a floor
-that sits above what it retains. The observable symptom is not "disk full": the
-capacity probe *starts a container* to run `df`, so a thrashing daemon makes it
-**time out**, and the gate dies reporting that it could not measure free space.
-
-Fixed usage is the declared cache volumes plus base images (~18 GiB here).
-
-**A too-small `build_cache_keep_bytes` is a speed bug, not a safety margin.** At 24 GiB
-against a ~35 GB hot graph, every pressure prune discarded layers about to be
-reused and the host-builder image recompiled cold each run.
-
-Age-based reclaim (`dangling-image-prune`, `buildkit-age-prune`, both 72h)
-structurally cannot help during a burst of same-day runs — everything is younger
-than the threshold. Expect `gc` to return near-zero after a heavy session; that
-is the policy working, not failing. Provision headroom instead of pruning harder.
-
-Thresholds are validated by the strict cache policy and exercised in
-`build_system/tests/cache/`, so config and contract move together.
+A cache enforcement failure means owned usage still exceeds its configured
+maximum after safe pruning. Preserve the inventory and mutation journal, then
+fix ownership, protected-generation accounting, or the evidence-based limit.
+Do not convert it into a machine-capacity probe or delete foreign daemon resources.
+Read `/dev-cache` before changing cache policy or workflow cache behavior.
 
 ## Release CI is orthogonal
 

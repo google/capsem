@@ -211,8 +211,7 @@ class CandidateConfig(Strict):
     generated_settings_script: str
     materialize_script: str
     recipe_suite: tuple[str, ...]
-    candidate_budget: tuple[str, ...]
-    failure_rail: str
+    candidate_cache: str
     unknown_head: str
 
 

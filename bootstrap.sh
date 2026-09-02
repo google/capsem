@@ -268,13 +268,13 @@ case "$(uname -s)" in
         # instead of maintaining a second partial TOML parser in this script.
         DOCKER_DISK_BYTES=$(
             uv run --project "$SCRIPT_DIR/build_system" --frozen \
-                capsem-cache --repository "$SCRIPT_DIR" policy \
+                capsem-cache --repository "$SCRIPT_DIR" contract docker \
                 | uv run --project "$SCRIPT_DIR/build_system" --frozen python -c \
-                    'import json, sys; print(json.load(sys.stdin)["control"]["docker"]["recommended_disk_bytes"])'
+                    'import json, sys; print(json.load(sys.stdin)["max_size_bytes"])'
         )
         case "$DOCKER_DISK_BYTES" in
             ''|*[!0-9]*)
-                printf "invalid control.docker.recommended_disk_bytes in validated cache policy\n" >&2
+                printf "invalid docker max_size_bytes in validated cache policy\n" >&2
                 exit 2
                 ;;
         esac

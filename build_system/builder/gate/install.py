@@ -105,7 +105,7 @@ class InstallGate:
 
         try:
             self._container.require_rosetta()
-            self._cache.ensure_space("install")
+            self._cache.enforce("docker", "install")
             self._container.start(options=options)
             self._prove(package)
         finally:
@@ -180,7 +180,7 @@ class InstallGate:
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside
         # a fixture after hours of otherwise-green release work.
-        self._cache.ensure_space("install")
+        self._cache.enforce("docker", "install")
 
         self._proof.run_install_suite()
         if not self._container.boots_a_guest:

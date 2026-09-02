@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.objects import object_path
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.views import ReceiptLocation, ViewReceipt, canonicalize, copy_view
@@ -11,17 +11,16 @@ from capsem_builder.cache.views import ReceiptLocation, ViewReceipt, canonicaliz
 def test_named_view_is_hardlinked_and_receipted(tmp_path: Path) -> None:
     stage = StagePolicy(
         path=Path("objects"),
-        warning_bytes=1,
-        soft_bytes=2,
-        hard_bytes=3,
-        prune=PruneMethod.NONE,
+        description="test cache",
+        scope=CacheScope.DISK,
+        warm_size_bytes=2,
+        max_size_bytes=3,
+        prune_strategy=PruneStrategy.NONE,
         maximum_age_hours=1,
     )
     paths = CachePaths(
         repository_root=tmp_path,
-        policy=CachePolicy(
-            version=1, root=Path("cache"), minimum_free_bytes=1, stages={"objects": stage}
-        ),
+        policy=CachePolicy(version=1, root=Path("cache"), stages={"objects": stage}),
     )
     package = tmp_path / "Capsem.deb"
     package.write_bytes(b"package")

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
-from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 
 
@@ -13,14 +13,14 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
         stages={
             "objects": StagePolicy(
                 path=Path("target/objects"),
-                warning_bytes=10,
-                soft_bytes=20,
-                hard_bytes=30,
-                prune=PruneMethod.LRU,
+                description="test cache",
+                scope=CacheScope.DISK,
+                warm_size_bytes=20,
+                max_size_bytes=30,
+                prune_strategy=PruneStrategy.LRU,
                 maximum_age_hours=72,
             )
         },
@@ -114,9 +114,9 @@ def test_inventory_separates_metadata_and_protects_active_leases(tmp_path: Path)
 
 
 def test_retention_inventory_skips_policy_protected_stages(tmp_path: Path) -> None:
-    retained = policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
+    retained = policy().stages["objects"].model_copy(update={"prune_strategy": PruneStrategy.NONE})
     reclaimable = retained.model_copy(
-        update={"path": Path("target/reclaimable"), "prune": PruneMethod.LRU}
+        update={"path": Path("target/reclaimable"), "prune_strategy": PruneStrategy.LRU}
     )
     configured = policy().model_copy(
         update={"stages": {"objects": retained, "reclaimable": reclaimable}}

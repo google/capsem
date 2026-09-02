@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from ..cache.config import load_policy
+from ..cache.models import StagePolicy
 from ..cache.paths import CachePaths
 from .config import GateConfig
 from .errors import GateError
@@ -39,6 +40,14 @@ def stage_path(config: GateConfig, stage_id: str) -> Path:
         return paths.stage(stage_id)
     except KeyError as error:
         raise GateError(str(error)) from error
+
+
+def stage_policy(config: GateConfig, stage_id: str) -> StagePolicy:
+    """Return one disk cache contract from the sole cache authority."""
+    try:
+        return load_policy(config.root).stages[stage_id]
+    except KeyError as error:
+        raise GateError(f"cache policy has no disk owner {stage_id!r}") from error
 
 
 def cache_paths(config: GateConfig) -> CachePaths:

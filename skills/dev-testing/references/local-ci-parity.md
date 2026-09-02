@@ -129,19 +129,19 @@ CI process is also root. Root invalidates permission-denied regressions and is
 therefore a parity failure, not a harmless container implementation detail.
 
 The canonical gate also has a runtime budget. Measure full local and CI stage
-durations and keep meaningful headroom below the runner's observed lifetime;
+durations and keep meaningful time margin below the runner's observed lifetime;
 the workflow's declared timeout is not proof that the host will live that long.
-Disk headroom is part of the same budget. Large immutable packages and VM
+Large immutable packages and VM
 blobs that are already present in the candidate workspace must use
 hardlink-first same-filesystem staging on both macOS and Linux, with a tested
 cross-filesystem copy fallback. Add a constrained-disk executable regression
 that makes an accidental full copy fail with `ENOSPC`; a source assertion or
 an unconstrained happy-path run cannot guard a multi-gigabyte late-stage copy.
-Record disk use before every expensive artifact lane and before the final
-install/glow-up tail so capacity failures happen before hours of qualification.
-Parallel Docker gates also own a daemon-space preflight: measure free space,
-reclaim only unused builder cache when below the documented reserve, and fail
-before launching lanes if the reserve remains unavailable. Preserve each lane's
+Record owned cache use before every expensive artifact lane and before the final
+install/glow-up tail so limit failures happen before hours of qualification.
+Parallel Docker gates enforce the common `docker` cache contract before
+launching lanes; the backend may reclaim only owned, unprotected resources to
+its configured warm size after crossing its maximum. Preserve each lane's
 complete log and wait for the logging pipeline itself, so failure diagnostics
 cannot race a still-flushing process substitution.
 Two runs terminating at the same wall-clock age are a deterministic budget
@@ -153,8 +153,8 @@ Docker tags are daemon-global across worktrees. Automatic gates must never run
 `docker image prune --all`/`-a`, and an internal primitive used by concurrent
 lanes must not invoke garbage collection. A newly tagged cached image can have
 an old creation timestamp and be deleted by age-filtered `prune -a` from another
-lane or checkout. Run cleanup only at an owning outer boundary, prune dangling
-images and unused builder cache, and emit captured Docker stderr on failure.
+lane or checkout. Run cleanup only through the common cache controller at an
+owning outer boundary, and emit captured Docker stderr on failure.
 Any preflight that mutates the container VM or daemon must have a hard
 wall-clock timeout and an executable test that waits for process completion.
 Printed success output is not completion proof. In particular, never set the

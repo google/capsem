@@ -25,9 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence remains fresh rather than being mistaken for construction output.
 - `just cache` now reconciles repository usage with owned Docker images,
   containers, BuildKit data, and Tart VMs through bounded typed adapters.
-  Snapshots write strict receipts under `cache/containers`, prune previews
-  protect active and foreign resources, and applied native cleanup is exact,
-  reasoned, and journaled alongside its runtime output.
+  Every owner exposes the same description, scope, maximum size, warm size,
+  and prune strategy through `just cache stats`; prune previews protect active
+  and foreign resources, and applied cleanup is exact, reasoned, and journaled.
 - Complete local tests now refuse low-impact repeats until ten commits have
   accumulated since the latest successful proof and print the exact focused
   owners to run instead. High-impact and unknown changes remain eligible;
@@ -64,9 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `just cache` now provides a typed, repository-owned inventory and retention
-  interface. Status and verification are read-only, pruning previews its exact
-  plan unless `--apply` is supplied, and every applied deletion is contained
-  beneath `cache/` and journaled with its reason.
+  interface. Stats and verification are read-only, pruning previews its exact
+  plan unless `--apply` is supplied, and a common registry hides disk,
+  Docker/Colima, and Tart mechanisms from callers. Every applied deletion is
+  ownership-scoped and journaled with its reason.
 - Developer verification now has explicit cost boundaries: `just fast-test`
   prints that it is incomplete, `just focus-test <group>` reruns one existing
   owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or

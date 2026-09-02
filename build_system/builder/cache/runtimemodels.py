@@ -17,6 +17,8 @@ from pydantic import (
     model_validator,
 )
 
+from .contract import CacheContract, CacheScope, PruneStrategy
+
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 
@@ -41,9 +43,7 @@ class RuntimeOperation(StrEnum):
     DELETE_VM = "delete-vm"
 
 
-class DockerRuntimePolicy(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
+class DockerRuntimePolicy(CacheContract):
     kind: Literal["docker"]
     required: StrictBool = True
     command: StrictStr
@@ -51,14 +51,12 @@ class DockerRuntimePolicy(BaseModel):
     mutation_timeout_seconds: PositiveInt
     inventory_retry_attempts: PositiveInt
     inventory_retry_delay_milliseconds: NonNegativeInt
-    receipt_stage: StrictStr
     log_stage: StrictStr
     image_prefixes: tuple[StrictStr, ...]
     container_prefixes: tuple[StrictStr, ...]
     build_cache_owned: StrictBool
     maximum_age_hours: PositiveInt
     keep_image_generations: PositiveInt
-    build_cache_keep_bytes: PositiveInt
 
     @field_validator("image_prefixes", "container_prefixes", mode="before")
     @classmethod
@@ -67,6 +65,8 @@ class DockerRuntimePolicy(BaseModel):
 
     @model_validator(mode="after")
     def ownership_is_explicit(self) -> DockerRuntimePolicy:
+        if self.scope is not CacheScope.DOCKER or self.prune_strategy is not PruneStrategy.DOCKER:
+            raise ValueError("Docker cache requires docker scope and prune strategy")
         if not self.command or any(character.isspace() for character in self.command):
             raise ValueError("Docker command must be one executable token")
         if not self.image_prefixes or not self.container_prefixes:
@@ -74,20 +74,15 @@ class DockerRuntimePolicy(BaseModel):
         prefixes = (*self.image_prefixes, *self.container_prefixes)
         if any(not prefix or prefix.isspace() for prefix in prefixes):
             raise ValueError("Docker ownership prefixes must contain visible text")
-        if self.receipt_stage == self.log_stage:
-            raise ValueError("runtime receipts and logs require distinct stages")
         return self
 
 
-class TartRuntimePolicy(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
+class TartRuntimePolicy(CacheContract):
     kind: Literal["tart"]
     required: StrictBool = True
     command: StrictStr
     timeout_seconds: PositiveInt
     mutation_timeout_seconds: PositiveInt
-    receipt_stage: StrictStr
     log_stage: StrictStr
     vm_prefixes: tuple[StrictStr, ...]
     base_images: tuple[StrictStr, ...]
@@ -100,12 +95,12 @@ class TartRuntimePolicy(BaseModel):
 
     @model_validator(mode="after")
     def ownership_is_explicit(self) -> TartRuntimePolicy:
+        if self.scope is not CacheScope.TART or self.prune_strategy is not PruneStrategy.TART:
+            raise ValueError("Tart cache requires tart scope and prune strategy")
         if not self.command or any(character.isspace() for character in self.command):
             raise ValueError("Tart command must be one executable token")
         if not self.vm_prefixes or not self.base_images or not self.home:
             raise ValueError("Tart ownership, base images, and home must be non-empty")
-        if self.receipt_stage == self.log_stage:
-            raise ValueError("runtime receipts and logs require distinct stages")
         return self
 
 

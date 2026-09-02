@@ -31,12 +31,10 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
         "build_system/tests/cache/test_admission.py",
         "build_system/tests/cache/test_admission_state.py",
-        "build_system/tests/cache/test_capacity.py",
         "build_system/tests/cache/test_cli.py",
         "build_system/tests/cache/test_direct_environment.py",
         "build_system/tests/cache/test_failure_artifacts.py",
         "build_system/tests/cache/test_gitimpact.py",
-        "build_system/tests/cache/test_health.py",
         "build_system/tests/cache/test_inventory.py",
         "build_system/tests/cache/test_objects.py",
         "build_system/tests/cache/test_operations.py",
@@ -46,6 +44,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/cache/test_pythonenv.py",
         "build_system/tests/cache/test_runtime_adapters.py",
         "build_system/tests/cache/test_runtime_control.py",
+        "build_system/tests/cache/test_registry.py",
+        "build_system/tests/cache/test_stats.py",
         "build_system/tests/cache/test_telemetry.py",
         "build_system/tests/cache/test_tool_adapters.py",
         "build_system/tests/cache/test_views.py",
@@ -157,9 +157,7 @@ def _problems(rows: Iterable[Mapping[str, Any]], tracked: frozenset[str]) -> lis
             problems.append(f"duplicate {label} paths: {duplicates}")
 
     owned_targets = set(targets) | set(BOUNDARY_FILES)
-    actual_build_tests = {
-        path for path in tracked if path.startswith("build_system/tests/")
-    }
+    actual_build_tests = {path for path in tracked if path.startswith("build_system/tests/")}
     unowned = sorted(actual_build_tests - owned_targets)
     missing_boundaries = sorted(BOUNDARY_FILES - tracked)
     if unowned:

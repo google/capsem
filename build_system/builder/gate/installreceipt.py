@@ -103,13 +103,13 @@ def validate(
         raise GateError(f"install image receipt selects stale input key {receipt.input_key}")
     if receipt.runtime_digest != runtime_digest or receipt.platform != platform:
         raise GateError("install image receipt no longer matches the Docker runtime")
-    limits = CacheControl(runner).image_limits(resource)
+    policy = CacheControl(runner).image_policy(resource)
     now = time.time()
     if receipt.created_at > now or receipt.last_used_at > now:
         raise GateError("install image receipt has future-dated cache timestamps")
-    if now - receipt.created_at > limits.maximum_age_seconds:
+    if now - receipt.created_at > policy.maximum_age_seconds:
         raise GateError("install image receipt exceeded its configured cache age")
-    if receipt.image_size_bytes > limits.maximum_bytes:
+    if receipt.image_size_bytes > policy.max_size_bytes:
         raise GateError("install qualification image exceeds its configured byte bound")
     if not docker.image_exists(tag, platform=platform):
         raise GateError(f"install qualification image {tag} is missing")

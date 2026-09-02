@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["CachePaths", "CachePolicy", "PruneMethod", "StagePolicy", "load_policy"]
+__all__ = [
+    "CachePaths",
+    "CachePolicy",
+    "CacheScope",
+    "PruneStrategy",
+    "StagePolicy",
+    "load_policy",
+]
 
 
 def __getattr__(name: str) -> Any:
@@ -21,8 +28,12 @@ def __getattr__(name: str) -> Any:
         from .paths import CachePaths
 
         return CachePaths
-    if name in {"CachePolicy", "PruneMethod", "StagePolicy"}:
+    if name in {"CachePolicy", "StagePolicy"}:
         from . import models
 
         return getattr(models, name)
+    if name in {"CacheScope", "PruneStrategy"}:
+        from . import contract
+
+        return getattr(contract, name)
     raise AttributeError(name)

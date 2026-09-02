@@ -271,15 +271,14 @@ def test_the_profile_lane_exports_a_complete_profile_release_state() -> None:
 #
 # A half-exported release environment is the moment an operator most needs to
 # ask what the last run did. Parsing the release state in every command's
-# constructor made `runs last` and `gc --dry-run` refuse with the same message
-# as the gate itself -- correct for a command that would *prove* something,
-# useless for one that only reports.
+# constructor made `runs last` refuse with the same message as the gate itself
+# -- correct for a command that would *prove* something, useless for one that
+# only reports.
 
 #: Commands that only read. None of them can prove anything, so none of them
 #: has an opinion about which artifacts a release selected.
 INSPECTION = (
     ("runs", {"action": "last", "failed": False, "run": None}),
-    ("gc", {"dry_run": True}),
     ("version", {}),
     ("logs", {"target": "service"}),
 )
@@ -383,7 +382,10 @@ def test_a_local_state_cannot_carry_release_inputs() -> None:
     # Through a named mapping, so the type checker does not report the very
     # error this asserts happens at *runtime*. It would be right -- that is
     # the point -- and a literal splat is what ruff objects to instead.
-    local_with_release_input = {"bin_dir": "cache/target/cargo/debug", "input_dir": VALUES[INPUT_DIR]}
+    local_with_release_input = {
+        "bin_dir": "cache/target/cargo/debug",
+        "input_dir": VALUES[INPUT_DIR],
+    }
 
     with pytest.raises((pydantic.ValidationError, TypeError)):
         LocalQualification(**local_with_release_input)
@@ -409,7 +411,9 @@ def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
     from capsem_builder.gate.qualification import BinaryQualification
 
     with pytest.raises(pydantic.ValidationError):
-        BinaryQualification(input_dir="   ", package=VALUES[PACKAGE], bin_dir="cache/target/cargo/debug")
+        BinaryQualification(
+            input_dir="   ", package=VALUES[PACKAGE], bin_dir="cache/target/cargo/debug"
+        )
 
 
 def test_a_profile_name_follows_the_configured_grammar() -> None:

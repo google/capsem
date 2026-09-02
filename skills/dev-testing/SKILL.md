@@ -133,7 +133,7 @@ must still exercise the installed package and post-install behavior.
 Read `references/local-ci-parity.md` before editing any release workflow, gate
 recipe, or CI job. It holds the Ironbank parity rule (every portable release
 gate must be owned by `just test`), scanner/tool pinning, Docker platform and
-prune discipline, runtime/disk budgets, and the source-guard contracts.
+prune discipline, common cache contracts, and the source-guard contracts.
 
 ## TDD workflow
 
@@ -552,21 +552,23 @@ first sends production code to the ambient run directory while the fixture
 writes into a temp one. Bisect by exporting one variable at a time; that names
 the culprit in two runs instead of guessing.
 
-### Thresholds belong in one place
+### Cache limits belong in the cache contract
 
 A number copied next to a rule drifts from it silently. Three separate gate
 failures in one session traced to this: a coverage floor copied into a test, a
-guest kernel major copied beside its pin, and a Docker fixture hardcoding
-"plenty" of free space independently from the configured minimum.
+guest kernel major copied beside its pin, and a Docker fixture restating a
+storage assumption outside the cache policy.
 
 Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
 
 ```python
-floor = tomllib.loads(BUILD_CONFIG.read_text())["rails"]["assets"]["minimum_free_gib"]
-ample_kib = (floor + 10) * 1024 * 1024   # follows the floor; never restates it
+maximum = load_policy(ROOT).runtimes["docker"].max_size_bytes
+assert registry.contract("docker").max_size_bytes == maximum
 ```
 
 Prove it derives rather than hardcodes: change the source value and confirm the test *follows* instead of breaking.
+Read `/dev-cache` for the common cache model; tests must not recreate backend
+accounting or machine-capacity rails.
 
 ## Platform gating tests
 

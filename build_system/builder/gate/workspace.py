@@ -32,6 +32,7 @@ from pathlib import Path
 from . import pidfiles
 from .config import GateConfig
 from .fileactions import digest_of
+from .filesystem import remove
 from .lifecycle import Resource
 
 
@@ -83,10 +84,8 @@ class Workspace(Resource, name="workspace"):
     # -- Resource ----------------------------------------------------------
 
     def acquire(self) -> None:
-        from .disk import _remove_tree
-
         if self.home.is_dir():
-            _remove_tree(self.home, self._config.root)
+            remove(self.home)
         self._remove_run_dir()
         for relative in self._settings.seeded_dirs:
             (self.home / relative).mkdir(parents=True, exist_ok=True)
@@ -99,11 +98,9 @@ class Workspace(Resource, name="workspace"):
 
     def preserve(self, error: BaseException) -> None:
         """Copy the host-side diagnostics out before anything removes them."""
-        from .disk import _remove_tree
-
         destination = self._config.path(self._settings.evidence_dir)
         if destination.is_dir():
-            _remove_tree(destination, self._config.root)
+            remove(destination)
         destination.mkdir(parents=True, exist_ok=True)
 
         # The service has to stop first: it SIGTERMs every VM process, and that

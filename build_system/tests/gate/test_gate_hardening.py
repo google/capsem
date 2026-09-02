@@ -313,7 +313,6 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
             "source_commit": SourceCommit("0" * 40),
         },
         "cross-compile": {"arch": "arm64"},
-        "storage": {"action": "gc", "rail": None},
         "prove-deb": {
             "package": "x.deb",
             "content_root": "cache/target/content",
@@ -324,7 +323,6 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
         "dev": {"surface": "ui", "args": []},
         "logs": {"target": ""},
         "runs": {"action": "list", "run": None, "failed": False, "other": None},
-        "gc": {"aggressive": False},
     }
 
     for name, command in sorted(GateCommand.registry.items()):

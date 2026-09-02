@@ -4,7 +4,7 @@ from pathlib import Path
 
 from capsem_builder import gatelaunch
 from capsem_builder.cache.paths import CachePaths
-from capsem_builder.cache.telemetry import CacheScope
+from capsem_builder.cache.telemetry import ReuseScope
 from capsem_builder.gate import cachetooling
 from capsem_builder.gate import config as gate_config
 
@@ -15,7 +15,7 @@ CONFIG = gate_config.load(ROOT)
 def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) -> None:
     monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
     monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
-    observed: list[tuple[str, CacheScope, Path | None, tuple[str, ...]]] = []
+    observed: list[tuple[str, ReuseScope, Path | None, tuple[str, ...]]] = []
 
     def observe(
         _paths: CachePaths,
@@ -23,7 +23,7 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
         *,
         tool: str,
         key: str,
-        scope: CacheScope,
+        scope: ReuseScope,
         observed_bytes: int | None = None,
         probe: Path | None = None,
         ignored_names: tuple[str, ...] = (),
@@ -46,7 +46,7 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     compiler = cachetooling.compiler_environment(CONFIG)
     assert compiler[CONFIG.environment.rustc_wrapper] == "sccache"
     assert compiler[CONFIG.environment.sccache_dir] == str(ROOT / "cache/tools/rust/sccache")
-    assert compiler[CONFIG.environment.sccache_cache_size] == "32G"
+    assert compiler[CONFIG.environment.sccache_cache_size] == "200G"
     assert compiler[CONFIG.environment.sccache_base_dir] == str(ROOT)
     assert compiler[CONFIG.environment.sccache_server_uds] == str(
         ROOT / "cache/tools/rust/sccache/sccache.sock"
@@ -60,18 +60,18 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
         "node-pnpm",
         "rust-sccache",
     ]
-    assert by_stage["python-uv"][0] is CacheScope.SHARED
-    assert by_stage["python-ruff"][0] is CacheScope.SHARED
-    assert by_stage["python-pycache"][0] is CacheScope.GENERATION
-    assert by_stage["python-pytest"][0] is CacheScope.GENERATION
+    assert by_stage["python-uv"][0] is ReuseScope.SHARED
+    assert by_stage["python-ruff"][0] is ReuseScope.SHARED
+    assert by_stage["python-pycache"][0] is ReuseScope.GENERATION
+    assert by_stage["python-pytest"][0] is ReuseScope.GENERATION
     python_probe = by_stage["python-pycache"][1]
     pytest_probe = by_stage["python-pytest"][1]
     assert python_probe is not None
     assert pytest_probe is not None
     assert python_probe.parent == ROOT / "cache/tools/python/pycache"
     assert pytest_probe.parent == ROOT / "cache/tools/python/pytest"
-    assert by_stage["node-pnpm"][0] is CacheScope.SHARED
-    assert by_stage["rust-sccache"][0] is CacheScope.SHARED
+    assert by_stage["node-pnpm"][0] is ReuseScope.SHARED
+    assert by_stage["rust-sccache"][0] is ReuseScope.SHARED
     assert by_stage["rust-sccache"][2] == ("sccache.sock",)
 
 

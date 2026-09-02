@@ -15,5 +15,4 @@ class RetentionInventory(BaseModel):
 
     root: Path
     generated_ns: Annotated[StrictInt, Field(ge=0)]
-    filesystem_free_bytes: Annotated[StrictInt, Field(ge=0)]
     stages: tuple[StageInventory, ...]

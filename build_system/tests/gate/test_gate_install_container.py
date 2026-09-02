@@ -68,7 +68,9 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/vsock")
+    monkeypatch.setattr(
+        "capsem_builder.gate.host.device_available", lambda path: path != "/dev/vsock"
+    )
     container, runner = _container()
 
     options = container.runtime_options()
@@ -104,7 +106,9 @@ def test_a_linux_host_without_kvm_refuses_rather_than_proving_less(
     failing, because the gate would then report a pass for a proof it did not
     run."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/kvm")
+    monkeypatch.setattr(
+        "capsem_builder.gate.host.device_available", lambda path: path != "/dev/kvm"
+    )
     container, _ = _container()
 
     with pytest.raises(GateError, match="/dev/kvm"):
@@ -224,8 +228,7 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
     mount = CONFIG.install.mount
     assert f"-v {resolved}:{resolved}:ro" in started
     assert (
-        f"-v {resolved / CONFIG.assets.merged_assets_dir}:"
-        f"{mount}/{CONFIG.functional.assets_dir}:ro"
+        f"-v {resolved / CONFIG.assets.merged_assets_dir}:{mount}/{CONFIG.functional.assets_dir}:ro"
     ) in started
     assert (
         f"-v {resolved / CONFIG.assets.merged_config_dir}:"
@@ -459,15 +462,13 @@ def test_install_source_cli_escapes_the_ephemeral_cargo_cache_mount() -> None:
     source = " ".join(dockerfile.replace("\\\n", " ").split())
 
     assert (
-        "install -m 0555 /tmp/capsem-install-current-cli/debug/capsem "
-        "/tmp/capsem-install-current"
+        "install -m 0555 /tmp/capsem-install-current-cli/debug/capsem /tmp/capsem-install-current"
     ) in source
     assert (
         "COPY --from=source-cli --chmod=0555 /tmp/capsem-install-current ${FRESH_CLI}"
     ) in source
     assert (
-        "COPY --from=source-cli --chmod=0555 "
-        "/tmp/capsem-install-current-cli/debug/capsem"
+        "COPY --from=source-cli --chmod=0555 /tmp/capsem-install-current-cli/debug/capsem"
     ) not in source
 
 
@@ -582,8 +583,8 @@ def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert (hostimage.STEP, "install.capacity") in plan.edges
-    assert ("install.capacity", "install.materialize") in plan.edges
+    assert (hostimage.STEP, "install.cache") in plan.edges
+    assert ("install.cache", "install.materialize") in plan.edges
     assert ("install.materialize", "install.image-build") in plan.edges
     assert ("install.image-build", "install.image-smoke") in plan.edges
 

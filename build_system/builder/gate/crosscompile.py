@@ -23,7 +23,7 @@ from .plan import Plan
 #: One reason per phase. The class docstring used to carry a single rationale
 #: -- "a package build carries signing material" -- for all eight, which is
 #: true of exactly one of them.
-HEADROOM = "reads the daemon's free space before an hour of compilation spends it"
+CACHE_LIMIT = "accounts for Docker-owned bytes before an hour of compilation adds to them"
 CLOCK = "Colima's clock drift is a property of the machine this runs on"
 CONTENT = "verifies one paired asset and configuration bundle for the package target"
 MATERIALIZE = "resolves locked package dependencies at the explicit network-open boundary"
@@ -92,10 +92,10 @@ def fragment(
     #: opaque `Call`.
     phases = (
         (
-            "space",
-            "reserve the package rail's headroom",
-            "reserve",
-            _because(HEADROOM, Effect.PROCESS),
+            "cache",
+            "enforce the Docker cache maximum before package work",
+            "enforce_cache",
+            _because(CACHE_LIMIT, Effect.PROCESS),
         ),
         (
             "clock",
@@ -161,7 +161,7 @@ def fragment(
             after=previous,
         )
         if method == "materialize":
-            # The preceding rail steps only order capacity and content checks.
+            # The preceding rail steps only order cache and content checks.
             # This is where the package helper derives from the host builder.
             plan.edge(before=built, after=current, requires=Requires.ARTIFACT)
         previous = (current,)

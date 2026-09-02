@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
-from .models import CacheInventory, CachePolicy, PruneAction, PruneMethod, PrunePlan
+from .models import CacheEntry, CacheInventory, CachePolicy, PruneAction, PrunePlan
 
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
+
+
+def _retention_key(strategy: PruneStrategy, entry: CacheEntry) -> tuple[int, int, str]:
+    """Order by the semantic clock named by the configured strategy."""
+    if strategy is PruneStrategy.LRU:
+        return entry.last_used_ns, entry.created_ns, entry.key
+    return entry.created_ns, entry.last_used_ns, entry.key
+
+
+def _age_clock(strategy: PruneStrategy, entry: CacheEntry) -> int:
+    return entry.last_used_ns if strategy is PruneStrategy.LRU else entry.created_ns
 
 
 def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
@@ -13,10 +25,8 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
     actions: list[PruneAction] = []
     violations: list[str] = []
     selected: dict[str, set[str]] = {stage.stage_id: set() for stage in inventory.stages}
-    recovered_allocated = 0
 
     def choose(stage, entry, reason: str) -> None:
-        nonlocal recovered_allocated
         actions.append(
             PruneAction(
                 stage_id=stage.stage_id,
@@ -27,17 +37,16 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
             )
         )
         selected[stage.stage_id].add(entry.key)
-        recovered_allocated += entry.allocated_bytes
 
     for stage in inventory.stages:
         stage_policy = policy.stages[stage.stage_id]
         remaining = stage.logical_bytes
         remaining_count = sum(entry.managed for entry in stage.entries)
-        if stage_policy.prune in {PruneMethod.NONE, PruneMethod.EXTERNAL}:
-            if remaining > stage_policy.soft_bytes:
+        if stage_policy.prune_strategy is PruneStrategy.NONE:
+            if remaining > stage_policy.max_size_bytes:
                 violations.append(
-                    f"{stage.stage_id} remains {remaining} bytes above soft cap "
-                    f"{stage_policy.soft_bytes}"
+                    f"{stage.stage_id} uses {remaining} bytes above max size "
+                    f"{stage_policy.max_size_bytes}"
                 )
             if (
                 stage_policy.maximum_count is not None
@@ -50,60 +59,42 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
             continue
         ordered = sorted(
             (entry for entry in stage.entries if entry.managed),
-            key=lambda entry: (entry.last_used_ns, entry.key),
+            key=lambda entry: _retention_key(stage_policy.prune_strategy, entry),
         )
         maximum_age = stage_policy.maximum_age_hours * NANOSECONDS_PER_HOUR
+        over_max = remaining > stage_policy.max_size_bytes
         for entry in ordered:
-            expired = inventory.generated_ns >= entry.created_ns + maximum_age
-            over_cap = remaining > stage_policy.soft_bytes
+            expired = (
+                inventory.generated_ns
+                >= _age_clock(stage_policy.prune_strategy, entry) + maximum_age
+            )
+            recover_to_warm = over_max and remaining > stage_policy.warm_size_bytes
             over_count = (
                 stage_policy.maximum_count is not None
                 and remaining_count > stage_policy.maximum_count
             )
-            if entry.protected or not (expired or over_cap or over_count):
+            if entry.protected or not (expired or recover_to_warm or over_count):
                 continue
-            reason = "expired" if expired else "over soft cap" if over_cap else "over count cap"
+            reason = (
+                "expired"
+                if expired
+                else "over max size; recover to warm size"
+                if recover_to_warm
+                else "over count cap"
+            )
             choose(stage, entry, reason)
             remaining -= entry.logical_bytes
             remaining_count -= 1
-        if remaining > stage_policy.soft_bytes:
+        if remaining > stage_policy.max_size_bytes:
             violations.append(
-                f"{stage.stage_id} remains {remaining} bytes above soft cap "
-                f"{stage_policy.soft_bytes}"
+                f"{stage.stage_id} remains {remaining} bytes above max size "
+                f"{stage_policy.max_size_bytes}"
             )
         if stage_policy.maximum_count is not None and remaining_count > stage_policy.maximum_count:
             violations.append(
                 f"{stage.stage_id} remains at {remaining_count} entries above count cap "
                 f"{stage_policy.maximum_count}"
             )
-
-    required = policy.minimum_free_bytes - (inventory.filesystem_free_bytes + recovered_allocated)
-    if required > 0:
-        candidates = sorted(
-            (
-                (stage, entry)
-                for stage in inventory.stages
-                if policy.stages[stage.stage_id].prune
-                not in {PruneMethod.NONE, PruneMethod.EXTERNAL}
-                for entry in stage.entries
-                if entry.managed
-                and not entry.protected
-                and entry.key not in selected[stage.stage_id]
-                and entry.allocated_bytes > 0
-            ),
-            key=lambda item: (item[1].last_used_ns, item[0].stage_id, item[1].key),
-        )
-        for stage, entry in candidates:
-            choose(stage, entry, "below free-space reserve")
-            required -= entry.allocated_bytes
-            if required <= 0:
-                break
-    projected_free = inventory.filesystem_free_bytes + recovered_allocated
-    if projected_free < policy.minimum_free_bytes:
-        violations.append(
-            f"filesystem remains at {projected_free} bytes below free-space reserve "
-            f"{policy.minimum_free_bytes}"
-        )
     return PrunePlan(
         generated_ns=inventory.generated_ns,
         reclaim_bytes=sum(action.logical_bytes for action in actions),

@@ -51,7 +51,6 @@ def _source(tmp_path: Path):
         update={
             "parent": str(tmp_path / "cache" / "worktrees"),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )

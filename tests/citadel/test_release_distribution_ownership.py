@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = ROOT / "build_system" / "release_site"
@@ -86,9 +87,7 @@ def _legacy_literals(sources: dict[str, str]) -> list[str]:
 
 def _legacy_local_outputs(sources: dict[str, str]) -> list[str]:
     return sorted(
-        path
-        for path, text in sources.items()
-        if LEGACY_LOCAL_OUTPUT.search(text)
+        path for path, text in sources.items() if LEGACY_LOCAL_OUTPUT.search(text)
     )
 
 
@@ -178,11 +177,13 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
     assert modules["rehearsal_after_manifest"] == (
         f"{distribution}/rehearsal/dist/assets/{{channel}}/manifest.json"
     ), RATIONALE
-    disk = config["disk"]
-    assert isinstance(disk, dict)
-    reclaimable = disk["reclaimable"]
-    assert "cache/target/release/distribution" in reclaimable, RATIONALE
-    assert "cache/target/release-channel" not in reclaimable, RATIONALE
+    cache = _toml(ROOT / "config" / "cache.toml")
+    stages = cache["stages"]
+    assert isinstance(stages, dict)
+    owner = stages["release-distribution"]
+    assert f"{cache['root']}/{owner['path']}" == distribution, RATIONALE
+    retired = "tar" + "get/release-channel"
+    assert all(stage["path"] != retired for stage in stages.values()), RATIONALE
 
 
 def test_no_old_release_source_or_distribution_output_literal_remains() -> None:

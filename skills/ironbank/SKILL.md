@@ -69,10 +69,10 @@ and require the expensive production rail to pass locally before spending
 another CI run. Parallel work is acceptable only when its hidden workspaces,
 container tags, outputs, and cleanup are isolated and covered by a test.
 
-Preflight the Docker daemon capacity required by concurrent artifact lanes.
-Low-space failures must be detected before launch, after safe unused-cache
-reclamation, with architecture-specific logs that are fully flushed before the
-gate reports failure.
+Enforce Docker caches through `/dev-cache` and the common typed registry before
+concurrent artifact lanes start. The policy owns each cache's description,
+scope, warm size, maximum size, and prune strategy; acceptance code must not
+inspect Docker's data root or recreate backend-specific capacity logic.
 
 ## Required Shape
 

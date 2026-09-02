@@ -10,7 +10,7 @@ from .. import gatelaunch
 from ..cache.leases import retain_generation
 from ..cache.pythonenv import PYTEST_ADDOPTS
 from ..cache.pythonenv import select as select_python
-from ..cache.telemetry import CacheScope, CacheUse, record_use
+from ..cache.telemetry import CacheUse, ReuseScope, record_use
 from ..cache.views import ViewReceipt, canonicalize
 from . import cachelayout
 from .config import GateConfig
@@ -25,7 +25,7 @@ def record_cargo(config: GateConfig, *, key: str, logical_bytes: int) -> CacheUs
         "cargo",
         tool="cargo",
         key=key,
-        scope=CacheScope.SHARED,
+        scope=ReuseScope.SHARED,
         observed_bytes=logical_bytes,
     )
 
@@ -43,14 +43,14 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
     python = select_python(paths, pycache, inherited_addopts=os.environ.get(PYTEST_ADDOPTS, ""))
     retain_generation(paths, "python-pycache", pycache.name)
     retain_generation(paths, "python-pytest", python.pytest_cache.name)
-    record_use(paths, "python-uv", tool="uv", key=key, scope=CacheScope.SHARED, probe=uv)
-    record_use(paths, "python-ruff", tool="ruff", key=key, scope=CacheScope.SHARED, probe=ruff)
+    record_use(paths, "python-uv", tool="uv", key=key, scope=ReuseScope.SHARED, probe=uv)
+    record_use(paths, "python-ruff", tool="ruff", key=key, scope=ReuseScope.SHARED, probe=ruff)
     record_use(
         paths,
         "python-pycache",
         tool="python",
         key=key,
-        scope=CacheScope.GENERATION,
+        scope=ReuseScope.GENERATION,
         probe=pycache,
     )
     record_use(
@@ -58,16 +58,16 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
         "python-pytest",
         tool="pytest",
         key=key,
-        scope=CacheScope.GENERATION,
+        scope=ReuseScope.GENERATION,
         probe=python.pytest_cache,
     )
-    record_use(paths, "node-pnpm", tool="pnpm", key=key, scope=CacheScope.SHARED)
+    record_use(paths, "node-pnpm", tool="pnpm", key=key, scope=ReuseScope.SHARED)
     record_use(
         paths,
         "rust-sccache",
         tool=config.toolchain.compiler_cache_command,
         key=key,
-        scope=CacheScope.SHARED,
+        scope=ReuseScope.SHARED,
         ignored_names=(config.toolchain.compiler_cache_socket_name,),
     )
     return {
@@ -88,7 +88,7 @@ def compiler_environment(config: GateConfig) -> dict[str, str]:
     return {
         config.environment.rustc_wrapper: command,
         config.environment.sccache_dir: str(paths.stage("rust-sccache")),
-        config.environment.sccache_cache_size: f"{stage.hard_bytes // 1024**3}G",
+        config.environment.sccache_cache_size: f"{stage.max_size_bytes // 1024**3}G",
         config.environment.sccache_base_dir: str(config.root),
         config.environment.sccache_server_uds: str(
             paths.stage("rust-sccache") / config.toolchain.compiler_cache_socket_name

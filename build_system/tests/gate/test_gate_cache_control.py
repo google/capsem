@@ -48,25 +48,25 @@ def test_failure_capture_is_best_effort_and_carries_identity() -> None:
     )
 
 
-def test_capacity_preflight_and_reclaim_use_explicit_cache_commands() -> None:
+def test_enforcement_and_reclaim_use_explicit_cache_commands() -> None:
     runner = RecordingRunner(PROJECT_ROOT)
     cache = CacheControl(runner)
 
-    cache.ensure_space("default", "candidate")
+    cache.enforce("docker", "candidate")
     cache.reclaim("capsem-install-test", keep="capsem-install-test:current")
 
-    assert runner.matching(r"ensure-space default --reason 'gate preflight for candidate'")
+    assert runner.matching(r"enforce docker --reason 'gate cache enforcement for candidate'")
     assert runner.matching(
         r"reclaim-image capsem-install-test --keep capsem-install-test:current .*--apply"
     )
 
 
-def test_receipt_limits_come_from_validated_cache_policy() -> None:
-    limits = CacheControl(RecordingRunner(PROJECT_ROOT)).image_limits("capsem-install-test")
+def test_receipt_policy_comes_from_validated_cache_policy() -> None:
+    policy = CacheControl(RecordingRunner(PROJECT_ROOT)).image_policy("capsem-install-test")
 
-    assert limits.maximum_count == 3
-    assert limits.maximum_age_seconds == 336 * 3600
-    assert limits.maximum_bytes == 96 * 1024**3
+    assert policy.maximum_count == 3
+    assert policy.maximum_age_seconds == 336 * 3600
+    assert policy.max_size_bytes == 200 * 1024**3
 
 
 def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_path: Path) -> None:
@@ -76,9 +76,9 @@ def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_
     monkeypatch.setenv(CONFIG.environment.source_checkout, str(PROJECT_ROOT))
     runner = RecordingRunner(prefix)
 
-    CacheControl(runner).ensure_space("default", "candidate")
+    CacheControl(runner).enforce("docker", "candidate")
 
     assert runner.matching(
         rf"capsem-cache --repository {PROJECT_ROOT} --policy-repository {prefix} "
-        r"ensure-space default"
+        r"enforce docker"
     )

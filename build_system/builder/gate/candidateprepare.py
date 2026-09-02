@@ -58,8 +58,8 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
         )
     bounded = phase.add(
         step(
-            "cache-budget",
-            _ensure_space(config),
+            "cache-enforcement",
+            _enforce_cache(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
             kind=Kind.STATIC_TEST,
@@ -125,15 +125,15 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     return phase.add(hostpackage.sign_step(config), after=(built,))
 
 
-def _ensure_space(config: GateConfig) -> Call:
-    """Refuse a gate the daemon has no room to finish."""
+def _enforce_cache(config: GateConfig) -> Call:
+    """Enforce the repository cache maximum before expensive work."""
     settings = config.candidate
     return Call(
-        "refuse to start a gate the daemon has no room to finish",
-        lambda ctx: CacheControl(ctx.runner).ensure_space(*settings.candidate_budget),
+        "enforce configured cache maximums before expensive work",
+        lambda ctx: CacheControl(ctx.runner).enforce(settings.candidate_cache, "candidate"),
         justification=CallJustification(
-            kind=OpaqueKind.PURE_INSPECTION,
-            reason="reads the daemon's free space and refuses a gate it has no room to finish",
-            effects=machine_effects(Effect.PROCESS),
+            kind=OpaqueKind.RUNTIME_DERIVED,
+            reason="accounts for owned cache bytes and prunes only when a maximum is crossed",
+            effects=machine_effects(Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
         ),
     )

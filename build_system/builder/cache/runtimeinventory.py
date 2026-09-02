@@ -1,14 +1,11 @@
-"""Compose native runtime adapters and persist explicit snapshots."""
+"""Compose native runtime adapters behind one typed inventory interface."""
 
 from __future__ import annotations
 
-import secrets
 import time
-from pathlib import Path
 
 from . import dockeradapter, tartadapter
 from .models import CachePolicy
-from .paths import CachePaths
 from .runtimeexec import CommandRunner, execute
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -65,24 +62,3 @@ def scan_runtimes(
         owned_bytes=sum(item.owned_bytes for item in values),
         runtimes=values,
     )
-
-
-def write_receipts(
-    paths: CachePaths, policy: CachePolicy, snapshot: RuntimeSnapshot
-) -> tuple[Path, ...]:
-    """Atomically record one strict native inventory per configured runtime."""
-    written = []
-    by_id = {runtime.runtime_id: runtime for runtime in snapshot.runtimes}
-    for runtime_id, runtime_policy in sorted(policy.runtimes.items()):
-        destination = paths.stage(runtime_policy.receipt_stage) / f"{runtime_id}.inventory.json"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_name(f".{destination.name}.{secrets.token_hex(6)}")
-        try:
-            temporary.write_text(
-                by_id[runtime_id].model_dump_json(indent=2) + "\n", encoding="utf-8"
-            )
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-        written.append(destination)
-    return tuple(written)

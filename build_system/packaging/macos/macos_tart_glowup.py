@@ -91,7 +91,7 @@ def cache_control_command(label: str) -> list[str]:
         "capsem-cache",
         "--repository",
         str(PROJECT_ROOT),
-        "runtime-prune",
+        "prune",
         "tart",
         "--apply",
         "--reason",

@@ -5,15 +5,14 @@ from pathlib import Path
 import pytest
 from capsem_builder.cache.controlmodels import (
     CacheControlPolicy,
-    CapacityRail,
     DockerControlPolicy,
     FailureArtifactPolicy,
     ImageCachePolicy,
     ReleaseBoundary,
 )
-from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.dockerimages import plan_release, plan_repository_reclaim
+from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
-from capsem_builder.cache.runtimeinventory import write_receipts
 from capsem_builder.cache.runtimemodels import (
     DockerRuntimePolicy,
     ResourceKind,
@@ -28,47 +27,46 @@ from capsem_builder.cache.runtimemodels import (
 from capsem_builder.cache.runtimeoperations import apply_runtime_prune
 from capsem_builder.cache.runtimeplanner import (
     NANOSECONDS_PER_HOUR,
-    plan_release,
-    plan_repository_reclaim,
     plan_runtime_clean,
     plan_runtime_prune,
 )
-
-PINNED_PROBE = "debian:bookworm-slim@sha256:" + "a" * 64
 
 
 def policy() -> CachePolicy:
     def stage(path: str) -> StagePolicy:
         return StagePolicy(
             path=Path(path),
-            warning_bytes=1,
-            soft_bytes=2,
-            hard_bytes=3,
-            prune=PruneMethod.LRU,
+            description="test cache",
+            scope=CacheScope.DISK,
+            warm_size_bytes=2,
+            max_size_bytes=3,
+            prune_strategy=PruneStrategy.LRU,
             maximum_age_hours=1,
         )
 
     return CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
-        stages={"receipts": stage("containers/receipts"), "logs": stage("containers/logs")},
+        stages={"logs": stage("containers/logs")},
         runtimes={
             "docker": DockerRuntimePolicy(
+                description="Docker test cache",
+                scope=CacheScope.DOCKER,
+                warm_size_bytes=80,
+                max_size_bytes=90,
+                prune_strategy=PruneStrategy.DOCKER,
                 kind="docker",
                 command="docker",
                 timeout_seconds=30,
                 mutation_timeout_seconds=600,
                 inventory_retry_attempts=3,
                 inventory_retry_delay_milliseconds=0,
-                receipt_stage="receipts",
                 log_stage="logs",
                 image_prefixes=("capsem-",),
                 container_prefixes=("capsem-",),
                 build_cache_owned=True,
                 maximum_age_hours=72,
                 keep_image_generations=1,
-                build_cache_keep_bytes=80,
             )
         },
     )
@@ -79,23 +77,18 @@ def controlled_policy() -> CachePolicy:
     control = CacheControlPolicy(
         docker=DockerControlPolicy(
             runtime_id="docker",
-            capacity_probe_image=PINNED_PROBE,
-            minimum_disk_bytes=100,
-            recommended_disk_bytes=200,
-            rails={
-                "default": CapacityRail(
-                    minimum_free_bytes=10,
-                    build_cache_keep_bytes=80,
-                    reclaim_headroom_bytes=5,
-                    reclaim_attempts=3,
-                )
-            },
             images={
-                "tool": ImageCachePolicy(repository="capsem-tool", keep_previous=0),
+                "tool": ImageCachePolicy(
+                    description="Tool image generations",
+                    scope=CacheScope.DOCKER,
+                    warm_size_bytes=20,
+                    max_size_bytes=30,
+                    prune_strategy=PruneStrategy.GENERATIONAL,
+                    repository="capsem-tool",
+                    keep_previous=0,
+                ),
             },
-            releases={
-                "after-tool": ReleaseBoundary(rail="default", images=("capsem-working:latest",))
-            },
+            releases={"after-tool": ReleaseBoundary(images=("capsem-working:latest",))},
         ),
         failure_artifacts=FailureArtifactPolicy(
             stage="logs",
@@ -111,12 +104,12 @@ def controlled_policy() -> CachePolicy:
     return CachePolicy.model_validate({**base.model_dump(), "control": control.model_dump()})
 
 
-def test_docker_capacity_probe_requires_an_immutable_digest() -> None:
+def test_docker_control_rejects_unknown_fields() -> None:
     values = controlled_policy().control
     assert values is not None
-    with pytest.raises(ValueError, match="pinned by SHA-256 digest"):
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         DockerControlPolicy.model_validate(
-            {**values.docker.model_dump(), "capacity_probe_image": "debian:bookworm-slim"}
+            {**values.docker.model_dump(), "legacy_capacity_rail": {}}
         )
 
 
@@ -177,12 +170,16 @@ def test_optional_unavailable_runtime_does_not_block_retention() -> None:
             "runtimes": {
                 **policy().runtimes,
                 "tart": TartRuntimePolicy(
+                    description="Tart test cache",
+                    scope=CacheScope.TART,
+                    warm_size_bytes=20,
+                    max_size_bytes=30,
+                    prune_strategy=PruneStrategy.TART,
                     kind="tart",
                     required=False,
                     command="tart",
                     timeout_seconds=30,
                     mutation_timeout_seconds=60,
-                    receipt_stage="receipts",
                     log_stage="logs",
                     vm_prefixes=("capsem-",),
                     base_images=("base",),
@@ -250,34 +247,13 @@ def test_runtime_apply_uses_exact_argv_and_journals(tmp_path: Path) -> None:
             "builder",
             "prune",
             "--force",
-            "--filter",
-            "until=72h",
+            "--all",
             "--reserved-space",
             "80B",
         )
     ]
     assert result.journal == tmp_path / "cache/containers/logs/runtime-mutations.jsonl"
     assert result.journal.is_file()
-
-
-def test_runtime_snapshot_receipt_roundtrips_strictly(tmp_path: Path) -> None:
-    inventory = RuntimeInventory(
-        runtime_id="docker",
-        kind=RuntimeKind.DOCKER,
-        available=True,
-        generated_ns=1,
-        native_bytes=10,
-        owned_bytes=10,
-    )
-    snapshot = RuntimeSnapshot(
-        generated_ns=1, native_bytes=10, owned_bytes=10, runtimes=(inventory,)
-    )
-    paths = CachePaths(repository_root=tmp_path, policy=policy())
-
-    (receipt,) = write_receipts(paths, policy(), snapshot)
-
-    assert RuntimeInventory.model_validate_json(receipt.read_text(encoding="utf-8")) == inventory
-    assert receipt == tmp_path / "cache/containers/receipts/docker.inventory.json"
 
 
 def test_repository_reclaim_requires_present_anchor_and_preserves_receipts() -> None:

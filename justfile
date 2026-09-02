@@ -203,7 +203,7 @@ _test-source-checks:
     just _test-release-contracts
 
 _test-compiled-checks: _clean-stale _check-generated-settings
-    just cache ensure-space default --reason "compiled test preflight"
+    just cache enforce docker --reason "compiled test preflight"
     uv run --project build_system --frozen capsem-gate test-static
 
 _test-artifacts:
@@ -220,10 +220,6 @@ _test-glowup:
 
 _test-release-contracts: _release-site-pnpm-install
     uv run --project build_system --frozen capsem-gate test-release-contracts
-
-# Require Docker headroom without discarding content-addressed compiler caches.
-# Cargo validates cached artifacts against the current source inputs; bounded
-# reuse speeds forward fixes without weakening the before/after tree invariant.
 
 _test-recipes:
     uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-recipes/ -v --tb=short -m recipe

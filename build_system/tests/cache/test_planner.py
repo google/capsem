@@ -6,7 +6,8 @@ from capsem_builder.cache.models import (
     CacheEntry,
     CacheInventory,
     CachePolicy,
-    PruneMethod,
+    CacheScope,
+    PruneStrategy,
     StageInventory,
     StagePolicy,
 )
@@ -17,14 +18,14 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
         stages={
             "objects": StagePolicy(
                 path=Path("target/objects"),
-                warning_bytes=10,
-                soft_bytes=20,
-                hard_bytes=30,
-                prune=PruneMethod.LRU,
+                description="test cache",
+                scope=CacheScope.DISK,
+                warm_size_bytes=20,
+                max_size_bytes=30,
+                prune_strategy=PruneStrategy.LRU,
                 maximum_age_hours=72,
             )
         },
@@ -43,19 +44,17 @@ def entry(key: str, size: int, used: int, *, protected: bool = False) -> CacheEn
     )
 
 
-def inventory(*entries: CacheEntry, free: int = 1000) -> CacheInventory:
+def inventory(*entries: CacheEntry) -> CacheInventory:
     total = sum(item.logical_bytes for item in entries)
     return CacheInventory(
         root=Path("/repo/cache"),
         generated_ns=100,
-        filesystem_free_bytes=free,
         logical_bytes=total,
         allocated_bytes=total,
         stages=(
             StageInventory(
                 stage_id="objects",
                 path=Path("/repo/cache/target/objects"),
-                external=False,
                 logical_bytes=total,
                 allocated_bytes=total,
                 protected_bytes=sum(item.logical_bytes for item in entries if item.protected),
@@ -65,7 +64,7 @@ def inventory(*entries: CacheEntry, free: int = 1000) -> CacheInventory:
     )
 
 
-def test_prune_uses_stable_lru_order_until_soft_cap() -> None:
+def test_prune_uses_stable_lru_order_from_maximum_to_warm_size() -> None:
     report = inventory(entry("z", 10, 1), entry("a", 10, 1), entry("new", 15, 2))
 
     plan = plan_prune(report, policy())
@@ -75,20 +74,54 @@ def test_prune_uses_stable_lru_order_until_soft_cap() -> None:
     assert plan.violations == ()
 
 
+def test_generational_prune_orders_by_creation_instead_of_recent_use() -> None:
+    generational = policy().model_copy(
+        update={
+            "stages": {
+                "objects": policy()
+                .stages["objects"]
+                .model_copy(update={"prune_strategy": PruneStrategy.GENERATIONAL})
+            }
+        }
+    )
+    oldest = entry("oldest", 20, 90).model_copy(update={"created_ns": 1})
+    least_used = entry("least-used", 20, 2).model_copy(update={"created_ns": 2})
+
+    plan = plan_prune(inventory(oldest, least_used), generational)
+
+    assert [action.key for action in plan.actions] == ["oldest"]
+
+
+def test_lru_expiration_is_based_on_last_use() -> None:
+    recent = entry("recent", 1, 99).model_copy(update={"created_ns": 1})
+    configured = policy().model_copy(
+        update={
+            "stages": {
+                "objects": policy().stages["objects"].model_copy(update={"maximum_age_hours": 1})
+            }
+        }
+    )
+    report = inventory(recent).model_copy(update={"generated_ns": 99 + 3_599_000_000_000})
+
+    assert plan_prune(report, configured).actions == ()
+
+
 def test_protected_entries_are_never_selected_and_report_violations() -> None:
     report = inventory(entry("pinned", 40, 1, protected=True), entry("old", 10, 2))
 
     plan = plan_prune(report, policy())
 
     assert [action.key for action in plan.actions] == ["old"]
-    assert plan.violations == ("objects remains 40 bytes above soft cap 20",)
+    assert plan.violations == ("objects remains 40 bytes above max size 30",)
 
 
 def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:
     locked = policy().model_copy(
         update={
             "stages": {
-                "objects": policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
+                "objects": policy()
+                .stages["objects"]
+                .model_copy(update={"prune_strategy": PruneStrategy.NONE})
             }
         }
     )
@@ -96,7 +129,7 @@ def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:
     plan = plan_prune(inventory(entry("fingerprint", 40, 1)), locked)
 
     assert plan.actions == ()
-    assert plan.violations == ("objects remains 40 bytes above soft cap 20",)
+    assert plan.violations == ("objects uses 40 bytes above max size 30",)
 
 
 def test_prune_enforces_generation_count_even_below_byte_cap() -> None:
@@ -130,35 +163,6 @@ def test_count_ignores_metadata_and_preserves_leased_generations() -> None:
     plan = plan_prune(inventory(metadata, leased, entry("old", 5, 2)), counted)
 
     assert [action.key for action in plan.actions] == ["old"]
-
-
-def test_prune_recovers_global_free_space_from_oldest_allocated_entries() -> None:
-    reserved = policy().model_copy(update={"minimum_free_bytes": 15})
-
-    plan = plan_prune(
-        inventory(entry("old", 10, 1), entry("new", 10, 2), free=0),
-        reserved,
-    )
-
-    assert [action.key for action in plan.actions] == ["old", "new"]
-    assert {action.reason for action in plan.actions} == {"below free-space reserve"}
-    assert plan.violations == ()
-
-
-def test_prune_reports_reserve_when_only_nonprunable_bytes_remain() -> None:
-    locked = policy().model_copy(
-        update={
-            "minimum_free_bytes": 15,
-            "stages": {
-                "objects": policy().stages["objects"].model_copy(update={"prune": PruneMethod.NONE})
-            },
-        }
-    )
-
-    plan = plan_prune(inventory(entry("fingerprint", 10, 1), free=0), locked)
-
-    assert plan.actions == ()
-    assert plan.violations == ("filesystem remains at 0 bytes below free-space reserve 15",)
 
 
 def test_explicit_clean_preserves_metadata_and_active_leases() -> None:

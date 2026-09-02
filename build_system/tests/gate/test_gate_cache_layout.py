@@ -21,7 +21,6 @@ def test_checked_in_shared_roots_are_inside_repository_cache(
         for value in (
             CONFIG.prefix.parent,
             CONFIG.prefix.build_cache,
-            CONFIG.prefix.vm_image_cache,
             CONFIG.prefix.cargo_target,
         )
     }

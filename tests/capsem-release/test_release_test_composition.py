@@ -150,7 +150,9 @@ def _all_modules() -> str:
 def _recipe(name: str) -> str:
     lines = JUSTFILE.splitlines()
     start = next(
-        index for index, line in enumerate(lines) if line.startswith((f"{name}:", f"{name} "))
+        index
+        for index, line in enumerate(lines)
+        if line.startswith((f"{name}:", f"{name} "))
     )
     end = len(lines)
     for index in range(start + 1, len(lines)):
@@ -162,9 +164,7 @@ def _recipe(name: str) -> str:
 
 
 def _workflow_job(path: str, name: str) -> str:
-    return workflow_job_source(
-        (PROJECT_ROOT / path).read_text(encoding="utf-8"), name
-    )
+    return workflow_job_source((PROJECT_ROOT / path).read_text(encoding="utf-8"), name)
 
 
 SETUP_JUST = "extractions/setup-just"
@@ -176,6 +176,7 @@ PROVISIONED_WORKFLOWS = (
     ".github/workflows/release.yaml",
     ".github/workflows/release-assets.yaml",
 )
+
 
 def _tests_requiring_just() -> tuple[str, ...]:
     return tuple(
@@ -244,9 +245,9 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
             shell = _job_shell(job)
-            needs_just = bool(GRAPH.just_recipes(shell)) or _selects_a_just_dependent_test(
-                shell, just_tests
-            )
+            needs_just = bool(
+                GRAPH.just_recipes(shell)
+            ) or _selects_a_just_dependent_test(shell, just_tests)
             needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
             needs_uv = GRAPH.invokes(shell, "uv") or any(
                 recipe in recipes_reaching_uv for recipe in GRAPH.just_recipes(shell)
@@ -258,13 +259,17 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
                 (SETUP_UV, needs_uv),
             ):
                 if needed and required not in job:
-                    missing.append(f"{path}::{name} invokes it but never installs {required}")
+                    missing.append(
+                        f"{path}::{name} invokes it but never installs {required}"
+                    )
 
     assert not missing, "CI jobs missing tool provisioning:\n" + "\n".join(missing)
 
 
 def _source_digest_module():
-    script = PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
+    script = (
+        PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
+    )
     spec = importlib.util.spec_from_file_location("source_state_digest", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -301,9 +306,17 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     order = list(_planned_labels("test-candidate"))
     # The modules are phases of one plan now rather than four child processes,
     # so each is a namespace rather than a step name.
-    expected = ("prepare.", "static.", "artifacts.", "functional.", "glowup.", "recipes")
+    expected = (
+        "prepare.",
+        "static.",
+        "artifacts.",
+        "functional.",
+        "glowup.",
+        "recipes",
+    )
     positions = [
-        next(i for i, label in enumerate(order) if label.startswith(prefix)) for prefix in expected
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in expected
     ]
     assert positions == sorted(positions)
 
@@ -382,7 +395,7 @@ def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> No
     static = _recipe("_test-compiled-checks")
 
     assert "_bootstrap" not in static.splitlines()[0]
-    assert 'just cache ensure-space default --reason "compiled test preflight"' in static
+    assert 'just cache enforce docker --reason "compiled test preflight"' in static
     assert "_check-generated-settings" in static.splitlines()[0]
     assert "uv sync" in _planned("test-static") or "uv sync" in _planned("test-fast")
     for forbidden in (
@@ -406,7 +419,9 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
     # Composed rather than dispatched: one platform-shaped signing step stays
     # in the graph before the broad suite. Linux keeps the edge with no action;
     # the synthetic macOS contract separately proves the codesign actions.
-    assert labels.index("functional.sign") < labels.index("functional.pytest.broad.code")
+    assert labels.index("functional.sign") < labels.index(
+        "functional.pytest.broad.code"
+    )
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -479,7 +494,8 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
         source = path.read_text(encoding="utf-8")
         if not any(
-            needle in source for needle in (".github/workflows", '"Justfile"', '"justfile"')
+            needle in source
+            for needle in (".github/workflows", '"Justfile"', '"justfile"')
         ):
             continue
         relative = path.relative_to(PROJECT_ROOT).as_posix()
@@ -543,7 +559,9 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
         assert "cache: pnpm" in pairing
         assert "build_system/release_site/pnpm-lock.yaml" in pairing
         assert "cd web/app && pnpm install --frozen-lockfile" in pairing
-        assert "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
+        assert (
+            "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
+        )
 
     real_just = shutil.which("just")
     assert real_just is not None
@@ -575,7 +593,10 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     trace_lines = trace.read_text(encoding="utf-8").splitlines()
     pnpm_command, pnpm_cwd, pnpm_args = trace_lines[0].split(":", maxsplit=2)
     assert pnpm_command == "pnpm"
-    assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "build_system" / "release_site").resolve()
+    assert (
+        Path(pnpm_cwd).resolve()
+        == (PROJECT_ROOT / "build_system" / "release_site").resolve()
+    )
     assert pnpm_args == "install --frozen-lockfile"
     # The recipe dispatches rather than implementing: one install, then the
     # gate command. Nothing between them, and no nested `just`.
@@ -615,7 +636,9 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     """
     fast = _planned("test-fast")
     static = _planned("test-static")
-    pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
     audit_owner = (
         PROJECT_ROOT / "build_system/builder/gate/tools/audit/python_lock.py"
     ).read_text(encoding="utf-8")
@@ -640,7 +663,9 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
 
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
-    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
+    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(
+        encoding="utf-8"
+    )
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")
     shared_module = workflow.index("Run the complete fast gate")
 
@@ -659,7 +684,10 @@ def test_standalone_functional_scripts_use_the_project_python() -> None:
     the interpreter the lockfile pins."""
     for module in ("test-functional", "smoke"):
         planned = _planned(module)
-        for script in ("build_system/scripts/test/injection_test.py", "build_system/scripts/test/integration_test.py"):
+        for script in (
+            "build_system/scripts/test/injection_test.py",
+            "build_system/scripts/test/integration_test.py",
+        ):
             assert f"uv run --project build_system --frozen python {script}" in planned
             assert f"python3 {script}" not in planned
 
@@ -709,7 +737,9 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
         assert forbidden not in runner
 
 
-def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> None:
+def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> (
+    None
+):
     """A release lane verifies the bytes it pulled rather than rebuilding
     them; rebuilding would prove something about the source instead."""
     artifacts = _planned("test-artifacts", PROFILE_LANE)
@@ -717,7 +747,12 @@ def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_b
     assert "build_system/scripts/release/prove-release-profile-assets.py" in artifacts
     assert "--input-dir cache/target/release/staging/inputs" in artifacts
     assert "--profile code" in artifacts
-    for forbidden in ("capsem-gate assets", "_build-kernel", "_build-rootfs", "cross-compile"):
+    for forbidden in (
+        "capsem-gate assets",
+        "_build-kernel",
+        "_build-rootfs",
+        "cross-compile",
+    ):
         assert forbidden not in artifacts
 
 
@@ -814,7 +849,10 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
     )
 
     assert "cache/target/build/linux-agent/<arch>" not in required
-    assert required["verified release input report"] == release_inputs / "release-inputs.json"
+    assert (
+        required["verified release input report"]
+        == release_inputs / "release-inputs.json"
+    )
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
     assert _missing_required_artifacts(
@@ -854,7 +892,9 @@ def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("one\n", encoding="utf-8")
     (tmp_path / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
-    subprocess.run(("git", "add", "tracked.txt", ".gitignore"), cwd=tmp_path, check=True)
+    subprocess.run(
+        ("git", "add", "tracked.txt", ".gitignore"), cwd=tmp_path, check=True
+    )
     module = _source_digest_module()
 
     initial = module.source_state_digest(tmp_path)
@@ -888,7 +928,9 @@ def test_source_state_digest_accepts_a_tracked_deletion(tmp_path: Path) -> None:
     assert module.source_state_digest(tmp_path) != present
 
 
-def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path) -> None:
+def test_source_state_digest_ignores_the_generated_asset_selector(
+    tmp_path: Path,
+) -> None:
     """Asset selection is build output, not a mid-gate source mutation.
 
     ``AssetGate`` creates selectors below the target-owned output root only
@@ -900,7 +942,9 @@ def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("source\n", encoding="utf-8")
-    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
+    subprocess.run(
+        ("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True
+    )
     module = _source_digest_module()
 
     before = module.source_state_digest(tmp_path)
@@ -914,13 +958,17 @@ def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path
     assert module.source_state_digest(tmp_path) != before
 
 
-def test_source_state_digest_ignores_node_workspace_atomic_scratch(tmp_path: Path) -> None:
+def test_source_state_digest_ignores_node_workspace_atomic_scratch(
+    tmp_path: Path,
+) -> None:
     """pnpm scratch is generated state, not a racing untracked source file."""
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("source\n", encoding="utf-8")
-    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
+    subprocess.run(
+        ("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True
+    )
     module = _source_digest_module()
     before = module.source_state_digest(tmp_path)
 

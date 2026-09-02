@@ -6,12 +6,12 @@ import ast
 import hashlib
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("generated_output_debt.toml")
@@ -209,11 +209,7 @@ def _observe(probes: list[str]) -> Observed:
     tracked = tuple(_git("ls-files"))
     sources = _text_sources(list(tracked))
     subject = tuple(_git("ls-files", "-co", "--exclude-standard"))
-    ignored = frozenset(
-        probe
-        for probe in probes
-        if _probe_is_ignored(ROOT, probe)
-    )
+    ignored = frozenset(probe for probe in probes if _probe_is_ignored(ROOT, probe))
     return Observed(
         producers=_producer_records(sources),
         ambient_assets=_ambient_asset_records(sources),
@@ -404,14 +400,12 @@ def test_empty_output_surface_fails_closed() -> None:
 def test_producer_scanner_distinguishes_repository_roots() -> None:
     records = _producer_records(
         {
-            "scripts/new.py": "\n".join(
-                (
-                    'Path("assets/cache").mkdir(parents=True)',
-                    'output_pkg = Path("../packages/Capsem.pkg")',
-                    'Path("cache/target/staging/assets/cache").mkdir(parents=True)',
-                    'Path("/assets/container-cache").mkdir(parents=True)',
-                    'Path("$CAPSEM_HOME/assets/manifest.json").write_text(data)',
-                )
+            "scripts/new.py": (
+                'Path("assets/cache").mkdir(parents=True)\n'
+                'output_pkg = Path("../packages/Capsem.pkg")\n'
+                'Path("cache/target/staging/assets/cache").mkdir(parents=True)\n'
+                'Path("/assets/container-cache").mkdir(parents=True)\n'
+                'Path("$CAPSEM_HOME/assets/manifest.json").write_text(data)'
             )
         }
     )
@@ -424,13 +418,11 @@ def test_producer_scanner_distinguishes_repository_roots() -> None:
 def test_ambient_scanner_distinguishes_path_defaults_from_asset_data() -> None:
     records = _ambient_asset_records(
         {
-            "scripts/new.py": "\n".join(
-                (
-                    'parser.add_argument("--assets", default=Path("assets"))',
-                    'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"',
-                    "assets: list[Asset] = Field(default_factory=list)",
-                    'parser.add_argument("--lane", choices=("assets",), default="assets")',
-                )
+            "scripts/new.py": (
+                'parser.add_argument("--assets", default=Path("assets"))\n'
+                'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"\n'
+                "assets: list[Asset] = Field(default_factory=list)\n"
+                'parser.add_argument("--lane", choices=("assets",), default="assets")'
             )
         }
     )
@@ -581,19 +573,24 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
 
 def test_generated_output_transfer_and_cleanup_ownership_is_symmetric() -> None:
     config = _gate_config()
+    cache = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
     exports = set(config["prefix"]["exports"])
-    reclaimable = set(config["disk"]["reclaimable"])
     generated = set(FINAL_OUTPUT_ROOTS.values())
+    stage_by_path = {
+        f"{cache['root']}/{stage['path']}": stage for stage in cache["stages"].values()
+    }
 
     assert exports == generated, RATIONALE
-    protected = {
-        FINAL_OUTPUT_ROOTS["assets"],
-        FINAL_OUTPUT_ROOTS["materialized_config"],
-        FINAL_OUTPUT_ROOTS["packages"],
+    assert generated <= set(stage_by_path), RATIONALE
+    contract = {
+        "description",
+        "scope",
+        "warm_size_bytes",
+        "max_size_bytes",
+        "prune_strategy",
     }
-    assert generated - protected <= reclaimable, RATIONALE
-    assert protected.isdisjoint(reclaimable), RATIONALE
-    assert all(path.startswith("cache/target/") for path in reclaimable), RATIONALE
+    assert all(contract <= set(stage_by_path[path]) for path in generated), RATIONALE
+    assert all(path.startswith("cache/target/") for path in generated), RATIONALE
 
     gitignore = {
         line.strip()

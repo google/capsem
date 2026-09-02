@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from capsem_builder.cache import dockeradapter, tartadapter
+from capsem_builder.cache.contract import CacheScope, PruneStrategy
 from capsem_builder.cache.runtimemodels import (
     DockerRuntimePolicy,
     ResourceKind,
@@ -23,20 +24,23 @@ def command(argv: tuple[str, ...], stdout: str = "", returncode: int = 0) -> Run
 
 def docker_policy() -> DockerRuntimePolicy:
     return DockerRuntimePolicy(
+        description="Docker test cache",
+        scope=CacheScope.DOCKER,
+        warm_size_bytes=80_000_000_000,
+        max_size_bytes=100_000_000_000,
+        prune_strategy=PruneStrategy.DOCKER,
         kind="docker",
         command="docker",
         timeout_seconds=30,
         mutation_timeout_seconds=600,
         inventory_retry_attempts=3,
         inventory_retry_delay_milliseconds=0,
-        receipt_stage="receipts",
         log_stage="logs",
         image_prefixes=("capsem-",),
         container_prefixes=("capsem-",),
         build_cache_owned=True,
         maximum_age_hours=72,
         keep_image_generations=2,
-        build_cache_keep_bytes=80_000_000_000,
     )
 
 
@@ -122,8 +126,7 @@ def test_docker_inventory_retries_only_transient_snapshot_accounting() -> None:
             )
         return command(
             argv,
-            '{"Type":"Build Cache","TotalCount":"1","Active":"0",'
-            '"Size":"50B","Reclaimable":"40B"}',
+            '{"Type":"Build Cache","TotalCount":"1","Active":"0","Size":"50B","Reclaimable":"40B"}',
         )
 
     storage = dockeradapter.categories(docker_policy(), runner=runner)
@@ -150,8 +153,7 @@ def test_docker_inventory_rejects_negative_total_size() -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
         return command(
             argv,
-            '{"Type":"Images","TotalCount":"34","Active":"0",'
-            '"Size":"-1B","Reclaimable":"0B"}',
+            '{"Type":"Images","TotalCount":"34","Active":"0","Size":"-1B","Reclaimable":"0B"}',
         )
 
     try:
@@ -164,11 +166,15 @@ def test_docker_inventory_rejects_negative_total_size() -> None:
 
 def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> None:
     policy = TartRuntimePolicy(
+        description="Tart test cache",
+        scope=CacheScope.TART,
+        warm_size_bytes=80 * 1024**3,
+        max_size_bytes=100 * 1024**3,
+        prune_strategy=PruneStrategy.TART,
         kind="tart",
         command="tart",
         timeout_seconds=30,
         mutation_timeout_seconds=60,
-        receipt_stage="receipts",
         log_stage="logs",
         vm_prefixes=("capsem-glowup-",),
         base_images=("base@sha256:" + "a" * 64,),

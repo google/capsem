@@ -189,7 +189,7 @@ class Hash(Action, name="hash"):
     """Record what an artifact's bytes are, in the run log.
 
     So a run answers "which bytes did this gate build" afterwards, without
-    re-hashing a tree that rotation or `gc` may already have reclaimed.
+    re-hashing a tree that retention may already have reclaimed.
     """
 
     def __init__(self, path: Path) -> None:

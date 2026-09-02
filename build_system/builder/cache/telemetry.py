@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from .paths import CachePaths
 
 
-class CacheScope(StrEnum):
+class ReuseScope(StrEnum):
     """Whether bytes belong to one exact generation or a shared pool."""
 
     GENERATION = "generation"
@@ -38,7 +38,7 @@ class CacheUse(BaseModel):
     stage_id: str
     tool: str
     key: str
-    scope: CacheScope
+    scope: ReuseScope
     temperature: CacheTemperature
     observed_bytes: Annotated[StrictInt, Field(ge=0)] | None = None
 
@@ -59,7 +59,7 @@ def record_use(
     *,
     tool: str,
     key: str,
-    scope: CacheScope,
+    scope: ReuseScope,
     observed_bytes: int | None = None,
     probe: Path | None = None,
     ignored_names: tuple[str, ...] = (),

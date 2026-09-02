@@ -35,21 +35,21 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     # those later steps back onto it would create a cycle. Standalone plans
     # still get the same root step here.
     recorded = plan.shared(record_step(config))
-    # Groundwork has no ordering of its own. The capacity consumer waits for
+    # Groundwork has no ordering of its own. The cache enforcement waits for
     # both the builder and this fragment's caller; pushing `after` into a
     # shared producer lets a later consumer add a backwards edge and cycle the
     # candidate graph once another lane has already materialized the producer.
     built = hostimage.fragment(plan, config)
 
-    capacity = plan.shared(
+    cache = plan.shared(
         step(
-            _step_label(InstallImageStep.CAPACITY),
+            _step_label(InstallImageStep.CACHE),
             Call(
-                "reserve disk for the install helper and exact source image",
-                lambda context: CacheControl(context.runner).ensure_space("install-preflight"),
+                "enforce Docker cache before the install helper and exact source image",
+                lambda context: CacheControl(context.runner).enforce("docker", "install-preflight"),
                 justification=CallJustification(
                     kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="the storage policy measures and reserves Docker capacity",
+                    reason="the cache policy measures and bounds Docker-owned bytes",
                     effects=machine_effects(Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
                 ),
             ),
@@ -92,10 +92,10 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
             needs=frozenset({Needs.DOCKER, Needs.DISK}),
             speed=Speed.SLOW,
         ),
-        after=(capacity,),
+        after=(cache,),
     )
-    # This is the host builder's real byte consumer. The capacity step merely
-    # orders disk reservation. Once materialization is carried, bounded GC may
+    # This is the host builder's real byte consumer. The cache step orders
+    # enforcement before it. Once materialization is carried, retention may
     # have reclaimed the working parent without invalidating a later resume.
     plan.edge(before=built, after=materialized, requires=Requires.ARTIFACT)
 

@@ -136,11 +136,6 @@ target = "build_system/tests/gate/test_gate_debproof.py"
 
 [[owned]]
 owner = "gate"
-source = "tests/test_gate_disk.py"
-target = "build_system/tests/gate/test_gate_disk.py"
-
-[[owned]]
-owner = "gate"
 source = "tests/test_gate_docker.py"
 target = "build_system/tests/gate/test_gate_docker.py"
 

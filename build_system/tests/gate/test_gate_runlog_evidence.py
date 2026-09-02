@@ -91,9 +91,7 @@ def test_concurrent_steps_do_not_steal_each_others_events(tmp_path: Path) -> Non
     with RunLog.open(config, "concurrent") as log:
         plan.run(Context(RecordingRunner(tmp_path), config, journal=log))
         notes = {
-            event["step"]: event["message"]
-            for event in _events(log)
-            if event["event"] == "note"
+            event["step"]: event["message"] for event in _events(log) if event["event"] == "note"
         }
 
     assert notes == {"left": "left", "right": "right"}
@@ -141,7 +139,9 @@ def test_a_run_that_failed_outside_any_step_is_not_reported_as_ok(
         raise GateError("teardown broke")
 
     directory = config.path(config.runlog.root) / config.runlog.latest_link
-    events = [json.loads(line) for line in (directory / config.runlog.events).read_text().splitlines()]
+    events = [
+        json.loads(line) for line in (directory / config.runlog.events).read_text().splitlines()
+    ]
 
     assert measure(events).outcome == "failed"
 
@@ -175,16 +175,12 @@ def test_the_summary_is_written_where_a_bug_report_can_find_it(
 
 @pytest.mark.parametrize(
     ("command", "args"),
-    [("runs", {}), ("gc", {"dry_run": True, "aggressive": False})],
+    [("runs", {})],
 )
 def test_inspecting_runs_does_not_create_one(command: str, args: dict) -> None:
     """`runs last` opened a run and repointed `latest` at itself first.
 
     So the honest answer to "which run failed" could be the question.
-
-    `gc` is here only in its `--dry-run` shape. It used to be listed outright,
-    which is how a command that reclaims whole trees came to be classified
-    with the run readers and approved for silence by name.
     """
     import argparse
 
@@ -192,20 +188,13 @@ def test_inspecting_runs_does_not_create_one(command: str, args: dict) -> None:
 
     instance = GateCommand.registry[command](
         RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(
-            **{"dry_run": False, "graph": False, "timing": False, **args}
-        ),
+        argparse.Namespace(**{"dry_run": False, "graph": False, "timing": False, **args}),
     )
     assert instance.should_record() is False
 
 
 def test_every_command_that_changes_something_still_records(tmp_path: Path) -> None:
-    """Non-recording is for inspection, and must not spread quietly.
-
-    Asked of an invocation rather than a class, because whether a command
-    records can depend on how it was called -- which is exactly the
-    distinction `gc` needed and did not have.
-    """
+    """Non-recording is for inspection, and must not spread quietly."""
     import argparse
 
     from helpers.gate import RecordingRunner
@@ -214,22 +203,17 @@ def test_every_command_that_changes_something_still_records(tmp_path: Path) -> N
     for name, command in GateCommand.registry.items():
         if not command.__module__.startswith("capsem_builder.gate."):
             continue
-        extra = {"aggressive": False} if name == "gc" else {}
         try:
             instance = command(
                 RecordingRunner(PROJECT_ROOT),
-                argparse.Namespace(
-                    dry_run=False, graph=False, timing=False, **extra
-                ),
+                argparse.Namespace(dry_run=False, graph=False, timing=False),
             )
         except TypeError:
             continue
         if not instance.should_record():
             silent.append(name)
 
-    assert sorted(silent) == ["runs", "version"], (
-        "a normal gc reclaims disk, so it is not inspection"
-    )
+    assert sorted(silent) == ["runs", "version"]
 
 
 # ---------------------------------------------------------------------------

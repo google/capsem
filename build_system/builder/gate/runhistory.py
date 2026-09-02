@@ -62,7 +62,7 @@ def history_lock_path(config: GateConfig) -> Path:
 
     Deliberately not the machine lock. That one is held for the length of a
     gate, and a command opening its run log must not wait forty minutes for a
-    directory -- `runs` and `gc --dry-run` would stop answering entirely.
+    directory -- `runs` would stop answering entirely.
     """
     return config.path(config.runlog.root) / config.runlog.history_lock
 

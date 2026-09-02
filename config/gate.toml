@@ -740,16 +740,6 @@ evidence_prune_dirs = ["guest", "auto_snapshots"]
 # session path, and cache/target/tests/ironbank is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
 
-[assets.cache]
-# Two profiles by two architectures are live today. Ten slots retain one
-# complete resumable matrix beside the current four lanes and still leave two
-# rotation slots for a renamed profile or architecture.
-maximum_count = 10
-maximum_age_hours = 336
-# Rootfs images dominate this cache. This is a hard retained-byte ceiling,
-# independent of the filesystem free-space floor in `[disk]`.
-maximum_bytes = 17179869184
-
 # ---------------------------------------------------------------------------
 # The candidate gate
 # ---------------------------------------------------------------------------
@@ -781,11 +771,10 @@ clean_stale_script = "build_system/scripts/build/clean_stale.py"
 generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
 materialize_script = "build_system/scripts/build/materialize-config.sh"
 recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "--rootdir", ".", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
-# The rail and boundary the whole gate's disk budget is taken against.
-candidate_budget = ["default", "candidate-boundary"]
+# Cache owner enforced before the complete gate starts expensive work.
+candidate_cache = "all"
 # Where a failed gate's evidence is kept, and what to call a run whose
 # source state was never recorded.
-failure_rail = "default"
 unknown_head = "unknown"
 doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1", CAPSEM_SKIP_TART_CHECK = "1" }
 # ---------------------------------------------------------------------------
@@ -1183,7 +1172,7 @@ reason = "production has one service and one service-scoped snapshot lock; an xd
 reason = "cargo build --workspace atomically replaces the binaries a running VM test is using, and two cargo invocations block on the target directory's own lock -- a wait that lands in execution time and never reaches the queueing report"
 
 [execution.exclusives.docker_daemon]
-reason = "the storage rails reserve and release a single daemon's disk budget"
+reason = "Docker exposes one shared mutable image and container namespace"
 
 [execution.exclusives.astro_build]
 reason = "Astro stages prerendering in a path derived from the project root, not from the invocation, so two overlapping builds delete each other's staging -- and neither --outDir nor --cacheDir moves it"
@@ -1966,7 +1955,6 @@ source_contract = [
     "build_system/tests/gate/test_gate_candidate_composition.py",
     "build_system/tests/gate/test_gate_crosscompile.py",
     "build_system/tests/gate/test_gate_debproof.py",
-    "build_system/tests/gate/test_gate_disk.py",
     "build_system/tests/gate/test_gate_docker.py",
     "build_system/tests/gate/test_gate_doctor.py",
     "build_system/tests/gate/test_gate_exec_boundary.py",
@@ -2336,7 +2324,6 @@ build_cache = "cache/target/prefix-products"
 # prefixes come and go. Prefixes point their lane paths at one input-identity
 # generation, so a retained resumable prefix pins its exact images and a new
 # source can use or evict other generations without stealing those bytes.
-vm_image_cache = "cache/target/assets/generations"
 
 # Where cargo writes, for every run, at one absolute path.
 #
@@ -2364,17 +2351,6 @@ vm_image_cache = "cache/target/assets/generations"
 cargo_target = "cache/target/cargo"
 cargo_profiles = ["debug", "release"]
 
-# The size at which a run warns that the shared directory deserves attention.
-#
-# Advisory only. A normal gate must absolutely reuse this directory: selective
-# deletion underneath Cargo corrupts its fingerprint judgement, and deleting
-# it whole silently turns the expensive public qualification into a cold build.
-# `--clean-build` remains the explicit operator request to discard it.
-#
-# `[disk] required_free_gb` stays the fail-closed filesystem backstop. The
-# threshold is deliberately visible on every run so growth is not hidden.
-cargo_target_warning_gb = 40.0
-
 name_length = 8
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
@@ -2383,8 +2359,7 @@ name_length = 8
 # rather than on exit so a crash leaves something to inspect.
 #
 # Bounded because they are not small: one retained prefix on this machine was
-# 42 GiB, and it carried the copied signing material with it. Nothing else
-# reclaims them -- `[disk] reclaimable` only accepts paths inside the checkout.
+# 42 GiB, and it carried the copied signing material with it.
 #
 # Still one, and deliberately: raising it was the other candidate answer to
 # cold rebuilds, and it is the wrong one. Ten retained prefixes are ten copies
@@ -2431,7 +2406,7 @@ carried = ["private"]
 # every console-script shebang, and both are already fast from warm global
 # stores.
 # `cache/target/assets` is the selected payload. Isolated VM products live in the stable
-# content-addressed `vm_image_cache`; each prefix keeps only symlinks selecting
+# content-addressed VM asset cache; each prefix keeps only symlinks selecting
 # its exact input generation, so a resumable source continues to pin its bytes.
 # `cache/target/build/install-image` carries the live source/helper/runtime/product receipt
 # for the sealed Docker image. Without it a successful prefix kept the image in
@@ -2997,49 +2972,6 @@ hotspots = 6
 # pass read as most of a stage that contains nothing else, while the critical
 # path is what the run actually waits for.
 lane_share = 0.25
-
-# ---------------------------------------------------------------------------
-# Disk the gate is allowed to occupy
-# ---------------------------------------------------------------------------
-
-[disk]
-# Everything the gate can create, so reclaiming is a policy rather than whoever
-# remembers a path. Nothing outside this list may be removed: a guard proves the
-# reclaimer cannot reach past it, and the loader rejects an absolute path or a
-# `..` so the list cannot be aimed at the wrong tree.
-reclaimable = [
-    "cache/target/gate-runs",
-    "cache/target/tests/home",
-    "cache/target/build/image-workspace",
-    "cache/target/tests/benchmarks",
-    "cache/target/coverage",
-    "cache/target/tests/evidence",
-    "cache/target/tests/install/assets",
-    "cache/target/release/distribution",
-    "cache/target/release/staging/module-glowup",
-    "cache/target/release/staging/module-channel-switch",
-]
-# Refuse to start an expensive phase below this, after reclaiming what we can.
-# The gate builds two architectures of VM images; running out at minute thirty
-# wastes the thirty.
-required_free_gb = 60
-# The same floor for the scratch filesystem, which is often not the one the
-# checkout is on. `required_free_gb` measures where `cache/target/` lives; the suites
-# do their bulk scratch work under the temporary directory, and on a host where
-# that is a tmpfs it is a much smaller, entirely separate volume. One run died
-# on ENOSPC twenty-five minutes in with 196GB free beside it, because nothing
-# was measuring the 32GB tmpfs that filled.
-#
-# Lower than `required_free_gb` because this holds a run's transient working
-# set rather than its built artifacts: VM session directories, per-test
-# temporary trees and image audit unpacks.
-#
-# Checked but never reclaimed. Every `reclaimable` entry is relative to the
-# checkout by construction, so the gate cannot -- and must not -- delete
-# anything out there.
-required_free_scratch_gb = 15
-# Warn when a single run's own footprint passes this.
-run_footprint_warn_gb = 40
 
 # ---------------------------------------------------------------------------
 # Discarded verdicts

@@ -216,9 +216,7 @@ def test_the_re_entry_error_names_the_run_that_is_holding_it(journal, monkeypatc
 
 
 def test_a_read_only_command_may_still_answer_inside_a_run(journal, monkeypatch) -> None:
-    """`runs last` and `gc --dry-run` take no lock, so they cannot deadlock --
-    and being able to ask what is happening from inside a running gate is the
-    entire point of them."""
+    """Read-only run inspection takes no lock, so it cannot deadlock."""
     monkeypatch.setenv(RUN_MARKER, "gate-20260801-abc123")
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(runner, steps=(step("look", Run(["echo", "hello"])),))

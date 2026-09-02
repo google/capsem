@@ -238,11 +238,11 @@ uv run --project build_system --frozen capsem-gate runs digest            # the 
 uv run --project build_system --frozen capsem-gate runs trend --step <label>   # one step, run by run
 ```
 ```bash
-uv run --project build_system --frozen capsem-gate gc --dry-run           # what disk the gate holds, per tree
+just cache stats --offline                                                # every disk cache owner and contract
 ```
 
-`runs` and `gc` do not record themselves: `runs last` used to open a run and
-repoint `latest` at the question.
+Inspection does not record a gate run: `runs last` used to open a run and
+repoint `latest` at the question. Read `/dev-cache` for cache mutation commands.
 
 ## The private copy is cloned, not copied
 

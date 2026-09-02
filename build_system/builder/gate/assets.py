@@ -245,11 +245,11 @@ class AssetGate:
     def preflight(self) -> None:
         """Refuse an impossible build and clear derived output, retaining lane caches."""
         crossexec.require(self._runner, self._config, self.host_arch)
-        # Resolve the asset rail from the checked-in storage policy: the
-        # dual-architecture BuildKit cohort survives unless the daemon falls
-        # below its declared reserve.
-        self._cache.ensure_space("assets")
+        # Enforce the checked-in Docker contract while retaining the warm,
+        # protected dual-architecture BuildKit cohort.
+        self._cache.enforce("docker", "assets")
         prepare_workspace(self._config, discover_profiles(self._config))
+        self._cache.enforce("assets", "active VM asset generations")
 
     def prefetch(self) -> None:
         """Materialize exact bases through the Docker daemon's fetch edge."""
