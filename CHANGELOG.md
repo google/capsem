@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The gateway refuses any request whose `Host` header is not `localhost`,
+  `127.0.0.1`, or `::1`. Before, a web page whose DNS answer flipped to the
+  loopback address (DNS rebinding) could fetch `/token` as a same-origin
+  loopback caller and hold full authority over the gateway. Request spans also
+  no longer record the query string, which carried the WebSocket `?token=`
+  into `gateway.log`, and token comparison no longer short-circuits on the
+  first differing byte.
 - Security rule string literals now decode their escape sequences. A rule whose
   value held a quote, a backslash, or a newline -- every Sigma-derived selection
   and every managed MCP tool permission is emitted JSON-escaped -- compiled and

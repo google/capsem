@@ -875,3 +875,170 @@ async fn events_ws_without_upgrade_header_is_rejected() {
         .unwrap();
     assert_ne!(resp.status(), http::StatusCode::OK);
 }
+
+// --- Host header: DNS rebinding ---
+//
+// `/token` is unauthenticated and gated by the peer being loopback. A page at
+// `http://evil.example:19222` whose DNS answer flips to 127.0.0.1 is a
+// same-origin caller from a loopback peer: CORS never enters into it, and the
+// token came back. The Host header is the one thing a rebinding page cannot
+// forge, so every request must name a loopback host.
+
+fn guarded_app() -> (axum::Router, Arc<AppState>) {
+    let (_, state) = token_app();
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(handle_health))
+        .route("/token", axum::routing::get(handle_token))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state.clone());
+    (app, state)
+}
+
+async fn get_with_host(app: axum::Router, path: &str, host: Option<&str>) -> http::Response<Body> {
+    let mut builder = http::Request::builder().uri(path);
+    if let Some(host) = host {
+        builder = builder.header(http::header::HOST, host);
+    }
+    let mut req = builder.body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+    app.oneshot(req).await.unwrap()
+}
+
+#[tokio::test]
+async fn token_refuses_a_rebound_host_from_a_loopback_peer() {
+    let (app, state) = guarded_app();
+    let resp = get_with_host(app, "/token", Some("evil.example:19222")).await;
+    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        !String::from_utf8_lossy(&body).contains(&state.token),
+        "the token must not leave for a foreign host"
+    );
+}
+
+#[tokio::test]
+async fn every_route_refuses_a_rebound_host() {
+    for host in [
+        "evil.example",
+        "evil.example:19222",
+        "localhost.evil.example",
+        "127.0.0.1.evil.example:80",
+    ] {
+        let (app, _) = guarded_app();
+        let resp = get_with_host(app, "/health", Some(host)).await;
+        assert_eq!(resp.status(), http::StatusCode::FORBIDDEN, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn loopback_hosts_in_every_spelling_are_accepted() {
+    for host in [
+        "localhost",
+        "localhost:19222",
+        "LOCALHOST:19222",
+        "127.0.0.1",
+        "127.0.0.1:19222",
+        "[::1]",
+        "[::1]:19222",
+    ] {
+        let (app, state) = guarded_app();
+        let resp = get_with_host(app, "/token", Some(host)).await;
+        assert_eq!(resp.status(), http::StatusCode::OK, "host {host}");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["token"], state.token, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn a_request_without_a_host_header_is_not_a_browser_and_passes() {
+    // Browsers always send Host, so an absent header cannot be a rebinding
+    // page; refusing it would only break raw HTTP/1.0 tooling.
+    let (app, _) = guarded_app();
+    let resp = get_with_host(app, "/health", None).await;
+    assert_eq!(resp.status(), http::StatusCode::OK);
+}
+
+// --- Constant-time token comparison ---
+
+#[test]
+fn token_comparison_does_not_depend_on_prefix_agreement() {
+    assert!(auth::token_matches("abc", "abc"));
+    assert!(!auth::token_matches("abd", "abc"));
+    assert!(!auth::token_matches("ab", "abc"));
+    assert!(!auth::token_matches("abcd", "abc"));
+    assert!(!auth::token_matches("", "abc"));
+}
+
+// --- Request spans must not record the query string ---
+//
+// The browser WebSocket API cannot set headers, so `/events` and `/terminal`
+// authenticate with `?token=`. tower-http's default span records the full
+// URI at debug, and the gateway log runs `tower_http=debug`, so every such
+// request wrote the bearer token into gateway.log in clear text.
+
+#[derive(Default)]
+struct TraceCapture {
+    records: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+struct TraceCaptureVisitor<'a>(&'a mut Vec<String>);
+
+impl tracing::field::Visit for TraceCaptureVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push(format!("{}={value:?}", field.name()));
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for TraceCapture {
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        _id: &tracing::span::Id,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut records = self.records.lock().unwrap();
+        attrs.record(&mut TraceCaptureVisitor(&mut records));
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut records = self.records.lock().unwrap();
+        event.record(&mut TraceCaptureVisitor(&mut records));
+    }
+}
+
+#[tokio::test]
+async fn request_spans_record_the_path_but_never_the_query() {
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let capture = TraceCapture::default();
+    let records = std::sync::Arc::clone(&capture.records);
+    let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(capture));
+
+    let (_, state) = health_app("/tmp/test.sock");
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(handle_health))
+        .layer(request_trace_layer())
+        .with_state(state);
+    let req = http::Request::builder()
+        .uri("/health?token=SECRET-QUERY-TOKEN")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).with_subscriber(dispatcher).await.unwrap();
+    assert_eq!(resp.status(), http::StatusCode::OK);
+
+    let records = std::mem::take(&mut *records.lock().unwrap());
+    assert!(
+        records.iter().any(|r| r.contains("/health")),
+        "the span must still name the path: {records:?}"
+    );
+    assert!(
+        !records.iter().any(|r| r.contains("SECRET-QUERY-TOKEN")),
+        "the query string carries the WebSocket token and must not be logged: {records:?}"
+    );
+}
