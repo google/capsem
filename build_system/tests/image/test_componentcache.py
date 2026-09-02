@@ -1,5 +1,6 @@
 """VM components reuse exact input-keyed object receipts."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -12,7 +13,11 @@ from capsem_builder.image.componentcache import (
     source_digest,
     store,
 )
+from capsem_builder.image.componentcache import (
+    current as component_current,
+)
 from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.guestbinarycache import current as guest_current
 from capsem_builder.image.guestbinarycache import materialize
 from capsem_builder.image.models import BuildConfig
 
@@ -71,6 +76,27 @@ def test_changed_component_input_is_a_clean_miss(tmp_path: Path) -> None:
     assert restore(repo, "rootfs", input_digest({"source": "new"}), tmp_path / "out") is None
 
 
+def test_component_receipt_recognizes_only_exact_current_outputs(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    output = repo / "cache/target/current"
+    output.mkdir(parents=True)
+    payload = output / "agent"
+    payload.write_bytes(b"current")
+    identity = input_digest({"source": "one"})
+    store(repo, "guest-binaries", identity, output, (payload.name,))
+
+    assert component_current(repo, "guest-binaries", identity, output) == (payload,)
+
+    replacement = output / ".replacement"
+    replacement.write_bytes(b"changed")
+    replacement.replace(payload)
+    assert component_current(repo, "guest-binaries", identity, output) is None
+
+    assert restore(repo, "guest-binaries", identity, output) == (payload,)
+    payload.chmod(0o600)
+    assert component_current(repo, "guest-binaries", identity, output) is None
+
+
 def test_build_identity_ignores_commit_and_runtime_labels() -> None:
     stable = {
         "arch": "x86_64",
@@ -100,6 +126,17 @@ def test_source_digest_changes_with_source_bytes_and_names(tmp_path: Path) -> No
     third = source_digest(tmp_path, ("crates",))
 
     assert len({first, second, third}) == 3
+
+
+def test_source_digest_ignores_checkout_mtime_refresh(tmp_path: Path) -> None:
+    source = tmp_path / "crates/agent/main.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("fn main() {}", encoding="utf-8")
+    before = source_digest(tmp_path, ("crates/agent",))
+
+    os.utime(source, (4_000_000_000, 4_000_000_000))
+
+    assert source_digest(tmp_path, ("crates/agent",)) == before
 
 
 def test_source_digest_ignores_undeclared_crates(tmp_path: Path) -> None:
@@ -160,6 +197,14 @@ def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
             prefix / "cache/target/initrd",
             names,
             compile_binaries,
+        )
+        os.utime(prefix / "guest-input", (4_000_000_000, 4_000_000_000))
+        assert guest_current(
+            build,
+            "x86_64",
+            prefix,
+            prefix / "cache/target/initrd",
+            names,
         )
 
     assert calls == 1

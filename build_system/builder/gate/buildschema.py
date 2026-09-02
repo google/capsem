@@ -245,9 +245,6 @@ class SuitesConfig(Strict):
 class InitrdConfig(Strict):
     binaries: tuple[str, ...]
     staging: str
-    sources: tuple[str, ...]
-    freshness_globs: tuple[str, ...]
-    freshness_inputs: tuple[str, ...]
     build: tuple[str, ...]
     init: str
     files: tuple[str, ...]

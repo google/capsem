@@ -1454,31 +1454,8 @@ binaries = [
     "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
 ]
 staging = "cache/target/build/linux-agent"
-# Rebuilt when a staged binary is missing, or older than anything the build
-# reads. Cheaper than an unconditional cross-compile -- but only correct if
-# "anything the build reads" is honest, and `*.rs` under these crates is not:
-# a dependency bump, a feature change or a toolchain bump leaves every source
-# file older than the staged binary while the binary is stale. A stale guest
-# binary ships into an initrd that does not match the source it claims.
-sources = ["crates/capsem-agent", "crates/capsem-proto", "crates/capsem-bench"]
-# Files under the crate roots whose change invalidates a staged binary, and
-# the workspace-wide ones. Split because the first are globbed per crate and
-# the second are single paths.
-freshness_globs = ["*.rs", "Cargo.toml", "build.rs"]
-freshness_inputs = [
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-    "config/gate.toml",
-    "build_system/builder/image/config.py",
-    "build_system/builder/image/models.py",
-    "build_system/builder/image/cli.py",
-    "build_system/builder/image/docker.py",
-    "build_system/builder/image/guestbinarycache.py",
-    "build_system/builder/image/guestbuilder.py",
-    "config/docker/image/build.toml",
-    "build_system/docker/Dockerfile.guest-rust-builder",
-]
+# The guest builder's source_roots and sealed image identity own freshness.
+# Checkout timestamps never participate in reuse decisions.
 build = ["uv", "run", "--project", "build_system", "--frozen", "capsem-builder", "agent", "config/docker/image"]
 
 # Checked-in guest payloads copied in beside the binaries.

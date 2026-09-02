@@ -11,10 +11,11 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import initrd
+from capsem_builder.gate import initrd, initrdpaths
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.initrd import repack_step
@@ -25,16 +26,6 @@ from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
-DIRECT_BUILDER_INPUTS = {
-    "config/gate.toml",
-    "build_system/builder/image/config.py",
-    "build_system/builder/image/models.py",
-    "build_system/builder/image/cli.py",
-    "build_system/builder/image/docker.py",
-    "build_system/builder/image/guestbuilder.py",
-    "config/docker/image/build.toml",
-    "build_system/docker/Dockerfile.guest-rust-builder",
-}
 
 
 def _archive(path: Path) -> bytes:
@@ -172,22 +163,14 @@ def test_matrix_step_builds_only_stale_architecture_staging(tmp_path: Path) -> N
     runner = RecordingRunner(PROJECT_ROOT)
     context = Context(runner, config, journal=RecordingJournal())
 
-    stage.perform(context)
+    with patch(
+        "capsem_builder.gate.initrdactions.needs_rebuild",
+        side_effect=(True, False),
+    ):
+        stage.perform(context)
+        stage.perform(context)
 
-    assert runner.rendered == [
-        " ".join((*CONFIG.initrd.build, "--arch", arch)),
-    ]
-
-    runner.commands.clear()
-    for name in CONFIG.initrd.binaries:
-        binary = Path(config.initrd.staging) / arch / name
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(b"fresh")
-        os.utime(binary, (4_000_000_000, 4_000_000_000))
-
-    stage.perform(context)
-
-    assert runner.commands == []
+    assert runner.rendered == [" ".join((*CONFIG.initrd.build, "--arch", arch))]
 
 
 def test_standalone_initrd_plan_shape_is_identical_before_and_after_staging(
@@ -203,8 +186,7 @@ def test_standalone_initrd_plan_shape_is_identical_before_and_after_staging(
     for name in config.initrd.binaries:
         binary = Path(config.initrd.staging) / arch / name
         binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(b"fresh")
-        os.utime(binary, (4_000_000_000, 4_000_000_000))
+        binary.write_bytes(b"generated")
 
     warm = Plan("warm-initrd")
     initrd.pack(warm, config)
@@ -215,50 +197,45 @@ def test_standalone_initrd_plan_shape_is_identical_before_and_after_staging(
 
 
 def test_carried_initrd_staging_is_revalidated_before_resume(tmp_path: Path) -> None:
-    arch = CONFIG.host_arch().name
     config = _config(tmp_path / "staging")
     plan = Plan("resume-initrd")
     initrd.pack(plan, config)
     check = plan.step_named("initrd.guest-agents").carry_checks[0]
     context = Context(RecordingRunner(PROJECT_ROOT), config, journal=RecordingJournal())
 
-    with pytest.raises(GateError, match=r"resume from initrd\.guest-agents"):
+    with patch(
+        "capsem_builder.gate.initrdactions.needs_rebuild",
+        side_effect=(True, False),
+    ):
+        with pytest.raises(GateError, match=r"resume from initrd\.guest-agents"):
+            check.perform(context)
         check.perform(context)
 
-    for name in config.initrd.binaries:
-        binary = Path(config.initrd.staging) / arch / name
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(b"fresh")
-        os.utime(binary, (4_000_000_000, 4_000_000_000))
 
-    check.perform(context)
-
-
-def test_freshness_inventory_covers_the_direct_builder_inputs() -> None:
-    assert set(CONFIG.initrd.freshness_inputs) >= DIRECT_BUILDER_INPUTS
-
-
-@pytest.mark.parametrize("relative", CONFIG.initrd.freshness_inputs)
-def test_touching_each_declared_input_rebuilds_warm_staging(tmp_path: Path, relative: str) -> None:
-    config = CONFIG.model_copy(update={"root": tmp_path})
+@pytest.mark.parametrize(("current", "expected"), ((True, False), (False, True)))
+def test_initrd_freshness_uses_guest_binary_content_identity(
+    tmp_path: Path, current: bool, expected: bool
+) -> None:
+    config = _config(tmp_path / "staging")
     arch = next(iter(config.architectures))
-    for declared in config.initrd.freshness_inputs:
-        source = config.path(declared)
-        source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_bytes(b"input")
-        os.utime(source, (1, 1))
-    for name in config.initrd.binaries:
-        binary = config.path(config.initrd.staging) / arch / name
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(b"warm")
-        os.utime(binary, (2, 2))
-    os.utime(config.path(relative), (3, 3))
-    runner = RecordingRunner(tmp_path)
-    context = Context(runner, config, journal=RecordingJournal())
-    stage = repack_step(config, {arch: (tmp_path / config.artifacts.initrd,)}).actions[0]
+    build = object()
 
-    stage.perform(context)
+    with (
+        patch(
+            "capsem_builder.gate.initrdpaths.imagebases.build_config",
+            return_value=build,
+        ),
+        patch(
+            "capsem_builder.gate.initrdpaths.guestbinarycache.current",
+            return_value=current,
+        ) as content_current,
+    ):
+        assert initrdpaths.needs_rebuild(config, arch) is expected
 
-    assert runner.rendered == [
-        " ".join((*config.initrd.build, "--arch", arch)),
-    ]
+    content_current.assert_called_once_with(
+        build,
+        arch,
+        config.root,
+        Path(config.initrd.staging) / arch,
+        config.initrd.binaries,
+    )
