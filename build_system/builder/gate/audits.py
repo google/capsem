@@ -94,7 +94,7 @@ def live(config: GateConfig) -> list[Step]:
     actions = (
         ("audit.cargo", Script(config, audits.cargo, outside_sandbox=True)),
         ("audit.pnpm", Script(config, audits.pnpm, outside_sandbox=True)),
-        ("audit.python-lock", Run(["bash", audits.python_lock], outside_sandbox=True)),
+        ("audit.python-lock", Script(config, audits.python_lock, outside_sandbox=True)),
     )
     return [
         step(

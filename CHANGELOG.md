@@ -111,6 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy, preserves leased and structural entries, enforces generation and
   free-space limits, reports typed health, and reuses Rust compilation through
   the pinned sccache toolchain with a cache-owned daemon endpoint.
+- Python lock auditing now uses the shared repository HTTP cache and bounded
+  retries for transient advisory-service failures, while vulnerability results
+  still fail immediately and requirement hashes are validated through PyPI.
 - MITM forwarding now rejects disallowed plain-HTTP upstream ports before the
   host dials them, and gzip collection rejects decompression beyond its bounded
   payload limit instead of allowing a compressed body to exhaust host memory.

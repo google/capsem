@@ -1719,7 +1719,7 @@ cargo = "build_system/scripts/audit/check-cargo-audit.py"
 # This says which package changed shape, before anything is built.
 dependency_drift = "build_system/scripts/audit/check-dependency-drift.py"
 pnpm = "build_system/scripts/audit/audit-pnpm-bulk.py"
-python_lock = "build_system/scripts/audit/audit-python-lock.sh"
+python_lock = "build_system/scripts/audit/audit-python-lock.py"
 public_surface = "build_system/scripts/audit/check_public_surface.py"
 source_syntax = "build_system/scripts/audit/check-source-syntax.py"
 hardcoded_selections = "build_system/scripts/audit/check-hardcoded-release-selections.sh"
@@ -1758,6 +1758,15 @@ max_skill_description_chars = 200
 # split-to-references/ pattern is established. A ceiling to stop regrowth,
 # not a mandate to rewrite anything.
 max_skill_body_lines = 600
+
+[audits.python_lock_policy]
+requirements = "cache/state/python-audit-requirements.txt"
+cache_stage = "python-uv"
+cache_subdirectory = "pip-audit"
+service = "pypi"
+attempts = 3
+retry_seconds = 2
+socket_timeout_seconds = 15
 
 # A shell body is a sequence of simple commands. Control flow, multi-line
 # string building and here-documents inside a YAML `run:` or a Dockerfile `RUN`

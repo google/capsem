@@ -351,7 +351,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         "build_system/scripts/audit/check-source-syntax.py",
         "build_system/scripts/audit/check-cargo-audit.py",
         "build_system/scripts/audit/audit-pnpm-bulk.py",
-        "build_system/scripts/audit/audit-python-lock.sh",
+        "build_system/scripts/audit/audit-python-lock.py",
         # Ruff over the whole tree, and Ty over the strict builder package -- as
         # three steps, so a ruff failure no longer hides what ty would have
         # said. The explicit all-platform surface keeps the exact diagnostic
@@ -616,23 +616,26 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     fast = _planned("test-fast")
     static = _planned("test-static")
     pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
-    audit_script = (
-        PROJECT_ROOT / "build_system/scripts/audit/audit-python-lock.sh"
+    audit_owner = (
+        PROJECT_ROOT / "build_system/builder/gate/tools/audit/python_lock.py"
     ).read_text(encoding="utf-8")
+    gate_config = (PROJECT_ROOT / "config/gate.toml").read_text(encoding="utf-8")
 
-    assert "build_system/scripts/audit/audit-python-lock.sh" in fast
+    assert "build_system/scripts/audit/audit-python-lock.py" in fast
     assert "build the network-denied install qualification image" in static
     assert '"pip-audit>=' in pyproject
     for required in (
-        "uv export",
+        '"uv",\n            "export"',
         "--locked",
         "--no-emit-project",
-        "uv run --project build_system --frozen pip-audit",
-        "-s osv",
+        '"-m",\n        "pip_audit"',
         "--require-hashes",
         "--disable-pip",
+        "--cache-dir",
     ):
-        assert required in audit_script
+        assert required in audit_owner
+    assert 'service = "pypi"' in gate_config
+    assert "attempts = 3" in gate_config
 
 
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:

@@ -86,7 +86,7 @@ def test_audit_script_boundaries_are_thin_exit_status_launchers() -> None:
 def test_audit_configuration_and_boundaries_have_one_functional_owner() -> None:
     expected = {
         "audit-pnpm-bulk.py",
-        "audit-python-lock.sh",
+        "audit-python-lock.py",
         "audit.toml",
         "check-cargo-audit.py",
         "check-dependency-drift.py",
