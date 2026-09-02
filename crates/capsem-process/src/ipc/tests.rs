@@ -135,7 +135,7 @@ revision = "test.1"
                     }],
                 },
                 capsem_proto::mcp_aggregator::AggregatorMethod::Refresh { .. } => AggregatorResult::Ok { ok: true },
-                capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments } => {
+                capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments, .. } => {
                     AggregatorResult::CallResult {
                         result: serde_json::json!({"tool": name, "arguments": arguments}),
                     }

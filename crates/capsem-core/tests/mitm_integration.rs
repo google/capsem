@@ -548,67 +548,62 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     assert_eq!(events[0].port, 80, "plain HTTP defaults to upstream port 80");
 }
 
-/// Network routing mechanics must not issue security decisions. A plain-HTTP
-/// request whose Host carries a port outside `http_upstream_ports` is still
-/// decided by the security-rule rail; if the rules allow it, the request is
-/// forwarded and logged as allowed.
+/// A plain-HTTP request whose Host carries a port outside
+/// `http_upstream_ports` is refused by the host before any upstream dial. The
+/// port came from the guest's Host header, so a guest reaching the proxy
+/// directly must not be able to make the host connect to an arbitrary port;
+/// the refusal is logged against the mechanics rule that made it. (This test
+/// used to assert the opposite -- that the port list was routing mechanics and
+/// the request was forwarded -- and its upstream accept waited forever once the
+/// allowlist became a refusal.)
 #[tokio::test]
-async fn mitm_proxy_plain_http_port_mechanics_do_not_deny_outside_security_rail() {
+async fn mitm_proxy_plain_http_port_outside_allowlist_is_refused_before_dialing() {
     let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let upstream_addr = upstream_listener.local_addr().unwrap();
-    let upstream_port = upstream_addr.port();
+    let upstream_port = upstream_listener.local_addr().unwrap().port();
+    // Reports whether the proxy ever dialed the upstream.
     let upstream_task = tokio::spawn(async move {
-        let (mut sock, _) = upstream_listener.accept().await.unwrap();
-        let mut buf = vec![0u8; 2048];
-        let _ = sock.read(&mut buf).await.unwrap();
-        let body = b"port mechanics are not a security rail";
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        sock.write_all(resp.as_bytes()).await.unwrap();
-        sock.write_all(body).await.unwrap();
-        sock.flush().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), upstream_listener.accept())
+            .await
+            .is_ok()
     });
 
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80]);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\n\r\n");
+    let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     tcp.write_all(request.as_bytes()).await.unwrap();
 
     let mut buf = Vec::new();
     let _ = tcp.read_to_end(&mut buf).await;
     drop(tcp);
 
-    upstream_task.await.unwrap();
+    let dialed = upstream_task.await.unwrap();
     proxy_task.await.unwrap();
     db.flush().await;
 
+    assert!(!dialed, "the host must not dial a port outside the allowlist");
     let response = String::from_utf8_lossy(&buf);
     assert!(
-        response.contains("HTTP/1.1 200 OK"),
-        "expected upstream response, got:\n{response}"
+        response.contains("HTTP/1.1 403"),
+        "expected a refusal, got:\n{response}"
     );
     assert!(
-        response.contains("port mechanics are not a security rail"),
-        "expected upstream body, got:\n{response}"
+        response.contains("blocked by security.web.http_upstream_ports"),
+        "the refusal names the rule, got:\n{response}"
     );
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert!(!events.is_empty(), "forwarded path must record a NetEvent");
-    assert_eq!(events[0].decision, Decision::Allowed);
-    assert_eq!(events[0].status_code, Some(200));
+    assert!(!events.is_empty(), "refused path must record a NetEvent");
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].status_code, Some(403));
     assert_eq!(events[0].domain, "127.0.0.1");
     assert_eq!(events[0].port, upstream_port);
-    assert_eq!(events[0].matched_rule.as_deref(), Some("security.http.default"));
-    assert!(!events[0]
-        .matched_rule
-        .as_deref()
-        .unwrap_or_default()
-        .contains("http-port-not-allowlisted"));
+    assert_eq!(
+        events[0].matched_rule.as_deref(),
+        Some("security.web.http_upstream_ports")
+    );
 }
 
 /// Release-scale local protocol benchmarks reuse one guest->MITM HTTP/1.1

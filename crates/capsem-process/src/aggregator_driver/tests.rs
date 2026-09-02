@@ -123,6 +123,7 @@ async fn abandoned_callers_are_pruned_from_the_pending_map() {
         client.request(AggregatorMethod::CallTool {
             name: "slow__tool".into(),
             arguments: serde_json::json!({}),
+            timeout_ms: None,
         }),
     )
     .await;
