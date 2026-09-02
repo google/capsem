@@ -1,5 +1,6 @@
 pub mod auditfs;
 pub mod auto_snapshot;
+pub mod contained_fs;
 pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_state;

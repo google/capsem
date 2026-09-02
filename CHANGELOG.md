@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The sandbox files API (list, download, upload) no longer follows symlinks
+  the guest plants in the shared workspace. Every path component is opened
+  with `O_NOFOLLOW` relative to the workspace root, so an upload to a dangling
+  link or below a symlinked directory is refused instead of writing to the
+  host filesystem, and a linked host file or directory is neither served nor
+  listed.
 - KVM VirtioFS and console devices now validate the complete guest-controlled
   descriptor range before reading or writing host memory, and zero-sized
   virtqueues are rejected without a host-process panic.

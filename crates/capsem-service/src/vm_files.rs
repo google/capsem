@@ -367,76 +367,103 @@ pub(super) fn find_failed_session_dir(run_dir: &std::path::Path, id: &str) -> Op
 
 use axum::http::StatusCode;
 use capsem_service::errors::AppError;
-use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
+use std::ffi::OsString;
+
+use capsem_core::contained_fs::{is_symlink_refusal, ContainedDir, EntryKind};
+use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize_file_path, unknown_file_type};
+use nix::fcntl::OFlag;
+use nix::sys::stat::Mode;
 
 // ---------------------------------------------------------------------------
 // Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
 // ---------------------------------------------------------------------------
+//
+// The workspace is a VirtioFS share the guest writes at will, so every symlink
+// in it is guest-controlled. Nothing here resolves a guest-influenced path by
+// name: the root is opened once and every step below it is an `openat` that
+// refuses symlinks (see `capsem_core::contained_fs`). Path-based checks --
+// canonicalize, exists, metadata -- were answered for one file and acted on
+// for another, and for a dangling link or a missing parent they were not
+// answered at all: an upload to `notes.txt -> ~/.ssh/authorized_keys` landed
+// on the host.
 
-/// Resolve a sanitized relative path to an absolute workspace path on the host.
-/// Returns (workspace_root, resolved_path). Verifies the resolved path is
-/// inside the workspace via canonicalize + starts_with.
-pub(super) fn resolve_workspace_path(
+fn session_dir_for(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    if let Some(info) = instances.get(id) {
+        return Ok(info.session_dir.clone());
+    }
+    drop(instances);
+    // Check persistent registry for stopped VMs
+    let reg = state.persistent_registry.lock().unwrap();
+    reg.data
+        .vms
+        .get(id)
+        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+        .map(|e| e.session_dir.clone())
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+}
+
+/// Open the workspace root of sandbox `id` as a containment handle.
+pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
+    let session_dir = session_dir_for(state, id)?;
+    let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
+    ContainedDir::open_root(&root).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("open workspace {}: {e}", root.display()),
+        )
+    })
+}
+
+/// A containment failure as the client sees it: a symlink anywhere on the
+/// path is a refusal, an absent component is not found, a file named where a
+/// directory was expected is a bad request, anything else is the host's.
+pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
+    if is_symlink_refusal(&e) {
+        AppError(
+            StatusCode::FORBIDDEN,
+            "path leaves the workspace through a symlink".into(),
+        )
+    } else if e.kind() == std::io::ErrorKind::NotFound {
+        AppError(StatusCode::NOT_FOUND, "path not found".into())
+    } else if e.kind() == std::io::ErrorKind::InvalidInput || e.raw_os_error() == Some(nix::errno::Errno::ENOTDIR as i32)
+    {
+        AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
+    } else {
+        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
+    }
+}
+
+/// Resolve a sanitized relative path to the handle of its parent directory and
+/// its final name. With `create`, missing parent directories are made. A
+/// symlink or special file already at the final name is refused here, and
+/// again race-free by `O_NOFOLLOW` when the caller opens it.
+pub(super) fn resolve_workspace_target(
     state: &ServiceState,
     id: &str,
     sanitized: &str,
-) -> Result<(PathBuf, PathBuf), AppError> {
-    let session_dir = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(info) = instances.get(id) {
-            info.session_dir.clone()
-        } else {
-            drop(instances);
-            // Check persistent registry for stopped VMs
-            let reg = state.persistent_registry.lock().unwrap();
-            reg.data
-                .vms
-                .get(id)
-                .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-                .map(|e| e.session_dir.clone())
-                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
-        }
-    };
-    let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    let target = workspace_root.join(sanitized);
-
-    // Canonicalize requires the path to exist for files; for listing we may
-    // also target the workspace root itself. Use the parent if target doesn't exist.
-    let canonical = if target.exists() {
-        target.canonicalize()
+    create: bool,
+) -> Result<(ContainedDir, OsString), AppError> {
+    let rel = StdPath::new(sanitized);
+    let name = rel
+        .file_name()
+        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "path has no file name".into()))?
+        .to_owned();
+    let parent_rel = rel.parent().unwrap_or_else(|| StdPath::new(""));
+    let root = workspace_root(state, id)?;
+    let parent = if create {
+        root.walk_creating(parent_rel, Mode::from_bits_truncate(0o755))
     } else {
-        // For upload: parent must exist and be inside workspace
-        if let Some(parent) = target.parent() {
-            if parent.exists() {
-                let canon_parent = parent
-                    .canonicalize()
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
-                let ws_canon = workspace_root.canonicalize().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("canonicalize workspace: {e}"),
-                    )
-                })?;
-                if !canon_parent.starts_with(&ws_canon) {
-                    return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
-                }
-                return Ok((workspace_root, target));
-            }
-        }
-        return Ok((workspace_root, target));
+        root.walk(parent_rel)
     }
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
-
-    let ws_canon = workspace_root.canonicalize().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("canonicalize workspace: {e}"),
-        )
-    })?;
-    if !canonical.starts_with(&ws_canon) {
-        return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+    .map_err(workspace_io_error)?;
+    if parent.entry_kind(&name).map_err(workspace_io_error)? == Some(EntryKind::Other) {
+        return Err(AppError(
+            StatusCode::FORBIDDEN,
+            "path names a symlink or special file".into(),
+        ));
     }
-    Ok((workspace_root, canonical))
+    Ok((parent, name))
 }
 
 // ---------------------------------------------------------------------------
@@ -446,9 +473,9 @@ pub(super) fn resolve_workspace_path(
 #[derive(Deserialize)]
 pub(super) struct FileListQuery {
     #[serde(default)]
-    path: Option<String>,
+    pub(super) path: Option<String>,
     #[serde(default = "default_file_depth")]
-    depth: u32,
+    pub(super) depth: u32,
 }
 
 pub(super) fn default_file_depth() -> u32 {
@@ -460,58 +487,41 @@ pub(super) struct FileContentQuery {
     pub(super) path: String,
 }
 
-/// Recursively list a directory up to `max_depth`.
+/// Recursively list a directory up to `max_depth`. Symlinks and special
+/// files are neither followed nor shown.
 pub(super) fn list_dir_recursive(
-    base: &std::path::Path,
+    dir: &ContainedDir,
     rel_prefix: &str,
     current_depth: u32,
     max_depth: u32,
     magika: &Mutex<magika::Session>,
 ) -> Vec<FileListEntry> {
-    let mut entries = Vec::new();
-    let read = match std::fs::read_dir(base) {
-        Ok(r) => r,
-        Err(_) => return entries,
+    let mut items = match dir.entries() {
+        Ok(items) => items,
+        Err(_) => return Vec::new(),
     };
-
-    let mut items: Vec<_> = read.flatten().collect();
+    // Skip the system directory (rootfs overlay, not user content)
+    items.retain(|item| item.kind != EntryKind::Other && item.name != "system");
     items.sort_by(|a, b| {
-        let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        b_is_dir.cmp(&a_is_dir).then_with(|| a.file_name().cmp(&b.file_name()))
+        let a_is_dir = a.kind == EntryKind::Directory;
+        let b_is_dir = b.kind == EntryKind::Directory;
+        b_is_dir.cmp(&a_is_dir).then_with(|| a.name.cmp(&b.name))
     });
 
+    let mut entries = Vec::with_capacity(items.len());
     for item in items {
-        let name = item.file_name().to_string_lossy().into_owned();
-        // Skip the system directory (rootfs overlay, not user content)
-        if name == "system" {
-            continue;
-        }
+        let name = item.name.to_string_lossy().into_owned();
         let rel_path = if rel_prefix.is_empty() {
             name.clone()
         } else {
             format!("{rel_prefix}/{name}")
         };
-        let meta = match item.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
 
-        if meta.is_dir() {
+        if item.kind == EntryKind::Directory {
             let children = if current_depth < max_depth {
-                Some(list_dir_recursive(
-                    &base.join(&name),
-                    &rel_path,
-                    current_depth + 1,
-                    max_depth,
-                    magika,
-                ))
+                dir.descend(&item.name)
+                    .ok()
+                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth, magika))
             } else {
                 None
             };
@@ -520,24 +530,26 @@ pub(super) fn list_dir_recursive(
                 path: rel_path,
                 entry_type: "directory".into(),
                 size: 0,
-                mtime,
+                mtime: item.mtime_secs,
                 mime: None,
                 label: None,
                 is_text: None,
                 children,
             });
-        } else if meta.is_file() {
-            let (lbl, mime_str, _group, text) = identify_file_sync(magika, &base.join(&name));
-            let (mime, label, is_text) = (Some(mime_str), Some(lbl), Some(text));
+        } else {
+            let (label, mime, _group, is_text) = match dir.open_file(&item.name, OFlag::O_RDONLY, Mode::empty()) {
+                Ok(mut file) => identify_file_sync(magika, StdPath::new(&name), &mut file),
+                Err(_) => unknown_file_type(),
+            };
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
                 entry_type: "file".into(),
-                size: meta.len(),
-                mtime,
-                mime,
-                label,
-                is_text,
+                size: item.size,
+                mtime: item.mtime_secs,
+                mime: Some(mime),
+                label: Some(label),
+                is_text: Some(is_text),
                 children: None,
             });
         }
@@ -555,55 +567,16 @@ pub(super) async fn handle_list_files(
         Some(p) if !p.is_empty() => sanitize_file_path(p)?,
         _ => String::new(),
     };
+    let target = workspace_root(&state, &id)?
+        .walk(StdPath::new(&rel_path))
+        .map_err(workspace_io_error)?;
 
-    let (workspace_root, target) = if rel_path.is_empty() {
-        // List workspace root -- get session_dir directly
-        let session_dir = {
-            let instances = state.instances.lock().unwrap();
-            if let Some(info) = instances.get(&id) {
-                info.session_dir.clone()
-            } else {
-                drop(instances);
-                let reg = state.persistent_registry.lock().unwrap();
-                reg.data
-                    .vms
-                    .get(&id)
-                    .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-                    .map(|e| e.session_dir.clone())
-                    .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
-            }
-        };
-        let ws = capsem_core::guest_share_dir(&session_dir).join("workspace");
-        (ws.clone(), ws)
-    } else {
-        resolve_workspace_path(&state, &id, &rel_path)?
-    };
+    // Directory reads and Magika are blocking I/O -- run in spawn_blocking
+    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth, &state.magika))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
-    if !target.exists() {
-        return Err(AppError(StatusCode::NOT_FOUND, "path not found".into()));
-    }
-
-    // Compute relative prefix for the listing
-    let rel_prefix = target
-        .strip_prefix(&workspace_root)
-        .unwrap_or(std::path::Path::new(""))
-        .to_string_lossy()
-        .into_owned();
-
-    // read_dir + metadata are blocking I/O -- run in spawn_blocking
-    let magika = state.magika.lock().unwrap();
-    // We can't send MutexGuard across threads; re-acquire inside spawn_blocking
-    drop(magika);
-    let magika_ref = {
-        // Clone Arc to move into blocking task
-        let state_clone = Arc::clone(&state);
-        let target = target.clone();
-        tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika))
-            .await
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
-    };
-
-    Ok(Json(FileListResponse { entries: magika_ref }))
+    Ok(Json(FileListResponse { entries }))
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -674,32 +647,29 @@ pub(super) async fn handle_download_file(
     Query(params): Query<FileContentQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let sanitized = sanitize_file_path(&params.path)?;
-    let (_ws_root, resolved) = resolve_workspace_path(&state, &id, &sanitized)?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, false)?;
 
-    if !resolved.is_file() {
-        return Err(AppError(StatusCode::NOT_FOUND, "file not found".into()));
-    }
-
-    let meta = std::fs::metadata(&resolved)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("metadata: {e}")))?;
-    if meta.len() > MAX_FILE_SIZE {
-        return Err(AppError(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!("file too large: {} bytes (max {})", meta.len(), MAX_FILE_SIZE),
-        ));
-    }
-
-    // Read file and detect type in spawn_blocking
+    // Open without following symlinks, read, and detect type in spawn_blocking
     let state_clone = Arc::clone(&state);
-    let resolved_clone = resolved.clone();
     let (data, mime, filename) = tokio::task::spawn_blocking(move || {
-        let data = std::fs::read(&resolved_clone)
+        use std::io::Read;
+        let file = parent
+            .open_file(&name, OFlag::O_RDONLY, Mode::empty())
+            .map_err(workspace_io_error)?;
+        // Read one byte past the cap rather than trusting a length the guest
+        // can grow between stat and read.
+        let mut data = Vec::new();
+        file.take(MAX_FILE_SIZE + 1)
+            .read_to_end(&mut data)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
-        let (_, mime_str, _, _) = identify_file_sync(&state_clone.magika, &resolved_clone);
-        let name = resolved_clone
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "download".into());
+        if data.len() as u64 > MAX_FILE_SIZE {
+            return Err(AppError(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("file too large (max {MAX_FILE_SIZE} bytes)"),
+            ));
+        }
+        let name = name.to_string_lossy().into_owned();
+        let (_, mime_str, _, _) = identify_bytes_sync(&state_clone.magika, StdPath::new(&name), &data);
         // Sanitize the filename for Content-Disposition
         let safe_name: String = name
             .chars()
@@ -745,12 +715,11 @@ pub(super) async fn handle_upload_file(
     body: axum::body::Bytes,
 ) -> Result<Json<UploadResponse>, AppError> {
     let sanitized = sanitize_file_path(&params.path)?;
-    let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, true)?;
 
     let mut data = body.to_vec();
     let size = data.len() as u64;
     let preview = file_security_preview_bytes(&data);
-    let target_for_write = target.clone();
 
     if let Some(rewritten) =
         log_file_boundary(&state, &id, FileBoundaryAction::Import, sanitized, preview, size, None).await?
@@ -759,25 +728,17 @@ pub(super) async fn handle_upload_file(
     }
     let written_size = data.len() as u64;
 
-    // Write file in spawn_blocking (blocking I/O)
+    // Write without following symlinks, in spawn_blocking (blocking I/O)
     tokio::task::spawn_blocking(move || {
-        if let Some(parent) = target_for_write.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {e}")))?;
-        }
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(&target_for_write)
-            .and_then(|f| {
-                use std::io::Write;
-                let mut f = f;
-                f.write_all(&data)?;
-                Ok(())
-            })
+        use std::io::Write;
+        let mut file = parent
+            .open_file(
+                &name,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                Mode::from_bits_truncate(0o644),
+            )
+            .map_err(workspace_io_error)?;
+        file.write_all(&data)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
         Ok::<_, AppError>(())
     })

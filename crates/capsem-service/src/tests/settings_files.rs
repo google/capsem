@@ -1,5 +1,6 @@
 use super::*;
 use capsem_service::fs_utils::sanitize_file_path;
+use std::io::{Read as _, Write as _};
 
 // Settings handler tests
 // -----------------------------------------------------------------------
@@ -219,13 +220,13 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
 }
 
 // -----------------------------------------------------------------------
-// resolve_workspace_path
+// resolve_workspace_target
 // -----------------------------------------------------------------------
 
 #[test]
 fn resolve_rejects_unknown_vm() {
     let state = make_test_state();
-    let r = resolve_workspace_path(&state, "nonexistent", "src/main.rs");
+    let r = resolve_workspace_target(&state, "nonexistent", "src/main.rs", false);
     assert!(r.is_err());
 }
 
@@ -265,7 +266,7 @@ fn resolve_rejects_symlink_escape() {
         },
     );
 
-    let r = resolve_workspace_path(&state, "test-vm", "escape/secret.txt");
+    let r = resolve_workspace_target(&state, "test-vm", "escape/secret.txt", false);
     assert!(r.is_err());
 }
 
@@ -300,10 +301,9 @@ fn resolve_valid_path_inside_workspace() {
         },
     );
 
-    let r = resolve_workspace_path(&state, "test-vm", "hello.txt");
-    assert!(r.is_ok());
-    let (ws_root, resolved) = r.unwrap();
-    assert!(resolved.starts_with(ws_root.canonicalize().unwrap()));
+    let (parent, name) = resolve_workspace_target(&state, "test-vm", "hello.txt", false).unwrap();
+    assert_eq!(parent.path(), workspace.canonicalize().unwrap());
+    assert_eq!(name, "hello.txt");
 }
 
 // -----------------------------------------------------------------------
@@ -319,7 +319,7 @@ fn list_dir_returns_correct_structure() {
     std::fs::write(ws.join("README.md"), "# Hello").unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(ws, "", 1, 2, &magika);
+    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 2, &magika);
 
     // Should have src/ dir and README.md file
     assert!(entries.len() >= 2);
@@ -345,7 +345,7 @@ fn list_dir_respects_depth_limit() {
 
     let magika = test_magika();
     // depth 1: should list "a" but not recurse into "a/b"
-    let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
     let a = entries.iter().find(|e| e.name == "a").unwrap();
     assert!(a.children.is_none());
 }
@@ -359,7 +359,7 @@ fn list_dir_skips_system_but_shows_hidden() {
     std::fs::write(ws.join("visible.txt"), "yes").unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
     // .hidden + visible.txt shown; system/ filtered out
     assert_eq!(entries.len(), 2);
     assert!(entries.iter().any(|e| e.name == ".hidden"));
@@ -377,7 +377,7 @@ fn list_dir_sorts_dirs_first_then_alphabetical() {
     std::fs::create_dir_all(ws.join("beta")).unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(ws, "", 1, 1, &magika);
+    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
     // Dirs first (alpha, beta), then files (apple.txt, zebra.txt)
     assert_eq!(entries[0].name, "alpha");
     assert_eq!(entries[1].name, "beta");
@@ -858,8 +858,13 @@ fn download_reads_correct_bytes() {
     let content = b"hello world\nline 2\n";
     std::fs::write(ws.join("test.txt"), content).unwrap();
 
-    let (_, resolved) = resolve_workspace_path(&state, "dl-vm", "test.txt").unwrap();
-    let data = std::fs::read(&resolved).unwrap();
+    let (parent, name) = resolve_workspace_target(&state, "dl-vm", "test.txt", false).unwrap();
+    let mut data = Vec::new();
+    parent
+        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+        .unwrap()
+        .read_to_end(&mut data)
+        .unwrap();
     assert_eq!(data, content);
 }
 
@@ -873,8 +878,13 @@ fn download_binary_preserves_content() {
     let binary: Vec<u8> = (0..256).map(|i| i as u8).collect();
     std::fs::write(ws.join("data.bin"), &binary).unwrap();
 
-    let (_, resolved) = resolve_workspace_path(&state, "bin-vm", "data.bin").unwrap();
-    let data = std::fs::read(&resolved).unwrap();
+    let (parent, name) = resolve_workspace_target(&state, "bin-vm", "data.bin", false).unwrap();
+    let mut data = Vec::new();
+    parent
+        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+        .unwrap()
+        .read_to_end(&mut data)
+        .unwrap();
     assert_eq!(data, binary);
 }
 
@@ -885,8 +895,16 @@ fn upload_creates_file_with_content() {
     setup_vm_with_workspace(&state, dir.path(), "up-vm");
 
     let ws = dir.path().join("session/guest/workspace");
-    let (_, target) = resolve_workspace_path(&state, "up-vm", "new.txt").unwrap();
-    std::fs::write(&target, b"uploaded").unwrap();
+    let (parent, name) = resolve_workspace_target(&state, "up-vm", "new.txt", true).unwrap();
+    parent
+        .open_file(
+            &name,
+            nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_CREAT,
+            nix::sys::stat::Mode::from_bits_truncate(0o644),
+        )
+        .unwrap()
+        .write_all(b"uploaded")
+        .unwrap();
 
     assert_eq!(std::fs::read_to_string(ws.join("new.txt")).unwrap(), "uploaded");
 }
@@ -898,10 +916,17 @@ fn upload_creates_parent_directories() {
     setup_vm_with_workspace(&state, dir.path(), "mkdir-vm");
 
     let ws = dir.path().join("session/guest/workspace");
-    // resolve_workspace_path should succeed even for non-existing nested paths
-    let (_, target) = resolve_workspace_path(&state, "mkdir-vm", "deep/nested/file.txt").unwrap();
-    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-    std::fs::write(&target, b"deep content").unwrap();
+    // Resolving for upload creates the missing parents inside the workspace
+    let (parent, name) = resolve_workspace_target(&state, "mkdir-vm", "deep/nested/file.txt", true).unwrap();
+    parent
+        .open_file(
+            &name,
+            nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_CREAT,
+            nix::sys::stat::Mode::from_bits_truncate(0o644),
+        )
+        .unwrap()
+        .write_all(b"deep content")
+        .unwrap();
 
     assert_eq!(
         std::fs::read_to_string(ws.join("deep/nested/file.txt")).unwrap(),
@@ -916,16 +941,18 @@ fn upload_path_traversal_blocked() {
 }
 
 #[test]
-fn download_nonexistent_file_resolve_ok_but_not_exists() {
+fn download_nonexistent_file_resolves_but_does_not_open() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _dir2) = make_test_state_with_tempdir();
     setup_vm_with_workspace(&state, dir.path(), "404-vm");
 
     // Resolving a non-existent file path still works (for upload target)
-    let result = resolve_workspace_path(&state, "404-vm", "nonexistent.txt");
-    assert!(result.is_ok());
-    let (_, resolved) = result.unwrap();
-    assert!(!resolved.exists());
+    let (parent, name) = resolve_workspace_target(&state, "404-vm", "nonexistent.txt", false).unwrap();
+    assert_eq!(parent.entry_kind(&name).unwrap(), None);
+    let err = parent
+        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+        .unwrap_err();
+    assert_eq!(workspace_io_error(err).0, StatusCode::NOT_FOUND);
 }
 
 // is_launchd_cleanup_transient identifies the misleading "missing
@@ -1236,4 +1263,133 @@ fn service_pidfile_leaves_a_successors_record_intact() {
         "erasing a successor's pid strands it: every later reap finds no \
          pidfile and reports success while the service keeps running"
     );
+}
+
+// -----------------------------------------------------------------------
+// Files API must not follow guest-planted symlinks
+// -----------------------------------------------------------------------
+//
+// The workspace is a VirtioFS share the guest writes at will, so every
+// symlink in it is guest-controlled. The old resolver canonicalized only when
+// the target existed, returned the raw path for a dangling link or a missing
+// parent, and every handler then opened by path -- which follows symlinks.
+// A guest could therefore have the host write its uploads anywhere, read any
+// host file back, or list any host directory.
+
+struct EscapeTree {
+    dir: tempfile::TempDir,
+    outside: PathBuf,
+}
+
+impl EscapeTree {
+    fn workspace(&self) -> PathBuf {
+        self.dir.path().join("session/guest/workspace")
+    }
+}
+
+fn escape_tree(state: &ServiceState, vm_id: &str, uds_path: PathBuf) -> EscapeTree {
+    let dir = tempfile::tempdir().unwrap();
+    setup_vm_with_workspace_and_uds(state, dir.path(), vm_id, uds_path);
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), b"host secret").unwrap();
+    EscapeTree { dir, outside }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upload_refuses_a_dangling_symlink_target() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let tree = escape_tree(&state, "up-dangling-vm", uds_path);
+    let planted = tree.outside.join("authorized_keys");
+    std::os::unix::fs::symlink(&planted, tree.workspace().join("notes.txt")).unwrap();
+
+    let err = handle_upload_file(
+        State(state),
+        Path("up-dangling-vm".to_string()),
+        Query(FileContentQuery {
+            path: "notes.txt".to_string(),
+        }),
+        axum::body::Bytes::from_static(b"ssh-ed25519 AAAA attacker"),
+    )
+    .await
+    .expect_err("an upload through a guest symlink must be refused");
+
+    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert!(!planted.exists(), "the symlink target must not be created on the host");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missing() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let tree = escape_tree(&state, "up-parent-vm", uds_path);
+    std::os::unix::fs::symlink(&tree.outside, tree.workspace().join("link")).unwrap();
+
+    let err = handle_upload_file(
+        State(state),
+        Path("up-parent-vm".to_string()),
+        Query(FileContentQuery {
+            path: "link/sub/new.txt".to_string(),
+        }),
+        axum::body::Bytes::from_static(b"payload"),
+    )
+    .await
+    .expect_err("an upload below a guest symlink must be refused");
+
+    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert!(
+        !tree.outside.join("sub").exists(),
+        "no directory may be created outside the workspace"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn download_refuses_a_symlink_to_a_host_file() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let tree = escape_tree(&state, "dl-symlink-vm", uds_path);
+    std::os::unix::fs::symlink(tree.outside.join("secret.txt"), tree.workspace().join("leak.txt")).unwrap();
+
+    let err = handle_download_file(
+        State(state),
+        Path("dl-symlink-vm".to_string()),
+        Query(FileContentQuery {
+            path: "leak.txt".to_string(),
+        }),
+    )
+    .await
+    .expect_err("a download through a guest symlink must be refused");
+
+    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let tree = escape_tree(&state, "ls-symlink-vm", PathBuf::from("/tmp/test.sock"));
+    std::os::unix::fs::symlink(&tree.outside, tree.workspace().join("peek")).unwrap();
+    std::fs::write(tree.workspace().join("mine.txt"), b"mine").unwrap();
+
+    let err = handle_list_files(
+        State(Arc::clone(&state)),
+        Path("ls-symlink-vm".to_string()),
+        Query(FileListQuery {
+            path: Some("peek".to_string()),
+            depth: 3,
+        }),
+    )
+    .await
+    .expect_err("listing through a guest symlink must be refused");
+    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+
+    let root = handle_list_files(
+        State(state),
+        Path("ls-symlink-vm".to_string()),
+        Query(FileListQuery { path: None, depth: 3 }),
+    )
+    .await
+    .expect("listing the workspace root");
+    let names: Vec<&str> = root.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["mine.txt"], "a symlink is neither followed nor advertised");
 }
