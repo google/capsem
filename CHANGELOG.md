@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest network proxy no longer closes a vsock descriptor twice when it
+  fails to register it with the runtime, which could sever an unrelated
+  connection that had just been handed the same descriptor number.
 - An MCP tool call to a server that never answers is now cancelled upstream
   when the sandbox stops waiting for it. Each such call used to leave a task
   and a pending request behind in the MCP aggregator for the life of the VM.
