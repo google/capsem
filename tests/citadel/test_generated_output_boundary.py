@@ -212,12 +212,7 @@ def _observe(probes: list[str]) -> Observed:
     ignored = frozenset(
         probe
         for probe in probes
-        if subprocess.run(
-            ("git", "check-ignore", "--quiet", "--", probe),
-            cwd=ROOT,
-            check=False,
-        ).returncode
-        == 0
+        if _probe_is_ignored(ROOT, probe)
     )
     return Observed(
         producers=_producer_records(sources),
@@ -228,6 +223,25 @@ def _observe(probes: list[str]) -> Observed:
         ignored_probes=ignored,
         prefix_exports=_prefix_exports(),
         output_roots=_output_roots(),
+    )
+
+
+def _probe_is_ignored(root: Path, probe: str) -> bool:
+    """Check the owning path when an exported cache symlink blocks traversal."""
+    candidate = root
+    checked = probe
+    for part in Path(probe).parts:
+        candidate /= part
+        if candidate.is_symlink():
+            checked = candidate.relative_to(root).as_posix()
+            break
+    return (
+        subprocess.run(
+            ("git", "check-ignore", "--quiet", "--", checked),
+            cwd=root,
+            check=False,
+        ).returncode
+        == 0
     )
 
 
@@ -364,6 +378,21 @@ def test_each_generated_output_violation_is_observed_red(
     assert any(
         message in problem for problem in _problems(_synthetic_policy(), observed)
     ), RATIONALE
+
+
+def test_ignored_probe_uses_the_exported_symlink_owner(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+    (repository / ".gitignore").write_text("/cache/\n", encoding="utf-8")
+    exported = tmp_path / "exported-assets"
+    exported.mkdir()
+    target = repository / "cache" / "target"
+    target.mkdir(parents=True)
+    (target / "assets").symlink_to(exported, target_is_directory=True)
+
+    assert _probe_is_ignored(repository, "cache/target/assets/.boundary-probe")
+    assert not _probe_is_ignored(repository, "outside/.boundary-probe")
 
 
 def test_empty_output_surface_fails_closed() -> None:
