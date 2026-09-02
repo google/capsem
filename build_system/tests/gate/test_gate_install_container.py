@@ -454,6 +454,23 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     ) > runner.index_of(r"docker build .*Dockerfile\.install-test")
 
 
+def test_install_source_cli_escapes_the_ephemeral_cargo_cache_mount() -> None:
+    dockerfile = (PROJECT_ROOT / CONFIG.install.dockerfile).read_text(encoding="utf-8")
+    source = " ".join(dockerfile.replace("\\\n", " ").split())
+
+    assert (
+        "install -m 0555 /tmp/capsem-install-current-cli/debug/capsem "
+        "/tmp/capsem-install-current"
+    ) in source
+    assert (
+        "COPY --from=source-cli --chmod=0555 /tmp/capsem-install-current ${FRESH_CLI}"
+    ) in source
+    assert (
+        "COPY --from=source-cli --chmod=0555 "
+        "/tmp/capsem-install-current-cli/debug/capsem"
+    ) not in source
+
+
 def test_install_helper_accepts_a_local_parent_without_repository_digests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
