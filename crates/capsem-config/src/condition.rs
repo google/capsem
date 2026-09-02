@@ -118,8 +118,8 @@ impl ConditionAtom {
     {
         if let Some(inner) = atom.strip_prefix("has(").and_then(|s| s.strip_suffix(')')) {
             let field = inner.trim();
-            validate_field_name(field)?;
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::Has {
                 field: field.to_string(),
             });
@@ -127,8 +127,8 @@ impl ConditionAtom {
 
         for method in ["matches", "contains", "endsWith", "startsWith"] {
             if let Some((field, argument)) = parse_method_call(atom, method)? {
-                validate_field_name(field)?;
                 validate(field)?;
+                validate_field_name(field)?;
                 let expected = parse_string_literal(argument)?;
                 let method = match method {
                     "matches" => StringMethod::Matches {
@@ -147,16 +147,16 @@ impl ConditionAtom {
         }
 
         if let Some(field) = parse_zero_arg_method_call(atom, "contains_pii")? {
-            validate_field_name(field)?;
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::ContainsPii {
                 field: field.to_string(),
             });
         }
 
         if let Some((field, operator, value)) = parse_comparison(atom)? {
-            validate_field_name(field)?;
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::Comparison {
                 field: field.to_string(),
                 operator,
