@@ -1,10 +1,8 @@
 """The cheap checks, as independent steps rather than backgrounded jobs.
 
-These were seven `&` and seven `wait` in one recipe body, aggregating into a
-single `FAIL=1`. That told an operator something broke, and then they read the
-interleaved output of seven concurrent jobs to find out what. Every one of them
-is independent -- none reads what another writes -- so as graph nodes they run
-at once by construction and every failure comes back named.
+These were seven background jobs aggregated into one `FAIL=1`, leaving an
+operator to untangle interleaved output. Each is independent, so graph nodes
+run them concurrently and report every failure by name.
 
 The web surfaces are here too, and one of them is not independent: `capsem-app`
 embeds `web/app/dist` at compile time, so clippy reads a directory the
@@ -234,10 +232,8 @@ def frontend_bundle(config: GateConfig) -> Step:
 def clippy(config: GateConfig) -> Step:
     """The Rust lint gate.
 
-    Clippy rather than `cargo check`: it is a strict superset and covers
-    `--all-targets`, which is the project standard. Warnings are errors here
-    because the workspace sets `warnings = "deny"` and a gate that let one
-    through would be disagreeing with the build.
+    Clippy is the project-standard `cargo check` superset over `--all-targets`.
+    Workspace warnings are denied, so this gate must deny them too.
     """
     return step(
         "clippy",
