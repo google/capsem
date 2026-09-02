@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate.config import for_root
+from capsem_builder.gate.tools.audit import python_lock
 from capsem_builder.gate.tools.audit.python_lock import audit_python_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -98,5 +99,35 @@ def test_inherited_uv_cache_cannot_escape_configured_stage(
     variable = for_root(PROJECT_ROOT).environment.uv_cache
     monkeypatch.setenv(variable, str(tmp_path / "outside-cache"))
 
+    def unexpected_runner(*_args, **_kwargs) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("cache validation must precede subprocess work")
+
     with pytest.raises(ValueError, match="configured cache stage"):
-        audit_python_lock(PROJECT_ROOT, POLICY, runner=lambda *_args, **_kwargs: None)
+        audit_python_lock(PROJECT_ROOT, POLICY, runner=unexpected_runner)
+
+
+def test_private_checkout_uses_the_outer_shared_cache_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = for_root(PROJECT_ROOT)
+    private_config = config.model_copy(update={"root": tmp_path})
+    policy_dir = tmp_path / "config"
+    policy_dir.mkdir()
+    (policy_dir / "cache.toml").write_text(
+        (PROJECT_ROOT / "config/cache.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    shared = PROJECT_ROOT / "cache/tools/python/uv"
+    monkeypatch.setenv(config.environment.source_checkout, str(PROJECT_ROOT))
+    monkeypatch.setenv(config.environment.uv_cache, str(shared))
+    monkeypatch.setattr(python_lock, "for_root", lambda _root: private_config)
+    issued: list[tuple[str, ...]] = []
+
+    def runner(argv, **_kwargs):
+        command = tuple(argv)
+        issued.append(command)
+        return completed(command, 0)
+
+    assert audit_python_lock(tmp_path, POLICY, runner=runner) == 0
+    audit = issued[1]
+    assert audit[audit.index("--cache-dir") + 1] == str(shared / "pip-audit")

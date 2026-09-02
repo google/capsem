@@ -9,8 +9,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from capsem_builder.cache import CachePaths, load_policy
-from capsem_builder.gate import project_root
+from capsem_builder.gate import cachelayout, project_root
 from capsem_builder.gate.buildschema import PythonLockAuditConfig
 from capsem_builder.gate.config import for_root
 
@@ -40,9 +39,8 @@ def _retryable(result: subprocess.CompletedProcess[str]) -> bool:
     return any(marker in output for marker in RETRYABLE_FAILURES)
 
 
-def _cache_base(root: Path, policy: PythonLockAuditConfig, paths: CachePaths) -> Path:
-    configured = paths.stage(policy.cache_stage).resolve()
-    variable = for_root(root).environment.uv_cache
+def _cache_base(variable: str, configured: Path) -> Path:
+    configured = configured.resolve()
     inherited = os.environ.get(variable)
     if inherited is None:
         return configured
@@ -60,9 +58,13 @@ def audit_python_lock(
     sleep: Sleep = time.sleep,
 ) -> int:
     """Export once, then audit with fail-closed bounded transient retries."""
-    cache_paths = CachePaths(repository_root=root.resolve(), policy=load_policy(root.resolve()))
+    gate_config = for_root(root)
+    cache_paths = cachelayout.cache_paths(gate_config)
     requirements = cache_paths.resolve(Path(policy.requirements))
-    cache_base = _cache_base(root, policy, cache_paths)
+    cache_base = _cache_base(
+        gate_config.environment.uv_cache,
+        cache_paths.stage(policy.cache_stage),
+    )
     http_cache = cache_base / policy.cache_subdirectory
     requirements.parent.mkdir(parents=True, exist_ok=True)
     http_cache.mkdir(parents=True, exist_ok=True)
