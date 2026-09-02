@@ -132,6 +132,36 @@ def test_docker_inventory_retries_only_transient_snapshot_accounting() -> None:
     assert storage[0].name == "Build Cache"
 
 
+def test_docker_inventory_normalizes_negative_reclaimable_accounting() -> None:
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        return command(
+            argv,
+            '{"Type":"Images","TotalCount":"34","Active":"0",'
+            '"Size":"33.14GB","Reclaimable":"-1.103e+09B (-3%)"}',
+        )
+
+    storage = dockeradapter.categories(docker_policy(), runner=runner)
+
+    assert storage[0].logical_bytes == 33_140_000_000
+    assert storage[0].reclaimable_bytes == 0
+
+
+def test_docker_inventory_rejects_negative_total_size() -> None:
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        return command(
+            argv,
+            '{"Type":"Images","TotalCount":"34","Active":"0",'
+            '"Size":"-1B","Reclaimable":"0B"}',
+        )
+
+    try:
+        dockeradapter.categories(docker_policy(), runner=runner)
+    except ValueError as error:
+        assert "unsupported Docker size" in str(error)
+    else:
+        raise AssertionError("negative total size must fail closed")
+
+
 def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> None:
     policy = TartRuntimePolicy(
         kind="tart",

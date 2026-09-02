@@ -6,6 +6,7 @@ import json
 import re
 import time
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from .runtimeexec import CommandRunner, execute
 from .runtimemodels import (
@@ -30,12 +31,26 @@ SIZE_UNITS = {
 }
 
 
-def parse_size(value: str) -> int:
+def _parse_size(value: str, *, signed: bool) -> int:
     token = value.strip().split()[0].replace(",", "")
-    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([A-Za-z]+)", token)
+    sign = "-?" if signed else ""
+    match = re.fullmatch(
+        rf"({sign}[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)([A-Za-z]+)",
+        token,
+    )
     if match is None or match.group(2).upper() not in SIZE_UNITS:
         raise ValueError(f"unsupported Docker size: {value!r}")
-    return int(float(match.group(1)) * SIZE_UNITS[match.group(2).upper()])
+    return int(Decimal(match.group(1)) * SIZE_UNITS[match.group(2).upper()])
+
+
+def parse_size(value: str) -> int:
+    return _parse_size(value, signed=False)
+
+
+def _reclaimable_size(value: str) -> int:
+    # Docker 29 can subtract shared image layers below zero. Reclaimable bytes
+    # are capacity, not debt, so normalize that native accounting artifact here.
+    return max(0, _parse_size(value, signed=True))
 
 
 def _timestamp(value: str) -> int:
@@ -67,7 +82,7 @@ def _categories(output: str) -> tuple[RuntimeCategory, ...]:
                 count=int(str(raw["TotalCount"])),
                 active=int(str(raw["Active"])),
                 logical_bytes=parse_size(str(raw["Size"])),
-                reclaimable_bytes=parse_size(str(raw["Reclaimable"])),
+                reclaimable_bytes=_reclaimable_size(str(raw["Reclaimable"])),
             )
         )
     return tuple(rows)
