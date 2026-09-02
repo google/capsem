@@ -6,12 +6,12 @@ import hashlib
 import json
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("web_benchmark_boundary_debt.toml")
