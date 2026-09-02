@@ -936,8 +936,55 @@ fn read_nofollow_works_for_regular_file() {
     let dir = std::env::temp_dir();
     let path = dir.join("capsem-test-read-nofollow");
     std::fs::write(&path, b"world").unwrap();
-    assert_eq!(read_nofollow(path.to_str().unwrap()).unwrap(), b"world");
+    assert_eq!(read_nofollow(path.to_str().unwrap(), usize::MAX).unwrap(), b"world");
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn read_nofollow_refuses_a_file_over_the_frame_budget() {
+    let dir = std::env::temp_dir();
+    let path = dir.join("capsem-test-read-nofollow-budget");
+    std::fs::write(&path, b"0123456789").unwrap();
+    let err = read_nofollow(path.to_str().unwrap(), 9).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::FileTooLarge, "{err}");
+    assert_eq!(read_nofollow(path.to_str().unwrap(), 10).unwrap(), b"0123456789");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn file_read_reply_for_an_oversized_file_is_an_error_that_fits_a_frame() {
+    // A reply the host cannot decode is never acked and replays forever, so
+    // the reply for a file that does not fit must be a small Error frame.
+    let path = "/root/blob.bin".to_string();
+    let too_big = GuestToHost::FileContent {
+        id: 7,
+        path: path.clone(),
+        data: vec![0xFF; MAX_FRAME_SIZE as usize],
+    };
+    assert!(!capsem_proto::guest_msg_fits_frame(&too_big));
+    let reply = GuestToHost::Error {
+        id: 7,
+        message: format!("failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"),
+    };
+    assert!(capsem_proto::guest_msg_fits_frame(&reply));
+}
+
+#[test]
+fn frame_or_drop_evicts_an_unframeable_reply_from_the_replay_map() {
+    let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let too_big = GuestToHost::FileContent {
+        id: 7,
+        path: "/root/blob.bin".to_string(),
+        data: vec![0xFF; MAX_FRAME_SIZE as usize],
+    };
+    pending.lock().unwrap().insert(7, too_big.clone());
+    assert!(frame_or_drop(&too_big, &pending).is_none());
+    assert!(
+        pending.lock().unwrap().is_empty(),
+        "a frame the host would never ack must not be replayed on every reconnect"
+    );
+    let ack = GuestToHost::Ack { id: 7 };
+    assert!(frame_or_drop(&ack, &pending).is_some());
 }
 
 #[test]
@@ -964,7 +1011,7 @@ fn read_nofollow_rejects_symlink() {
     std::fs::write(&target, b"secret").unwrap();
     let _ = std::fs::remove_file(&link);
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    let err = read_nofollow(link.to_str().unwrap());
+    let err = read_nofollow(link.to_str().unwrap(), usize::MAX);
     assert!(err.is_err(), "read through symlink must fail");
     std::fs::remove_file(&target).ok();
     std::fs::remove_file(&link).ok();
@@ -1035,7 +1082,7 @@ fn write_nofollow_truncates_existing() {
 
 #[test]
 fn read_nofollow_nonexistent_returns_error() {
-    let result = read_nofollow("/tmp/capsem-test-rn-nonexistent-xyzzy");
+    let result = read_nofollow("/tmp/capsem-test-rn-nonexistent-xyzzy", usize::MAX);
     assert!(result.is_err());
 }
 

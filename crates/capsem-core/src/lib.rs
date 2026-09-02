@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 pub use host_state::{validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition};
 pub use vm::boot::{
     boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config, write_control_msg,
-    BootOptions,
+    BootOptions, ControlFrameTooLarge,
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};

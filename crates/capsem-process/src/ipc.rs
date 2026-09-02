@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::HostToGuest;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,8 @@ const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
 /// replay layer handles forward-path losses; this covers return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
+/// The mode the bridge stamps on every guest FileWrite (see vsock.rs).
+const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
@@ -362,6 +365,38 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     }
                 });
+            }
+            ServiceToProcess::WriteFile { id, path, data }
+                if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
+                    id,
+                    path: path.clone(),
+                    data: data.clone(),
+                    mode: GUEST_FILE_WRITE_MODE,
+                }) =>
+            {
+                // The guest drops any control frame over MAX_FRAME_SIZE and
+                // never acks it, so the bridge would replay it until the
+                // watchdog gave up. Refuse here, with the reason.
+                warn!(
+                    id,
+                    path,
+                    len = data.len(),
+                    "WriteFile refused: too large for one control frame"
+                );
+                capsem_core::try_send!(
+                    "ipc_write_file_result",
+                    ipc_tx_out
+                        .send(ProcessToService::WriteFileResult {
+                            id,
+                            success: false,
+                            error: Some(format!(
+                                "file too large for the guest control channel: {} bytes do not fit one {} byte frame",
+                                data.len(),
+                                capsem_proto::MAX_FRAME_SIZE
+                            )),
+                        })
+                        .await
+                );
             }
             ServiceToProcess::WriteFile { id, path, data } => {
                 let job_store = job_store.clone();

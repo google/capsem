@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reading a guest file larger than one control frame (2 MiB) no longer wedges
+  the sandbox control channel. The guest replied with a frame the host could
+  never decode, so it was never acknowledged and was replayed on every
+  reconnect for the life of the VM, taking exec, file operations and snapshots
+  with it. The guest now answers with an error, the host discards an
+  oversized frame and keeps the connection, and an oversized host-to-guest
+  file write is refused immediately with the reason.
 - The gateway refuses any request whose `Host` header is not `localhost`,
   `127.0.0.1`, or `::1`. Before, a web page whose DNS answer flipped to the
   loopback address (DNS rebinding) could fetch `/token` as a same-origin

@@ -1691,3 +1691,62 @@ fn detector_sees_a_leaked_frame_body_but_not_its_length_prefix() {
     assert!(!looks_like_ipc_frame(&frame), "length prefix hides the shape");
     assert!(looks_like_ipc_frame(&frame[4..]), "body is detectable");
 }
+
+// -------------------------------------------------------------------
+// Control frame size: a frame the peer would drop is never produced
+// -------------------------------------------------------------------
+//
+// Both control readers reject a length prefix over MAX_FRAME_SIZE and drop
+// the connection. A guest FileContent for a 3 MiB file therefore was never
+// decoded, never acked, and replayed on every reconnect: the control channel
+// stayed wedged for the life of the VM.
+
+#[test]
+fn encode_guest_msg_refuses_a_frame_the_host_would_drop() {
+    let msg = GuestToHost::FileContent {
+        id: 1,
+        path: "/root/model.bin".to_string(),
+        data: vec![0; MAX_FRAME_SIZE as usize + 1],
+    };
+    let err = encode_guest_msg(&msg).unwrap_err();
+    assert!(err.to_string().contains("exceeds MAX_FRAME_SIZE"), "{err}");
+}
+
+#[test]
+fn encode_host_msg_refuses_a_frame_the_guest_would_drop() {
+    let msg = HostToGuest::FileWrite {
+        id: 1,
+        path: "/root/model.bin".to_string(),
+        data: vec![0; MAX_FRAME_SIZE as usize + 1],
+        mode: 0o644,
+    };
+    let err = encode_host_msg(&msg).unwrap_err();
+    assert!(err.to_string().contains("exceeds MAX_FRAME_SIZE"), "{err}");
+}
+
+#[test]
+fn fits_frame_answers_from_the_real_encoding_not_the_byte_count() {
+    // rmp encodes a Vec<u8> element by element: 0..=127 take one byte,
+    // 128..=255 take two. The same length fits or does not depending on
+    // content, so a length-only budget would lie in one direction or the
+    // other.
+    let ascii = GuestToHost::FileContent {
+        id: 1,
+        path: "/root/notes.txt".to_string(),
+        data: vec![b'a'; MAX_FRAME_SIZE as usize - 64],
+    };
+    assert!(guest_msg_fits_frame(&ascii));
+    let binary = GuestToHost::FileContent {
+        id: 1,
+        path: "/root/blob.bin".to_string(),
+        data: vec![0xFF; MAX_FRAME_SIZE as usize - 64],
+    };
+    assert!(!guest_msg_fits_frame(&binary));
+    let one_mib_binary = HostToGuest::FileWrite {
+        id: 1,
+        path: "/root/blob.bin".to_string(),
+        data: vec![0xFF; 1024 * 1024 - 64],
+        mode: 0o644,
+    };
+    assert!(host_msg_fits_frame(&one_mib_binary));
+}

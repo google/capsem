@@ -45,6 +45,26 @@ fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
     Ok(())
 }
 
+/// Frame `msg` for the control channel. A message that cannot be framed (over
+/// `MAX_FRAME_SIZE`) is logged, evicted from the replay map, and dropped:
+/// the host would never decode or ack it, and replaying it on every
+/// reconnect is how one oversized response wedged the channel for good.
+fn frame_or_drop(
+    msg: &GuestToHost,
+    pending: &std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+) -> Option<Vec<u8>> {
+    match encode_guest_msg(msg) {
+        Ok(frame) => Some(frame),
+        Err(e) => {
+            eprintln!("[capsem-agent] control writer: dropping unframeable message: {e}");
+            if let Some(id) = ackable_response_id(msg) {
+                pending.lock().unwrap().remove(&id);
+            }
+            None
+        }
+    }
+}
+
 /// Returns `Some(id)` for `GuestToHost` variants the agent retains in
 /// its symmetric pending_responses map and replays on every fresh
 /// control conn. Mirrors `vsock.rs::ackable_response_id` on the host
@@ -810,7 +830,10 @@ fn run_bridge(
                 snap.len()
             );
             for msg in &snap {
-                if send_guest_msg(control_fd, msg).is_err() {
+                let Some(frame) = frame_or_drop(msg, &pending_for_writer) else {
+                    continue;
+                };
+                if write_all_fd(control_fd, &frame).is_err() {
                     unsafe {
                         libc::shutdown(control_fd, libc::SHUT_RDWR);
                         libc::shutdown(terminal_fd, libc::SHUT_RDWR);
@@ -821,6 +844,12 @@ fn run_bridge(
         }
 
         while let Ok(msg) = ctrl_write_rx.recv() {
+            // Frame first: a message that cannot be framed is a bug in the
+            // producer, not a transport loss, and must never be parked for
+            // replay or tear the connection down.
+            let Some(frame) = frame_or_drop(&msg, &pending_for_writer) else {
+                continue;
+            };
             // Insert ackable responses *before* writing so a
             // write-success-but-silent-drop is recoverable via the
             // next rekey replay. Bound the map at 4096 to match the
@@ -834,7 +863,7 @@ fn run_bridge(
                 }
                 p.insert(id, msg.clone());
             }
-            if send_guest_msg(control_fd, &msg).is_err() {
+            if write_all_fd(control_fd, &frame).is_err() {
                 unsafe {
                     libc::shutdown(control_fd, libc::SHUT_RDWR);
                     libc::shutdown(terminal_fd, libc::SHUT_RDWR);
@@ -1432,16 +1461,28 @@ fn write_nofollow(path: &str, data: &[u8], mode: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// Read a file, refusing to follow symlinks on the final path component.
-/// Returns ELOOP if the target is a symlink.
-fn read_nofollow(path: &str) -> io::Result<Vec<u8>> {
+/// Read a file, refusing to follow symlinks on the final path component and
+/// refusing more than `max_bytes`. Returns ELOOP if the target is a symlink
+/// and `FileTooLarge` past the cap.
+///
+/// The cap bounds memory; whether the reply fits one control frame is decided
+/// by encoding it. A `FileContent` over `MAX_FRAME_SIZE` was never decoded by
+/// the host, so never acked, so replayed on every reconnect: one read of a
+/// 3 MiB file wedged the control channel for the life of the VM.
+fn read_nofollow(path: &str, max_bytes: usize) -> io::Result<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
+    file.take(max_bytes.saturating_add(1) as u64).read_to_end(&mut data)?;
+    if data.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            format!("file exceeds the {max_bytes}-byte control frame budget"),
+        ));
+    }
     Ok(data)
 }
 
@@ -1618,8 +1659,24 @@ fn control_loop(
                         message: format!("FileRead rejected: {e}"),
                     }
                 } else {
-                    match read_nofollow(&path) {
-                        Ok(data) => GuestToHost::FileContent { id, path, data },
+                    match read_nofollow(&path, MAX_FRAME_SIZE as usize) {
+                        Ok(data) => {
+                            let reply = GuestToHost::FileContent {
+                                id,
+                                path: path.clone(),
+                                data,
+                            };
+                            if capsem_proto::guest_msg_fits_frame(&reply) {
+                                reply
+                            } else {
+                                GuestToHost::Error {
+                                    id,
+                                    message: format!(
+                                        "failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"
+                                    ),
+                                }
+                            }
+                        }
                         Err(e) => GuestToHost::Error {
                             id,
                             message: format!("failed to read {path}: {e}"),
