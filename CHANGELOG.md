@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A profile whose security rules fail to compile now refuses to start or
+  reload instead of running with no rules. The merged rule set was replaced
+  by an empty one behind a log warning, and the engine allows any event no
+  rule matches, so one broken rule silently disabled every other one.
 - Process audit events now use the security rules in force when each record
   arrives. The guest opens its audit stream once at boot, and the host had
   frozen the rule set at that moment, so a profile edit that reloaded every

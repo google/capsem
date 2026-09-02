@@ -12,7 +12,7 @@ fn file_with_mcp(entries: Vec<(&str, SettingValue)>, mcp: crate::mcp::policy::Mc
 
 #[test]
 fn merged_defaults_only() {
-    let m = MergedPolicies::from_files(&empty_file(), &empty_file());
+    let m = MergedPolicies::from_files(&empty_file(), &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
     assert!(has_security_rule(&m, "profiles.rules.default_dns"));
 }
@@ -20,7 +20,7 @@ fn merged_defaults_only() {
 #[test]
 fn merged_user_enables_provider() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
@@ -30,14 +30,14 @@ fn merged_user_enables_search() {
         "security.services.search.google.allow",
         SettingValue::Bool(true),
     )]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
 fn merged_all_policies_populated() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(!m.security_rules.rules().is_empty());
     // Guest config still carries non-secret built-in shell env defaults.
     assert!(m.guest.env.is_some());
@@ -53,7 +53,7 @@ fn merged_all_policies_populated() {
 fn corp_forces_provider_on() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
@@ -61,7 +61,7 @@ fn corp_forces_provider_on() {
 fn corp_forces_provider_off() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
@@ -75,7 +75,7 @@ fn corp_sets_api_key() {
         "ai.openai.api_key",
         SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
     )]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     let env = m.guest.env.unwrap_or_default();
     assert!(!env.contains_key("OPENAI_API_KEY"));
 }
@@ -130,7 +130,7 @@ fn merged_from_missing_user_toml() {
     let dir = tempfile::tempdir().unwrap();
     let nonexistent = dir.path().join("missing_settings.toml");
     let user = load_settings_file(&nonexistent).unwrap_or_default();
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // Should produce valid defaults without panicking
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
@@ -141,7 +141,7 @@ fn merged_from_missing_corp_toml() {
     let nonexistent = dir.path().join("missing_corp.toml");
     let corp = load_settings_file(&nonexistent).unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
@@ -150,7 +150,7 @@ fn merged_from_both_missing() {
     let dir = tempfile::tempdir().unwrap();
     let u = load_settings_file(&dir.path().join("u.toml")).unwrap_or_default();
     let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
-    let m = MergedPolicies::from_files(&u, &c);
+    let m = MergedPolicies::from_files(&u, &c).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
@@ -163,7 +163,7 @@ fn merged_from_invalid_user_toml() {
     assert!(result.is_err());
     // Fallback to default still works
     let user = result.unwrap_or_default();
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
@@ -176,7 +176,7 @@ fn merged_from_invalid_corp_toml() {
     assert!(result.is_err());
     let corp = result.unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
 
@@ -186,7 +186,7 @@ fn merged_ignores_unknown_setting_ids() {
         ("nonexistent.setting.foo", SettingValue::Bool(true)),
         ("ai.anthropic.allow", SettingValue::Bool(true)),
     ]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // Should not crash, anthropic should still work
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
@@ -195,7 +195,7 @@ fn merged_ignores_unknown_setting_ids() {
 fn merged_wrong_type_for_bool_setting() {
     // SettingValue::Text for a Bool-type setting -- resolve will use default
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Text("yes".into()))]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // Provider detection/default rules are independent from legacy allow
     // toggles; malformed toggle values do not create network decisions.
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
@@ -204,7 +204,7 @@ fn merged_wrong_type_for_bool_setting() {
 #[test]
 fn merged_wrong_type_for_number_setting() {
     let user = file_with(vec![("vm.resources.cpu_count", SettingValue::Text("four".into()))]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // as_number() returns None -> falls back to default (4)
     assert_eq!(m.vm.cpu_count, Some(4));
 }
@@ -212,7 +212,7 @@ fn merged_wrong_type_for_number_setting() {
 #[test]
 fn merged_retired_custom_allow_setting_is_ignored() {
     let user = file_with(vec![("security.web.custom_allow", SettingValue::Text("".into()))]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // Should not crash, empty string -> no domains added
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
@@ -221,7 +221,7 @@ fn merged_retired_custom_allow_setting_is_ignored() {
 fn merged_empty_mcp_section() {
     use crate::mcp::policy::McpProfileConfig;
     let user = file_with_mcp(vec![], McpProfileConfig::default());
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
@@ -304,7 +304,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
         .iter()
         .any(|rule| rule.rule_id == "profiles.rules.ai_openai_http_api"));
 
-    let policies = MergedPolicies::from_files(&file, &SettingsFile::default());
+    let policies = MergedPolicies::from_files(&file, &SettingsFile::default()).expect("policies merge");
     assert!(policies
         .security_rules
         .rules()
@@ -334,7 +334,7 @@ trace_id = "trace-openai"
         Some("credential:blake3:0000000000000000000000000000000000000000000000000000000000000000")
     );
 
-    let policies = MergedPolicies::from_files(&file, &SettingsFile::default());
+    let policies = MergedPolicies::from_files(&file, &SettingsFile::default()).expect("policies merge");
     assert_eq!(
         policies.model_endpoints.protocol_for_host("api.openai.com"),
         Some(crate::net::ai_traffic::provider::ModelProtocol::OpenAi)
@@ -515,7 +515,8 @@ fn batch_update_settings_rejects_raw_provider_credentials_atomically() {
 
 #[test]
 fn builtin_provider_rules_compile_only_into_security_rules() {
-    let policies = MergedPolicies::from_files(&SettingsFile::default(), &SettingsFile::default());
+    let policies =
+        MergedPolicies::from_files(&SettingsFile::default(), &SettingsFile::default()).expect("policies merge");
     let rule_ids = policies
         .security_rules
         .rules()
@@ -563,7 +564,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
         ..Default::default()
     };
 
-    let policies = MergedPolicies::from_files(&user, &corp);
+    let policies = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     let ids: Vec<_> = policies
         .security_rules
         .rules()
@@ -594,7 +595,7 @@ fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
         root.join("tests/fixtures/config/integration/corp.toml"),
     );
     let (user, corp) = load_settings_and_corp_files();
-    let policies = MergedPolicies::from_files(&user, &corp);
+    let policies = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     let event = serde_json::json!({
         "http": {
             "host": "127.0.0.1",
@@ -637,7 +638,7 @@ match = 'http.host == "llm.internal.example"'
     )
     .expect("settings parse");
 
-    let policies = MergedPolicies::from_files(&user, &SettingsFile::default());
+    let policies = MergedPolicies::from_files(&user, &SettingsFile::default()).expect("policies merge");
 
     assert_eq!(
         policies.model_endpoints.protocol_for_host("llm.internal.example"),
@@ -700,7 +701,7 @@ sigma = "detection.yaml"
     .unwrap();
 
     let user = load_settings_file(&settings_path).expect("settings load");
-    let policies = MergedPolicies::from_files(&user, &SettingsFile::default());
+    let policies = MergedPolicies::from_files(&user, &SettingsFile::default()).expect("policies merge");
     let rule = policies
         .security_rules
         .rules()
@@ -785,7 +786,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     )
     .unwrap();
 
-    let policies = MergedPolicies::from_files(&user, &corp);
+    let policies = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     let rule = policies
         .security_rules
         .rules()
@@ -917,7 +918,7 @@ fn merged_partial_settings_file() {
         }),
         ..Default::default()
     };
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // No settings -> defaults for everything else
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
@@ -927,7 +928,7 @@ fn merged_partial_settings_only() {
     // Settings but no MCP section
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     assert!(user.mcp.is_none());
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     // Settings applied
     assert!(has_security_rule(&m, "profiles.rules.ai_anthropic_http_api"));
 }
@@ -958,7 +959,7 @@ mode = "disable"
     )
     .expect("corp plugin policy parses");
 
-    let merged = MergedPolicies::from_files(&user, &corp);
+    let merged = MergedPolicies::from_files(&user, &corp).expect("policies merge");
 
     assert_eq!(merged.plugins["dummy_pre"].mode, SecurityPluginMode::Rewrite);
     assert_eq!(merged.plugins["dummy_pre"].detection_level, DetectionLevel::Medium);
@@ -966,4 +967,50 @@ mode = "disable"
     assert_eq!(merged.plugins["dummy_post"].detection_level, DetectionLevel::Critical);
     assert_eq!(merged.plugins["dummy_disabled"].mode, SecurityPluginMode::Disable);
     assert_eq!(merged.plugins["dummy_disabled"].active_detection_level(), None);
+}
+
+// The engine allows any event no rule matches, so an empty rule set is
+// allow-everything. from_files used to substitute exactly that for a rule set
+// that failed to compile, behind a warning, and compile_security_rule_set
+// returned it as Ok: one broken rule in a profile disabled every other one.
+
+#[test]
+fn a_rule_set_that_does_not_compile_is_an_error_not_an_empty_allow_all() {
+    let user: SettingsFile = toml::from_str(
+        r#"
+[profiles.rules.broken]
+name = "broken"
+action = "block"
+match = 'http.host.matches("(unclosed")'
+"#,
+    )
+    .unwrap();
+    let error = MergedPolicies::from_files(&user, &empty_file())
+        .err()
+        .expect("a broken rule must not merge");
+    assert!(error.contains("regex"), "{error}");
+}
+
+#[test]
+fn an_active_profile_with_a_broken_rule_refuses_to_compile_its_rule_set() {
+    // Deserialization does not validate, so a broken rule can reach the
+    // runtime from active_profile.toml on disk.
+    let active: ActiveProfileFile = toml::from_str(
+        r#"
+id = "code"
+name = "Code"
+description = "test"
+revision = "r1"
+
+[corp_rules.corp.rules.broken]
+name = "broken"
+action = "block"
+match = 'http.host.matches("(unclosed")'
+"#,
+    )
+    .unwrap();
+    let error = active
+        .compile_security_rule_set()
+        .expect_err("the runtime must not receive an empty rule set for a broken profile");
+    assert!(error.contains("regex"), "{error}");
 }
