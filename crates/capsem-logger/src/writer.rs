@@ -139,10 +139,15 @@ pub enum WriteOp {
     ProfileMutationEvent(ProfileMutationEvent),
 }
 
+/// What a flush barrier reports back: `Err` when the disk flush the barrier
+/// forced did not happen, so a caller relying on cross-process visibility
+/// (an external reader syncing from disk) is not told the rows are there.
+type FlushOutcome = Result<(), String>;
+
 #[derive(Debug)]
 struct WriterMessage {
     write: Option<WriteOp>,
-    flush_reply: Option<tokio::sync::oneshot::Sender<()>>,
+    flush_reply: Option<tokio::sync::oneshot::Sender<FlushOutcome>>,
 }
 
 impl WriterMessage {
@@ -153,14 +158,14 @@ impl WriterMessage {
         }
     }
 
-    fn flush(reply: tokio::sync::oneshot::Sender<()>) -> Self {
+    fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self {
             write: None,
             flush_reply: Some(reply),
         }
     }
 
-    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<()>> {
+    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<FlushOutcome>> {
         match (self.write, self.flush_reply) {
             (Some(op), None) => Ok(op),
             (None, Some(reply)) => Err(reply),
@@ -448,16 +453,25 @@ impl DbWriter {
     /// before this barrier. This is non-destructive: unlike shutdown, it keeps
     /// the writer alive for future events.
     pub async fn flush(&self) {
-        if let Some(tx) = self.clone_sender() {
-            let (reply, rx) = tokio::sync::oneshot::channel();
-            if let Err(e) = send_with_backpressure(&tx, WriterMessage::flush(reply)).await {
-                warn!(error = %e, "db writer channel closed, dropping flush barrier");
-                return;
-            }
-            if let Err(e) = rx.await {
-                warn!(error = %e, "db writer flush barrier dropped before ack");
-            }
+        if let Err(error) = self.flush_checked().await {
+            warn!(error = %error, "db flush barrier did not complete");
         }
+    }
+
+    /// `flush`, reporting whether the disk flush the barrier forced happened.
+    /// Same-process readers see the rows either way (they live in the shared
+    /// memory schema); an `Err` means an external reader syncing from disk
+    /// will not, and the caller must not claim otherwise.
+    pub async fn flush_checked(&self) -> Result<(), String> {
+        let Some(tx) = self.clone_sender() else {
+            return Ok(());
+        };
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        send_with_backpressure(&tx, WriterMessage::flush(reply))
+            .await
+            .map_err(|e| format!("db writer channel closed, dropping flush barrier: {e}"))?;
+        rx.await
+            .map_err(|e| format!("db writer flush barrier dropped before ack: {e}"))?
     }
 
     /// Wait for short-lived producers to enqueue their final rows, then flush
@@ -514,13 +528,31 @@ fn is_sqlite_busy(error: &rusqlite::Error) -> bool {
     )
 }
 
+/// Longest pause between attempts to queue a message while the writer is full.
+const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
+
+/// Queue a message, waiting for room.
+///
+/// The channel is a std `sync_channel` drained by the writer thread, so there
+/// is nothing async to await for space. Yield once, then sleep with doubling
+/// backoff. Retrying immediately after `yield_now` pinned every producer task
+/// at full CPU for as long as the writer thread was inside a disk flush, which
+/// can be seconds with a large dirty set or a busy-timeout on the file.
 async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -> Result<(), String> {
+    let mut wait = Duration::from_micros(50);
+    let mut attempts = 0u32;
     loop {
         match tx.try_send(message) {
             Ok(()) => return Ok(()),
             Err(mpsc::TrySendError::Full(returned)) => {
                 message = returned;
-                tokio::task::yield_now().await;
+                if attempts == 0 {
+                    tokio::task::yield_now().await;
+                } else {
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(BACKPRESSURE_MAX_WAIT);
+                }
+                attempts += 1;
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 return Err("db writer channel closed".to_string());
@@ -624,18 +656,21 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || !flush_barriers.is_empty();
+        let mut barrier_outcome: FlushOutcome = Ok(());
         if disk_flush_due {
-            if let Err(error) =
-                flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref())
-            {
-                warn!(error = %error, "db dirty table flush failed");
-            } else {
-                dirty_ops = 0;
-                last_disk_flush = Instant::now();
+            match flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref()) {
+                Ok(()) => {
+                    dirty_ops = 0;
+                    last_disk_flush = Instant::now();
+                }
+                Err(error) => {
+                    warn!(error = %error, "db dirty table flush failed");
+                    barrier_outcome = Err(format!("db dirty table flush failed: {error}"));
+                }
             }
         }
         for reply in flush_barriers {
-            let _ = reply.send(());
+            let _ = reply.send(barrier_outcome.clone());
         }
     }
 

@@ -1682,3 +1682,37 @@ async fn db_handle_rejects_write_sql_and_broken_schema() {
         "unexpected broken-query error: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 }
+
+// A flush barrier answered `()` whether or not the disk flush it forced
+// succeeded, so `DbHandle::flush` returned Ok after a failed flush. Same-
+// process readers were fine (rows live in the shared memory schema); a
+// service route reading a process-owned session.db from disk was told the
+// rows were there when they were not.
+
+#[tokio::test]
+async fn db_handle_flush_reports_a_failed_disk_flush() {
+    let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let p = temp_db_path("flush-reports-failure");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.ready().await.expect("db ready");
+    db.write(WriteOp::NetEvent(make_net_event(
+        "flush-reported.example",
+        Decision::Allowed,
+    )))
+    .await
+    .expect("write accepted");
+
+    crate::writer::fail_disk_flushes_for_path_for_tests(&p, 1);
+    let error = db
+        .flush()
+        .await
+        .expect_err("a flush the disk refused must not report success");
+    assert!(error.contains("flush failed"), "{error}");
+    assert_eq!(disk_net_event_count(&p, "flush-reported.example"), 0);
+
+    db.flush().await.expect("the next flush succeeds");
+    assert_eq!(disk_net_event_count(&p, "flush-reported.example"), 1);
+    crate::writer::fail_disk_flushes_for_tests(0);
+}

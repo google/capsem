@@ -502,7 +502,7 @@ impl DbHandle {
         let Some(writer) = &self.inner.writer else {
             return Err("db handle is read-only; no writer is available to flush".to_string());
         };
-        writer.flush().await;
+        writer.flush_checked().await?;
         self.invalidate_read_cache();
         Ok(())
     }
