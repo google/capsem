@@ -112,9 +112,11 @@ fn set_io_timeouts(fd: RawFd) {
 
 /// Set one of `SO_SNDTIMEO` / `SO_RCVTIMEO`; `Duration::ZERO` disables it.
 pub fn set_socket_timeout(fd: RawFd, which: libc::c_int, timeout: Duration) {
+    // The field types are `time_t` / `suseconds_t`, whose aliases are
+    // deprecated on musl (they widen in a future libc); infer them instead.
     let tv = libc::timeval {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_usec: libc::suseconds_t::from(i32::try_from(timeout.subsec_micros()).unwrap_or(0)),
+        tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX) as _,
+        tv_usec: i32::try_from(timeout.subsec_micros()).unwrap_or(0).into(),
     };
     unsafe {
         libc::setsockopt(
