@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Security rule string literals now decode their escape sequences. A rule whose
+  value held a quote, a backslash, or a newline -- every Sigma-derived selection
+  and every managed MCP tool permission is emitted JSON-escaped -- compiled and
+  silently never matched; a corp regex written as `\\.` reached the engine as a
+  literal backslash. `\\ \" \' \/ \n \t \r \xHH \uHHHH` are decoded; other
+  backslash sequences such as `\.` and `\d` still reach `matches()` verbatim.
 - The sandbox files API (list, download, upload) no longer follows symlinks
   the guest plants in the shared workspace. Every path component is opened
   with `O_NOFOLLOW` relative to the workspace root, so an upload to a dangling
