@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A sandbox environment variable whose value has a multibyte character at the
+  40-character mark no longer crashes the guest agent during boot, which left
+  the VM never becoming ready.
 - Reading a guest file larger than one control frame (2 MiB) no longer wedges
   the sandbox control channel. The guest replied with a frame the host could
   never decode, so it was never acknowledged and was replayed on every

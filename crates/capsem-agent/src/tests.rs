@@ -1845,3 +1845,19 @@ fn execve_argv_passes_hex_encoded_arguments_through_unchanged() {
 
     assert_eq!(extract_execve_argv(line).as_deref(), Some("sh 2D6C61"));
 }
+
+// -----------------------------------------------------------------------
+// Boot log env preview
+// -----------------------------------------------------------------------
+
+#[test]
+fn env_preview_truncates_on_a_character_boundary() {
+    let straddling = format!("{}é-rest", "a".repeat(39));
+    assert_eq!(env_preview(&straddling), format!("{}é...", "a".repeat(39)));
+    let straddling_later = format!("{}日本語", "a".repeat(40));
+    assert_eq!(env_preview(&straddling_later), format!("{}...", "a".repeat(40)));
+    assert_eq!(env_preview("short"), "short");
+    assert_eq!(env_preview(&"x".repeat(40)), "x".repeat(40));
+    assert_eq!(env_preview(&"x".repeat(41)), format!("{}...", "x".repeat(40)));
+    assert_eq!(env_preview(""), "");
+}
