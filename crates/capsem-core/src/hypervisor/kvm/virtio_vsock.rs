@@ -61,6 +61,8 @@ const VSOCK_PORT_BLOCK_COUNT: u32 = 2_500;
 /// Implements the VirtioDevice trait for MMIO transport discovery and
 /// feature negotiation. The actual data plane runs in-kernel via
 /// /dev/vhost-vsock.
+mod lifecycle;
+
 pub(super) struct VhostVsockDevice {
     guest_cid: u64,
     vhost_fd: Option<OwnedFd>,
@@ -285,57 +287,6 @@ impl VhostVsockDevice {
             .call(vhost_fd, VHOST_VSOCK_SET_RUNNING, &running as *const libc::c_int as u64)
             .context("VHOST_VSOCK_SET_RUNNING=1")?;
 
-        Ok(())
-    }
-
-    fn quiesce_with<I: VhostIoctl + ?Sized>(&mut self, ioctl: &mut I) -> Result<()> {
-        if !self.activated {
-            self.checkpoint_state = Some(encode_vsock_checkpoint(self.guest_cid, None));
-            return Ok(());
-        }
-        let vhost_fd = self
-            .vhost_fd
-            .as_ref()
-            .context("vhost-vsock fd not available")?
-            .as_raw_fd();
-
-        // VHOST_VSOCK_SET_RUNNING=0 detaches both backends while holding each
-        // vring mutex. It therefore waits for active handlers to leave guest
-        // memory, and later queued handlers observe no backend. It must
-        // complete before GET_VRING_BASE and before the caller copies RAM.
-        let running: libc::c_int = 0;
-        ioctl
-            .call(vhost_fd, VHOST_VSOCK_SET_RUNNING, &running as *const libc::c_int as u64)
-            .context("VHOST_VSOCK_SET_RUNNING=0")?;
-
-        let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
-        for (index, base) in vring_bases.iter_mut().enumerate() {
-            let mut state = VhostVringState {
-                index: index as u32,
-                num: 0,
-            };
-            ioctl
-                .call(
-                    vhost_fd,
-                    VHOST_GET_VRING_BASE,
-                    &mut state as *mut VhostVringState as u64,
-                )
-                .with_context(|| format!("VHOST_GET_VRING_BASE queue {index}"))?;
-            ensure!(
-                u16::try_from(state.num).is_ok(),
-                "vhost-vsock queue {index} returned invalid vring base {}",
-                state.num
-            );
-            *base = state.num;
-        }
-
-        self.checkpoint_state = Some(encode_vsock_checkpoint(self.guest_cid, Some(vring_bases)));
-        debug!(
-            event_name = "virtio.vsock.quiesce",
-            rx_base = vring_bases[0],
-            tx_base = vring_bases[1],
-            "vhost-vsock backend stopped and vring state captured"
-        );
         Ok(())
     }
 
@@ -670,6 +621,12 @@ impl VirtioDevice for VhostVsockDevice {
 
     fn write_config(&self, _offset: u64, _data: &[u8]) {
         // Config space is read-only for vsock
+    }
+
+    fn reset(&mut self) {
+        if let Err(error) = self.reset_with(&mut KernelVhostIoctl) {
+            warn!(error = format!("{error:#}"), "vhost-vsock reset failed");
+        }
     }
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {

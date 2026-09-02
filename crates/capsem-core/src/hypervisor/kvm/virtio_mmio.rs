@@ -108,6 +108,13 @@ pub(super) trait VirtioDevice: Send {
     /// for devices that use the MMIO interrupt path. Devices that own their
     /// interrupt delivery can return false.
     fn queue_notify(&mut self, queue_index: u32) -> bool;
+    /// Called when the driver writes STATUS=0. The device must stop any
+    /// worker, release the guest rings it holds, and return to the state
+    /// before `activate`, so the next DRIVER_OK activates against the rings
+    /// the driver programs then. Without this a driver unbind/rebind (or a
+    /// hostile reset) left workers pointing at freed guest memory and the
+    /// device unable to activate again.
+    fn reset(&mut self) {}
     /// Called while vCPUs are paused before checkpointing device/guest state.
     fn quiesce(&mut self) -> Result<()> {
         Ok(())
@@ -796,7 +803,9 @@ impl MmioDevice for VirtioMmioTransport {
             }
             STATUS => {
                 if val == 0 {
-                    // Reset
+                    // Reset: the device first, so its workers stop touching
+                    // rings the transport is about to forget.
+                    state.device.reset();
                     state.status = 0;
                     state.activated = false;
                     for q in &mut state.queues {

@@ -22,6 +22,7 @@ use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use super::virtio_queue::{VirtQueue, VIRTIO_RING_F_EVENT_IDX};
 
 mod fd_util;
+mod lifecycle;
 
 use fd_util::{
     create_epoll_fd, create_eventfd, drain_eventfd, dup_owned_fd, epoll_add, epoll_wait_tokens, read_eventfd,
@@ -250,6 +251,18 @@ impl VirtioBlockDevice {
     }
 
     fn activate_inner(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig], fail_closed: bool) -> Result<()> {
+        if self.worker_handle.is_some() || self.queue.is_some() {
+            // A second activation without a reset would spawn a second worker
+            // on the same eventfd and leak the first with its ring addresses.
+            if fail_closed {
+                bail!("virtio-blk is already active; reset before activating again");
+            }
+            tracing::warn!(
+                event_name = "virtio.blk.activate_ignored",
+                "virtio-blk activation ignored: device is already active"
+            );
+            return Ok(());
+        }
         let Some(q) = queues.first().filter(|q| q.size > 0) else {
             if fail_closed {
                 bail!("restored virtio-blk request queue is unavailable");
@@ -337,13 +350,6 @@ impl VirtioBlockDevice {
         }
         self.mem = Some(mem);
         Ok(())
-    }
-
-    pub fn with_async_notify(mut self, irq_fd: RawFd, interrupt_status: Arc<AtomicU32>, notify_fd: OwnedFd) -> Self {
-        self.irq_fd = Some(irq_fd);
-        self.interrupt_status = Some(interrupt_status);
-        self.notify_fd = Some(notify_fd);
-        self
     }
 
     /// Process a read request: file -> guest memory.
@@ -1607,17 +1613,11 @@ impl VirtioDevice for VirtioBlockDevice {
     fn uses_mmio_interrupt(&self) -> bool {
         self.control_tx.is_none()
     }
-}
 
-impl Drop for VirtioBlockDevice {
-    fn drop(&mut self) {
-        if let (Some(tx), Some(notify_fd)) = (self.control_tx.take(), self.notify_fd.as_ref()) {
-            let _ = tx.send(BlockWorkerCommand::Stop);
-            let _ = write_eventfd(notify_fd.as_raw_fd());
-        }
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
-        }
+    fn reset(&mut self) {
+        self.stop_worker();
+        self.queue = None;
+        self.mem = None;
     }
 }
 

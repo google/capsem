@@ -53,6 +53,9 @@ impl VirtioDevice for DummyDevice {
     fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
         self.activated.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+    fn reset(&mut self) {
+        self.activated.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
     fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> anyhow::Result<()> {
         self.activate(mem, queues);
         Ok(())
@@ -217,6 +220,32 @@ fn status_reset() {
     write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
     write_u32(&t, STATUS, 0); // reset
     assert_eq!(read_u32(&t, STATUS), 0);
+}
+
+// A driver unbind/rebind writes STATUS=0 and re-runs the init sequence with
+// new ring addresses. The transport used to clear only its own state, so the
+// device kept its worker on the old rings and its second activation failed.
+#[test]
+fn status_reset_reaches_the_device_and_allows_reactivation() {
+    let (t, activated, _) = make_transport();
+    let driver_ok = STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK;
+    write_u32(&t, STATUS, driver_ok);
+    assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
+
+    write_u32(&t, STATUS, 0);
+    assert!(
+        !activated.load(std::sync::atomic::Ordering::SeqCst),
+        "reset must reach the device"
+    );
+
+    write_u32(&t, STATUS, driver_ok);
+    assert!(
+        activated.load(std::sync::atomic::Ordering::SeqCst),
+        "the device must activate again after a reset"
+    );
+    // Without a reset a second DRIVER_OK is ignored: no double activation.
+    write_u32(&t, STATUS, driver_ok);
+    assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[cfg(target_arch = "x86_64")]

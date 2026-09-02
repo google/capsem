@@ -1069,7 +1069,6 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1856
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
-"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = 1032
 "crates/capsem-core/src/mcp/builtin_tools/tests.rs" = 1678
 "crates/capsem-core/src/mcp/file_tools.rs" = 1172
 "crates/capsem-core/src/mcp/file_tools/tests.rs" = 1092

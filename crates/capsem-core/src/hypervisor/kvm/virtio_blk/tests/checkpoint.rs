@@ -225,3 +225,36 @@ fn block_restore_activate_revalidates_open_fd_before_queue_activation() {
     assert!(error.to_string().contains("length"), "{error:#}");
     assert!(restored.queue.is_none() && restored.mem.is_none());
 }
+
+// STATUS=0 from the guest: the worker must stop and release its rings, and a
+// second DRIVER_OK must spawn a fresh worker on the new rings. Before, the
+// transport reset only itself: a second activation spawned a second worker on
+// the same eventfd and the first kept running against freed guest memory.
+#[cfg(target_os = "linux")]
+#[test]
+fn block_reset_stops_the_worker_and_allows_reactivation() {
+    let path = temp_disk("reset-reactivate.img", 512);
+    let mut h = TestHarness::new_with_async_notify(&path, false);
+    assert!(h.dev.worker_handle.is_some());
+
+    h.dev.reset();
+    assert!(h.dev.worker_handle.is_none() && h.dev.control_tx.is_none());
+    assert!(h.dev.queue.is_none() && h.dev.mem.is_none());
+
+    let queue_config = || QueueConfig {
+        desc_addr: RAM_BASE + DESC_TABLE_OFFSET,
+        driver_addr: RAM_BASE + AVAIL_RING_OFFSET,
+        device_addr: RAM_BASE + USED_RING_OFFSET,
+        size: QUEUE_TEST_SIZE,
+        warm_restore: false,
+        event_idx: false,
+    };
+    h.dev.activate(h.mem.clone_ref(RAM_BASE), &[queue_config()]);
+    assert!(h.dev.worker_handle.is_some(), "a fresh worker after reset");
+
+    // A second activation without a reset is ignored, not doubled.
+    h.dev.activate(h.mem.clone_ref(RAM_BASE), &[queue_config()]);
+    assert!(h.dev.worker_handle.is_some());
+    h.dev.reset();
+    assert!(h.dev.worker_handle.is_none());
+}

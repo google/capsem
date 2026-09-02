@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A guest driver reset (STATUS=0) now reaches every KVM virtio device: the
+  VirtioFS worker stops and hands its state back, the virtio-blk worker is
+  joined instead of leaked beside a second one, the vhost-vsock backend is
+  detached, and the console drops its queue, so a driver unbind/rebind
+  re-activates cleanly instead of leaving workers on freed guest memory and
+  a filesystem that could never come back. Console output descriptors are
+  also capped at 64 KiB per copy.
 - The KVM VirtioFS server no longer follows guest-created symlinks on the
   host. A hostile guest driver could use a symlink to a host directory as the
   parent of unlink, rename, mkdir, create, mknod, symlink, link or opendir

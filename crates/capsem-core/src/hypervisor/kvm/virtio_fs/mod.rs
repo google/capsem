@@ -195,6 +195,10 @@ fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) ->
 
 enum WorkerCommand {
     Notify(u32),
+    /// Stop the worker and hand the processor back for a later activation.
+    Stop {
+        done: mpsc::Sender<FuseProcessor>,
+    },
     Checkpoint {
         tag: [u8; TAG_LEN],
         done: mpsc::Sender<Result<Vec<u8>>>,
@@ -234,6 +238,14 @@ fn worker_loop(
                 }
             }
             WorkerCommand::Notify(_) => {}
+            WorkerCommand::Stop { done } => {
+                debug!(
+                    event_name = "virtio.fs.worker_stop",
+                    hiprio_processed_total, request_processed_total, "virtio-fs worker stopping for device reset"
+                );
+                let _ = done.send(proc);
+                return;
+            }
             WorkerCommand::Checkpoint { tag, done } => {
                 let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
@@ -536,6 +548,28 @@ impl VirtioDevice for VirtioFsDevice {
         false
     }
 
+    fn reset(&mut self) {
+        let Some(tx) = self.notify_tx.take() else {
+            return;
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        let _ = tx.send(WorkerCommand::Stop { done: done_tx });
+        drop(tx);
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join();
+        }
+        match done_rx.recv() {
+            Ok(processor) => {
+                self.processor = Some(processor);
+                debug!(event_name = "virtio.fs.reset", "virtio-fs device reset; worker stopped");
+            }
+            Err(_) => warn!(
+                event_name = "virtio.fs.reset_lost_processor",
+                "virtio-fs worker exited without returning its processor; device cannot re-activate"
+            ),
+        }
+    }
+
     fn quiesce(&mut self) -> Result<()> {
         let Some(tx) = self.notify_tx.as_ref() else {
             let processor = self
@@ -599,5 +633,8 @@ impl VirtioDevice for VirtioFsDevice {
 #[cfg(test)]
 #[path = "tests/containment.rs"]
 mod containment_tests;
+#[cfg(test)]
+#[path = "tests/reset.rs"]
+mod reset_tests;
 #[cfg(test)]
 mod tests;

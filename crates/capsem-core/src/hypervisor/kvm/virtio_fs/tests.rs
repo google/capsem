@@ -130,7 +130,7 @@ pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
     }
 }
 
-fn test_device(dir: &Path) -> VirtioFsDevice {
+pub(super) fn test_device(dir: &Path) -> VirtioFsDevice {
     VirtioFsDevice::new("capsem", dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap()
 }
 

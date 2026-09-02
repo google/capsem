@@ -683,3 +683,21 @@ fn vsock_socket_anchor_is_send() {
     fn assert_send<T: Send>() {}
     assert_send::<VsockSocketAnchor>();
 }
+
+// A guest reset must detach the vhost backend (SET_RUNNING=0) and clear the
+// activation latch so the next DRIVER_OK re-programs the rings.
+#[test]
+fn vsock_reset_detaches_the_backend_and_clears_activation() {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device.activated = true;
+    let mut ioctl = RecordingIoctl::new([0, 0]);
+    device.reset_with(&mut ioctl).unwrap();
+    assert!(!device.activated);
+    assert_eq!(ioctl.events, vec![RecordedIoctl::Running(0)]);
+
+    // Idle devices reset without touching vhost.
+    let mut ioctl = RecordingIoctl::new([0, 0]);
+    device.reset_with(&mut ioctl).unwrap();
+    assert!(ioctl.events.is_empty());
+}
