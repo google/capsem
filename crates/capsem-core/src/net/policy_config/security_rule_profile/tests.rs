@@ -1722,3 +1722,79 @@ match = 'has(http.valid)'
         );
     }
 }
+
+// A user settings file could set `corp_locked = true` on its own rules. The
+// flag unlocked the corp priority band and marked the rule corp-owned, so a
+// user `allow` at priority -1000 outranked a corp `block` at -10 -- the exact
+// override corp config exists to prevent. Only the corp file may mint locks.
+
+#[test]
+fn user_files_cannot_mint_corp_locked_rules() {
+    let cases = [
+        (
+            "profiles",
+            r#"
+[profiles.rules.open]
+name = "open"
+action = "allow"
+corp_locked = true
+priority = -1000
+match = 'http.host == "api.openai.com"'
+"#,
+        ),
+        (
+            "ai",
+            r#"
+[ai.openai.rules.open]
+name = "open"
+action = "allow"
+corp_locked = true
+priority = -1000
+match = 'http.host == "api.openai.com"'
+"#,
+        ),
+        (
+            "default",
+            r#"
+[default.open]
+name = "open"
+action = "allow"
+corp_locked = true
+priority = -1000
+match = 'http.host == "api.openai.com"'
+"#,
+        ),
+    ];
+    for (label, toml) in cases {
+        let profile = SecurityRuleProfile::parse_toml(toml).unwrap_or_else(|e| panic!("{label} parses: {e}"));
+        let error = profile
+            .compile(SecurityRuleSource::User)
+            .expect_err("a user file must not compile a corp-locked rule");
+        assert!(error.contains("corp_locked"), "{label}: {error}");
+        assert!(error.contains("only corp config"), "{label}: {error}");
+
+        let compiled = profile
+            .compile(SecurityRuleSource::Corp)
+            .unwrap_or_else(|e| panic!("{label}: the same rule is legitimate from corp config: {e}"));
+        assert!(compiled[0].corp_locked, "{label}");
+        assert_eq!(compiled[0].priority, -1000, "{label}");
+    }
+}
+
+#[test]
+fn user_rules_without_corp_locked_still_compile_as_user_rules() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.open]
+name = "open"
+action = "allow"
+match = 'http.host == "api.openai.com"'
+"#,
+    )
+    .unwrap();
+    let compiled = profile
+        .compile(SecurityRuleSource::User)
+        .expect("plain user rule compiles");
+    assert!(!compiled[0].corp_locked);
+    assert!(compiled[0].priority > 0);
+}

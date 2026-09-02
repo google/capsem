@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A user settings or profile file can no longer mark its own rules
+  `corp_locked`. The flag unlocked the corp priority band and the corp-owned
+  marker, so a user `allow` at priority -1000 outranked a corp `block`; only
+  corp config may set it now, and such a file is refused at load.
 - A profile whose security rules fail to compile now refuses to start or
   reload instead of running with no rules. The merged rule set was replaced
   by an empty one behind a log warning, and the engine allows any event no

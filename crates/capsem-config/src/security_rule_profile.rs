@@ -431,6 +431,9 @@ impl SecurityRuleProfile {
 
     pub fn compile(&self, source: SecurityRuleSource) -> Result<Vec<CompiledSecurityRule>, String> {
         self.validate()?;
+        if matches!(source, SecurityRuleSource::User) {
+            self.reject_user_corp_locks()?;
+        }
         let mut compiled = Vec::new();
         self.compile_default_rules(source, &mut compiled)?;
         self.compile_group("corp", "corp", &self.corp, SecurityRuleSource::Corp, &mut compiled)?;
@@ -464,6 +467,42 @@ impl SecurityRuleProfile {
                 .then_with(|| left.rule_id.cmp(&right.rule_id))
         });
         Ok(compiled)
+    }
+
+    /// Only corp config may mint locked rules.
+    ///
+    /// `corp_locked` unlocks the corp priority band and marks the compiled
+    /// rule as corp-owned. A user settings file that set it on a default,
+    /// profile, or provider rule was compiled at priority -1000 with the lock
+    /// flag and outranked every real corp rule. The service's authoring
+    /// routes already refuse this; the file path must too.
+    fn reject_user_corp_locks(&self) -> Result<(), String> {
+        let locked = self
+            .default
+            .iter()
+            .filter(|(_, rule)| rule.corp_locked)
+            .map(|(key, _)| format!("default.{key}"))
+            .chain(
+                self.profiles
+                    .rules
+                    .iter()
+                    .filter(|(_, rule)| rule.corp_locked)
+                    .map(|(key, _)| format!("profiles.rules.{key}")),
+            )
+            .chain(self.ai.iter().flat_map(|(provider_id, provider)| {
+                provider
+                    .rules
+                    .iter()
+                    .filter(|(_, rule)| rule.corp_locked)
+                    .map(move |(key, _)| format!("ai.{provider_id}.rules.{key}"))
+            }))
+            .next();
+        match locked {
+            Some(rule_id) => Err(format!(
+                "rule '{rule_id}' sets corp_locked, which only corp config may set"
+            )),
+            None => Ok(()),
+        }
     }
 
     fn compile_default_rules(
