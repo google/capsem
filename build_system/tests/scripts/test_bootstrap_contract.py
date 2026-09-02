@@ -662,6 +662,7 @@ def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
         "cargo-audit",
         "cargo-sbom",
         "cargo-tauri",
+        "sccache",
     ]
 
 
@@ -685,6 +686,7 @@ def test_rust_bootstrap_reads_exact_cargo_tool_versions_from_the_same_inventory(
         "cargo-audit\tcargo-audit 0.22.1\tcargo-audit --version",
         "cargo-sbom\tcargo-sbom 0.10.0\tcargo-sbom --version",
         "cargo-tauri\ttauri-cli 2.11.1\tcargo-tauri --version",
+        "sccache\tsccache 0.17.0\tsccache --version",
     ]
 
 

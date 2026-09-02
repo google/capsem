@@ -49,6 +49,9 @@ def _command(cls, tmp_path: Path, **overrides):
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    (tmp_path / "config" / "cache.toml").write_text(
+        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
+    )
     (tmp_path / "justfile").write_text("# a checkout needs one\n")
     return cls(RecordingRunner(tmp_path), _args(**overrides))
 

@@ -75,6 +75,7 @@ component_management:
         - crates/capsem-core/src/net/mod.rs
         - crates/capsem-core/src/net/ai_traffic/**
         - crates/capsem-core/src/net/cert_authority.rs
+        - crates/capsem-core/src/net/decompress.rs
         - crates/capsem-core/src/net/dns/**
         - crates/capsem-core/src/net/interpreters/**
         - crates/capsem-core/src/net/mitm_proxy/**

@@ -1973,6 +1973,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_candidate.py",
     "build_system/tests/gate/test_gate_cache_layout.py",
     "build_system/tests/gate/test_gate_cache_tooling.py",
+    "build_system/tests/gate/test_gate_pycache_authority.py",
     "build_system/tests/gate/test_gate_cli.py",
     "build_system/tests/gate/test_gate_command.py",
     "build_system/tests/gate/test_gate_config.py",

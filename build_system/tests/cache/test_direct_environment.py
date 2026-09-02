@@ -20,7 +20,8 @@ from pathlib import Path
 
 
 def test_cache_authority():
-    root = Path({str(ROOT)!r}) / "cache"
+    checkout = Path(os.environ.get("CAPSEM_GATE_SOURCE_CHECKOUT", {str(ROOT)!r}))
+    root = checkout / "cache"
     assert Path(sys.pycache_prefix).is_relative_to(root)
     assert str(root / "tools/python/pytest") in os.environ["PYTEST_ADDOPTS"]
     assert Path(os.environ["UV_CACHE_DIR"]).is_relative_to(root)

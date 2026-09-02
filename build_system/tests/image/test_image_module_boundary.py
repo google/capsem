@@ -13,6 +13,7 @@ IMAGE_ROOT = BUILD_SYSTEM_ROOT / "builder" / "image"
 
 EXPECTED_MODULES = {
     "__init__.py",
+    "__main__.py",
     "assetdependencies.py",
     "assettools.py",
     "audit.py",
@@ -46,7 +47,7 @@ def test_builder_distribution_owns_image_package_and_command() -> None:
     assert "capsem_builder.image.tools.bootstrap" in project["tool"]["setuptools"]["packages"]
     assert "capsem_builder.image.tools.build" in project["tool"]["setuptools"]["packages"]
     assert project["project"]["scripts"]["capsem-builder"] == (
-        "capsem_builder.image.cli:main"
+        "capsem_builder.gatelaunch:builder_main"
     )
 
 

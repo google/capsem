@@ -1461,7 +1461,7 @@ def test_linux_doctor_accepts_native_musl_gcc_without_x86_cross_compiler(
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
     cli_status = _source_text("crates/capsem/src/tests.rs")
-    service = _source_text("crates/capsem-service/src/tests.rs")
+    service = _source_text("crates/capsem-service/src/tests/update_routes.rs")
     tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
     tui = _source_text("crates/capsem-tui/src/tests.rs")
     frontend = _source_text("web/app/src/lib/__tests__/update-status.test.ts")
@@ -1519,6 +1519,8 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 
 def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     service = _source_text("crates/capsem-service/src/main.rs")
+    router_runtime = _source_text("crates/capsem-service/src/router_runtime.rs")
+    service_runtime = _source_text("crates/capsem-service/src/service_runtime.rs")
     update_command = _source_text("crates/capsem-service/src/update_command.rs")
     api = _source_text("crates/capsem-service/src/api.rs")
     route_tests = _source_text("tests/capsem-service/test_update_routes.py")
@@ -1526,30 +1528,30 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
         "}", maxsplit=1
     )[0]
 
-    check_executor = service.split("async fn execute_update_command(", maxsplit=1)[1].split(
+    check_executor = router_runtime.split("async fn execute_update_command(", maxsplit=1)[1].split(
         "async fn execute_update_apply(", maxsplit=1
     )[0]
-    apply_executor = service.split("async fn execute_update_apply(", maxsplit=1)[1].split(
+    apply_executor = router_runtime.split("async fn execute_update_apply(", maxsplit=1)[1].split(
         "async fn execute_update_command_unlocked(", maxsplit=1
     )[0]
-    automatic_executor = service.split("async fn run_automatic_update_once(", maxsplit=1)[1].split(
+    automatic_executor = router_runtime.split("async fn run_automatic_update_once(", maxsplit=1)[1].split(
         "async fn run_automatic_update_loop(", maxsplit=1
     )[0]
 
     assert "update_lock: tokio::sync::Mutex<()>" in service
-    assert "run_automatic_update_loop(state_for_updates)" in service
+    assert "run_automatic_update_loop(state_for_updates)" in service_runtime
     assert "automatic_updates_enabled()" in automatic_executor
     assert "state.update_lock.try_lock()" in automatic_executor
     assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS" in service
     assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS" in service
-    assert "automatic_update_delay(" in service
+    assert "automatic_update_delay(" in router_runtime
     assert "AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60" in service
     assert "AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60" in service
     assert "state.update_lock.lock().await" in check_executor
     assert "state.update_lock.lock().await" in apply_executor
-    assert service.count("execute_update_command_unlocked(plan).await") == 3
+    assert router_runtime.count("execute_update_command_unlocked(plan).await") == 3
 
-    assert "UpdateCommandKind::Apply" in service
+    assert "UpdateCommandKind::Apply" in router_runtime
     assert 'vec!["update".to_string(), "--yes".to_string()]' in update_command
     assert 'std::env::var_os("INVOCATION_ID")' in update_command
     assert 'std::env::var_os("SYSTEMD_EXEC_PID")' in update_command
@@ -2751,8 +2753,14 @@ def test_manifest_source_inputs_are_url_only() -> None:
     release_channel = _workflow_text("release-channel.yaml")
     # Production rejection message plus its unit tests, which live in the
     # sibling tests.rs; the assertions below span both.
-    admin = (PROJECT_ROOT / "crates/capsem-admin/src/main.rs").read_text() + (
-        PROJECT_ROOT / "crates/capsem-admin/src/tests.rs"
+    admin = (
+        PROJECT_ROOT / "crates/capsem-admin/src/profile_images.rs"
+    ).read_text() + (
+        PROJECT_ROOT / "crates/capsem/src/update/asset_install.rs"
+    ).read_text() + (
+        PROJECT_ROOT / "crates/capsem-admin/src/tests/channel_validation.rs"
+    ).read_text() + (
+        PROJECT_ROOT / "crates/capsem-admin/src/tests/image_build.rs"
     ).read_text()
 
     for script in (build_pkg, repack_deb):
@@ -6437,7 +6445,7 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
 
 def test_fork_route_flushes_without_thaw_before_clone() -> None:
     """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
-    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs").read_text()
     fork_block = source.split("async fn handle_fork", maxsplit=1)[1].split(
         "Ok(Json(ForkResponse", maxsplit=1
     )[0]
@@ -6450,7 +6458,11 @@ def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
     """Doctor boot must not pay first-boot mke2fs cost inside the guest."""
     core = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "lib.rs").read_text()
     process = (PROJECT_ROOT / "crates" / "capsem-process" / "src" / "main.rs").read_text()
-    service = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    service = (
+        PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs"
+    ).read_text() + (
+        PROJECT_ROOT / "crates" / "capsem-service" / "src" / "service_runtime.rs"
+    ).read_text()
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
     assert "pub fn preformat_system_overlay_image_if_needed" in core
@@ -6491,7 +6503,7 @@ def test_raw_guest_vsock_probes_resolve_kvm_port_offset() -> None:
 
 def test_create_route_does_not_wait_for_full_guest_readiness() -> None:
     """Create catches immediate boot crashes; exec/file routes own readiness waits."""
-    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs").read_text()
     provision_attempt = source.split("async fn provision_attempt", maxsplit=1)[1].split(
         "\n#[cfg(unix)]", maxsplit=1
     )[0]

@@ -226,7 +226,11 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
             # environment. A release prefix that did not carry it would take a
             # cold build on every dispatch.
             config.environment.cargo_target: str(cargotarget.path(config)),
-            **cachetooling.environment(config, key=str(commit)),
+                **cachetooling.environment(
+                    config,
+                    key=str(commit),
+                    source_root=tmp_path / str(commit),
+                ),
         }
     ]
 
