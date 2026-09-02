@@ -98,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Asset downloads stop as soon as the origin sends more bytes than the manifest
+  declares, and a local asset copy hashes the bytes it actually installs. An
+  endless or oversized response used to be written to disk in full before the
+  hash check ran, and a local source that changed between hashing and copying
+  was installed under a hash-named file it did not match.
+- Waiting for the session ledger to flush now reports failure when the disk
+  flush did not happen, instead of returning success, and producers waiting
+  for a full ledger queue back off instead of spinning a CPU core while the
+  writer flushes.
 - A user settings or profile file can no longer mark its own rules
   `corp_locked`. The flag unlocked the corp priority band and the corp-owned
   marker, so a user `allow` at priority -1000 outranked a corp `block`; only

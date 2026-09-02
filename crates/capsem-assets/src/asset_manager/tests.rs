@@ -1165,3 +1165,139 @@ fn materializing_refuses_an_arch_no_compatible_release_builds() {
     let error = arch_assets_to_materialize(&manifest, "9.9.9", "x86_64").unwrap_err();
     assert!(error.to_string().contains("x86_64"), "unhelpful error: {error}");
 }
+
+// -----------------------------------------------------------------------
+// Download size bound
+// -----------------------------------------------------------------------
+//
+// The manifest size was used for progress only; the stream was written to
+// disk until EOF and only then hashed. The origin is manifest-controlled, so
+// a hostile or broken server could fill the disk before the hash check ran.
+
+/// Serve `arm64-<name>` requests from `bodies`, one HTTP/1.1 response per
+/// connection. Returns an asset base URL that `asset_download_url_with_base`
+/// expands under it.
+async fn serve_asset_bodies(bodies: std::collections::HashMap<&'static str, Vec<u8>>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            let request = String::from_utf8_lossy(&seen);
+            let path = request.split_whitespace().nth(1).unwrap_or("");
+            let name = path.rsplit("arm64-").next().unwrap_or("");
+            let body = bodies.get(name).cloned().unwrap_or_default();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(&body).await.unwrap();
+            let _ = sock.shutdown().await;
+        }
+    });
+    format!("http://{addr}/assets/{{asset_version}}")
+}
+
+const DECLARED_ASSETS: [(&str, &[u8]); 3] = [
+    ("initrd.img", b"initrd"),
+    ("rootfs.erofs", b"rootfs"),
+    ("vmlinuz", b"kernel"),
+];
+
+fn declared_manifest(asset_base: String) -> ManifestV2 {
+    let mut assets = std::collections::HashMap::new();
+    for (name, bytes) in DECLARED_ASSETS {
+        assets.insert(
+            name.to_string(),
+            AssetEntry {
+                hash: blake3::hash(bytes).to_hex().to_string(),
+                sha256: String::new(),
+                size: bytes.len() as u64,
+            },
+        );
+    }
+    ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".to_string(),
+        asset_base: Some(asset_base),
+        assets: AssetsSection {
+            current: "2030.0101.1".to_string(),
+            releases: [(
+                "2030.0101.1".to_string(),
+                AssetRelease {
+                    date: "2030-01-01".to_string(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary: "1.0.0".to_string(),
+                    arches: [("arm64".to_string(), assets)].into(),
+                },
+            )]
+            .into(),
+        },
+        binaries: BinariesSection {
+            current: "9.9.9".to_string(),
+            releases: [(
+                "9.9.9".to_string(),
+                BinaryRelease {
+                    date: "2030-01-01".to_string(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_assets: "2030.0101.1".to_string(),
+                    version: String::new(),
+                    files: Vec::new(),
+                },
+            )]
+            .into(),
+        },
+    }
+}
+
+#[tokio::test]
+async fn download_refuses_a_body_longer_than_the_manifest_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bodies: std::collections::HashMap<&'static str, Vec<u8>> = DECLARED_ASSETS
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.to_vec()))
+        .collect();
+    // Assets download in name order; the first one lies about its length.
+    bodies.insert("initrd.img", b"initrd-but-much-longer-than-declared".to_vec());
+    let manifest = declared_manifest(serve_asset_bodies(bodies).await);
+
+    let err = download_missing_assets(&manifest, "9.9.9", "arm64", dir.path(), |_| {})
+        .await
+        .expect_err("a body past the manifest size must be refused");
+    assert!(err.to_string().contains("more than the manifest size"), "{err:#}");
+
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("arm64"))
+        .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "no partial download may remain: {leftovers:?}");
+}
+
+#[tokio::test]
+async fn download_accepts_bodies_that_match_the_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let bodies = DECLARED_ASSETS
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.to_vec()))
+        .collect();
+    let manifest = declared_manifest(serve_asset_bodies(bodies).await);
+
+    let mut downloaded = download_missing_assets(&manifest, "9.9.9", "arm64", dir.path(), |_| {})
+        .await
+        .expect("exact bodies download");
+    downloaded.sort();
+    assert_eq!(downloaded.len(), 3);
+    assert_eq!(std::fs::read(&downloaded[2]).unwrap(), b"kernel");
+}

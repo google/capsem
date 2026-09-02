@@ -918,6 +918,25 @@ fn canonical_json(value: &serde_json::Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// Compute the blake3 hash of a file.
+/// Copy `source` to `dest` and return the blake3 hex of the bytes written.
+fn copy_hashed(source: &Path, dest: &Path) -> Result<String> {
+    use std::io::{Read, Write};
+    let mut from = std::fs::File::open(source).with_context(|| format!("cannot open {}", source.display()))?;
+    let mut to = std::fs::File::create(dest).with_context(|| format!("cannot create {}", dest.display()))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = from.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        to.write_all(&buf[..n])?;
+    }
+    to.sync_all()?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
 pub fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
     let mut file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -1296,12 +1315,33 @@ where
             }
             hasher.update(&chunk);
             bytes_done += chunk.len() as u64;
+            // The manifest size is a hard cap, not a progress hint: the origin
+            // is manifest-controlled, and without this an endless body filled
+            // the disk before the hash check could ever run.
+            if bytes_done > entry.size {
+                cleanup_tmp(&tmp);
+                bail!(
+                    "{}: origin sent more than the manifest size ({} > {} bytes); download refused",
+                    name,
+                    bytes_done,
+                    entry.size
+                );
+            }
             on_progress(DownloadProgress {
                 logical_name: name.clone(),
                 bytes_done,
                 bytes_total: total,
                 done: false,
             });
+        }
+        if bytes_done != entry.size {
+            cleanup_tmp(&tmp);
+            bail!(
+                "{}: origin sent {} bytes, manifest says {}",
+                name,
+                bytes_done,
+                entry.size
+            );
         }
         if let Err(e) = file.flush().await {
             cleanup_tmp(&tmp);
@@ -1409,8 +1449,16 @@ where
             )
         })?;
 
-        let actual = hash_file(&source).with_context(|| format!("hash local asset {}", source.display()))?;
+        // Hash the bytes that land in the store, in the same pass that copies
+        // them. Hashing the source and then copying it separately verified one
+        // set of bytes and installed another if the source changed in between,
+        // under a filename that says it was verified.
+        let tmp = arch_dir.join(format!("{hname}.tmp"));
+        let _ = std::fs::remove_file(&tmp);
+        let actual =
+            copy_hashed(&source, &tmp).with_context(|| format!("copy {} -> {}", source.display(), tmp.display()))?;
         if actual != entry.hash {
+            let _ = std::fs::remove_file(&tmp);
             bail!(
                 "{}: local asset hash mismatch at {} (expected {}, got {})",
                 name,
@@ -1419,10 +1467,6 @@ where
                 actual
             );
         }
-
-        let tmp = arch_dir.join(format!("{hname}.tmp"));
-        let _ = std::fs::remove_file(&tmp);
-        std::fs::copy(&source, &tmp).with_context(|| format!("copy {} -> {}", source.display(), tmp.display()))?;
         std::fs::rename(&tmp, &target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
         #[cfg(unix)]
         {
