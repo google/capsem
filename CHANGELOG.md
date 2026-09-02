@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP tool calls from inside the sandbox no longer fail with a spurious
+  "connection closed" error when a tool takes longer than 30 seconds or when
+  the relay sits idle for 30 seconds between calls. The guest relay inherited
+  the control channel's receive timeout although its transport has no
+  keepalive, so every long call or quiet stretch tore the connection down.
 - A sandbox environment variable whose value has a multibyte character at the
   40-character mark no longer crashes the guest agent during boot, which left
   the VM never becoming ready.
