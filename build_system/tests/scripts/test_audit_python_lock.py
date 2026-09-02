@@ -4,12 +4,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate.config import for_root
 from capsem_builder.gate.tools.audit import python_lock
 from capsem_builder.gate.tools.audit.python_lock import audit_python_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 POLICY = for_root(PROJECT_ROOT).audits.python_lock_policy
+CACHE_POLICY = load_policy(PROJECT_ROOT)
 
 
 def completed(
@@ -118,7 +120,7 @@ def test_private_checkout_uses_the_outer_shared_cache_authority(
         encoding="utf-8",
     )
     shared = PROJECT_ROOT / "cache/tools/python/uv"
-    monkeypatch.setenv(config.environment.source_checkout, str(PROJECT_ROOT))
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(PROJECT_ROOT))
     monkeypatch.setenv(config.environment.uv_cache, str(shared))
     monkeypatch.setattr(python_lock, "for_root", lambda _root: private_config)
     issued: list[tuple[str, ...]] = []

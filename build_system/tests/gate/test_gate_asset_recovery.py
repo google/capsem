@@ -7,6 +7,7 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import imagebuild
 from capsem_builder.gate.actions import Action
@@ -16,6 +17,7 @@ from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CACHE_POLICY = load_policy(PROJECT_ROOT)
 
 
 class _Probe(Action, name="asset-recovery-probe"):
@@ -514,7 +516,7 @@ def test_preflight_keeps_only_reusable_lane_roots(
     # A complete gate exports the outer checkout for its private prefix. This
     # unit owns a temporary repository and must not inherit that cache owner,
     # or its fixture in /tmp is incorrectly paired with the live cache.
-    monkeypatch.delenv(config.environment.source_checkout, raising=False)
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
     profile_root = output.parent
     (profile_root / config.assets.merged_assets_dir).mkdir()
     (profile_root / config.assets.merged_config_dir).mkdir()

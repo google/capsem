@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from capsem_builder import gatelaunch
+from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.telemetry import ReuseScope
 from capsem_builder.gate import cachetooling
@@ -10,10 +11,11 @@ from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(ROOT)
+CACHE_POLICY = load_policy(ROOT)
 
 
 def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) -> None:
-    monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
     monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
     observed: list[tuple[str, ReuseScope, Path | None, tuple[str, ...]]] = []
 
@@ -86,7 +88,7 @@ def test_missing_compiler_cache_keeps_cargo_on_its_first_bootstrap(monkeypatch, 
 
 
 def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch) -> None:
-    monkeypatch.delenv(CONFIG.environment.source_checkout, raising=False)
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
     monkeypatch.setattr(cachetooling, "record_use", lambda *args, **kwargs: None)
 
     typed = cachetooling.environment(CONFIG, key="parity")

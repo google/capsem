@@ -304,7 +304,7 @@ def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(
     from capsem_builder.gate import assetstore
 
     base = _config(tmp_path)
-    monkeypatch.setenv(base.environment.source_checkout, str(tmp_path))
+    monkeypatch.setenv(load_policy(tmp_path).authority_environment, str(tmp_path))
     identity = "a" * 64
     roots = tuple(Path(base.prefix.parent) / name for name in ("11111111", "22222222"))
     selected = []

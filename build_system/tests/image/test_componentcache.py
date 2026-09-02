@@ -47,7 +47,10 @@ def test_guest_binary_identity_names_only_its_output_inputs() -> None:
 def repository(tmp_path: Path) -> Path:
     config = tmp_path / "config"
     config.mkdir()
-    policy = (ROOT / "config/cache.toml").read_text(encoding="utf-8")
+    policy = (ROOT / "config/cache.toml").read_text(encoding="utf-8").replace(
+        'authority_environment = "CAPSEM_CACHE_AUTHORITY"',
+        'authority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"',
+    )
     config.joinpath("cache.toml").write_text(policy, encoding="utf-8")
     return tmp_path
 

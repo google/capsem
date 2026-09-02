@@ -74,11 +74,11 @@ def checkout() -> Path:
 
 def _cache_authority(root: Path) -> Path:
     """Keep private-checkout bytecode in the outer repository cache."""
-    policy = root / GATE_POLICY
+    policy = root / CACHE_POLICY
     if not policy.is_file():
         return root
     raw = tomllib.loads(policy.read_text(encoding="utf-8"))
-    variable = raw.get("environment", {}).get("source_checkout")
+    variable = raw.get("authority_environment")
     selected = os.environ.get(variable, "") if isinstance(variable, str) else ""
     return Path(selected).resolve() if selected else root
 

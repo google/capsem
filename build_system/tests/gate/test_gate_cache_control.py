@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.cachecontrol import CacheControl
 from capsem_builder.gate.errors import GateError
@@ -11,6 +12,7 @@ from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
+CACHE_POLICY = load_policy(PROJECT_ROOT)
 
 
 def test_release_names_one_configured_final_consumer_boundary() -> None:
@@ -73,7 +75,7 @@ def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_
     prefix = tmp_path / "prefix"
     prefix.mkdir()
     (prefix / "config").symlink_to(PROJECT_ROOT / "config", target_is_directory=True)
-    monkeypatch.setenv(CONFIG.environment.source_checkout, str(PROJECT_ROOT))
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(PROJECT_ROOT))
     runner = RecordingRunner(prefix)
 
     CacheControl(runner).enforce("docker", "candidate")

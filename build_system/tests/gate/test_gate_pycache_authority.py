@@ -114,10 +114,6 @@ def test_private_source_generation_uses_outer_cache_authority(
         '[stages.python-pycache]\npath = "tools/python/pycache"\n',
         encoding="utf-8",
     )
-    config.joinpath("gate.toml").write_text(
-        '[environment]\nsource_checkout = "CAPSEM_TEST_CACHE_AUTHORITY"\n',
-        encoding="utf-8",
-    )
     monkeypatch.setenv("CAPSEM_TEST_CACHE_AUTHORITY", str(authority))
 
     generation = Path(isolated_environment(source)[PYCACHE])
