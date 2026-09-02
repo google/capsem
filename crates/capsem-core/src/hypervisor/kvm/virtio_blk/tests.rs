@@ -1246,13 +1246,35 @@ fn oversized_descriptor_lengths_do_not_panic_the_host() {
     h.write_header(header_offset, VIRTIO_BLK_T_IN, 0);
 
     // header -> data(0xFFFFFFFF) -> data(0xFFFFFFFF) -> status
-    h.write_desc(0, RAM_BASE + header_offset, REQ_HEADER_SIZE as u32, VRING_DESC_F_NEXT, 1);
-    h.write_desc(1, RAM_BASE + data_offset, 0xFFFF_FFFF, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 2);
-    h.write_desc(2, RAM_BASE + data_offset, 0xFFFF_FFFF, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE, 3);
+    h.write_desc(
+        0,
+        RAM_BASE + header_offset,
+        REQ_HEADER_SIZE as u32,
+        VRING_DESC_F_NEXT,
+        1,
+    );
+    h.write_desc(
+        1,
+        RAM_BASE + data_offset,
+        0xFFFF_FFFF,
+        VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+        2,
+    );
+    h.write_desc(
+        2,
+        RAM_BASE + data_offset,
+        0xFFFF_FFFF,
+        VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+        3,
+    );
     h.write_desc(3, RAM_BASE + data_offset, 1, VRING_DESC_F_WRITE, 0);
     h.push_avail(0, 0, 1);
 
     let mut h = h;
     h.dev.queue_notify(0); // must not panic on the length sum
-    assert_eq!(h.read_used_idx(), 1, "the request must be completed, not crash the device");
+    assert_eq!(
+        h.read_used_idx(),
+        1,
+        "the request must be completed, not crash the device"
+    );
 }

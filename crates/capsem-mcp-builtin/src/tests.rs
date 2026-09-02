@@ -439,7 +439,11 @@ async fn builtin_http_client_does_not_follow_redirects() {
     let client = build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT).expect("build client");
     let url = spawn_redirecting_http_server().await;
 
-    let resp = client.get(url).send().await.expect("request completes without following redirect");
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .expect("request completes without following redirect");
     assert_eq!(
         resp.status().as_u16(),
         302,

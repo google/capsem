@@ -553,7 +553,10 @@ async fn flush_fires_on_interval_under_continuous_events() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM fs_events", [], |r| r.get(0))
         .unwrap();
-    assert!(count > 0, "interval flush must persist events mid-stream, not only at shutdown");
+    assert!(
+        count > 0,
+        "interval flush must persist events mid-stream, not only at shutdown"
+    );
 
     drop(event_tx);
     let _ = loop_task.await;

@@ -319,7 +319,13 @@ fn list_dir_returns_correct_structure() {
     std::fs::write(ws.join("README.md"), "# Hello").unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 2, &magika);
+    let entries = list_dir_recursive(
+        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        "",
+        1,
+        2,
+        &magika,
+    );
 
     // Should have src/ dir and README.md file
     assert!(entries.len() >= 2);
@@ -345,7 +351,13 @@ fn list_dir_respects_depth_limit() {
 
     let magika = test_magika();
     // depth 1: should list "a" but not recurse into "a/b"
-    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
+    let entries = list_dir_recursive(
+        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        "",
+        1,
+        1,
+        &magika,
+    );
     let a = entries.iter().find(|e| e.name == "a").unwrap();
     assert!(a.children.is_none());
 }
@@ -359,7 +371,13 @@ fn list_dir_skips_system_but_shows_hidden() {
     std::fs::write(ws.join("visible.txt"), "yes").unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
+    let entries = list_dir_recursive(
+        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        "",
+        1,
+        1,
+        &magika,
+    );
     // .hidden + visible.txt shown; system/ filtered out
     assert_eq!(entries.len(), 2);
     assert!(entries.iter().any(|e| e.name == ".hidden"));
@@ -377,7 +395,13 @@ fn list_dir_sorts_dirs_first_then_alphabetical() {
     std::fs::create_dir_all(ws.join("beta")).unwrap();
 
     let magika = test_magika();
-    let entries = list_dir_recursive(&capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(), "", 1, 1, &magika);
+    let entries = list_dir_recursive(
+        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        "",
+        1,
+        1,
+        &magika,
+    );
     // Dirs first (alpha, beta), then files (apple.txt, zebra.txt)
     assert_eq!(entries[0].name, "alpha");
     assert_eq!(entries[1].name, "beta");

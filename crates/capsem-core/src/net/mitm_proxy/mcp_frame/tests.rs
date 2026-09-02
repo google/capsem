@@ -375,10 +375,7 @@ async fn read_next_frame_times_out_when_body_stalls_after_length_prefix() {
     let (client, mut server_writer) = tokio::io::duplex(1024);
     // Announce a valid frame length, then never send the body.
     let declared = (capsem_proto::MCP_FRAME_HEADER_LEN as usize) + 32;
-    server_writer
-        .write_all(&(declared as u32).to_be_bytes())
-        .await
-        .unwrap();
+    server_writer.write_all(&(declared as u32).to_be_bytes()).await.unwrap();
 
     let mut client = client;
     let handle = tokio::spawn(async move { read_next_frame(&mut client).await });

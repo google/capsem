@@ -78,7 +78,12 @@ pub fn identify_file_sync(
     file: &mut std::fs::File,
 ) -> (String, String, String, bool) {
     let mut head = Vec::with_capacity(UTF8_PROBE_BYTES);
-    if file.by_ref().take(UTF8_PROBE_BYTES as u64).read_to_end(&mut head).is_err() {
+    if file
+        .by_ref()
+        .take(UTF8_PROBE_BYTES as u64)
+        .read_to_end(&mut head)
+        .is_err()
+    {
         return unknown_file_type();
     }
     let mut session = magika.lock().unwrap();

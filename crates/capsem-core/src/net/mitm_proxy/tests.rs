@@ -303,9 +303,7 @@ fn observed_mcp_http_request_preview_is_capped() {
     // to MCP_BODY_CAPTURE_LIMIT). The stored preview must be bounded like the
     // framed path, not the whole multi-megabyte body pushed into the ledger.
     let filler = "a".repeat(200_000);
-    let body = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"x","pad":"{filler}"}}}}"#
-    );
+    let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"x","pad":"{filler}"}}}}"#);
     let observed = observed_mcp_http_request_for_body(body.as_bytes(), "mcp.example.test", 443, "/mcp").unwrap();
     let preview = observed.request_preview.expect("preview present");
     assert!(
@@ -436,8 +434,12 @@ async fn classify_read_times_out_on_a_stalled_client() {
 #[tokio::test]
 async fn classify_read_returns_data_that_arrives_in_time() {
     let (mut reader, mut writer) = tokio::io::duplex(64);
-    tokio::io::AsyncWriteExt::write_all(&mut writer, b"hello").await.unwrap();
+    tokio::io::AsyncWriteExt::write_all(&mut writer, b"hello")
+        .await
+        .unwrap();
     let mut buf = [0u8; 16];
-    let n = classify_read(&mut reader, &mut buf, std::time::Duration::from_secs(5)).await.unwrap();
+    let n = classify_read(&mut reader, &mut buf, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
     assert_eq!(&buf[..n], b"hello");
 }

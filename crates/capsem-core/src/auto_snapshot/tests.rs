@@ -1141,5 +1141,8 @@ fn take_named_snapshot_never_overwrites_an_existing_manual_slot() {
         names.contains(&"a".to_string()),
         "creating 'e' overwrote the oldest named snapshot 'a'; names = {names:?}"
     );
-    assert!(names.contains(&"e".to_string()), "new snapshot 'e' should exist; names = {names:?}");
+    assert!(
+        names.contains(&"e".to_string()),
+        "new snapshot 'e' should exist; names = {names:?}"
+    );
 }

@@ -773,7 +773,11 @@ fn cold_activation_rejects_oversized_queue() {
     write_u32(&t, QUEUE_SEL, 0);
     write_u32(&t, QUEUE_NUM, 512);
     write_u32(&t, QUEUE_READY, 1);
-    write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+    write_u32(
+        &t,
+        STATUS,
+        STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+    );
     assert!(
         !activated.load(Ordering::SeqCst),
         "device must not activate with a guest queue size exceeding the maximum"
@@ -795,7 +799,11 @@ fn cold_activation_accepts_a_valid_ready_queue() {
     write_u32(&t, QUEUE_DEVICE_LOW, (RAM_BASE + 512) as u32);
     write_u32(&t, QUEUE_DEVICE_HIGH, (RAM_BASE >> 32) as u32);
     write_u32(&t, QUEUE_READY, 1);
-    write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+    write_u32(
+        &t,
+        STATUS,
+        STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+    );
     assert!(
         activated.load(Ordering::SeqCst),
         "a valid ready queue must still activate the device"

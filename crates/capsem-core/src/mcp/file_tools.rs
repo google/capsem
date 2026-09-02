@@ -384,8 +384,10 @@ fn write_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> Result<(
         .mode(mode)
         .open(path)
         .map_err(|e| format!("failed to create restored file without following symlinks: {e}"))?;
-    file.write_all(data).map_err(|e| format!("failed to write restored file: {e}"))?;
-    file.sync_all().map_err(|e| format!("failed to fsync restored file: {e}"))?;
+    file.write_all(data)
+        .map_err(|e| format!("failed to write restored file: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("failed to fsync restored file: {e}"))?;
     Ok(())
 }
 
@@ -397,7 +399,8 @@ fn write_regular_file_no_follow(path: &Path, data: &[u8], _mode: u32) -> Result<
         .create_new(true)
         .open(path)
         .map_err(|e| format!("failed to create restored file: {e}"))?;
-    file.write_all(data).map_err(|e| format!("failed to write restored file: {e}"))?;
+    file.write_all(data)
+        .map_err(|e| format!("failed to write restored file: {e}"))?;
     let _ = file.sync_all();
     Ok(())
 }

@@ -1371,7 +1371,6 @@ pub async fn emit_security_rule_match(
     Ok(())
 }
 
-
 pub fn security_rule_event(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,

@@ -1761,7 +1761,11 @@ async fn read_body_capped_truncates_oversized_body() {
         .await
         .unwrap();
     let body = read_body_capped(resp, 1000).await.unwrap();
-    assert_eq!(body.len(), 1000, "an oversized response body must be truncated at the cap");
+    assert_eq!(
+        body.len(),
+        1000,
+        "an oversized response body must be truncated at the cap"
+    );
 }
 
 #[tokio::test]
