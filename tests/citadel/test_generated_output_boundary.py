@@ -6,12 +6,12 @@ import ast
 import hashlib
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("generated_output_debt.toml")

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 import subprocess
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = ROOT / "build_system" / "release_site"

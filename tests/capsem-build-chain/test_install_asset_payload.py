@@ -9,11 +9,11 @@ import json
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
-import tomllib
 import yaml
 from blake3 import blake3
 from capsem_builder.release.tools import (

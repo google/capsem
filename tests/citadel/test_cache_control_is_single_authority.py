@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import tomllib
 from pathlib import Path
 
-import tomllib
 from capsem_builder.cache.api import CacheBackend
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.registry import CacheRegistry
