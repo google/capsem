@@ -49,10 +49,7 @@ fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
 /// `MAX_FRAME_SIZE`) is logged, evicted from the replay map, and dropped:
 /// the host would never decode or ack it, and replaying it on every
 /// reconnect is how one oversized response wedged the channel for good.
-fn frame_or_drop(
-    msg: &GuestToHost,
-    pending: &std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
-) -> Option<Vec<u8>> {
+fn frame_or_drop(msg: &GuestToHost, pending: &PendingResponses) -> Option<Vec<u8>> {
     match encode_guest_msg(msg) {
         Ok(frame) => Some(frame),
         Err(e) => {
@@ -565,8 +562,15 @@ fn main() {
             // `HostToGuest::AckReply { id }` on receipt; control_loop
             // removes the entry. Lifted to outer scope so the map
             // survives reconnects (the writer thread is per-run_bridge).
-            let pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>> =
+            let pending_responses: PendingResponses =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+            let (ctrl_sender, ctrl_rx) = CtrlSender::new(std::sync::Arc::clone(&pending_responses));
+            let bridge_shared = BridgeShared {
+                exec_inflight: std::sync::Arc::clone(&exec_inflight),
+                exec_done: std::sync::Arc::clone(&exec_done),
+                ctrl_sender,
+                ctrl_rx,
+            };
 
             loop {
                 if !is_first {
@@ -683,9 +687,7 @@ fn main() {
                     t_fd,
                     c_fd,
                     &boot_env_for_parent,
-                    std::sync::Arc::clone(&exec_inflight),
-                    std::sync::Arc::clone(&exec_done),
-                    std::sync::Arc::clone(&pending_responses),
+                    bridge_shared.clone(),
                 );
 
                 // Cleanup broken FDs
@@ -799,106 +801,190 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
 }
 
 #[allow(clippy::too_many_arguments)]
+type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>;
+type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<GuestToHost>>>;
+
+/// Producer side of the serialized control-channel writer.
+///
+/// One channel outlives every connection. The exec threads hold clones and
+/// keep running across a reconnect, so an ExecDone that finishes after the
+/// old connection died must reach the new connection's writer -- with a
+/// per-connection channel it went to a dropped receiver and the host waited
+/// for the exit code forever. Each connection's writer takes its turn on the
+/// shared receiver.
+///
+/// Ackable responses are parked in `pending` here, at send time, so nothing
+/// that enters the channel can be lost with it; the host's AckReply removes
+/// them and every fresh connection replays what is left.
+#[derive(Clone)]
+struct CtrlSender {
+    tx: std::sync::mpsc::Sender<GuestToHost>,
+    pending: PendingResponses,
+}
+
+impl CtrlSender {
+    fn new(pending: PendingResponses) -> (Self, SharedCtrlReceiver) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Self { tx, pending }, std::sync::Arc::new(std::sync::Mutex::new(rx)))
+    }
+
+    fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
+        if let Some(id) = ackable_response_id(&msg) {
+            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            // Bound the map at 4096 to match the exec_done cap -- under
+            // transport pathology it could otherwise grow without limit.
+            if p.len() >= 4096 {
+                p.clear();
+            }
+            p.insert(id, msg.clone());
+        }
+        self.tx.send(msg)
+    }
+}
+
+/// State that outlives any one host connection and is handed to every
+/// `run_bridge`: exec bookkeeping and the serialized control writer channel.
+#[derive(Clone)]
+struct BridgeShared {
+    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
+    ctrl_sender: CtrlSender,
+    ctrl_rx: SharedCtrlReceiver,
+}
+
+/// How long a connection's writer waits on the shared receiver before
+/// re-checking whether its connection is still alive.
+const CTRL_WRITER_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// One connection's turn at the control channel writer.
+///
+/// Replays every unacked response first, then drains the shared receiver
+/// until the connection dies. On a failed write both vsock fds are shut down
+/// so bridge_loop and control_loop wake from their polls and the outer
+/// reconnect logic runs. The message that failed is requeued for the next
+/// connection's writer, whose replay snapshot may already have been taken;
+/// the host dedups by id, so a copy that did land is harmless.
+fn control_writer_loop(
+    rx: &SharedCtrlReceiver,
+    sender: &CtrlSender,
+    control_fd: RawFd,
+    terminal_fd: RawFd,
+    alive: &std::sync::atomic::AtomicBool,
+) {
+    use std::sync::atomic::Ordering;
+    let mark_dead = || {
+        alive.store(false, Ordering::SeqCst);
+        unsafe {
+            libc::shutdown(control_fd, libc::SHUT_RDWR);
+            libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+        }
+    };
+
+    // Replay every entry still in pending_responses on the fresh control_fd.
+    // These are ackable responses (ExecDone / FileOpDone / FileContent /
+    // Error) whose host-side AckReply never arrived -- typically because the
+    // previous control conn went silent (Apple VZ post-restoreState pattern:
+    // write returned success, bytes never propagated). The host's
+    // handle_guest_msg is idempotent for already-handled ids.
+    let snap: Vec<GuestToHost> = sender
+        .pending
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    if !snap.is_empty() {
+        eprintln!(
+            "[capsem-agent] control writer: replaying {} pending unacked responses",
+            snap.len()
+        );
+        for msg in &snap {
+            let Some(frame) = frame_or_drop(msg, &sender.pending) else {
+                continue;
+            };
+            if write_all_fd(control_fd, &frame).is_err() {
+                mark_dead();
+                return;
+            }
+        }
+    }
+
+    while alive.load(Ordering::SeqCst) {
+        let received = rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .recv_timeout(CTRL_WRITER_POLL);
+        let msg = match received {
+            Ok(msg) => msg,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+        // Frame first: a message that cannot be framed is a bug in the
+        // producer, not a transport loss, and must not tear the connection
+        // down.
+        let Some(frame) = frame_or_drop(&msg, &sender.pending) else {
+            continue;
+        };
+        if write_all_fd(control_fd, &frame).is_err() {
+            mark_dead();
+            if ackable_response_id(&msg).is_some() {
+                let _ = sender.tx.send(msg);
+            }
+            return;
+        }
+    }
+}
+
 fn run_bridge(
     master_fd: RawFd,
     child_pid: Pid,
     terminal_fd: RawFd,
     control_fd: RawFd,
     boot_env: &[(String, String)],
-    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
-    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+    shared: BridgeShared,
 ) {
-    // Serialize all control channel writes through a single channel + writer
-    // thread. The exec background thread and control_loop both need to write
-    // to control_fd; concurrent writes would corrupt protocol framing.
-    let (ctrl_write_tx, ctrl_write_rx) = std::sync::mpsc::channel::<GuestToHost>();
-
-    // Single control channel writer thread. On write failure (host gone --
-    // typically because the VM was suspended and resumed against a fresh
-    // host process), shutdown both vsock fds so bridge_loop and control_loop
-    // wake from their polls and the outer reconnect logic re-establishes
-    // both connections against the new host.
-    //
-    // Before the normal write loop, replay every entry still in
-    // pending_responses on the fresh control_fd. These are ackable
-    // responses (ExecDone / FileOpDone / FileContent / Error) whose
-    // host-side AckReply never arrived -- typically because the
-    // previous control conn went silent (Apple VZ post-restoreState
-    // pattern: write returned success, bytes never propagated). The
-    // host's `handle_guest_msg` is idempotent for already-handled ids
-    // (it removes the job sender on first delivery), so a replayed
-    // response that actually did land twice is harmless.
-    let pending_for_writer = std::sync::Arc::clone(&pending_responses);
-    std::thread::spawn(move || {
-        let snap: Vec<GuestToHost> = pending_for_writer.lock().unwrap().values().cloned().collect();
-        if !snap.is_empty() {
-            eprintln!(
-                "[capsem-agent] control writer: replaying {} pending unacked responses",
-                snap.len()
-            );
-            for msg in &snap {
-                let Some(frame) = frame_or_drop(msg, &pending_for_writer) else {
-                    continue;
-                };
-                if write_all_fd(control_fd, &frame).is_err() {
-                    unsafe {
-                        libc::shutdown(control_fd, libc::SHUT_RDWR);
-                        libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-                    }
-                    return;
-                }
-            }
-        }
-
-        while let Ok(msg) = ctrl_write_rx.recv() {
-            // Frame first: a message that cannot be framed is a bug in the
-            // producer, not a transport loss, and must never be parked for
-            // replay or tear the connection down.
-            let Some(frame) = frame_or_drop(&msg, &pending_for_writer) else {
-                continue;
-            };
-            // Insert ackable responses *before* writing so a
-            // write-success-but-silent-drop is recoverable via the
-            // next rekey replay. Bound the map at 4096 to match the
-            // exec_done cap above -- under transport pathology the
-            // map could otherwise grow unbounded under a pathological
-            // return-path drop.
-            if let Some(id) = ackable_response_id(&msg) {
-                let mut p = pending_for_writer.lock().unwrap();
-                if p.len() >= 4096 {
-                    p.clear();
-                }
-                p.insert(id, msg.clone());
-            }
-            if write_all_fd(control_fd, &frame).is_err() {
-                unsafe {
-                    libc::shutdown(control_fd, libc::SHUT_RDWR);
-                    libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-                }
-                break;
-            }
-        }
-    });
+    let BridgeShared {
+        exec_inflight,
+        exec_done,
+        ctrl_sender,
+        ctrl_rx,
+    } = shared;
+    // All control channel writes go through the shared channel and this
+    // connection's writer thread. The exec background threads and
+    // control_loop both write to control_fd; concurrent writes would corrupt
+    // protocol framing. `alive` is this connection's lease on the shared
+    // receiver: cleared by the writer on a failed write and below when the
+    // bridge exits, so the next connection's writer can take over.
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    {
+        let rx = std::sync::Arc::clone(&ctrl_rx);
+        let sender = ctrl_sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        std::thread::spawn(move || control_writer_loop(&rx, &sender, control_fd, terminal_fd, &alive));
+    }
 
     // Heartbeat. Without periodic probes the connection is invisible until
     // the next genuine traffic, which can be hours. After a suspend/resume
-    // the host process is gone; the first failed write here trips the
-    // shutdown path above and triggers reconnect within ~3s.
-    let hb_tx = ctrl_write_tx.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        if hb_tx.send(GuestToHost::Pong).is_err() {
-            break;
-        }
-    });
+    // the host process is gone; the first failed write trips the writer's
+    // shutdown path and triggers reconnect within ~3s.
+    {
+        let hb = ctrl_sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            if !alive.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            let _ = hb.send(GuestToHost::Pong);
+        });
+    }
 
     // Spawn control channel handler in a background thread.
     let boot_env_owned = boot_env.to_vec();
-    let ctrl_tx = ctrl_write_tx;
+    let pending_for_ctrl = std::sync::Arc::clone(&ctrl_sender.pending);
+    let ctrl_tx = ctrl_sender;
     let inflight_for_ctrl = exec_inflight;
     let done_for_ctrl = exec_done;
-    let pending_for_ctrl = pending_responses;
     thread::spawn(move || {
         control_loop(
             control_fd,
@@ -919,6 +1005,9 @@ fn run_bridge(
 
     // Main I/O bridge: master PTY <-> vsock terminal port.
     bridge_loop(master_fd, terminal_fd);
+
+    // This connection is over; release the shared receiver to the next one.
+    alive.store(false, std::sync::atomic::Ordering::SeqCst);
 
     // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
     // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.
@@ -1305,12 +1394,7 @@ impl ExecOutcome {
 /// Runs in a background thread so control_loop remains responsive to heartbeats.
 /// Output flows as raw bytes on a dedicated exec vsock connection. The exit code
 /// is sent as ExecDone via the serialized control write channel.
-fn run_exec(
-    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
-    id: u64,
-    command: &str,
-    boot_env: &[(String, String)],
-) -> ExecOutcome {
+fn run_exec(ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> ExecOutcome {
     // Connect to host exec port. Retry on ECONNRESET only -- post-restore
     // VZ transient (Bug C). Other errors bail immediately.
     let exec_fd = match vsock_connect_with_econnreset_retry(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)) {
@@ -1328,13 +1412,7 @@ fn run_exec(
 /// Inner exec implementation that takes pre-connected fds (testable without vsock).
 /// `ctrl_tx` serializes writes to the control channel (prevents frame corruption
 /// from concurrent writers). `exec_fd` is consumed: closed on all exit paths.
-fn run_exec_on_fds(
-    exec_fd: RawFd,
-    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
-    id: u64,
-    command: &str,
-    boot_env: &[(String, String)],
-) -> i32 {
+fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> i32 {
     // RAII guard to ensure exec_fd is closed on all paths.
     struct FdGuard(RawFd);
     impl Drop for FdGuard {
@@ -1512,10 +1590,10 @@ fn control_loop(
     master_fd: RawFd,
     child_pid: Pid,
     boot_env: &[(String, String)],
-    ctrl_tx: std::sync::mpsc::Sender<GuestToHost>,
+    ctrl_tx: CtrlSender,
     exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+    pending_responses: PendingResponses,
 ) {
     loop {
         match recv_host_msg(control_fd) {

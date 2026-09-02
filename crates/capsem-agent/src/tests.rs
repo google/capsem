@@ -548,8 +548,19 @@ fn read_exec_started(exec_host: &mut std::os::unix::net::UnixStream) -> u64 {
 }
 
 /// Helper: receive ExecDone from mpsc channel, return (id, exit_code).
-fn recv_exec_done(rx: &std::sync::mpsc::Receiver<GuestToHost>) -> (u64, i32) {
-    match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
+fn test_ctrl_channel() -> (CtrlSender, SharedCtrlReceiver) {
+    CtrlSender::new(std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::new(),
+    )))
+}
+
+fn recv_exec_done(rx: &SharedCtrlReceiver) -> (u64, i32) {
+    let received = rx
+        .lock()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    match received {
         GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
         other => panic!("expected ExecDone, got {other:?}"),
     }
@@ -577,7 +588,7 @@ fn exec_echo_captures_output_and_exit_code() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
 
     let exec_fd = exec_guest.into_raw_fd();
 
@@ -604,7 +615,7 @@ fn exec_nonzero_exit_code() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -627,7 +638,7 @@ fn exec_boot_env_passed_to_child() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     let env = vec![("CAPSEM_TEST_VAR".to_string(), "test_value_42".to_string())];
@@ -652,7 +663,7 @@ fn exec_stderr_captured() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -677,7 +688,7 @@ fn exec_sentinel_in_output_is_not_stripped() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -704,7 +715,7 @@ fn exec_large_output_no_truncation() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1097,7 +1108,7 @@ fn exec_stdout_and_stderr_both_appear_in_merged_stream() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     // Generate distinct output on both stdout and stderr
@@ -1130,7 +1141,7 @@ fn exec_invalid_command_returns_nonzero() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1152,7 +1163,7 @@ fn exec_empty_command_succeeds() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1178,7 +1189,7 @@ fn exec_fd_closed_before_exec_done() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1424,7 +1435,7 @@ fn run_control_loop_with_messages_and_pending(
         .expect("spawn sleep");
     let child_pid = Pid::from_raw(child.id() as i32);
 
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
 
     // Write all messages then close the write end so control_loop
     // sees EOF and exits.
@@ -1469,7 +1480,7 @@ fn run_control_loop_with_messages_and_pending(
 
     // Drain the channel.
     let mut responses = Vec::new();
-    while let Ok(msg) = ctrl_rx.try_recv() {
+    while let Ok(msg) = ctrl_rx.lock().unwrap().try_recv() {
         responses.push(msg);
     }
     (responses, pending)
@@ -1505,7 +1516,7 @@ fn control_loop_resize_changes_pty_winsize() {
         .spawn()
         .expect("spawn sleep");
     let child_pid = Pid::from_raw(child.id() as i32);
-    let (ctrl_tx, _ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, _ctrl_rx) = test_ctrl_channel();
 
     // Send resize then close.
     let frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 132, rows: 43 }).unwrap();
@@ -1860,4 +1871,121 @@ fn env_preview_truncates_on_a_character_boundary() {
     assert_eq!(env_preview(&"x".repeat(40)), "x".repeat(40));
     assert_eq!(env_preview(&"x".repeat(41)), format!("{}...", "x".repeat(40)));
     assert_eq!(env_preview(""), "");
+}
+
+// -----------------------------------------------------------------------
+// Control writer: one channel across reconnects
+// -----------------------------------------------------------------------
+//
+// The writer thread used to own the only receiver of a per-connection
+// channel. An exec still running when the connection died finished into a
+// dropped receiver, its ExecDone was never parked (the writer did the
+// parking), and the host -- which has no exec watchdog -- waited forever.
+
+fn read_guest_frame(host: &mut std::os::unix::net::UnixStream) -> GuestToHost {
+    let mut len_buf = [0u8; 4];
+    host.read_exact(&mut len_buf).unwrap();
+    let mut payload = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+    host.read_exact(&mut payload).unwrap();
+    capsem_proto::decode_guest_msg(&payload).unwrap()
+}
+
+/// Read frames until `want` accepts one; replayed duplicates are allowed.
+fn wait_for_frame(host: &mut std::os::unix::net::UnixStream, want: impl Fn(&GuestToHost) -> bool) -> GuestToHost {
+    host.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    loop {
+        let msg = read_guest_frame(host);
+        if want(&msg) {
+            return msg;
+        }
+    }
+}
+
+struct WriterConn {
+    host: std::os::unix::net::UnixStream,
+    guest_fd: RawFd,
+    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+fn spawn_writer_conn(sender: &CtrlSender, rx: &SharedCtrlReceiver) -> WriterConn {
+    use std::os::unix::io::IntoRawFd;
+    let (host, guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    let guest_fd = guest.into_raw_fd();
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let handle = {
+        let rx = std::sync::Arc::clone(rx);
+        let sender = sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        std::thread::spawn(move || control_writer_loop(&rx, &sender, guest_fd, -1, &alive))
+    };
+    WriterConn {
+        host,
+        guest_fd,
+        alive,
+        handle,
+    }
+}
+
+impl WriterConn {
+    fn finish(self) {
+        self.alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        drop(self.host);
+        self.handle.join().unwrap();
+        unsafe {
+            libc::close(self.guest_fd);
+        }
+    }
+}
+
+#[test]
+fn exec_done_finished_after_a_reconnect_reaches_the_new_connection() {
+    let (sender, rx) = test_ctrl_channel();
+
+    let mut first = spawn_writer_conn(&sender, &rx);
+    sender.send(GuestToHost::Ack { id: 1 }).unwrap();
+    assert!(matches!(read_guest_frame(&mut first.host), GuestToHost::Ack { id: 1 }));
+    // The host goes away and the bridge exits.
+    first.finish();
+
+    // The exec that was running finishes now, into the same channel.
+    sender.send(GuestToHost::ExecDone { id: 7, exit_code: 3 }).unwrap();
+
+    let mut second = spawn_writer_conn(&sender, &rx);
+    let done = wait_for_frame(&mut second.host, |m| matches!(m, GuestToHost::ExecDone { id: 7, .. }));
+    assert!(matches!(done, GuestToHost::ExecDone { id: 7, exit_code: 3 }));
+    second.finish();
+}
+
+#[test]
+fn a_message_the_dying_writer_consumed_is_delivered_by_the_next_one() {
+    let (sender, rx) = test_ctrl_channel();
+
+    let first = spawn_writer_conn(&sender, &rx);
+    // The host dies without anyone telling the writer.
+    drop(first.host);
+    // The writer consumes this, fails to write it, and must hand it on.
+    sender.send(GuestToHost::ExecDone { id: 9, exit_code: 0 }).unwrap();
+    first.handle.join().unwrap();
+    assert!(
+        !first.alive.load(std::sync::atomic::Ordering::SeqCst),
+        "a failed write ends the connection"
+    );
+    unsafe {
+        libc::close(first.guest_fd);
+    }
+
+    let mut second = spawn_writer_conn(&sender, &rx);
+    let done = wait_for_frame(&mut second.host, |m| matches!(m, GuestToHost::ExecDone { id: 9, .. }));
+    assert!(matches!(done, GuestToHost::ExecDone { id: 9, exit_code: 0 }));
+    second.finish();
+}
+
+#[test]
+fn ackable_responses_are_parked_at_send_time_and_pongs_are_not() {
+    let (sender, _rx) = test_ctrl_channel();
+    sender.send(GuestToHost::Pong).unwrap();
+    sender.send(GuestToHost::ExecDone { id: 4, exit_code: 0 }).unwrap();
+    let parked: Vec<u64> = sender.pending.lock().unwrap().keys().copied().collect();
+    assert_eq!(parked, vec![4]);
 }
