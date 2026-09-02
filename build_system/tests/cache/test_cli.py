@@ -14,6 +14,7 @@ def repository(tmp_path: Path) -> Path:
         """
 version = 1
 root = "cache"
+authority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"
 [stages.objects]
 description = "immutable test objects"
 scope = "disk"

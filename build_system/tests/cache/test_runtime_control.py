@@ -47,6 +47,7 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={"logs": stage("containers/logs")},
         runtimes={
             "docker": DockerRuntimePolicy(

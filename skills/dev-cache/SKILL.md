@@ -43,6 +43,12 @@ path from repository literals, environment variables, or a backend name. A
 consumer that only inspects or controls a cache uses `CacheRegistry` and never
 receives its path.
 
+`CachePaths` is loaded through `load_paths()`. The loader resolves the
+policy-owned `authority_environment`; a gate prefix exports that variable once
+so every producer sees the outer shared cache even when its output path crosses
+a prefix symlink. Producers never read or interpret the environment variable
+themselves.
+
 All models are strict, frozen Pydantic models with `extra="forbid"`. Keep every
 module at or below 300 lines and put tests in the matching test module.
 

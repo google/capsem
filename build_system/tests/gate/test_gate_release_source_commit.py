@@ -179,7 +179,7 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem_builder.gate import buildcache, cachetooling, cargotarget, prefix
+    from capsem_builder.gate import buildcache, cachelayout, cachetooling, cargotarget, prefix
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.sourcecommit import SourceCommit
 
@@ -217,6 +217,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     assert environments == [
         {
             config.environment.source_checkout: str(config.root),
+            cachelayout.cache_paths(config).policy.authority_environment: str(config.root),
             config.environment.source_commit: str(commit),
             # Named here rather than merely tolerated: the child compiles into
             # one shared build directory, and it learns that from the exported

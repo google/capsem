@@ -24,6 +24,7 @@ def _paths(root: Path) -> CachePaths:
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={
             "python-pycache": stage("tools/python/pycache"),
             "python-pytest": stage("tools/python/pytest"),

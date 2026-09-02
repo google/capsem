@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 import blake3
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
-from ..cache.config import load_policy
+from ..cache.config import load_paths
 from ..cache.objects import ObjectRef, digest_file, import_file, materialize
 from ..cache.paths import CachePaths
 
@@ -87,7 +87,14 @@ def _source_files(target: Path) -> Iterator[Path]:
 
 def build_identity(record: dict[str, Any], *, extra: dict[str, Any] | None = None) -> str:
     """Hash only byte-affecting build inputs, excluding commit and runtime labels."""
-    keys = ("arch", "template", "docker_platform", "dockerfile", "build_context", "dependency_image")
+    keys = (
+        "arch",
+        "template",
+        "docker_platform",
+        "dockerfile",
+        "build_context",
+        "dependency_image",
+    )
     missing = [key for key in keys if key not in record]
     if missing:
         raise ValueError(f"component build identity lacks inputs: {missing}")
@@ -98,7 +105,7 @@ def build_identity(record: dict[str, Any], *, extra: dict[str, Any] | None = Non
 
 
 def _paths(repository: Path) -> CachePaths:
-    return CachePaths(repository_root=repository.resolve(), policy=load_policy(repository))
+    return load_paths(repository.resolve())
 
 
 def _receipt(paths: CachePaths, component: str, identity: str) -> Path:
@@ -107,9 +114,7 @@ def _receipt(paths: CachePaths, component: str, identity: str) -> Path:
     return paths.stage("objects") / "components" / component / f"{identity}.json"
 
 
-def _load_receipt(
-    paths: CachePaths, component: str, identity: str
-) -> ComponentReceipt | None:
+def _load_receipt(paths: CachePaths, component: str, identity: str) -> ComponentReceipt | None:
     receipt_path = _receipt(paths, component, identity)
     if not receipt_path.is_file():
         return None

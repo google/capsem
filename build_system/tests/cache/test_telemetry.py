@@ -23,6 +23,7 @@ def paths(tmp_path: Path) -> CachePaths:
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={"python-uv": stage("tools/python/uv"), "state": stage("state")},
     )
     return CachePaths(repository_root=tmp_path, policy=policy)

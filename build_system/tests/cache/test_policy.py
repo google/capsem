@@ -53,6 +53,7 @@ def test_stage_paths_must_be_unique_non_overlapping_leaves() -> None:
             {
                 "version": 1,
                 "root": "cache",
+                "authority_environment": "CAPSEM_TEST_CACHE_AUTHORITY",
                 "stages": {
                     "cargo": stage(path="target/cargo").model_dump(mode="json"),
                     "debug": stage(path="target/cargo/debug").model_dump(mode="json"),
@@ -65,6 +66,7 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     policy = load_policy(PROJECT_ROOT)
 
     assert policy.root == Path("cache")
+    assert policy.authority_environment == "CAPSEM_CACHE_AUTHORITY"
     assert policy.stages["cargo"].path == Path("target/cargo")
     assert policy.stages["assets"].entry_root == Path("generations")
     assert policy.stages["python-pycache"].managed_globs == ("cpython-*",)
@@ -76,6 +78,19 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())
+
+
+def test_cache_authority_environment_is_required_and_canonical() -> None:
+    values = {
+        "version": 1,
+        "root": "cache",
+        "stages": {"cargo": stage().model_dump(mode="json")},
+    }
+
+    with pytest.raises(ValidationError, match="authority_environment"):
+        CachePolicy.model_validate(values)
+    with pytest.raises(ValidationError, match="authority_environment"):
+        CachePolicy.model_validate({**values, "authority_environment": "not-valid"})
 
 
 def test_bootstrap_reads_only_the_common_docker_contract() -> None:
@@ -110,6 +125,7 @@ def test_runtime_policy_references_an_owned_log_stage() -> None:
         CachePolicy(
             version=1,
             root=Path("cache"),
+            authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
             stages={"logs": stage(path="containers/logs")},
             runtimes={"docker": docker},
         )

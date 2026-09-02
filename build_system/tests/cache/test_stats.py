@@ -17,6 +17,7 @@ def test_stats_exposes_every_required_contract_field() -> None:
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={
             "objects": StagePolicy(
                 description="immutable build objects",

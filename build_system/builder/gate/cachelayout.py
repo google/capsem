@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from ..cache.config import load_policy
+from ..cache.config import load_paths, load_policy
 from ..cache.models import StagePolicy
 from ..cache.paths import CachePaths
 from .config import GateConfig
@@ -14,11 +13,7 @@ from .errors import GateError
 
 def authority(config: GateConfig) -> Path:
     """Return the outer checkout that owns shared cache state."""
-    raw = os.environ.get(config.environment.source_checkout)
-    root = Path(raw) if raw else config.root
-    if not root.is_absolute():
-        raise GateError(f"cache authority must be absolute: {root}")
-    return root.absolute()
+    return cache_paths(config).repository_root
 
 
 def shared_path(config: GateConfig, configured: str | Path) -> Path:
@@ -52,4 +47,7 @@ def stage_policy(config: GateConfig, stage_id: str) -> StagePolicy:
 
 def cache_paths(config: GateConfig) -> CachePaths:
     """Return the typed path authority shared by gate cache adapters."""
-    return CachePaths(repository_root=authority(config), policy=load_policy(config.root))
+    try:
+        return load_paths(config.root)
+    except ValueError as error:
+        raise GateError(str(error)) from error

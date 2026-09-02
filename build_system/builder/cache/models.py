@@ -7,7 +7,15 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StringConstraints,
+    model_validator,
+)
 
 from .contract import CacheContract, CacheScope, PruneStrategy
 from .controlmodels import CacheControlPolicy
@@ -120,6 +128,7 @@ class CachePolicy(BaseModel):
 
     version: Annotated[StrictInt, Field(ge=1)]
     root: Path
+    authority_environment: Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]+$")]
     test_admission: TestAdmissionPolicy = TestAdmissionPolicy(
         minimum_commits=10,
         state_path=Path("state/test-admission.jsonl"),

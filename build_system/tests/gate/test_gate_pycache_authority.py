@@ -110,7 +110,8 @@ def test_private_source_generation_uses_outer_cache_authority(
     config = source / "config"
     config.mkdir()
     config.joinpath("cache.toml").write_text(
-        'root = "cache"\n[stages.python-pycache]\npath = "tools/python/pycache"\n',
+        'root = "cache"\nauthority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"\n'
+        '[stages.python-pycache]\npath = "tools/python/pycache"\n',
         encoding="utf-8",
     )
     config.joinpath("gate.toml").write_text(
@@ -145,6 +146,7 @@ def test_live_gate_generation_holds_a_prune_lease(tmp_path: Path) -> None:
     policy = CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={"python-pycache": stage},
     )
 

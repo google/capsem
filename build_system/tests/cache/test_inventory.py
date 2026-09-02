@@ -13,6 +13,7 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={
             "objects": StagePolicy(
                 path=Path("target/objects"),

@@ -1,6 +1,7 @@
 # One policy for repository caches, external runtime caches, and generated output.
 version = 1
 root = "cache"
+authority_environment = "CAPSEM_CACHE_AUTHORITY"
 
 [test_admission]
 minimum_commits = 10

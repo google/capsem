@@ -20,7 +20,12 @@ def test_named_view_is_hardlinked_and_receipted(tmp_path: Path) -> None:
     )
     paths = CachePaths(
         repository_root=tmp_path,
-        policy=CachePolicy(version=1, root=Path("cache"), stages={"objects": stage}),
+        policy=CachePolicy(
+            version=1,
+            root=Path("cache"),
+            authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
+            stages={"objects": stage},
+        ),
     )
     package = tmp_path / "Capsem.deb"
     package.write_bytes(b"package")

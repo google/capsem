@@ -21,7 +21,12 @@ def paths(tmp_path: Path) -> CachePaths:
     )
     return CachePaths(
         repository_root=tmp_path,
-        policy=CachePolicy(version=1, root=Path("cache"), stages={"objects": stage}),
+        policy=CachePolicy(
+            version=1,
+            root=Path("cache"),
+            authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
+            stages={"objects": stage},
+        ),
     )
 
 
