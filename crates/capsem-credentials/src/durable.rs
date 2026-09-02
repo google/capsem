@@ -11,6 +11,9 @@ pub const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 
 static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn backend_name() -> &'static str {
     if store_path_override().is_some() {
         return "disk_override";
@@ -70,8 +73,7 @@ fn disk_store_write(
     }
     let json =
         serde_json::to_string_pretty(&map).map_err(|error| format!("serialize credential disk store: {error}"))?;
-    std::fs::write(path, json).map_err(|error| format!("write credential disk store: {error}"))?;
-    restrict_secret_file(path)
+    write_secret_file(path, json.as_bytes())
 }
 
 fn disk_store_read(path: &Path, provider: CredentialProvider, credential_ref: &str) -> Result<String, String> {
@@ -121,14 +123,59 @@ fn parse_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
     Some((credential_provider_from_str(provider)?, credential_ref))
 }
 
+/// Write the plaintext credential store owner-only and atomically.
+///
+/// The store holds every provider's raw secret, so it must never exist even
+/// briefly as a world-readable file. The previous `fs::write` + `chmod` left a
+/// 0644 window under the default umask. Here the bytes go into a sibling temp
+/// created 0600, then a rename swings it into place -- the target is never
+/// observable at looser permissions or as a partial file.
+fn write_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "credential store path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("credential-store.json"));
+    let prefix = format!(".{}.tmp.", file_name.to_string_lossy());
+    let mut file = tempfile::Builder::new()
+        .prefix(&prefix)
+        .tempfile_in(parent)
+        .map_err(|error| format!("create credential store temp: {error}"))?;
+    restrict_secret_file(file.as_file())?;
+    file.write_all(data)
+        .map_err(|error| format!("write credential store temp: {error}"))?;
+    file.as_file()
+        .sync_all()
+        .map_err(|error| format!("sync credential store temp: {error}"))?;
+    file.persist(path)
+        .map_err(|error| format!("rename credential store into place: {}", error.error))?;
+    sync_secret_parent(parent)
+}
+
 #[cfg(unix)]
-fn restrict_secret_file(path: &Path) -> Result<(), String> {
+fn restrict_secret_file(file: &std::fs::File) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("restrict credential disk store permissions: {error}"))
+
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("restrict credential store temp: {error}"))
 }
 
 #[cfg(not(unix))]
-fn restrict_secret_file(_path: &Path) -> Result<(), String> {
+fn restrict_secret_file(_file: &std::fs::File) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_secret_parent(parent: &Path) -> Result<(), String> {
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("sync credential store directory: {error}"))
+}
+
+#[cfg(not(unix))]
+fn sync_secret_parent(_parent: &Path) -> Result<(), String> {
     Ok(())
 }

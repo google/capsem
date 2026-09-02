@@ -93,6 +93,17 @@ fn default_credential_store_writes_capsem_home_disk_file() {
         Some(&"ya29.release-disk-store".to_string()),
         "release credential storage must use the file-backed CAPSEM_HOME store"
     );
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::metadata(&store_path).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "the public broker path must persist plaintext credentials owner-only"
+    );
+    assert_eq!(
+        std::fs::read_dir(store_path.parent().unwrap()).unwrap().count(),
+        1,
+        "the public broker path must not leave a temporary sibling"
+    );
 
     CredentialStore::global().clear_for_test();
     match old_store {

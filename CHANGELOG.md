@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Plaintext credential-store updates now use collision-safe sibling files that
+  are owner-only before secrets are written, atomically replace the prior
+  complete store, and durably sync both file and directory without following a
+  predictable temporary-file symlink.
 - KVM VirtioFS and console devices now validate the complete guest-controlled
   descriptor range before reading or writing host memory, and zero-sized
   virtqueues are rejected without a host-process panic.
