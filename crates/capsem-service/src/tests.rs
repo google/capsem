@@ -569,6 +569,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
 }
 
 mod assets_registry;
+mod files_api;
 mod ledger_routes;
 mod lifecycle;
 mod profile_mutations;
