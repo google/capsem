@@ -7,18 +7,10 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from capsem_builder.cache.config import load_policy
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SHARED_CONFTEST = REPOSITORY_ROOT / "tests" / "conftest.py"
 PLUGIN_NAME = "capsem_shared_test_harness"
-CACHE_POLICY = load_policy(REPOSITORY_ROOT)
-
-
-@pytest.fixture(autouse=True)
-def _tests_do_not_inherit_cache_authority(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep synthetic repositories independent from their parent gate cache."""
-    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
 
 
 def _same_file(plugin: object, path: Path) -> bool:

@@ -6,8 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from capsem_builder.cache.config import load_policy
+
 ROOT = Path(__file__).resolve().parents[3]
 BOUNDED = ROOT / "build_system/scripts/ci/run-bounded-command.py"
+CACHE_POLICY = load_policy(ROOT)
 
 
 def test_bounded_pytest_leaves_no_cache_beside_source(tmp_path: Path) -> None:
@@ -20,8 +23,8 @@ from pathlib import Path
 
 
 def test_cache_authority():
-    checkout = Path(os.environ.get("CAPSEM_GATE_SOURCE_CHECKOUT", {str(ROOT)!r}))
-    root = checkout / "cache"
+    authority = Path(os.environ.get({CACHE_POLICY.authority_environment!r}, {str(ROOT)!r}))
+    root = authority / "cache"
     assert Path(sys.pycache_prefix).is_relative_to(root)
     assert str(root / "tools/python/pytest") in os.environ["PYTEST_ADDOPTS"]
     assert Path(os.environ["UV_CACHE_DIR"]).is_relative_to(root)
