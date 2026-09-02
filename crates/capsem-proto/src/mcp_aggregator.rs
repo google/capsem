@@ -190,7 +190,7 @@ pub struct AggregatorServerStatus {
 // ── Client (used by capsem-process and MITM MCP endpoint) ───────────
 
 /// Internal message sent through the client's mpsc channel.
-type ClientMessage = (AggregatorRequest, oneshot::Sender<AggregatorResponse>);
+pub type ClientMessage = (AggregatorRequest, oneshot::Sender<AggregatorResponse>);
 
 static NEXT_REQ_ID: AtomicU64 = AtomicU64::new(1);
 

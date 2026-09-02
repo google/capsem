@@ -1,3 +1,4 @@
+mod aggregator_driver;
 mod helpers;
 mod ipc;
 mod job_store;
@@ -777,9 +778,8 @@ async fn spawn_mcp_aggregator(
     trace_id: &str,
 ) -> Result<capsem_proto::mcp_aggregator::AggregatorClient> {
     use capsem_proto::mcp_aggregator::*;
-    use std::collections::HashMap;
 
-    let (client, mut rx) = AggregatorClient::channel(64);
+    let (client, rx) = AggregatorClient::channel(64);
 
     let exe_path = std::env::current_exe()?;
     let aggregator_bin = resolve_mcp_aggregator_binary(&exe_path)?;
@@ -841,59 +841,13 @@ async fn spawn_mcp_aggregator(
         .spawn()?;
 
     let mut child_stdin = child.stdin.take().unwrap();
-    let mut child_stdout = child.stdout.take().unwrap();
+    let child_stdout = child.stdout.take().unwrap();
 
     // Send server definitions as the first frame.
     let defs_vec = servers.to_vec();
     write_frame(&mut child_stdin, &defs_vec).await?;
 
-    // Background driver: reads from client channel, writes to subprocess stdin,
-    // reads responses from subprocess stdout, routes back to callers.
-    let pending: Arc<tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>> =
-        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-
-    // Reader task: reads msgpack frames from subprocess stdout and routes to pending callers.
-    let pending_reader = Arc::clone(&pending);
-    tokio::spawn(async move {
-        info!("aggregator reader task started");
-        loop {
-            match read_frame::<_, AggregatorResponse>(&mut child_stdout).await {
-                Ok(Some(resp)) => {
-                    let mut map = pending_reader.lock().await;
-                    if let Some(tx) = map.remove(&resp.id) {
-                        capsem_core::try_send!("aggregator_oneshot", tx.send(resp));
-                    }
-                }
-                Ok(None) => {
-                    info!("aggregator stdout closed (EOF)");
-                    break;
-                }
-                Err(e) => {
-                    error!(error = %e, "failed to read aggregator response frame");
-                    break;
-                }
-            }
-        }
-        info!("aggregator reader task ending");
-    });
-
-    // Writer task: reads from client channel, writes msgpack frames to subprocess stdin.
-    let pending_writer = Arc::clone(&pending);
-    tokio::spawn(async move {
-        info!("aggregator writer task started");
-        while let Some((req, resp_tx)) = rx.recv().await {
-            {
-                let mut map = pending_writer.lock().await;
-                map.insert(req.id, resp_tx);
-            }
-            if let Err(e) = write_frame(&mut child_stdin, &req).await {
-                error!(error = %e, "failed to write aggregator request frame");
-                info!("aggregator writer task ending due to write error");
-                break;
-            }
-        }
-        info!("aggregator writer task ending (channel closed or break)");
-    });
+    let inflight = aggregator_driver::spawn(rx, child_stdin, child_stdout);
 
     // Monitor child process.
     tokio::spawn(async move {
@@ -902,6 +856,7 @@ async fn spawn_mcp_aggregator(
             Ok(status) => info!(status = %status, "aggregator subprocess exited"),
             Err(e) => error!(error = %e, "failed to wait on aggregator"),
         }
+        inflight.close();
     });
 
     Ok(client)
