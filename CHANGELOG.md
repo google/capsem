@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The KVM VirtioFS server no longer follows guest-created symlinks on the
+  host. A hostile guest driver could use a symlink to a host directory as the
+  parent of unlink, rename, mkdir, create, mknod, symlink, link or opendir
+  requests, create or truncate through a symlink, and chmod, chown, truncate
+  or touch a symlink's host target; each of those reached files outside the
+  shared workspace with the host user's privileges. A FIFO in the workspace
+  could also park the single VirtioFS worker forever. Every parent must now
+  be a real in-share directory reached without a symlink, attribute changes
+  on a symlink apply to the link itself or are refused, and only regular
+  files are opened.
 - The guest network proxy no longer closes a vsock descriptor twice when it
   fails to register it with the runtime, which could sever an unrelated
   connection that had just been handed the same descriptor number.

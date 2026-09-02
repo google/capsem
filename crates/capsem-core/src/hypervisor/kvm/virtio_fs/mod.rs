@@ -597,4 +597,7 @@ impl VirtioDevice for VirtioFsDevice {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[path = "tests/containment.rs"]
+mod containment_tests;
+#[cfg(test)]
 mod tests;

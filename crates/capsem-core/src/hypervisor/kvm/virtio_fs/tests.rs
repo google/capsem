@@ -108,7 +108,7 @@ fn emit_capture_probe() {
     debug!(event_name = "virtio.fs.capture_probe", "structured capture probe");
 }
 
-fn temp_share(name: &str) -> PathBuf {
+pub(super) fn temp_share(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("capsem-virtfs-test").join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -121,7 +121,7 @@ fn host_file_type(metadata: &std::fs::Metadata) -> u32 {
 }
 
 /// Helper: create a FuseProcessor for testing (no queues needed).
-fn test_processor(dir: &Path) -> FuseProcessor {
+pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
     FuseProcessor {
         root_path: dir.to_path_buf(),
         read_only: false,
@@ -523,7 +523,7 @@ const OUT_HDR_SIZE: usize = std::mem::size_of::<FuseOutHeader>();
 const ENTRY_OUT_SIZE: usize = std::mem::size_of::<FuseEntryOut>();
 const ATTR_OUT_SIZE: usize = std::mem::size_of::<FuseAttrOut>();
 
-fn make_header(opcode: u32, nodeid: u64, unique: u64) -> FuseInHeader {
+pub(super) fn make_header(opcode: u32, nodeid: u64, unique: u64) -> FuseInHeader {
     FuseInHeader {
         len: 0,
         opcode,
@@ -536,18 +536,18 @@ fn make_header(opcode: u32, nodeid: u64, unique: u64) -> FuseInHeader {
     }
 }
 
-fn build_request(header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
+pub(super) fn build_request(header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
     let mut req = fuse::as_bytes(header).to_vec();
     req.extend_from_slice(body);
     req
 }
 
-fn response_error(resp: &[u8]) -> i32 {
+pub(super) fn response_error(resp: &[u8]) -> i32 {
     fuse::read_struct::<FuseOutHeader>(resp).unwrap().error
 }
 
 /// LOOKUP a name under a parent inode, return the entry's nodeid.
-fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32> {
+pub(super) fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32> {
     let h = make_header(FUSE_LOOKUP, parent, 100);
     let mut body = name.as_bytes().to_vec();
     body.push(0);
@@ -561,7 +561,7 @@ fn lookup(proc: &mut FuseProcessor, parent: u64, name: &str) -> Result<u64, i32>
 }
 
 /// OPEN a file by inode, return the file handle.
-fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i32> {
+pub(super) fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i32> {
     let h = make_header(FUSE_OPEN, nodeid, 200);
     let open_in = FuseOpenIn { flags, open_flags: 0 };
     let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&open_in)));
@@ -573,7 +573,7 @@ fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i
     Ok(open_out.fh)
 }
 
-fn open_dir(proc: &mut FuseProcessor, nodeid: u64) -> Result<u64, i32> {
+pub(super) fn open_dir(proc: &mut FuseProcessor, nodeid: u64) -> Result<u64, i32> {
     let h = make_header(FUSE_OPENDIR, nodeid, 201);
     let resp = proc.handle_request(&build_request(&h, &[]));
     let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
