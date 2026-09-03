@@ -25,7 +25,6 @@ from typing import Any
 
 import psutil
 import pytest
-from helpers.benchmark_ratchet import hot_route_factor
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -36,6 +35,20 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.process_cpu import process_cpu_seconds
+from helpers.route_health_budget import (
+    HOT_ROUTE_REFERENCE_SAMPLES,
+    HOT_ROUTE_WINDOW_SAMPLES,
+    HOT_ROUTE_WINDOWS,
+)
+from helpers.route_health_budget import (
+    assert_hot_route_budget as _assert_hot_route_budget,
+)
+from helpers.route_health_budget import (
+    assert_timing_budget as _assert_timing_budget,
+)
+from helpers.route_health_budget import (
+    scaled_hot_route_budget as _scaled_hot_route_budget,
+)
 from helpers.service import ServiceInstance, vm_name, wait_exec_ready
 
 from tests.ironbank.test_stats_detail_contract import (
@@ -49,11 +62,6 @@ from tests.ironbank.test_stats_detail_contract import (
 
 SEEDED_VM_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CPU_ACCOUNTING_SLACK_S = 0.011
-HOT_ROUTE_REFERENCE_SAMPLES = 64
-HOT_ROUTE_WINDOW_SAMPLES = 128
-HOT_ROUTE_WINDOWS = 3
-HOT_ROUTE_REGRESSION_FACTOR = hot_route_factor(PROJECT_ROOT)
 
 pytestmark = pytest.mark.integration
 
@@ -395,46 +403,6 @@ def _measure_once(
     )
 
 
-def _assert_timing_budget(
-    timing: RouteTiming,
-    *,
-    p95_ms: float,
-    max_ms: float | None,
-    cpu_s: float,
-    p99_ms: float | None = None,
-    cpu_slack_s: float = CPU_ACCOUNTING_SLACK_S,
-) -> None:
-    print(
-        "ROUTE_HEALTH "
-        f"{timing.label} p50={timing.p50_ms:.1f}ms "
-        f"p95={timing.p95_ms:.1f}ms "
-        f"p99={timing.p99_ms:.1f}ms max={timing.max_ms:.1f}ms "
-        f"service_cpu={timing.service_cpu_s:.3f}s "
-        f"gateway_cpu={timing.gateway_cpu_s if timing.gateway_cpu_s is not None else 'n/a'}"
-    )
-    assert timing.p95_ms <= p95_ms, (
-        f"{timing.label} p95={timing.p95_ms:.1f}ms > {p95_ms}ms; samples={timing.samples_ms}"
-    )
-    if p99_ms is not None:
-        assert timing.p99_ms <= p99_ms, (
-            f"{timing.label} p99={timing.p99_ms:.1f}ms > {p99_ms}ms; samples={timing.samples_ms}"
-        )
-    if max_ms is not None:
-        assert timing.max_ms <= max_ms, (
-            f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; samples={timing.samples_ms}"
-        )
-    # Linux uses nanosecond scheduler accounting; the portable fallback still
-    # reports OS accounting ticks. Preserve one tick of cross-platform slack;
-    # callers comparing an exact accounted boundary may explicitly pass zero.
-    assert timing.service_cpu_s <= cpu_s + cpu_slack_s, (
-        f"{timing.label} service CPU={timing.service_cpu_s:.3f}s > {cpu_s:.3f}s"
-    )
-    if timing.gateway_cpu_s is not None:
-        assert timing.gateway_cpu_s <= cpu_s + cpu_slack_s, (
-            f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
-        )
-
-
 def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
     return {
         "label": timing.label,
@@ -446,224 +414,6 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
         "service_cpu_s": round(timing.service_cpu_s, 6),
         "gateway_cpu_s": (None if timing.gateway_cpu_s is None else round(timing.gateway_cpu_s, 6)),
     }
-
-
-def _is_vm_scalar_state_route(path: str) -> bool:
-    if "/vms/" not in path:
-        return False
-    suffix = path.split("/vms/", 1)[1].split("?", 1)[0]
-    return suffix.count("/") == 1 and (suffix.endswith(("/status", "/info")))
-
-
-def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
-    if path == "/status" and gateway:
-        # Gateway status is not the service's scalar status route. It composes
-        # service status, VM inventory, and profile/asset readiness into the
-        # public dashboard payload. Give it the same Linux debug-build envelope
-        # as gateway /vms/list; both serialize the dashboard inventory rather
-        # than one scalar service DTO. Keep direct /status at the tiny default.
-        return (4.0, 10.0, 0.19)
-    if _is_vm_scalar_state_route(path):
-        # Per-session state routes touch richer lifecycle/profile metadata than
-        # global scalar status, but must still stay memory-backed and responsive
-        # enough for TUI/UI polling. Linux debug builds route a running VM
-        # through session DB readiness/status and storage DTO assembly; keep
-        # the aggregate CPU budget above the measured release-gate baseline
-        # without allowing projection rebuilds or route-time SQLite ownership.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.15 if not gateway else 0.19,
-        )
-    if path == "/vms/list":
-        # Empty-list polling is cheaper, but an active VM row includes lifecycle
-        # and profile metadata. Keep the budget memory-backed while allowing the
-        # one-VM debug-build route-health loop observed on Linux. The gateway
-        # serializes that row after proxying it, so it shares the richer scalar
-        # session-route CPU envelope rather than the empty-list measurement.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.19,
-        )
-    if path in {"/profiles/list", "/profiles/status"}:
-        # Profile inventory and readiness are richer than scalar service status:
-        # both return per-profile DTOs, while status adds asset readiness and
-        # manifest provenance. They must stay cache backed, but Linux debug
-        # builds account the same gateway CPU envelope for their JSON payloads.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.08 if not gateway else 0.12,
-        )
-    if "/stats/detail" in path:
-        # Detail is the largest user-facing ledger route and includes body blob
-        # metadata/content. It must still be DB-handle/memory backed rather
-        # than rebuilding projections or blocking on route-owned SQLite. The
-        # response body is large enough that debug-build JSON encoding can burn
-        # more aggregate CPU than scalar hot routes across 64 samples.
-        return (
-            12.0 if not gateway else 16.0,
-            35.0 if not gateway else 45.0,
-            0.70 if not gateway else 0.90,
-        )
-    if any(
-        marker in path
-        for marker in (
-            "/history",
-            "/timeline",
-            "/security/status",
-            "/security/latest",
-            "/detection/status",
-            "/detection/latest",
-            "/enforcement/status",
-            "/enforcement/latest",
-        )
-    ):
-        # Ledger list/status routes should be near-constant DB-handle reads.
-        # Aggregate security status routes cross enough rows that debug JSON
-        # encoding can brush into the 6ms range locally; CPU remains the
-        # regression tripwire for route-time disk scans/projection rebuilds.
-        # Gateway measurements include proxy hop jitter, but must stay
-        # sub-10ms p95.
-        aggregate_security = any(
-            path.endswith(marker) or f"{marker}?" in path
-            for marker in (
-                "/security/status",
-                "/security/latest",
-                "/detection/status",
-                "/detection/latest",
-                "/enforcement/status",
-                "/enforcement/latest",
-            )
-        )
-        return (
-            7.0 if not gateway else 9.0,
-            14.0 if not gateway else 18.0,
-            (0.30 if not gateway else 0.42)
-            if aggregate_security
-            else (0.14 if not gateway else 0.20),
-        )
-    if path.endswith("/assets/status"):
-        # Asset status returns a richer per-file readiness payload than scalar
-        # status routes. It is still byte-cache backed; this budget keeps 64
-        # debug-build calls bounded and catches any return to file hashing or
-        # route-time DB reads.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.16 if not gateway else 0.22,
-        )
-    if path.endswith("/mcp/default/info"):
-        # Default MCP info returns the profile's full builtin/default server
-        # shape. Gateway JSON buffering adds a proxy/body materialization hop;
-        # on Linux debug builds the full route loop can account ~0.17s service
-        # CPU across 64 samples while remaining a small in-memory response.
-        return (
-            2.0 if not gateway else 5.0,
-            5.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.19,
-        )
-    if path.endswith("/mcp/servers/list"):
-        # MCP server inventory is still cache backed, but larger than scalar
-        # profile info and measured through the gateway proxy loop it can use
-        # more service CPU ticks than the default tiny-route budget.
-        return (
-            3.0 if not gateway else 4.0,
-            6.0 if not gateway else 9.0,
-            0.06 if not gateway else 0.14,
-        )
-    if path.endswith("/rules/list"):
-        # Rule-inventory routes return the in-memory compiled/default rule
-        # shape. They are larger than scalar info/status routes and must stay
-        # comfortably sub-2ms without reparsing rule files or touching SQLite.
-        return (
-            2.0 if not gateway else 3.0,
-            5.0 if not gateway else 8.0,
-            0.08 if not gateway else 0.12,
-        )
-    if path.endswith("/latest"):
-        # Latest ledgers are projection backed. They can be a larger array than
-        # status routes, but route-time SQLite reads would show up immediately
-        # in this loop.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.14,
-        )
-    if path.endswith("/evaluate"):
-        # Rule evaluation is not a passive poll route, but it is the enforcement
-        # control plane and must stay memory/compiler-cache backed. This catches
-        # accidental route-time SQLite or rule-file reloads on every decision.
-        # Full-suite debug builds can account just under 0.09s service CPU for
-        # 64 cached decisions while still staying sub-2ms p95.
-        return (
-            2.0 if not gateway else 3.0,
-            5.0 if not gateway else 8.0,
-            0.10 if not gateway else 0.14,
-        )
-    if "/plugins/" in path and (path.endswith(("/info", "/credentials/info"))):
-        # Plugin and credential inventory routes hydrate runtime counters from
-        # in-memory projections. Keep them off Keychain/SQLite/hashing paths.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.14,
-        )
-    if path == "/stats":
-        # `/stats` is byte-projection backed, but it is still one of the
-        # larger hot JSON bodies. The gateway adds a TCP hop, one UDS proxy
-        # connection, and JSON response buffering per request, so the gateway
-        # p95 budget tracks the Linux release-gate baseline while staying well
-        # under the broader hot-route envelope.
-        return (
-            2.0 if not gateway else 4.0,
-            5.0 if not gateway else 9.0,
-            0.12 if gateway else 0.08,
-        )
-    return (
-        2.0 if not gateway else 3.0,
-        5.0 if not gateway else 8.0,
-        0.05 if not gateway else 0.09,
-    )
-
-
-def _scaled_hot_route_budget(
-    path: str,
-    *,
-    gateway: bool,
-    samples: int,
-) -> tuple[float, float, float]:
-    p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
-    return (
-        p95_ms * HOT_ROUTE_REGRESSION_FACTOR,
-        p99_ms * HOT_ROUTE_REGRESSION_FACTOR,
-        cpu_s
-        * samples
-        / HOT_ROUTE_REFERENCE_SAMPLES
-        * HOT_ROUTE_REGRESSION_FACTOR,
-    )
-
-
-def _assert_hot_route_budget(
-    timing: RouteTiming,
-    *,
-    path: str,
-    gateway: bool = False,
-) -> None:
-    assert len(timing.samples_ms) == HOT_ROUTE_WINDOW_SAMPLES
-    p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
-        path,
-        gateway=gateway,
-        samples=HOT_ROUTE_WINDOW_SAMPLES,
-    )
-    _assert_timing_budget(
-        timing,
-        p95_ms=p95_ms,
-        p99_ms=p99_ms,
-        max_ms=None,
-        cpu_s=cpu_s,
-    )
 
 
 def _hot_route_contracts(profile: str) -> list[RouteContract]:
@@ -1410,17 +1160,17 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                     gateway_proc=gateway_for_cpu,
                     samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
-                p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
+                budget = _scaled_hot_route_budget(
                     contract.path,
                     gateway=gateway_for_cpu is not None,
                     samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
                 _assert_timing_budget(
                     timing,
-                    p95_ms=max(p95_ms, 350.0),
-                    p99_ms=max(p99_ms, 500.0),
+                    p95_ms=max(budget.p95_ms, 350.0),
+                    p99_ms=max(budget.p99_ms, 500.0),
                     max_ms=None,
-                    cpu_s=cpu_s,
+                    cpu_s=budget.cpu_s,
                 )
 
         running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)

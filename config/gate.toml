@@ -2854,6 +2854,162 @@ unmeasured = [
     "/vms/{id}/timeline",
 ]
 
+# Release-blocking route ceilings and the margin they must retain. The budget
+# library classifies a route once and resolves both transports from this
+# inventory; test code owns no timing literals. CPU is authored for
+# `reference_samples` and scales linearly with the measured window. Latency
+# does not scale with sample count.
+[benchmark.route_health]
+minimum_headroom_factor = 1.2
+cpu_accounting_slack_s = 0.011
+reference_samples = 64
+window_samples = 128
+windows = 3
+
+[benchmark.route_health.budgets.status.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.05
+[benchmark.route_health.budgets.status.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.23
+
+[benchmark.route_health.budgets.vm_scalar.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.18
+[benchmark.route_health.budgets.vm_scalar.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.25
+
+[benchmark.route_health.budgets.vms_list.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.15
+[benchmark.route_health.budgets.vms_list.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.23
+
+[benchmark.route_health.budgets.profiles.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.08
+[benchmark.route_health.budgets.profiles.gateway]
+p95_ms = 6.0
+p99_ms = 10.0
+cpu_s = 0.18
+
+[benchmark.route_health.budgets.stats_detail.service]
+p95_ms = 12.0
+p99_ms = 35.0
+cpu_s = 0.70
+[benchmark.route_health.budgets.stats_detail.gateway]
+p95_ms = 16.0
+p99_ms = 45.0
+cpu_s = 0.90
+
+[benchmark.route_health.budgets.aggregate_ledger.service]
+p95_ms = 7.0
+p99_ms = 14.0
+cpu_s = 0.30
+[benchmark.route_health.budgets.aggregate_ledger.gateway]
+p95_ms = 9.0
+p99_ms = 18.0
+cpu_s = 0.42
+
+[benchmark.route_health.budgets.ledger.service]
+p95_ms = 7.0
+p99_ms = 14.0
+cpu_s = 0.14
+[benchmark.route_health.budgets.ledger.gateway]
+p95_ms = 9.0
+p99_ms = 18.0
+cpu_s = 0.20
+
+[benchmark.route_health.budgets.assets_status.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.16
+[benchmark.route_health.budgets.assets_status.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.22
+
+[benchmark.route_health.budgets.mcp_default.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.10
+[benchmark.route_health.budgets.mcp_default.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.19
+
+[benchmark.route_health.budgets.mcp_servers.service]
+p95_ms = 3.0
+p99_ms = 6.0
+cpu_s = 0.09
+[benchmark.route_health.budgets.mcp_servers.gateway]
+p95_ms = 5.0
+p99_ms = 9.0
+cpu_s = 0.16
+
+[benchmark.route_health.budgets.rules.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.08
+[benchmark.route_health.budgets.rules.gateway]
+p95_ms = 5.0
+p99_ms = 8.0
+cpu_s = 0.15
+
+[benchmark.route_health.budgets.latest.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.10
+[benchmark.route_health.budgets.latest.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.15
+
+[benchmark.route_health.budgets.evaluate.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.10
+[benchmark.route_health.budgets.evaluate.gateway]
+p95_ms = 5.0
+p99_ms = 8.0
+cpu_s = 0.15
+
+[benchmark.route_health.budgets.plugin_info.service]
+p95_ms = 3.0
+p99_ms = 8.0
+cpu_s = 0.10
+[benchmark.route_health.budgets.plugin_info.gateway]
+p95_ms = 5.0
+p99_ms = 10.0
+cpu_s = 0.15
+
+[benchmark.route_health.budgets.stats.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.08
+[benchmark.route_health.budgets.stats.gateway]
+p95_ms = 6.0
+p99_ms = 9.0
+cpu_s = 0.17
+
+[benchmark.route_health.budgets.default.service]
+p95_ms = 2.0
+p99_ms = 5.0
+cpu_s = 0.05
+[benchmark.route_health.budgets.default.gateway]
+p95_ms = 5.0
+p99_ms = 8.0
+cpu_s = 0.15
+
 # Gross-regression floors and ceilings for the in-guest benchmark. Not
 # evidence ratchets: these are authored, deliberately loose, and exist to catch
 # a collapse -- a disk doing 3 MB/s, a runtime taking thirty seconds to start.
@@ -2919,12 +3075,6 @@ quick_timeout_secs = 60
 # fails when any measured duration or allocated-byte metric grows by more than
 # this ratio; there is deliberately no independently authored seconds/MB cap.
 maximum_factor = 1.2
-# Headroom over the authored hot-route budgets in the ironbank route-health
-# gate. Same number today, and a separate knob on purpose: the value above
-# answers "has this changed", this one answers "is this fast enough". They
-# were one value, so widening tolerance while chasing a flaky comparison also
-# quietly relaxed every route budget.
-hot_route_factor = 1.2
 
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating

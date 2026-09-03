@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 from helpers.benchmark_output import benchmark_output_dir
+from helpers.route_health_budget import CPU_ACCOUNTING_SLACK_S
 
 from tests.ironbank.test_route_health import (
-    CPU_ACCOUNTING_SLACK_S,
     route_timing_summary,
     run_concurrent_route_read_write_benchmark,
 )

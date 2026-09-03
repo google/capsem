@@ -7,6 +7,8 @@ a distinct subject from building and releasing.
 
 from __future__ import annotations
 
+from pydantic import Field, PositiveFloat, PositiveInt
+
 from .configschema import Strict
 
 
@@ -23,6 +25,53 @@ class RouteCoverageConfig(Strict):
     measured: tuple[str, ...]
     unmeasured: tuple[str, ...]
     internal: dict[str, str]
+
+
+class RouteBudgetConfig(Strict):
+    """Actual ceilings for one route class and one transport."""
+
+    p95_ms: PositiveFloat
+    p99_ms: PositiveFloat
+    cpu_s: PositiveFloat
+
+
+class RouteBudgetPairConfig(Strict):
+    """The service and gateway have separate observable costs."""
+
+    service: RouteBudgetConfig
+    gateway: RouteBudgetConfig
+
+
+class RouteBudgetsConfig(Strict):
+    """Exhaustive semantic classes resolved by the route budget library."""
+
+    status: RouteBudgetPairConfig
+    vm_scalar: RouteBudgetPairConfig
+    vms_list: RouteBudgetPairConfig
+    profiles: RouteBudgetPairConfig
+    stats_detail: RouteBudgetPairConfig
+    aggregate_ledger: RouteBudgetPairConfig
+    ledger: RouteBudgetPairConfig
+    assets_status: RouteBudgetPairConfig
+    mcp_default: RouteBudgetPairConfig
+    mcp_servers: RouteBudgetPairConfig
+    rules: RouteBudgetPairConfig
+    latest: RouteBudgetPairConfig
+    evaluate: RouteBudgetPairConfig
+    plugin_info: RouteBudgetPairConfig
+    stats: RouteBudgetPairConfig
+    default: RouteBudgetPairConfig
+
+
+class RouteHealthConfig(Strict):
+    """How black-box route measurements retain operating margin."""
+
+    minimum_headroom_factor: float = Field(gt=1, allow_inf_nan=False)
+    cpu_accounting_slack_s: PositiveFloat
+    reference_samples: PositiveInt
+    window_samples: PositiveInt
+    windows: PositiveInt
+    budgets: RouteBudgetsConfig
 
 
 class BenchmarkRunConfig(Strict):
@@ -96,5 +145,6 @@ class BenchmarkGatesConfig(Strict):
 
 class BenchmarkConfig(Strict):
     routes: RouteCoverageConfig
+    route_health: RouteHealthConfig
     run: BenchmarkRunConfig
     gates: BenchmarkGatesConfig

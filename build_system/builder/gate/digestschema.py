@@ -120,7 +120,3 @@ class BenchmarkRegressionConfig(Strict):
     """
 
     maximum_factor: PositiveFloat
-    #: Headroom over the ironbank gate's authored hot-route budgets. Its own
-    #: value because it answers a different question: "is this fast enough"
-    #: rather than "has this changed".
-    hot_route_factor: PositiveFloat
