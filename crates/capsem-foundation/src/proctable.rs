@@ -48,7 +48,7 @@ pub fn running_processes() -> io::Result<String> {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::Process;
-    use nix::libc;
+    use libc;
     use std::io;
 
     // SAFETY: `libproc` is part of macOS and this is its documented
