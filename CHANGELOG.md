@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Capsem advances to version 0.6.3 for the cache-control, test-performance,
+  runtime, and security fixes collected in this release.
 - The TCP gateway now pools its HTTP-over-UDS service connections and streams
   already-sized JSON responses without copying them into a second buffer,
   disables Nagle buffering on accepted control-plane connections, and reduces

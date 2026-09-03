@@ -17,4 +17,4 @@ def test_editable_install_maps_the_direct_source_directory() -> None:
 
 
 def test_installed_distribution_uses_the_reserved_builder_name() -> None:
-    assert version("capsem-builder") == "0.6.2"
+    assert version("capsem-builder") == "0.6.3"
