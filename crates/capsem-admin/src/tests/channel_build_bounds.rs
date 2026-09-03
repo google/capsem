@@ -6,7 +6,7 @@ use super::*;
 /// copies, so a key that is not a single path component is a write and a
 /// delete outside the release root.
 const ESCAPING_KEYS: &[&str] = &[
-    "../../../../tmp/pwn",
+    "../../../../etc/pwn",
     "..",
     ".",
     "/tmp/pwn",
@@ -133,7 +133,7 @@ fn assets_channel_build_refuses_a_manifest_whose_arch_key_escapes() {
     assert!(format!("{error:#}").contains("architecture"), "{error:#}");
     assert!(!temp.path().join("escape-vmlinuz").exists());
     assert!(
-        !out_dir.join("assets/releases").exists(),
+        !out_dir.join("assets").join("releases").exists(),
         "no release dir for a refused manifest"
     );
 }

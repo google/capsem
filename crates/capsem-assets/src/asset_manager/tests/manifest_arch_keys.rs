@@ -19,7 +19,7 @@ fn a_well_formed_arch_key_still_parses() {
 #[test]
 fn arch_keys_that_escape_the_asset_root_are_rejected_at_parse() {
     for arch in [
-        "../../../../tmp/pwn",
+        "../../../../etc/pwn",
         "..",
         "/tmp/pwn",
         "/",
@@ -64,7 +64,7 @@ fn a_release_graph_manifest_gets_the_same_arch_key_check() {
                 "status": "current",
                 "min_capsem_version": "1.5.0",
                 "architectures": [{
-                    "architecture": "../../../../tmp/pwn",
+                    "architecture": "../../../../etc/pwn",
                     "image_revision": "2026.0714.18",
                     "images": [
                         {"kind": "kernel", "name": "vmlinuz", "bytes": 10, "status": "current", "digest": digest('a')},
