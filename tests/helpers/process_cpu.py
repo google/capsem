@@ -10,12 +10,16 @@ NANOSECONDS_PER_SECOND = Decimal(1_000_000_000)
 
 
 class CpuTimes(Protocol):
-    user: float
-    system: float
+    @property
+    def user(self) -> float: ...
+
+    @property
+    def system(self) -> float: ...
 
 
 class ProcessLike(Protocol):
-    pid: int
+    @property
+    def pid(self) -> int: ...
 
     def cpu_times(self) -> CpuTimes: ...
 
