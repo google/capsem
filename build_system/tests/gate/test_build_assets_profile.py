@@ -404,13 +404,12 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     container = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py").read_text()
     proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text()
 
-    # Removing cache/target/install-test-* needs write permission on their parent.
-    # Granted as the one directory entry: recursive here would walk every
-    # cargo artifact in the checkout.
-    assert 'f"{owner}:{owner}", f"{self._settings.mount}/{target}"' in container
-    assert '"-R", f"{owner}:{owner}", f"{self._settings.mount}/{target}"' not in container
-    # The directory entry, taken from the layout rather than spelled again.
-    assert "Path(self._settings.layout.assets).parent" in container
+    # Replacing any owned path needs write permission on its parent. Parents
+    # are derived from the typed layout and claimed without recursively
+    # walking unrelated Cargo or release output.
+    assert "owned_parent_paths(self._settings.mount)" in container
+    assert '["chown", f"{guest}:{guest}", *parents]' in container
+    assert '["chown", "-R", f"{guest}:{guest}", *parents]' not in container
 
     # Every path this user writes has to live off the bind mount.
     for path in (guest.tmp, guest.pytest_cache, guest.asset_manifest, config.install.venv):
