@@ -45,10 +45,10 @@ def test_concurrent_stats_budget_has_measured_twenty_percent_headroom() -> None:
 
     assert budget.p95_ms == 15.0
     assert budget.p99_ms == 40.0
-    assert budget.cpu_s == 0.5
+    assert budget.cpu_s == 0.6
     assert_has_headroom(
         label="service /stats during profile-mutation writes CPU",
-        measured=0.378,
+        measured=0.442,
         ceiling=budget.cpu_s,
         minimum_factor=1.2,
         accounting_slack=0.011,

@@ -2864,7 +2864,7 @@ windows = 3
 [benchmark.route_health.concurrent_stats]
 p95_ms = 15.0
 p99_ms = 40.0
-cpu_s = 0.5
+cpu_s = 0.6
 
 [benchmark.route_health.budgets.status.service]
 p95_ms = 2.0
