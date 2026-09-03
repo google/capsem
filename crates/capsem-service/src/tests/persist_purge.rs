@@ -41,13 +41,56 @@ fn assert_still_ephemeral(state: &ServiceState, id: &str, session_dir: &StdPath)
     );
 }
 
+fn registry_entry_dir(state: &ServiceState, name: &str) -> Option<PathBuf> {
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get(name)
+        .map(|entry| entry.session_dir.clone())
+}
+
+/// A running capsem-process holds its session directory by path: the
+/// VirtioFS workspace, the auto-snapshot scheduler, the MCP file tools and
+/// every lazily opened session.db reader all name `sessions/<id>/...`.
+/// Renaming that directory under a live process left snapshots, file tools
+/// and history failing until the next restart. Persist now claims the name
+/// and registers the directory where it is; the move to `persistent/<id>`
+/// happens when the process has exited.
 #[tokio::test]
-async fn persist_rolls_the_session_dir_back_when_registration_fails() {
-    // `register` refuses a duplicate id as well as a duplicate name. Before
-    // the claim was atomic, the session dir had already been renamed under
-    // persistent/<id> by the time that refusal arrived, and nothing moved it
-    // back: no registry entry, an InstanceInfo still saying persistent:false
-    // and pointing at a directory that no longer existed.
+async fn persist_keeps_the_live_session_dir_while_the_process_runs() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = insert_ephemeral_instance(&state, "live-src");
+
+    let _ = persist(&state, "live-src", "kept").await.expect("persist succeeds");
+
+    assert!(session_dir.join("marker").is_file(), "the live dir must not move");
+    assert!(
+        !state.run_dir.join("persistent").join("live-src").exists(),
+        "nothing may be renamed under persistent/ while the process runs"
+    );
+    assert_eq!(
+        registry_entry_dir(&state, "kept").as_deref(),
+        Some(session_dir.as_path())
+    );
+    let (persistent, name, live_dir) = state
+        .instances
+        .lock()
+        .unwrap()
+        .get("live-src")
+        .map(|info| (info.persistent, info.name.clone(), info.session_dir.clone()))
+        .expect("instance still registered");
+    assert!(persistent);
+    assert_eq!(name, "kept");
+    assert_eq!(live_dir, session_dir);
+}
+
+#[tokio::test]
+async fn persist_refuses_a_duplicate_id_and_leaves_the_instance_ephemeral() {
+    // `register` refuses a duplicate id as well as a duplicate name. The
+    // refusal must leave no trace: no entry, no moved directory, and an
+    // InstanceInfo that still says ephemeral.
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     let session_dir = insert_ephemeral_instance(&state, "persist-src");
@@ -114,7 +157,7 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
     };
     assert_eq!(entries, 1);
     assert_eq!(&entry_id, winner);
-    assert_eq!(entry_dir, state.run_dir.join("persistent").join(winner));
+    assert_eq!(entry_dir, state.run_dir.join("sessions").join(winner));
     assert!(entry_dir.join("marker").is_file());
     let (persistent, name) = state
         .instances
@@ -130,6 +173,129 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
             assert_still_ephemeral(&state, id, &session_dir);
         }
     }
+}
+
+/// Register `name` as a persisted session still living where it ran, with a
+/// fake running instance, and reap a child that exits with `code`.
+async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: &str, code: i32) -> PathBuf {
+    let live_dir = insert_ephemeral_instance(state, id);
+    let mut entry = test_persistent_entry(name, live_dir.clone());
+    entry.id = id.to_string();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+    if let Some(info) = state.instances.lock().unwrap().get_mut(id) {
+        info.persistent = true;
+        info.name = name.to_string();
+    }
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", &format!("exit {code}")])
+        .spawn()
+        .expect("spawn child");
+    crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.to_string(),
+        name.to_string(),
+        Arc::clone(state),
+        state.run_dir.join("instances").join(format!("{id}.sock")),
+        live_dir.clone(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while state.instances.lock().unwrap().contains_key(id) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "reaper never removed the instance"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    live_dir
+}
+
+#[tokio::test]
+async fn the_exit_reaper_moves_a_persisted_live_dir_under_persistent() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let live_dir = reap_persisted_live_session(&state, "settle-src", "settled", 0).await;
+
+    let target = state.run_dir.join("persistent").join("settle-src");
+    assert_eq!(
+        registry_entry_dir(&state, "settled").as_deref(),
+        Some(target.as_path()),
+        "the entry must follow the directory"
+    );
+    assert!(target.join("marker").is_file(), "the session bytes moved with it");
+    assert!(!live_dir.exists(), "nothing stays behind under sessions/");
+    let (defunct, suspended) = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("settled")
+        .map(|entry| (entry.defunct, entry.suspended))
+        .unwrap();
+    assert!(!defunct);
+    assert!(!suspended);
+}
+
+#[tokio::test]
+async fn a_failed_settle_keeps_the_entry_on_the_live_dir() {
+    // `persistent/<id>` already holds something: the rename fails and the
+    // session must stay reachable where it is rather than vanish.
+    let (state, _dir) = make_test_state_with_tempdir();
+    let occupied = state.run_dir.join("persistent").join("blocked-src");
+    std::fs::create_dir_all(&occupied).unwrap();
+    std::fs::write(occupied.join("squatter"), b"x").unwrap();
+
+    let live_dir = reap_persisted_live_session(&state, "blocked-src", "blocked", 3).await;
+
+    assert_eq!(
+        registry_entry_dir(&state, "blocked").as_deref(),
+        Some(live_dir.as_path())
+    );
+    assert!(live_dir.join("marker").is_file());
+    assert!(occupied.join("squatter").is_file(), "the occupant is not overwritten");
+    let defunct = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("blocked")
+        .map(|entry| entry.defunct)
+        .unwrap();
+    assert!(
+        defunct,
+        "crash bookkeeping still runs against the directory that exists"
+    );
+}
+
+#[test]
+fn settle_is_a_no_op_for_a_directory_already_under_persistent() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let home = state.run_dir.join("persistent").join("home-id");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut entry = test_persistent_entry("home", home.clone());
+    entry.id = "home-id".to_string();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+
+    let settled = crate::vm_lifecycle::settle_persistent_session_dir(&state, "home", &home);
+    assert_eq!(settled, home);
+    assert!(home.is_dir());
+    let unknown = crate::vm_lifecycle::settle_persistent_session_dir(&state, "no-such-name", &home);
+    assert_eq!(
+        unknown, home,
+        "an unregistered name settles to the directory it was given"
+    );
+}
+
+/// A resume must settle before it launches: the reaper of the previous
+/// process may not have run yet, and a process started from `sessions/<id>`
+/// would lose its directory to that reaper's move.
+#[test]
+fn resume_settles_the_session_dir_before_spawning() {
+    let source = include_str!("../main.rs");
+    let start = source.find("    fn resume_sandbox(").expect("resume_sandbox exists");
+    let end = start + source[start..].find("    fn has_existing_resume_checkpoint(").unwrap();
+    let body = &source[start..end];
+    let settle = body
+        .find("settle_persistent_session_dir(")
+        .expect("resume settles the session dir");
+    let spawn = body.find("Command::new(").expect("resume spawns capsem-process");
+    assert!(settle < spawn, "resume_sandbox must settle before it spawns the child");
 }
 
 fn register_defunct_entry(state: &ServiceState, name: &str, session_dir: PathBuf) {

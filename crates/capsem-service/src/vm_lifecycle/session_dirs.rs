@@ -1,24 +1,18 @@
 use super::*;
 
-/// Move an ephemeral session directory under `persistent/` and register it,
-/// as one step under the registry lock.
+/// Claim `entry.name` and register the session where it currently lives, as
+/// one step under the registry lock.
 ///
-/// The name check, the rename and the registration used to be three separate
-/// lock acquisitions. Two persists racing on one name both passed the check;
-/// the loser's directory was renamed under `persistent/<id>`, `register`
-/// refused it, and nothing moved it back: no registry entry, and an
-/// `InstanceInfo` still saying `persistent: false` and pointing at a
-/// directory that no longer existed.
+/// The directory is not moved here. A running capsem-process holds its
+/// session directory by path -- the VirtioFS workspace, the auto-snapshot
+/// scheduler, the MCP file tools and every lazily opened session.db reader
+/// name `sessions/<id>/...` -- so renaming it under a live process left
+/// snapshots, file tools and history failing until the next restart. The
+/// move to `persistent/<id>` is [`settle_persistent_session_dir`], run once
+/// the process has exited.
 ///
-/// Blocking: call from `spawn_blocking`. The registry mutex is held across
-/// the rename on purpose -- that is the atomicity.
-pub(super) fn claim_persistent_session(
-    state: &ServiceState,
-    entry: PersistentVmEntry,
-    from: &StdPath,
-) -> Result<(), AppError> {
-    let vm_id = entry.id.clone();
-    let to = entry.session_dir.clone();
+/// Blocking (the registry saves to disk): call from `spawn_blocking`.
+pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEntry) -> Result<(), AppError> {
     let mut registry = state.persistent_registry.lock().unwrap();
     if registry.contains(&entry.name) {
         return Err(AppError(
@@ -26,43 +20,56 @@ pub(super) fn claim_persistent_session(
             format!("persistent VM \"{}\" already exists", entry.name),
         ));
     }
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to create persistent root {}: {e}", parent.display()),
-            )
-        })?;
-    }
-    std::fs::rename(from, &to).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to move session dir: {e}"),
-        )
-    })?;
-    let registered = registry.register(entry);
-    drop(registry);
-    if let Err(error) = registered {
-        match std::fs::rename(&to, from) {
-            Ok(()) => warn!(
-                vm_id,
-                from = %from.display(),
-                to = %to.display(),
-                error = %error,
-                "persistent registration refused; session dir moved back"
-            ),
-            Err(rollback) => error!(
-                vm_id,
-                from = %from.display(),
-                to = %to.display(),
-                error = %error,
-                rollback_error = %rollback,
-                "persistent registration refused and the session dir could not be moved back"
-            ),
+    registry
+        .register(entry)
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+/// Move a persisted session that still lives where it ran to
+/// `persistent/<id>`, and point its registry entry there. Returns the
+/// directory the session is in afterwards: the new one on success, the one
+/// it was given when there is nothing to move or the move failed.
+///
+/// Called by the exit reaper for every child and by resume before it spawns,
+/// so a process is never launched from a directory a pending reaper is about
+/// to rename. Both take the registry lock, which serializes the two. A
+/// failed move is logged and the entry keeps naming the live directory; the
+/// session stays reachable instead of vanishing.
+///
+/// Blocking: call from `spawn_blocking` on the async side.
+pub(crate) fn settle_persistent_session_dir(state: &ServiceState, name: &str, exited_dir: &StdPath) -> PathBuf {
+    let mut registry = state.persistent_registry.lock().unwrap();
+    let persistent_root = state.run_dir.join("persistent");
+    let (from, vm_id) = match registry.get(name) {
+        Some(entry) if entry.session_dir.parent() == Some(persistent_root.as_path()) => {
+            return entry.session_dir.clone();
         }
-        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()));
+        Some(entry) => (entry.session_dir.clone(), entry.id.clone()),
+        None => return exited_dir.to_path_buf(),
+    };
+    let to = persistent_root.join(&vm_id);
+    let moved = std::fs::create_dir_all(&persistent_root).and_then(|()| std::fs::rename(&from, &to));
+    if let Err(error) = moved {
+        error!(
+            vm_id,
+            name,
+            from = %from.display(),
+            to = %to.display(),
+            error = %error,
+            "persisted session dir could not be moved under persistent/; it stays where it ran"
+        );
+        return from;
     }
-    Ok(())
+    if let Some(entry) = registry.data.vms.get_mut(name) {
+        entry.session_dir = to.clone();
+    }
+    let saved = registry.save();
+    drop(registry);
+    if let Err(error) = saved {
+        error!(vm_id, name, error = %error, "failed to save persistent registry after settling session dir");
+    }
+    info!(vm_id, name, from = %from.display(), to = %to.display(), "settled persisted session dir");
+    to
 }
 
 /// Remove a purged session directory through the service's delete contract,

@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persisting a running session no longer renames its directory under the
+  live process. capsem-process holds that directory by path for the shared
+  workspace, auto-snapshots, the file tools and its session ledger, so the
+  rename left snapshots, file tools and history failing until the next
+  restart. `persist` now claims the name and registers the session where it
+  runs; the directory moves to `persistent/<id>` when the process exits, and
+  a resume settles it first if that move is still pending. A move that fails
+  leaves the entry pointing at the directory that exists.
 - The built-in HTTP tools now see an IPv6 literal the way they see an IPv4
   one: `http://[::1]/` reaches the security rules as host `::1` with an
   `ip.version`/`ip.value` event, so a rule that blocks loopback by address

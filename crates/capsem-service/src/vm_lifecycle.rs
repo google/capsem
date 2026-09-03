@@ -2,7 +2,8 @@ use super::*;
 
 mod session_dirs;
 mod transcript;
-use session_dirs::{claim_persistent_session, remove_purged_session_dir};
+pub(crate) use session_dirs::settle_persistent_session_dir;
+use session_dirs::{claim_persistent_name, remove_purged_session_dir};
 pub(super) use transcript::handle_history_transcript;
 
 // History endpoints
@@ -715,7 +716,7 @@ pub(super) async fn handle_persist(
 
     // Find the running ephemeral instance
     let (
-        old_session_dir,
+        live_session_dir,
         profile_id,
         profile_revision,
         profile_payload_hash,
@@ -758,9 +759,9 @@ pub(super) async fn handle_persist(
         .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
-    // Move the session dir under persistent/ without changing the runtime id,
-    // and register it, as one step under the registry lock.
-    let new_session_dir = state.run_dir.join("persistent").join(&id);
+    // Claim the name and register the session where it lives. The directory
+    // moves under persistent/ once the process has exited (see
+    // `settle_persistent_session_dir`); a running process holds it by path.
     let entry = PersistentVmEntry {
         id: id.clone(),
         name: name.clone(),
@@ -778,7 +779,7 @@ pub(super) async fn handle_persist(
                 .unwrap()
                 .as_secs()
         ),
-        session_dir: new_session_dir.clone(),
+        session_dir: live_session_dir,
         forked_from: forked_from.clone(),
         description: None,
         suspended: false,
@@ -788,41 +789,21 @@ pub(super) async fn handle_persist(
         env,
     };
     let claim_state = Arc::clone(&state);
-    tokio::task::spawn_blocking(move || claim_persistent_session(&claim_state, entry, &old_session_dir))
+    tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("persist task failed: {e}")))??;
 
-    // Update instance info in-place
+    // Update instance info in-place; the session dir and its DB handle stay.
     {
         let mut instances = state.instances.lock().unwrap();
-        if let Some(info) = instances.remove(&id) {
-            state.unregister_session_db_handle(&id);
-            if session_db_path_for_session_dir(&new_session_dir).exists() {
-                state
-                    .register_session_db_handle(&id, &new_session_dir)
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            }
-            instances.insert(
-                id.clone(),
-                InstanceInfo {
-                    id: id.clone(),
-                    name: name.clone(),
-                    profile_id,
-                    profile_revision,
-                    profile_payload_hash,
-                    asset_pins,
-                    pid: info.pid,
-                    uds_path: info.uds_path,
-                    session_dir: new_session_dir,
-                    ram_mb: info.ram_mb,
-                    cpus: info.cpus,
-                    start_time: info.start_time,
-                    base_version: info.base_version,
-                    persistent: true,
-                    env: info.env,
-                    forked_from,
-                },
-            );
+        if let Some(info) = instances.get_mut(&id) {
+            info.name = name.clone();
+            info.profile_id = profile_id;
+            info.profile_revision = profile_revision;
+            info.profile_payload_hash = profile_payload_hash;
+            info.asset_pins = asset_pins;
+            info.persistent = true;
+            info.forked_from = forked_from;
         }
     }
 

@@ -33,6 +33,19 @@ pub(super) fn spawn_exit_reaper(
         // the guest or service initiated it; anything else is a crash.
         let removed = state.instances.lock().unwrap().remove(&id);
         state.unregister_session_db_handle(&id);
+        // A session persisted while it ran still lives under sessions/; now
+        // that nothing holds it by path, move it home. The bookkeeping below
+        // looks for the checkpoint and the process log where the dir is now.
+        let session_dir = {
+            let settle_state = Arc::clone(&state);
+            let settle_name = name.clone();
+            let exited_dir = session_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::vm_lifecycle::settle_persistent_session_dir(&settle_state, &settle_name, &exited_dir)
+            })
+            .await
+            .unwrap_or(session_dir)
+        };
         let clean_exit = exit_status.as_ref().is_some_and(|status| status.success());
         let unexpected_exit = removed.is_some() && !clean_exit;
         if removed.is_some() {
