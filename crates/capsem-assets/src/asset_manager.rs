@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -45,8 +45,8 @@ fn validate_filename(filename: &str) -> Result<()> {
     if filename.is_empty() {
         bail!("filename is empty");
     }
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        bail!("filename contains path traversal: {filename}");
+    if filename.contains(['/', '\\', '\0']) || filename.contains("..") {
+        bail!("filename contains a path separator, traversal, or NUL: {filename:?}");
     }
     Ok(())
 }
@@ -364,10 +364,9 @@ impl ManifestV2 {
         validate_version(&manifest.binaries.current)?;
         for (version, release) in &manifest.assets.releases {
             validate_version(version)?;
-            for assets in release.arches.values() {
-                if assets.is_empty() {
-                    bail!("asset release {version} has empty arch entry");
-                }
+            for (arch, assets) in &release.arches {
+                validate_filename(arch).with_context(|| format!("invalid asset architecture key {arch:?}"))?;
+                ensure!(!assets.is_empty(), "asset release {version} has empty arch entry");
                 for (name, entry) in assets {
                     validate_filename(name)?;
                     validate_hash(&entry.hash)?;

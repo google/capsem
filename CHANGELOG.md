@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Asset manifests reject an architecture key that is not a single path
+  component, and release staging refuses to write an asset anywhere but
+  `release_dir/<arch>-<name>`.
 - The credential broker binds a destination to a provider on a label
   boundary: `evil-openai.com` and `openai.com.evil.example` are no longer
   treated as `openai.com` (or `github.com`, `googleapis.com`, `anthropic.com`,

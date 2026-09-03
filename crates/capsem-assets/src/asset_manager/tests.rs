@@ -1,6 +1,7 @@
 use super::*;
 
 mod hydration;
+mod manifest_arch_keys;
 
 const SAMPLE_V2_MANIFEST: &str = r#"{
         "format": 2,
