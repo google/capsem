@@ -3,7 +3,6 @@
 Verifies that requests are correctly proxied from TCP to UDS.
 """
 
-import subprocess
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
@@ -87,16 +86,15 @@ class TestProxySecurity:
             f.write(b"x" * (11 * 1024 * 1024))
             tmp_path = f.name
         try:
-            result = subprocess.run(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                 "--max-time", "30", "-X", "POST",
-                 "-H", f"Authorization: Bearer {gateway_env.token}",
-                 "-H", "Content-Type: application/octet-stream",
-                 "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/oversized.bin"],
-                capture_output=True, text=True, timeout=60,
-            )
-            assert result.stdout.strip() == "413"
+            with open(tmp_path, "rb") as payload:
+                status = TcpHttpClient(gateway_env.base_url, gateway_env.token).call(
+                    "POST",
+                    "/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/oversized.bin",
+                    body=payload.read(),
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=30,
+                )[0]
+            assert status == 413
         finally:
             import os
             os.unlink(tmp_path)

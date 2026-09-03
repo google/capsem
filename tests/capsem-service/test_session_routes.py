@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 import platform
-import subprocess
-import tomllib
 from pathlib import Path
 from typing import Any
 
 import blake3
+import tomllib
 from helpers.service import ServiceInstance, materialize_test_profiles
 
 DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"
@@ -25,28 +24,7 @@ ASSET_PIN_DRIFT_NAME = "code-asset-pin-drift"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
-    cmd = [
-        "curl",
-        "-s",
-        "-S",
-        "--unix-socket",
-        str(service.uds_path),
-        "-X",
-        method,
-        "-H",
-        "Content-Type: application/json",
-        "-o",
-        "-",
-        "-w",
-        "\n__STATUS__%{http_code}",
-        f"http://localhost{path}",
-    ]
-    if body is not None:
-        cmd.extend(["-d", json.dumps(body)])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stderr
-    raw, status = result.stdout.rsplit("\n__STATUS__", 1)
-    return int(status), json.loads(raw) if raw.strip() else None
+    return service.client().call_json(method, path, body, timeout=30)
 
 
 def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
