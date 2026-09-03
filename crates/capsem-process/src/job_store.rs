@@ -28,6 +28,12 @@ pub(crate) struct JobStore {
     /// never acks. See `vsock.rs::setup_vsock` for the bridge end and
     /// `ipc.rs::handle_ipc_connection` for the IPC end.
     pub(crate) pending_acks: Mutex<HashMap<u64, HostToGuest>>,
+    /// Fired when the guest reports `GuestToHost::ShutdownComplete`. The
+    /// `Shutdown` IPC handler waits on it (bounded) before stopping the VM,
+    /// so a clean shutdown costs the shell's exit time, not a fixed timer.
+    /// `Notify` keeps a permit, so a report that lands before the wait
+    /// starts is not lost.
+    pub(crate) shutdown_complete: Notify,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -65,7 +71,16 @@ impl JobStore {
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
+            shutdown_complete: Notify::new(),
         }
+    }
+
+    /// Wait for the guest's `ShutdownComplete`, at most `bound`. Returns
+    /// whether it arrived; the caller stops the VM either way.
+    pub(crate) async fn wait_shutdown_complete(&self, bound: std::time::Duration) -> bool {
+        tokio::time::timeout(bound, self.shutdown_complete.notified())
+            .await
+            .is_ok()
     }
 
     /// Drain every pending job and oneshot, answering each with an Error.

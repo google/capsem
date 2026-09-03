@@ -463,7 +463,7 @@ fn bridge_loop_transfers_multi_chunk_data_both_directions() {
     let vsock_fd = vsock_guest.into_raw_fd();
 
     let _bridge_thread = std::thread::spawn(move || {
-        bridge_loop(master_fd, vsock_fd);
+        bridge_loop(master_fd, vsock_fd, &HostShutdown::default());
     });
 
     // 16 KiB is twice the bridge copy buffer, so this still forces
@@ -503,7 +503,7 @@ fn bridge_loop_shuts_down_vsock_before_returning() {
     let vsock_fd = vsock_guest.into_raw_fd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let bridge = std::thread::spawn(move || {
-        bridge_loop(master_fd, vsock_fd);
+        bridge_loop(master_fd, vsock_fd, &HostShutdown::default());
         done_tx.send(()).unwrap();
     });
 

@@ -64,7 +64,6 @@ fn mcp_frame_rejects_oversized_process_name() {
     let name = "x".repeat(MCP_FRAME_MAX_PROCESS_NAME_LEN + 1);
     assert!(encode_mcp_frame(1, 0, &name, b"{}").is_err());
 }
-
 // -------------------------------------------------------------------
 // HostToGuest roundtrip
 // -------------------------------------------------------------------
@@ -895,6 +894,7 @@ fn all_guest_variants_fit() {
         GuestToHost::ShutdownRequest,
         GuestToHost::SuspendRequest,
         GuestToHost::SnapshotReady,
+        GuestToHost::ShutdownComplete,
     ];
     for msg in messages {
         let frame = encode_guest_msg(&msg).unwrap();

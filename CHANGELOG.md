@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stopping a VM no longer waits out a fixed timer. The host used to sleep
+  two seconds after telling the guest to shut down, and the guest slept the
+  same two seconds after signalling its shell instead of waiting for it to
+  exit (an interactive bash ignores that signal anyway, so the shell was
+  always killed at the end). The guest now hangs the shell up, waits for it
+  to be reaped, syncs, and reports `ShutdownComplete`; the host stops the VM
+  on that report, with the old timer kept only as a ceiling for a guest that
+  never answers. On a KVM host, `capsem stop` of a persistent VM went from
+  2.3s to 0.3s and a one-shot `capsem run` from 5.2s to 3.1s. Bash also
+  gets the hangup it handles gracefully instead of a kill.
 - The session ledger writer reuses prepared statements instead of parsing
   the SQL of every insert again. Under load the writer thread's profile was
   a fifth SQL parsing; write throughput doubled (66,000 to 134,000 events
