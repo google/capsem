@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+import os
+import threading
+import time
 from typing import NamedTuple
+from unittest.mock import patch
 
 from helpers.process_cpu import process_cpu_seconds
 
@@ -18,32 +21,28 @@ class FakeProcess:
         return FakeCpuTimes(user=1.25, system=0.5)
 
 
-def test_process_cpu_sums_every_linux_thread(tmp_path: Path) -> None:
-    task_root = tmp_path / "42" / "task"
-    for task_id, runtime_ns in (("42", 125_000_000), ("43", 250_000_000)):
-        task_dir = task_root / task_id
-        task_dir.mkdir(parents=True)
-        (task_dir / "schedstat").write_text(
-            f"{runtime_ns} 99 3\n",
-            encoding="utf-8",
-        )
+class CurrentProcess:
+    pid = os.getpid()
 
-    assert process_cpu_seconds(FakeProcess(), proc_root=tmp_path) == 0.375
+    def cpu_times(self) -> FakeCpuTimes:
+        return FakeCpuTimes(user=time.process_time(), system=0.0)
 
 
-def test_process_cpu_uses_portable_counter_without_procfs(tmp_path: Path) -> None:
-    assert process_cpu_seconds(FakeProcess(), proc_root=tmp_path) == 1.75
+def test_process_cpu_retains_cpu_from_exited_threads() -> None:
+    before = process_cpu_seconds(CurrentProcess())
+
+    def consume_thread_cpu() -> None:
+        started = time.thread_time()
+        while time.thread_time() - started < 0.02:
+            pass
+
+    worker = threading.Thread(target=consume_thread_cpu)
+    worker.start()
+    worker.join()
+
+    assert process_cpu_seconds(CurrentProcess()) - before >= 0.015
 
 
-def test_process_cpu_rejects_malformed_scheduler_accounting(tmp_path: Path) -> None:
-    task_dir = tmp_path / "42" / "task" / "42"
-    task_dir.mkdir(parents=True)
-    (task_dir / "schedstat").write_text("\n", encoding="utf-8")
-
-    try:
-        process_cpu_seconds(FakeProcess(), proc_root=tmp_path)
-    except ValueError as error:
-        assert "empty scheduler accounting file" in str(error)
-        return
-
-    raise AssertionError("malformed scheduler accounting was accepted")
+def test_process_cpu_uses_portable_counter_when_process_clock_is_unavailable() -> None:
+    with patch("helpers.process_cpu._linux_process_cpu_nanoseconds", return_value=None):
+        assert process_cpu_seconds(FakeProcess()) == 1.75

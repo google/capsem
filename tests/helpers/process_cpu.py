@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
+import time
 from decimal import Decimal
-from pathlib import Path
 from typing import Protocol
 
 NANOSECONDS_PER_SECOND = Decimal(1_000_000_000)
@@ -26,28 +28,29 @@ class ProcessLike(Protocol):
 
 def process_cpu_seconds(
     process: ProcessLike,
-    *,
-    proc_root: Path = Path("/proc"),
 ) -> Decimal:
-    """Read total process CPU with nanosecond precision when Linux exposes it.
+    """Read monotonic total process CPU with nanosecond precision on Linux.
 
-    ``/proc/<pid>/schedstat`` covers only the main thread. Tokio does its work
-    on worker threads, so Linux measurements must sum every task. Other
+    Linux's process CPU clock includes every thread, including CPU consumed by
+    threads that exit between samples. Summing the live ``schedstat`` files
+    does not: the total can move backwards when a Tokio worker exits. Other
     platforms retain psutil's portable user-plus-system counter.
     """
-    task_root = proc_root / str(process.pid) / "task"
-    if task_root.is_dir():
-        schedstats = tuple(task_root.glob("*/schedstat"))
-        if schedstats:
-            runtime_ns = sum(_runtime_nanoseconds(path) for path in schedstats)
+    if sys.platform == "linux":
+        runtime_ns = _linux_process_cpu_nanoseconds(process.pid)
+        if runtime_ns is not None:
             return Decimal(runtime_ns) / NANOSECONDS_PER_SECOND
 
     times = process.cpu_times()
     return Decimal(str(times.user)) + Decimal(str(times.system))
 
 
-def _runtime_nanoseconds(path: Path) -> int:
-    fields = path.read_text(encoding="utf-8").split()
-    if not fields:
-        raise ValueError(f"empty scheduler accounting file: {path}")
-    return int(fields[0])
+def _linux_process_cpu_nanoseconds(pid: int) -> int | None:
+    clock_id = ctypes.c_int()
+    libc = ctypes.CDLL(None)
+    get_clock_id = libc.clock_getcpuclockid
+    get_clock_id.argtypes = (ctypes.c_int, ctypes.POINTER(ctypes.c_int))
+    get_clock_id.restype = ctypes.c_int
+    if get_clock_id(pid, ctypes.byref(clock_id)) != 0:
+        return None
+    return time.clock_gettime_ns(clock_id.value)
