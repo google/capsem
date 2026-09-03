@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest network proxy no longer serializes the two steps in front of
+  every outbound connection: attributing the connecting process from
+  `/proc` and opening the vsock to the host now run at the same time, so the
+  first byte leaves the guest after the slower of the two rather than their
+  sum.
 - The DNS forwarder accepts only the answer to the question it asked. It
   used to return the first datagram that arrived on its socket, so a forged
   reply that guessed the ephemeral port could answer for any name (the

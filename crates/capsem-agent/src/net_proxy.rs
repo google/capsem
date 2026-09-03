@@ -248,12 +248,15 @@ async fn handle_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAtt
         Err(_) => return,
     };
 
-    let process_name = attributor
-        .get_process_name(peer_addr.port())
-        .await
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let vsock_raw = match tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)).await {
+    // Attribution walks /proc and the vsock connect crosses to the host;
+    // neither needs the other, and both sit in front of the first byte of
+    // every outbound connection, so they run at the same time.
+    let (process_name, vsock_raw) = tokio::join!(
+        attributor.get_process_name(peer_addr.port()),
+        tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)),
+    );
+    let process_name = process_name.unwrap_or_else(|| "unknown".to_string());
+    let vsock_raw = match vsock_raw {
         Ok(Ok(fd)) => fd,
         _ => {
             eprintln!("[capsem-net-proxy] vsock connect failed");
