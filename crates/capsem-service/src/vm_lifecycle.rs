@@ -1,7 +1,9 @@
 use super::*;
 
 mod session_dirs;
+mod transcript;
 use session_dirs::{claim_persistent_session, remove_purged_session_dir};
+pub(super) use transcript::handle_history_transcript;
 
 // History endpoints
 
@@ -166,37 +168,6 @@ pub(super) async fn handle_history_counts(
     })?;
     session_response_cache_store(&state, &id, "history_counts", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
-}
-
-/// GET /vms/{id}/history/transcript -- raw PTY output (base64-encoded).
-pub(super) async fn handle_history_transcript(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Query(_params): Query<api::TranscriptQuery>,
-) -> Result<Json<api::TranscriptResponse>, AppError> {
-    use base64::Engine;
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let pty_log_path = session_dir.join("pty.log");
-
-    if !pty_log_path.exists() {
-        return Ok(Json(api::TranscriptResponse {
-            content: String::new(),
-            bytes: 0,
-        }));
-    }
-
-    let output = std::fs::read(&pty_log_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read pty.log: {e}"),
-        )
-    })?;
-
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&output);
-    Ok(Json(api::TranscriptResponse {
-        bytes: output.len(),
-        content: encoded,
-    }))
 }
 
 /// Acquire the host-wide VZ lifecycle flock (`startup::VzHostLock`)

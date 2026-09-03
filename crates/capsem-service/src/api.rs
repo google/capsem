@@ -818,7 +818,6 @@ pub struct TranscriptQuery {
     pub tail_lines: usize,
 }
 
-#[allow(dead_code)]
 fn default_tail_lines() -> usize {
     500
 }

@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /vms/{id}/history/transcript` honours its documented `tail_lines`
+  parameter (default 500) instead of returning the whole PTY log, reads the
+  file off the async runtime, and reports the bytes it actually returned.
 - A resumed persistent VM now gets the same exit bookkeeping as a freshly
   provisioned one: it is marked suspended when it checkpoints, defunct with
   the process-log tail when it crashes, and its stop is recorded in the

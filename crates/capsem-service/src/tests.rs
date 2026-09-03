@@ -580,6 +580,7 @@ mod profile_routes;
 mod session_identity;
 mod settings_files;
 mod system_contracts;
+mod transcript;
 mod update_routes;
 
 pub(crate) use assets_registry::make_state_in;
