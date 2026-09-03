@@ -108,5 +108,16 @@ pub fn links(path: &Path) -> Result<u64> {
         .nlink())
 }
 
+/// Create an intentional same-inode test fixture through the audited boundary.
+///
+/// Production staging must use [`stage`], which protects checked-in source.
+/// This narrower primitive is compiled only for crate tests that need to prove
+/// inode-identity behavior.
+#[cfg(test)]
+pub(crate) fn link_test_fixture(source: &Path, destination: &Path) -> Result<()> {
+    fs::hard_link(source, destination)
+        .with_context(|| format!("link test fixture {} -> {}", source.display(), destination.display()))
+}
+
 #[cfg(test)]
 mod tests;

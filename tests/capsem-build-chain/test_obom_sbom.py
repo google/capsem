@@ -156,6 +156,7 @@ def test_admin_materialization_and_service_routes_expose_verified_obom_evidence(
     profile_images = _read("crates/capsem-admin/src/profile_images.rs")
     service_router = _read("crates/capsem-service/src/router_runtime.rs")
     profile_routes = _read("crates/capsem-service/src/profile_routes.rs")
+    obom_routes = _read("crates/capsem-service/src/profile_routes/obom.rs")
     api = _read("crates/capsem-service/src/api.rs")
 
     assert "materialize_profile_obom_descriptor" in profile_images
@@ -176,10 +177,11 @@ def test_admin_materialization_and_service_routes_expose_verified_obom_evidence(
         'route("/profiles/{profile_id}/obom", get(handle_profile_obom))'
         in service_router
     )
-    assert "fn profile_obom_info" in profile_routes
-    assert "read_local_profile_obom" in profile_routes
-    assert "profile OBOM hash mismatch" in profile_routes
-    assert "profile OBOM size mismatch" in profile_routes
+    assert "mod obom;" in profile_routes
+    assert "fn profile_obom_info" in obom_routes
+    assert "read_local_profile_obom" in obom_routes
+    assert "profile OBOM hash mismatch" in obom_routes
+    assert "profile OBOM size mismatch" in obom_routes
     assert "rootfs_hash" in api
     assert "generator_version" in api
 
