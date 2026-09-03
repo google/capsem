@@ -232,7 +232,7 @@ pub fn handle_delete_snapshot(
 /// component without following symlinks. A symlink anywhere on the path, or
 /// at the leaf, is refused rather than sized through.
 pub(super) fn contained_file_size(root: &Path, rel: &str) -> Result<Option<u64>, String> {
-    use crate::contained_fs::{is_symlink_refusal, ContainedDir, EntryKind};
+    use capsem_foundation::unix::contained::{is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind};
     let rel = Path::new(rel);
     let Some(name) = rel.file_name() else {
         return Err("path names no file".into());
@@ -252,7 +252,7 @@ pub(super) fn contained_file_size(root: &Path, rel: &str) -> Result<Option<u64>,
     match parent.entry_kind(name).map_err(|e| format!("inspect: {e}"))? {
         None => Ok(None),
         Some(EntryKind::File) => parent
-            .open_file(name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+            .open_file(name, ContainedOpenOptions::read_only())
             .and_then(|file| file.metadata())
             .map(|meta| Some(meta.len()))
             .map_err(|e| format!("open: {e}")),

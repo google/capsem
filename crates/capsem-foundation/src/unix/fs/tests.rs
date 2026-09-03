@@ -1,7 +1,10 @@
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::{Arc, Barrier};
 
-use super::{atomic_write_private, ensure_private_dir, filesystem_space};
+use super::{
+    atomic_write_private, ensure_private_dir, filesystem_space, read_regular_file_no_follow,
+    write_new_regular_file_no_follow,
+};
 
 #[test]
 fn filesystem_capacity_is_internally_consistent() {
@@ -83,4 +86,33 @@ fn concurrent_private_writes_never_publish_partial_content() {
     let published = std::fs::read(&*path).unwrap();
     assert!(published == first || published == second);
     assert_eq!(root.path().read_dir().unwrap().count(), 1);
+}
+
+#[test]
+fn regular_file_helpers_refuse_symlinks_and_special_files() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("target");
+    std::fs::write(&target, b"secret").unwrap();
+    let link = root.path().join("link");
+    symlink(&target, &link).unwrap();
+    assert!(read_regular_file_no_follow(&link).is_err());
+    assert!(write_new_regular_file_no_follow(&link, b"replaced", 0o600).is_err());
+    assert_eq!(std::fs::read(&target).unwrap(), b"secret");
+
+    let fifo = root.path().join("fifo");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    let error = read_regular_file_no_follow(&fifo).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn new_regular_file_is_complete_and_uses_requested_mode() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("restored");
+    write_new_regular_file_no_follow(&path, b"restored bytes", 0o640).unwrap();
+    assert_eq!(read_regular_file_no_follow(&path).unwrap(), b"restored bytes");
+    assert_eq!(
+        std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
 }

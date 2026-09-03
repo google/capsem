@@ -93,6 +93,19 @@ pub fn try_acquire(path: &Path, mode: LockMode) -> io::Result<LockAttempt> {
     try_acquire_after_open(path, mode, || {})
 }
 
+/// Acquire a shared or exclusive lock, waiting until contention clears.
+///
+/// This preserves the same path-replacement and ownership checks as
+/// [`try_acquire`]. It is intended for synchronous read-modify-write sections.
+pub fn acquire(path: &Path, mode: LockMode) -> io::Result<FileLock> {
+    loop {
+        match try_acquire(path, mode)? {
+            LockAttempt::Acquired(lock) => return Ok(lock),
+            LockAttempt::Contended => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
 fn try_acquire_inner(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
     let registry_key = prepare_key(path)?;
     if !reserve(&registry_key, mode)? {
@@ -146,10 +159,14 @@ fn acquire_reserved(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> i
         LockMode::Shared => FlockArg::LockSharedNonblock,
         LockMode::Exclusive => FlockArg::LockExclusiveNonblock,
     };
-    let flock = match Flock::lock(file, argument) {
-        Ok(flock) => flock,
-        Err((_file, Errno::EWOULDBLOCK)) => return Ok(LockAttempt::Contended),
-        Err((_file, error)) => return Err(errno::io(error)),
+    let mut candidate = file;
+    let flock = loop {
+        match Flock::lock(candidate, argument) {
+            Ok(flock) => break flock,
+            Err((file, Errno::EINTR)) => candidate = file,
+            Err((_file, Errno::EWOULDBLOCK)) => return Ok(LockAttempt::Contended),
+            Err((_file, error)) => return Err(errno::io(error)),
+        }
     };
     let current = std::fs::symlink_metadata(path)?;
     if current.file_type().is_symlink() || current.dev() != metadata.dev() || current.ino() != metadata.ino() {

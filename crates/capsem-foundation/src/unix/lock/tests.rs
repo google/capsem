@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 
-use super::{try_acquire, try_acquire_after_open, LockAttempt, LockMode};
+use super::{acquire, try_acquire, try_acquire_after_open, LockAttempt, LockMode};
 
 fn acquired(attempt: LockAttempt) -> super::FileLock {
     match attempt {
@@ -56,6 +56,20 @@ fn shared_locks_are_compatible_but_exclude_a_writer() {
         try_acquire(&path, LockMode::Exclusive).unwrap(),
         LockAttempt::Acquired(_)
     ));
+}
+
+#[test]
+fn blocking_acquire_waits_for_same_process_holder() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("lock");
+    let first = acquired(try_acquire(&path, LockMode::Exclusive).unwrap());
+    let waiting_path = path.clone();
+    let waiter = std::thread::spawn(move || acquire(&waiting_path, LockMode::Exclusive).unwrap());
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert!(!waiter.is_finished());
+    drop(first);
+    let second = waiter.join().unwrap();
+    assert_eq!(second.path(), path);
 }
 
 #[test]

@@ -13,6 +13,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub use crate::unix::process::current_uid;
+
 /// Maximum length of a UDS path we'll accept before falling back to
 /// `/tmp/capsem-<uid>/<hash>.sock`. Chosen well under macOS's 104 and Linux's 108
 /// so there's headroom for any suffix.
@@ -40,12 +42,6 @@ pub fn instance_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(private_fallback_dir()?.join(format!("{:x}.sock", h.finish())))
 }
 
-/// The calling user's numeric id.
-pub fn current_uid() -> u32 {
-    // SAFETY: getuid(2) takes no arguments and cannot fail.
-    unsafe { libc::getuid() }
-}
-
 /// `/tmp/capsem-<uid>`, created 0700 and verified to be exactly that.
 ///
 /// The fallback used to live in a shared `/tmp/capsem`, created 0755 by
@@ -60,34 +56,9 @@ pub fn private_fallback_dir() -> io::Result<PathBuf> {
 }
 
 fn private_fallback_dir_under(base: &Path) -> io::Result<PathBuf> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let uid = current_uid();
     let dir = base.join(format!("capsem-{uid}"));
-    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => {
-            return Err(io::Error::new(
-                error.kind(),
-                format!("create private socket dir {}: {error}", dir.display()),
-            ))
-        }
-    }
-    let refuse = |what: String| io::Error::other(format!("refusing socket fallback dir {}: {what}", dir.display()));
-    let metadata = std::fs::symlink_metadata(&dir)?;
-    if metadata.file_type().is_symlink() {
-        return Err(refuse("it is a symlink".to_string()));
-    }
-    if !metadata.is_dir() {
-        return Err(refuse("it is not a directory".to_string()));
-    }
-    if metadata.uid() != uid {
-        return Err(refuse(format!("it is owned by uid {}, not {uid}", metadata.uid())));
-    }
-    let mode = metadata.mode() & 0o777;
-    if mode & 0o077 != 0 {
-        return Err(refuse(format!("its mode is {mode:o}, not 700")));
-    }
+    crate::unix::fs::ensure_private_dir(&dir)?;
     Ok(dir)
 }
 

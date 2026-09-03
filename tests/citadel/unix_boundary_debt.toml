@@ -4,13 +4,8 @@
 # any addition or changed fingerprint requires explicit review.
 
 [migration.rust]
-"crates/capsem-core/src/contained_fs.rs" = "d18fff65e2e407c7c104d5044af32ff00f8bdf46dc17e4b850aac57b4fe4e6f1"
-"crates/capsem-core/src/mcp/file_tools.rs" = "aecd540c5f4d3bb3f368fbf1a19a19e43bf4191a4d46e0c833a51847fe527050"
-"crates/capsem-core/src/mcp/file_tools/snapshots.rs" = "a3b53171c631938869489663a76f629e0458bab166c96ae64b5e3a84cd392ac7"
-"crates/capsem-service/src/vm_files.rs" = "19fc021779c50f2729eb218f39e1aab3f30a7b6ab9e708da95a5a34ecf5a4e06"
 
 [migration.manifest]
-"crates/capsem-service/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
 
 [domain_abi.rust]
 "crates/capsem-agent/src/audit.rs" = "2ff815c166e12c8323e75f8d5259072f9f3247877d0cdab6238eaf192fe078ab"

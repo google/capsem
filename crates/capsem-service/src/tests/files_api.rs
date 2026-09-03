@@ -1,4 +1,5 @@
 use super::*;
+use capsem_foundation::unix::contained::ContainedOpenOptions;
 use capsem_service::fs_utils::sanitize_file_path;
 use std::io::{Read as _, Write as _};
 
@@ -478,7 +479,7 @@ fn download_reads_correct_bytes() {
     let (parent, name) = resolve_workspace_target(&state, "dl-vm", "test.txt", false).unwrap();
     let mut data = Vec::new();
     parent
-        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+        .open_file(&name, ContainedOpenOptions::read_only())
         .unwrap()
         .read_to_end(&mut data)
         .unwrap();
@@ -498,7 +499,7 @@ fn download_binary_preserves_content() {
     let (parent, name) = resolve_workspace_target(&state, "bin-vm", "data.bin", false).unwrap();
     let mut data = Vec::new();
     parent
-        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
+        .open_file(&name, ContainedOpenOptions::read_only())
         .unwrap()
         .read_to_end(&mut data)
         .unwrap();
@@ -514,11 +515,7 @@ fn upload_creates_file_with_content() {
     let ws = dir.path().join("session/guest/workspace");
     let (parent, name) = resolve_workspace_target(&state, "up-vm", "new.txt", true).unwrap();
     parent
-        .open_file(
-            &name,
-            nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_CREAT,
-            nix::sys::stat::Mode::from_bits_truncate(0o644),
-        )
+        .open_file(&name, ContainedOpenOptions::write_create(0o644))
         .unwrap()
         .write_all(b"uploaded")
         .unwrap();
@@ -536,11 +533,7 @@ fn upload_creates_parent_directories() {
     // Resolving for upload creates the missing parents inside the workspace
     let (parent, name) = resolve_workspace_target(&state, "mkdir-vm", "deep/nested/file.txt", true).unwrap();
     parent
-        .open_file(
-            &name,
-            nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_CREAT,
-            nix::sys::stat::Mode::from_bits_truncate(0o644),
-        )
+        .open_file(&name, ContainedOpenOptions::write_create(0o644))
         .unwrap()
         .write_all(b"deep content")
         .unwrap();
@@ -566,9 +559,7 @@ fn download_nonexistent_file_resolves_but_does_not_open() {
     // Resolving a non-existent file path still works (for upload target)
     let (parent, name) = resolve_workspace_target(&state, "404-vm", "nonexistent.txt", false).unwrap();
     assert_eq!(parent.entry_kind(&name).unwrap(), None);
-    let err = parent
-        .open_file(&name, nix::fcntl::OFlag::O_RDONLY, nix::sys::stat::Mode::empty())
-        .unwrap_err();
+    let err = parent.open_file(&name, ContainedOpenOptions::read_only()).unwrap_err();
     assert_eq!(workspace_io_error(err).0, StatusCode::NOT_FOUND);
 }
 

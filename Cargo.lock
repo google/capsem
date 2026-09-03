@@ -1125,7 +1125,6 @@ dependencies = [
  "futures",
  "humantime",
  "magika",
- "nix 0.29.0",
  "ort",
  "rand 0.8.6",
  "reqwest 0.12.28",

@@ -378,10 +378,10 @@ use axum::http::StatusCode;
 use capsem_service::errors::AppError;
 use std::ffi::OsString;
 
-use capsem_core::contained_fs::{is_symlink_refusal, ContainedDir, EntryKind};
+use capsem_foundation::unix::contained::{
+    is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind,
+};
 use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize_file_path, unknown_file_type};
-use nix::fcntl::OFlag;
-use nix::sys::stat::Mode;
 
 // ---------------------------------------------------------------------------
 // Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
@@ -390,7 +390,7 @@ use nix::sys::stat::Mode;
 // The workspace is a VirtioFS share the guest writes at will, so every symlink
 // in it is guest-controlled. Nothing here resolves a guest-influenced path by
 // name: the root is opened once and every step below it is an `openat` that
-// refuses symlinks (see `capsem_core::contained_fs`). Path-based checks --
+// refuses symlinks (see `capsem_foundation::unix::contained`). Path-based checks --
 // canonicalize, exists, metadata -- were answered for one file and acted on
 // for another, and for a dangling link or a missing parent they were not
 // answered at all: an upload to `notes.txt -> ~/.ssh/authorized_keys` landed
@@ -435,9 +435,7 @@ pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
         )
     } else if e.kind() == std::io::ErrorKind::NotFound {
         AppError(StatusCode::NOT_FOUND, "path not found".into())
-    } else if e.kind() == std::io::ErrorKind::InvalidInput
-        || e.raw_os_error() == Some(nix::errno::Errno::ENOTDIR as i32)
-    {
+    } else if e.kind() == std::io::ErrorKind::InvalidInput || is_not_directory(&e) {
         AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
     } else {
         AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
@@ -462,7 +460,7 @@ pub(super) fn resolve_workspace_target(
     let parent_rel = rel.parent().unwrap_or_else(|| StdPath::new(""));
     let root = workspace_root(state, id)?;
     let parent = if create {
-        root.walk_creating(parent_rel, Mode::from_bits_truncate(0o755))
+        root.walk_creating(parent_rel, 0o755)
     } else {
         root.walk(parent_rel)
     }
@@ -547,7 +545,7 @@ pub(super) fn list_dir_recursive(
                 children,
             });
         } else {
-            let (label, mime, _group, is_text) = match dir.open_file(&item.name, OFlag::O_RDONLY, Mode::empty()) {
+            let (label, mime, _group, is_text) = match dir.open_file(&item.name, ContainedOpenOptions::read_only()) {
                 Ok(mut file) => identify_file_sync(magika, StdPath::new(&name), &mut file),
                 Err(_) => unknown_file_type(),
             };
@@ -664,7 +662,7 @@ pub(super) async fn handle_download_file(
     let (data, mime, filename) = tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let file = parent
-            .open_file(&name, OFlag::O_RDONLY, Mode::empty())
+            .open_file(&name, ContainedOpenOptions::read_only())
             .map_err(workspace_io_error)?;
         // Read one byte past the cap rather than trusting a length the guest
         // can grow between stat and read.
@@ -742,11 +740,7 @@ pub(super) async fn handle_upload_file(
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
         let mut file = parent
-            .open_file(
-                &name,
-                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
-                Mode::from_bits_truncate(0o644),
-            )
+            .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
             .map_err(workspace_io_error)?;
         file.write_all(&data)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;

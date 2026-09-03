@@ -10,7 +10,6 @@
 //! The guest sees changes immediately via VirtioFS.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -380,63 +379,14 @@ fn snapshot_file_mode(path: &Path) -> u32 {
 /// mode is set at creation, so there is no follow-prone `set_permissions`
 /// afterward. This closes the revert TOCTOU that let a guest redirect a restore
 /// to an arbitrary host file.
-#[cfg(unix)]
 fn write_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .mode(mode)
-        .open(path)
-        .map_err(|e| format!("failed to create restored file without following symlinks: {e}"))?;
-    file.write_all(data)
-        .map_err(|e| format!("failed to write restored file: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("failed to fsync restored file: {e}"))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_regular_file_no_follow(path: &Path, data: &[u8], _mode: u32) -> Result<(), String> {
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| format!("failed to create restored file: {e}"))?;
-    file.write_all(data)
-        .map_err(|e| format!("failed to write restored file: {e}"))?;
-    let _ = file.sync_all();
-    Ok(())
+    capsem_foundation::unix::fs::write_new_regular_file_no_follow(path, data, mode)
+        .map_err(|error| format!("failed to restore regular file: {error}"))
 }
 
 fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!("{label} is a symlink"));
-    }
-    if !meta.is_file() {
-        return Err(format!("{label} is not a regular file"));
-    }
-
-    #[cfg(unix)]
-    let mut file = {
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .map_err(|e| format!("failed to open {label} without following symlinks: {e}"))?
-    };
-    #[cfg(not(unix))]
-    let mut file = std::fs::File::open(path).map_err(|e| format!("failed to open {label}: {e}"))?;
-
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|e| format!("failed to read {label}: {e}"))?;
-    Ok(bytes)
+    capsem_foundation::unix::fs::read_regular_file_no_follow(path)
+        .map_err(|error| format!("failed to read {label} without following symlinks: {error}"))
 }
 
 /// Validate a snapshot name: alphanumeric + underscore + hyphen, 1-64 chars.

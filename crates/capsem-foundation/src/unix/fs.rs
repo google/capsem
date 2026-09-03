@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +28,40 @@ pub fn filesystem_space(path: &Path) -> io::Result<FilesystemSpace> {
         free_bytes: stat.blocks_free().saturating_mul(block_size),
         available_bytes: stat.blocks_available().saturating_mul(block_size),
     })
+}
+
+/// Read a regular file without following a link or blocking on a special file.
+pub fn read_regular_file_no_follow(path: &Path) -> io::Result<Vec<u8>> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| context(error, "open regular file without following links", path))?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .map_err(|error| context(error, "read regular file", path))?;
+    Ok(contents)
+}
+
+/// Write and sync a newly-created regular file without following a link.
+pub fn write_new_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|error| context(error, "create regular file without following links", path))?;
+    file.write_all(data)
+        .map_err(|error| context(error, "write regular file", path))?;
+    file.sync_all()
+        .map_err(|error| context(error, "sync regular file", path))
 }
 
 /// Create `path` as an owner-only directory, or verify an existing one.
