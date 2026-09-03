@@ -77,11 +77,12 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
 /// edges, but it does tolerate sibling cold starts. See
 /// web/docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
 ///
-/// Lock file lives at `/tmp/capsem-vz-save-restore-<uid>.lock` -- outside
+/// Lock file lives at `/tmp/capsem-<uid>/vz-save-restore.lock` -- outside
 /// any `CAPSEM_HOME`/`CAPSEM_RUN_DIR` override so every sibling service
-/// on the same host agrees on one path, and scoped by uid so multi-user
-/// hosts don't collide. `/tmp` is always writable and survives a suspend;
-/// the flock releases automatically on crash (fd close).
+/// on the same host agrees on one path, and inside the verified private
+/// per-user directory so another user cannot plant a symlink or squat the
+/// name. `/tmp` is always writable and survives a suspend; the flock
+/// releases automatically on crash (fd close).
 pub struct VzHostLock {
     _flock: Flock<std::fs::File>,
 }
@@ -93,16 +94,15 @@ pub enum VzHostLockMode {
 }
 
 impl VzHostLock {
-    fn lock_path() -> std::path::PathBuf {
-        let uid = unsafe { nix::libc::getuid() };
-        std::path::PathBuf::from(format!("/tmp/capsem-vz-save-restore-{uid}.lock"))
+    fn lock_path() -> Result<std::path::PathBuf> {
+        Ok(capsem_foundation::uds::private_fallback_dir()?.join("vz-save-restore.lock"))
     }
 
     /// Acquire the host-wide lock, waiting up to `timeout` for a compatible
     /// sibling lifecycle operation to release it. Returns `Ok(Some(lock))`
     /// on success, `Ok(None)` on timeout (caller decides whether to fail).
     pub fn acquire(mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
-        let path = Self::lock_path();
+        let path = Self::lock_path()?;
         Self::acquire_path(&path, mode, timeout)
     }
 

@@ -115,7 +115,7 @@ struct Args {
     ///
     /// Passed rather than walked up from `uds_path`. That worked while the IPC
     /// socket was `{run_dir}/instances/{id}.sock` and broke the moment it was
-    /// shortened to `/tmp/capsem/<hash>.sock` -- which is precisely the long
+    /// shortened to `/tmp/capsem-<uid>/<hash>.sock` -- which is precisely the long
     /// run directory the shortening exists for. Two levels up from the short
     /// form is `/tmp`, so the process bound `/tmp/instances/...` while the
     /// gateway dialled `{run_dir}/instances/...`.
@@ -684,7 +684,7 @@ async fn run_async_main_loop(
         .and_then(|instances| instances.parent())
         .unwrap_or_else(|| std::path::Path::new("/tmp"));
     let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
-    let ws_sock_path = capsem_foundation::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
+    let ws_sock_path = capsem_foundation::uds::terminal_socket_path(ws_run_dir, &vm_id_ws)?;
     if ws_sock_path.exists() {
         std::fs::remove_file(&ws_sock_path)?;
     }

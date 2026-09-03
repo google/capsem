@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When a per-VM socket path is too long for the platform limit, the short
+  fallback now lives in `/tmp/capsem-<uid>`, created mode 0700 and refused
+  unless it is a real directory owned by the current user and readable by
+  nobody else. The previous shared `/tmp/capsem` belonged to whichever user
+  created it, and any other user of the host could remove a service's socket
+  or bind their own at the path clients were handed. The VZ save/restore
+  lock file moves into the same directory.
 - `GET /vms/{id}/history/transcript` honours its documented `tail_lines`
   parameter (default 500) instead of returning the whole PTY log, reads the
   file off the async runtime, and reports the bytes it actually returned.

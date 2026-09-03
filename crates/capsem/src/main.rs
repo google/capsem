@@ -2225,12 +2225,13 @@ async fn main() -> Result<()> {
             tokio::pin!(ctrl_c);
 
             // The service tells us exactly where the per-VM socket lives. Never
-            // recompute locally -- the service may fall back to /tmp/capsem/{hash}
-            // when run_dir is under macOS's /var/folders (long SUN path).
-            let sock_path = provisioned
-                .uds_path
-                .clone()
-                .unwrap_or_else(|| capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id));
+            // recompute locally -- the service may fall back to
+            // /tmp/capsem-<uid>/{hash} when run_dir is under macOS's
+            // /var/folders (long SUN path).
+            let sock_path = match provisioned.uds_path.clone() {
+                Some(path) => path,
+                None => capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id)?,
+            };
 
             // Poll for the per-VM socket to exist and hand us an open IPC
             // channel. Uses the shared exponential-backoff helper instead of

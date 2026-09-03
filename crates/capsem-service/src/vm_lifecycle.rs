@@ -619,7 +619,9 @@ pub(super) async fn handle_resume(
 
     match state.resume_sandbox(&id, None, None) {
         Ok(resumed_id) => {
-            let uds_path = state.instance_socket_path(&resumed_id);
+            let uds_path = state
+                .instance_socket_path(&resumed_id)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
                 error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
@@ -632,7 +634,9 @@ pub(super) async fn handle_resume(
 
                     match state.resume_sandbox(&resumed_id, None, None) {
                         Ok(cold_id) => {
-                            let cold_uds_path = state.instance_socket_path(&cold_id);
+                            let cold_uds_path = state
+                                .instance_socket_path(&cold_id)
+                                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                             if let Err(cold_e) =
                                 wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
                             {
@@ -974,7 +978,9 @@ pub(super) async fn handle_run(
         // lifecycle rail. The child does its Apple VZ start/restore before it
         // writes the ready sentinel; releasing earlier reintroduces the
         // sibling-service overlap this lock exists to prevent.
-        let uds_path = state.instance_socket_path(&id);
+        let uds_path = state
+            .instance_socket_path(&id)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
             drop(_vz_host_guard);
             drop(_vz_guard);
@@ -992,7 +998,9 @@ pub(super) async fn handle_run(
         }
     }
 
-    let uds_path = state.instance_socket_path(&id);
+    let uds_path = state
+        .instance_socket_path(&id)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // 2. Execute command.
     let job_id = state.next_job_id();
