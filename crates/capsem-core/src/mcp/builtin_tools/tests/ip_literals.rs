@@ -91,3 +91,21 @@ fn ip_value_rules_match_every_spelling_of_loopback() {
         assert!(result.is_err(), "{url} must match ip.value == {value:?}");
     }
 }
+
+#[test]
+fn legacy_ipv4_spellings_are_judged_as_the_dotted_quad() {
+    for url in [
+        "http://0x7f000001/",
+        "http://127.1/",
+        "http://2130706433/",
+        "http://0177.0.0.1/",
+        "http://0x7f.0.0.1:8080/",
+    ] {
+        let result = evaluate_builtin_http_request(url, "GET", &block_value("127.0.0.1"), &BTreeMap::new());
+        assert!(
+            result.is_err(),
+            "{url} dials loopback and must match ip.value == \"127.0.0.1\""
+        );
+        assert_eq!(extract_domain(url), "127.0.0.1", "{url}");
+    }
+}

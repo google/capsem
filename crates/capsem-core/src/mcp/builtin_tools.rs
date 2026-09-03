@@ -737,7 +737,7 @@ fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
     if let Ok(ip) = unbracketed.parse::<IpAddr>() {
         return Some((ip.to_string(), Some(ip)));
     }
-    let host = crate::net::cert_authority::normalize_host(raw);
+    let host = crate::net::hostname::normalize_host(raw);
     (!host.is_empty()).then_some((host, None))
 }
 

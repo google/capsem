@@ -1728,18 +1728,12 @@ impl SecurityEvent {
     }
 
     pub fn with_http(mut self, mut http: HttpSecurityEvent) -> Self {
-        // Hostnames are case-insensitive. Normalize once here -- the single
-        // attach point for the matched HTTP event -- so `http.host` rules can't
-        // be evaded with a mixed-case Host header. Mirrors the DNS qname path,
-        // which already lowercases. Hostnames are ASCII (IDNs are punycode).
+        // One host identity, applied at the single attach point for the
+        // matched HTTP event: case, DNS-root dots and legacy IPv4 spellings
+        // (`0x7f000001`, `127.1`) all collapse to what the resolver dials, so
+        // an `http.host` rule cannot be evaded by respelling the host.
         if let Some(host) = http.host.as_mut() {
-            host.make_ascii_lowercase();
-            // `api.evil.com.` is the DNS-root spelling of `api.evil.com`: the
-            // resolver dials the same address, so a rule on the canonical
-            // name must see the canonical name.
-            while host.ends_with('.') {
-                host.pop();
-            }
+            *host = crate::net::hostname::normalize_host(host);
         }
         self.http = Some(http);
         self

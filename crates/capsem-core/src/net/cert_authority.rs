@@ -16,13 +16,6 @@ use rustls::sign::CertifiedKey;
 /// life of the VM; a real workload talks to far fewer hosts than this.
 const LEAF_CACHE_CAPACITY: usize = 1024;
 
-/// The host identity policy, dial, telemetry and this cache all share:
-/// lowercase, without the DNS-root trailing dots. `Example.COM.` and
-/// `example.com` are one host to the resolver and must be one leaf here.
-pub fn normalize_host(host: &str) -> String {
-    host.trim_end_matches('.').to_ascii_lowercase()
-}
-
 /// Holds the static CA keypair and caches minted leaf certificates.
 pub struct CertAuthority {
     ca_cert: rcgen::Certificate,
@@ -58,7 +51,7 @@ impl CertAuthority {
     /// now+1y, with SAN=domain. Minting takes well under a millisecond, so it
     /// happens under the lock rather than racing two mints for one name.
     pub fn certified_key_for_domain(&self, domain: &str) -> anyhow::Result<Arc<CertifiedKey>> {
-        let host = normalize_host(domain);
+        let host = crate::net::hostname::normalize_host(domain);
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(key) = cache.get(&host) {
             return Ok(Arc::clone(key));
@@ -145,7 +138,7 @@ impl rustls::server::ResolvesServerCert for MitmCertResolver {
         // handed to policy, dial, and telemetry is the same identity the leaf
         // is minted for: rustls accepts `Example.COM.` and a rule on
         // `example.com` must still fire.
-        let domain = normalize_host(hello.server_name()?);
+        let domain = crate::net::hostname::normalize_host(hello.server_name()?);
         if domain.is_empty() {
             return None;
         }

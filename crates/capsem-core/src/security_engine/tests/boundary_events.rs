@@ -440,3 +440,41 @@ match = 'http.host == "api.evil.com"'
         );
     }
 }
+
+#[test]
+fn http_host_matching_canonicalizes_legacy_ipv4_spellings() {
+    // The resolver reads `0x7f000001`, `127.1`, `0177.0.0.1` and
+    // `2130706433` as 127.0.0.1, so a rule on the dotted quad must fire for
+    // every spelling that dials it.
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.block_loopback]
+name = "block_loopback"
+action = "block"
+match = 'http.host == "127.0.0.1"'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+
+    for spelling in [
+        "0x7f000001",
+        "0X7F000001.",
+        "127.1",
+        "0177.0.0.1",
+        "2130706433",
+        "0x7f.0.0.1",
+    ] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some(spelling.into()),
+            ..Default::default()
+        });
+        let boundary = evaluate_security_boundary(&rules, std::collections::BTreeMap::new(), event).unwrap();
+        assert_eq!(
+            boundary.enforcement.action,
+            SecurityEnforcementAction::Block,
+            "{spelling:?} must not evade a block rule on 127.0.0.1"
+        );
+    }
+}

@@ -191,3 +191,25 @@ async fn tls_sni_mixed_case_is_normalized_for_policy_and_telemetry() {
         Some("profiles.rules.block_test_hosts")
     );
 }
+
+/// The spelling an evasion would actually try against a loopback rule: the
+/// hex form the resolver accepts. Without canonicalization the rule sees
+/// `0x7f000001`, the dial goes to 127.0.0.1, and the request is logged as
+/// allowed.
+#[tokio::test]
+async fn plain_http_block_rule_fires_for_hex_ipv4_host() {
+    let (port, dialed) = dial_probe().await;
+    let (config, db) = make_proxy_config_full(&[], &["127.0.0.1"], true, &[80, port]);
+
+    let (response, dialed, events) = plain_http_get(config, db, &format!("0x7f000001:{port}"), dialed).await;
+
+    assert!(!dialed, "a blocked address must not be dialed under a hex spelling");
+    assert!(response.starts_with("HTTP/1.1 403"), "expected 403, got:\n{response}");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].domain, "127.0.0.1", "telemetry records the canonical address");
+    assert_eq!(
+        events[0].matched_rule.as_deref(),
+        Some("profiles.rules.block_test_hosts")
+    );
+}

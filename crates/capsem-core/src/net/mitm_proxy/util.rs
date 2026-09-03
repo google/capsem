@@ -132,7 +132,7 @@ pub(super) fn parse_http_host_target(header: Option<&hyper::header::HeaderValue>
         Some((host, port_str)) if !host.is_empty() => (host, port_str.parse::<u16>().ok()?),
         _ => (trimmed, 80),
     };
-    let host = crate::net::cert_authority::normalize_host(host);
+    let host = crate::net::hostname::normalize_host(host);
     (!host.is_empty()).then_some((host, port))
 }
 

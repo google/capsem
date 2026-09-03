@@ -57,3 +57,52 @@ fn parse_http_host_target_rejects_hosts_that_normalize_to_nothing() {
         assert_eq!(parse_http_host_target(Some(&header)), None, "{raw:?} names no host");
     }
 }
+
+/// `inet_aton(3)` accepts hex, octal, and short forms, and the host's
+/// resolver hands every one of them to the same loopback the rule names.
+/// The proxy must dial and judge the canonical dotted quad, not the spelling.
+#[test]
+fn parse_http_host_target_canonicalizes_legacy_ipv4_spellings() {
+    for (raw, port) in [
+        ("0x7f000001:8080", 8080),
+        ("0x7F.0.0.1:19222", 19222),
+        ("127.1:80", 80),
+        ("127.0.1:80", 80),
+        ("2130706433:443", 443),
+        ("0177.0.0.1:80", 80),
+        ("0x7f.1", 80),
+        ("127.0.0.1", 80),
+    ] {
+        let header = hyper::header::HeaderValue::from_str(raw).unwrap();
+        assert_eq!(
+            parse_http_host_target(Some(&header)),
+            Some(("127.0.0.1".to_string(), port)),
+            "{raw:?} dials loopback and must be judged as loopback"
+        );
+    }
+}
+
+/// Only strings the resolver would read as an address are rewritten: a
+/// name that merely looks numeric stays a name, and an out-of-range part is
+/// not an address at all.
+#[test]
+fn parse_http_host_target_leaves_non_addresses_alone() {
+    for raw in [
+        "1e3",
+        "example.com",
+        "0x",
+        "300.1.1.1",
+        "1.2.3.4.5",
+        "08.1.1.1",
+        "127.0.0.1.1",
+        "0x7g000001",
+    ] {
+        let header = hyper::header::HeaderValue::from_str(raw).unwrap();
+        let parsed = parse_http_host_target(Some(&header));
+        assert_eq!(
+            parsed.map(|(host, _)| host).as_deref(),
+            Some(raw),
+            "{raw:?} is not an IPv4 spelling"
+        );
+    }
+}

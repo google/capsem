@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Legacy IPv4 spellings are judged as the address they dial. The resolver
+  reads `0x7f000001`, `127.1`, `0177.0.0.1` and `2130706433` as `127.0.0.1`,
+  but host rules, the certificate cache and telemetry saw the spelling, so a
+  rule on the dotted quad was evaded by any of them. One host normalizer now
+  serves the MITM edge, the security engine and the built-in tools, and
+  canonicalizes every `inet_aton` form to the dotted quad before anything
+  judges, dials or records it.
 - Persisting a running session no longer renames its directory under the
   live process. capsem-process holds that directory by path for the shared
   workspace, auto-snapshots, the file tools and its session ledger, so the
