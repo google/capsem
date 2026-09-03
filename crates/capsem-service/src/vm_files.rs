@@ -1,6 +1,10 @@
 use super::*;
 
 mod diagnostics;
+mod storage;
+#[cfg(test)]
+pub(crate) use storage::statvfs_bytes;
+pub(crate) use storage::storage_diagnostics;
 mod fork;
 #[cfg(test)]
 pub(crate) use diagnostics::session_db_triage;
@@ -1067,13 +1071,28 @@ pub(super) async fn provision_attempt(
         Err(e) => return ProvisionAttemptOutcome::ProvisionError(e),
     };
     let ready_path = uds_path.with_extension("ready");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
-    loop {
-        if ready_path.exists() {
-            return ProvisionAttemptOutcome::Ready { uds_path };
-        }
-        let still_alive = state.instances.lock().unwrap().contains_key(id);
-        if !still_alive {
+    // The shared backoff, like every other wait in this crate: a launch
+    // failure is seen within milliseconds instead of on the next 50 ms tick.
+    let launch = poll_until(
+        capsem_foundation::poll::PollOpts {
+            label: "provision-launch",
+            timeout: std::time::Duration::from_millis(500),
+            initial_delay: std::time::Duration::from_millis(5),
+            max_delay: std::time::Duration::from_millis(50),
+        },
+        || async {
+            if ready_path.exists() {
+                return Some(true);
+            }
+            let still_alive = state.instances.lock().unwrap().contains_key(id);
+            (!still_alive).then_some(false)
+        },
+    )
+    .await;
+    match launch {
+        Ok(true) => ProvisionAttemptOutcome::Ready { uds_path },
+        Err(_) => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
+        Ok(false) => {
             // Crash before ready. Prefer the persistent entry's
             // cached last_error (already computed by the child-exit
             // handler) to avoid re-reading the log; fall back to
@@ -1084,7 +1103,7 @@ pub(super) async fn provision_attempt(
                 Some(tail) => tail,
                 None => failed_process_log_tail(state, id).await,
             };
-            return if is_launchd_cleanup_transient(&tail) {
+            if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
                     "provision: detected launchd-cleanup transient (misleading 'entitlement' error)"
@@ -1092,49 +1111,9 @@ pub(super) async fn provision_attempt(
                 ProvisionAttemptOutcome::LaunchdTransient
             } else {
                 ProvisionAttemptOutcome::BootCrash { tail }
-            };
+            }
         }
-        if tokio::time::Instant::now() >= deadline {
-            return ProvisionAttemptOutcome::StillBootingTimedOut { uds_path };
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-}
-
-#[cfg(unix)]
-pub(super) fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.blocks() * 512
-}
-
-#[cfg(not(unix))]
-pub(super) fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
-    metadata.len()
-}
-
-pub(super) fn statvfs_bytes<BlockCount>(blocks: BlockCount, block_size: u64) -> u64
-where
-    BlockCount: Into<u64>,
-{
-    blocks.into().saturating_mul(block_size)
-}
-
-pub(super) fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-    let rootfs_image_path = capsem_core::guest_share_dir(session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
-    let stat = nix::sys::statvfs::statvfs(session_dir).ok()?;
-    let block_size = stat.block_size();
-
-    Some(api::StorageDiagnostics {
-        rootfs_image_path: rootfs_image_path.to_string_lossy().to_string(),
-        rootfs_image_logical_bytes: metadata.len(),
-        rootfs_image_physical_bytes: physical_bytes(&metadata),
-        host_total_bytes: statvfs_bytes(stat.blocks(), block_size),
-        host_free_bytes: statvfs_bytes(stat.blocks_free(), block_size),
-        host_available_bytes: statvfs_bytes(stat.blocks_available(), block_size),
-        guest_overlay_device: "/dev/vdb".into(),
-        guest_overlay_mount: "/".into(),
-    })
 }
 
 pub(super) fn append_fingerprint_field(out: &mut String, value: &str) {
