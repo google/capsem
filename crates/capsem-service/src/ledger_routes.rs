@@ -2547,9 +2547,7 @@ pub(super) async fn handle_enforcement_rule_upsert(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
-    state
-        .refresh_profile_rule_cache(Some(&profile_id))
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
     log_profile_mutation_applied("enforcement_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -2627,9 +2625,7 @@ pub(super) async fn handle_detection_rule_upsert(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
-    state
-        .refresh_profile_rule_cache(Some(&profile_id))
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
     log_profile_mutation_applied("detection_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -2670,9 +2666,7 @@ pub(super) async fn handle_enforcement_rule_delete(
         AppError(status, error)
     })?;
     let event = write_profile_mutation_event(&state, summary).await?;
-    state
-        .refresh_profile_rule_cache(Some(&profile_id))
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
@@ -2702,9 +2696,7 @@ pub(super) async fn handle_detection_rule_delete(
         AppError(status, error)
     })?;
     let event = write_profile_mutation_event(&state, summary).await?;
-    state
-        .refresh_profile_rule_cache(Some(&profile_id))
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
     log_profile_mutation_applied("detection_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }

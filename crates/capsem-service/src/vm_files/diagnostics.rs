@@ -6,26 +6,28 @@ pub(crate) async fn handle_logs(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<LogsResponse>, AppError> {
-    let session_dir = {
+    let known = {
         let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            i.session_dir.clone()
-        } else {
-            match find_persistent_entry_by_route_id(&state, &id).map(|e| e.session_dir) {
-                Some(dir) => dir,
-                None => {
-                    // VM might have crashed on boot. preserve_failed_session_dir
-                    // renames `sessions/<id>` to `sessions/<id>-failed-<suffix>`,
-                    // so the most recent `<id>-failed-*` still has the logs the
-                    // user needs to debug the crash. Without this branch
-                    // `capsem logs <id>` just returns 404 after a boot failure,
-                    // which is exactly when logs matter most.
-                    match find_failed_session_dir(&state.run_dir, &id) {
-                        Some(dir) => dir,
-                        None => return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))),
-                    }
-                }
-            }
+        match instances.get(&id) {
+            Some(i) => Some(i.session_dir.clone()),
+            None => find_persistent_entry_by_route_id(&state, &id).map(|e| e.session_dir),
+        }
+    };
+    let session_dir = match known {
+        Some(dir) => dir,
+        None => {
+            // VM might have crashed on boot. preserve_failed_session_dir
+            // renames `sessions/<id>` to `sessions/<id>-failed-<suffix>`,
+            // so the most recent `<id>-failed-*` still has the logs the
+            // user needs to debug the crash. Without this branch
+            // `capsem logs <id>` just returns 404 after a boot failure,
+            // which is exactly when logs matter most. The lookup lists
+            // sessions/, so it runs off the worker.
+            let failed_id = id.clone();
+            state
+                .off_worker(move |state| find_failed_session_dir(&state.run_dir, &failed_id))
+                .await?
+                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
         }
     };
 
@@ -67,22 +69,26 @@ pub(crate) async fn handle_panics(
         .unwrap_or(0);
     let limit = params.limit.unwrap_or(20).min(200);
 
-    let run_dir = state.run_dir.clone();
-    let home = capsem_foundation::paths::capsem_home();
-
-    let mut all_panics: Vec<triage::PanicEvent> = Vec::new();
-    for binary in ["service", "mcp", "gateway", "tray"] {
-        if let Some(path) = triage::host_log_path(&run_dir, binary) {
-            all_panics.extend(triage::scan_panics_in_file(
-                &path,
-                &format!("capsem-{binary}"),
-                since_unix,
-            ));
-        }
-    }
-    if let Some(path) = triage::latest_app_log(&home) {
-        all_panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
-    }
+    // Every host log is read in full; off the worker.
+    let mut all_panics = state
+        .off_worker(move |state| {
+            let home = capsem_foundation::paths::capsem_home();
+            let mut all_panics: Vec<triage::PanicEvent> = Vec::new();
+            for binary in ["service", "mcp", "gateway", "tray"] {
+                if let Some(path) = triage::host_log_path(&state.run_dir, binary) {
+                    all_panics.extend(triage::scan_panics_in_file(
+                        &path,
+                        &format!("capsem-{binary}"),
+                        since_unix,
+                    ));
+                }
+            }
+            if let Some(path) = triage::latest_app_log(&home) {
+                all_panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
+            }
+            all_panics
+        })
+        .await?;
 
     all_panics.truncate(limit);
     Ok(axum::Json(serde_json::json!({ "panics": all_panics })))
@@ -103,25 +109,28 @@ pub(crate) async fn handle_triage(
         .unwrap_or(0);
     let limit = params.limit.unwrap_or(20).min(200);
 
-    let run_dir = state.run_dir.clone();
-    let home = capsem_foundation::paths::capsem_home();
-
-    let mut panics: Vec<triage::PanicEvent> = Vec::new();
-    let mut errors: Vec<triage::ErrorEvent> = Vec::new();
-    let mut slow_ops: Vec<triage::SlowOpEvent> = Vec::new();
-
-    for binary in ["service", "mcp", "gateway", "tray"] {
-        if let Some(path) = triage::host_log_path(&run_dir, binary) {
-            let bin_label = format!("capsem-{binary}");
-            panics.extend(triage::scan_panics_in_file(&path, &bin_label, since_unix));
-            errors.extend(triage::scan_errors_in_file(&path, &bin_label, since_unix, limit));
-            slow_ops.extend(triage::scan_slow_ops_in_file(&path, &bin_label, since_unix, 500));
-        }
-    }
-    if let Some(path) = triage::latest_app_log(&home) {
-        panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
-        errors.extend(triage::scan_errors_in_file(&path, "capsem-app", since_unix, limit));
-    }
+    // Every host log is read in full; off the worker.
+    let (mut panics, mut errors, mut slow_ops) = state
+        .off_worker(move |state| {
+            let home = capsem_foundation::paths::capsem_home();
+            let mut panics: Vec<triage::PanicEvent> = Vec::new();
+            let mut errors: Vec<triage::ErrorEvent> = Vec::new();
+            let mut slow_ops: Vec<triage::SlowOpEvent> = Vec::new();
+            for binary in ["service", "mcp", "gateway", "tray"] {
+                if let Some(path) = triage::host_log_path(&state.run_dir, binary) {
+                    let bin_label = format!("capsem-{binary}");
+                    panics.extend(triage::scan_panics_in_file(&path, &bin_label, since_unix));
+                    errors.extend(triage::scan_errors_in_file(&path, &bin_label, since_unix, limit));
+                    slow_ops.extend(triage::scan_slow_ops_in_file(&path, &bin_label, since_unix, 500));
+                }
+            }
+            if let Some(path) = triage::latest_app_log(&home) {
+                panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
+                errors.extend(triage::scan_errors_in_file(&path, "capsem-app", since_unix, limit));
+            }
+            (panics, errors, slow_ops)
+        })
+        .await?;
 
     panics.truncate(limit);
     errors.truncate(limit);
@@ -316,7 +325,9 @@ pub(crate) async fn handle_host_logs(
     axum::extract::Query(params): axum::extract::Query<HostLogsQuery>,
 ) -> Result<String, AppError> {
     let path = if name == "app" {
-        triage::latest_app_log(&capsem_foundation::paths::capsem_home())
+        state
+            .off_worker(|_| triage::latest_app_log(&capsem_foundation::paths::capsem_home()))
+            .await?
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?
     } else {
         triage::host_log_path(&state.run_dir, &name)

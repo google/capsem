@@ -98,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Service routes no longer block the async runtime on the filesystem. The
+  list, info and status routes the UI polls hashed and stat'ed files for
+  every saved session on a tokio worker; provision, run, fork, delete,
+  purge, suspend, resume, reload and the rule-mutation routes listed
+  directories, saved the registry, re-read profile files or spawned the
+  child there; the panic and triage routes read every host log there; and
+  the asset reconciler hashed multi-gigabyte images there. Every such call
+  now goes through one blocking door, and a source contract refuses new
+  direct calls, so one slow disk no longer stalls every other request.
 - Legacy IPv4 spellings are judged as the address they dial. The resolver
   reads `0x7f000001`, `127.1`, `0177.0.0.1` and `2130706433` as `127.0.0.1`,
   but host rules, the certificate cache and telemetry saw the spelling, so a

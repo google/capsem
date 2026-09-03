@@ -1,5 +1,8 @@
 use super::*;
 
+mod obom;
+pub(crate) use obom::{handle_profile_obom, profile_obom_info};
+
 pub(super) async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -10,14 +13,16 @@ pub(super) async fn handle_reload_config_for_profile(
     state: Arc<ServiceState>,
     profile_filter: Option<&str>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Every refresh re-reads profile files from disk; off the worker.
+    let filter = profile_filter.map(str::to_owned);
     state
-        .refresh_active_profiles(profile_filter)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    state
-        .refresh_profile_rule_cache(profile_filter)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    state
-        .refresh_profile_plugin_policy_cache(profile_filter)
+        .off_worker(move |state| {
+            let filter = filter.as_deref();
+            state.refresh_active_profiles(filter)?;
+            state.refresh_profile_rule_cache(filter)?;
+            state.refresh_profile_plugin_policy_cache(filter)
+        })
+        .await?
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Collect paths to broadcast to.
@@ -608,7 +613,12 @@ pub(super) async fn ensure_profile_assets_after_claim(
             let expected_hash = profile_asset_hash_hex(asset).map_err(|e| e.to_string())?.to_string();
             let expected_size = required_profile_asset_size(asset).map_err(|e| e.to_string())?;
             if resolved.exists() {
-                match capsem_assets::asset_manager::hash_file(&resolved) {
+                // blake3 over a multi-gigabyte image: never on the worker.
+                let hash_path = resolved.clone();
+                let hashed = tokio::task::spawn_blocking(move || capsem_assets::asset_manager::hash_file(&hash_path))
+                    .await
+                    .map_err(|e| format!("hash task failed: {e}"))?;
+                match hashed {
                     Ok(hash) if hash == expected_hash => {
                         update_asset_reconcile_state(&state, |status| {
                             status.in_progress = true;
@@ -622,7 +632,7 @@ pub(super) async fn ensure_profile_assets_after_claim(
                         let target =
                             profile_asset_download_target(&state.assets_dir, arch, asset).map_err(|e| e.to_string())?;
                         if resolved == target {
-                            let _ = std::fs::remove_file(&resolved);
+                            let _ = tokio::fs::remove_file(&resolved).await;
                         }
                     }
                 }
@@ -689,13 +699,15 @@ where
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create {}", parent.display()))?;
     }
     let tmp = target.with_file_name(format!(
         "{}.tmp",
         target.file_name().and_then(|name| name.to_str()).unwrap_or("asset")
     ));
-    let _ = std::fs::remove_file(&tmp);
+    let _ = tokio::fs::remove_file(&tmp).await;
     let mut output = tokio::fs::File::create(&tmp)
         .await
         .with_context(|| format!("create {}", tmp.display()))?;
@@ -756,9 +768,12 @@ where
         .with_context(|| format!("flush {}", tmp.display()))?;
     drop(output);
 
-    let actual = capsem_assets::asset_manager::hash_file(&tmp)?;
+    let hash_path = tmp.clone();
+    let actual = tokio::task::spawn_blocking(move || capsem_assets::asset_manager::hash_file(&hash_path))
+        .await
+        .context("hash task failed")??;
     if actual != expected_hash {
-        let _ = std::fs::remove_file(&tmp);
+        let _ = tokio::fs::remove_file(&tmp).await;
         anyhow::bail!(
             "{}: hash mismatch (expected {}, got {})",
             asset.name,
@@ -766,11 +781,13 @@ where
             actual
         );
     }
-    std::fs::rename(&tmp, target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    tokio::fs::rename(&tmp, target)
+        .await
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o444));
+        let _ = tokio::fs::set_permissions(target, std::fs::Permissions::from_mode(0o444)).await;
     }
     on_progress(bytes_done, total, true);
     Ok(())
@@ -1489,100 +1506,6 @@ pub(super) async fn handle_profile_info(
     }))
 }
 
-pub(super) fn profile_obom_info(profile: &ProfileConfigFile) -> Option<api::ProfileObomInfo> {
-    let obom = profile.obom.as_ref()?;
-    let current_arch = capsem_core::net::policy_config::current_profile_arch().to_string();
-    let descriptor = obom.current_arch_obom()?;
-    let rootfs_hash = profile
-        .assets
-        .current_arch_assets()
-        .and_then(|assets| assets.rootfs.hash.clone())?;
-    Some(api::ProfileObomInfo {
-        profile_id: profile.id.clone(),
-        current_arch,
-        scope: "base_image".to_string(),
-        format: obom.format.clone(),
-        name: descriptor.name.clone(),
-        url: descriptor.url.clone(),
-        hash: descriptor.hash.clone(),
-        size: descriptor.size,
-        generator: descriptor.generator.clone(),
-        generator_version: descriptor.generator_version.clone(),
-        rootfs_hash,
-        route: format!("/profiles/{}/obom", profile.id),
-    })
-}
-
-pub(super) async fn handle_profile_obom(
-    Path(profile_id): Path<String>,
-) -> Result<Json<api::ProfileObomResponse>, AppError> {
-    let profile = profile_manifest_for_route(profile_id)?;
-    let obom = profile_obom_info(&profile).ok_or_else(|| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("profile {} has no OBOM for current architecture", profile.id),
-        )
-    })?;
-    let document = if let Some(path) = obom.url.strip_prefix("file://") {
-        Some(read_local_profile_obom(StdPath::new(path), &obom)?)
-    } else {
-        None
-    };
-    Ok(Json(api::ProfileObomResponse {
-        profile_id: profile.id,
-        current_arch: obom.current_arch.clone(),
-        obom,
-        document,
-    }))
-}
-
-pub(super) fn read_local_profile_obom(
-    path: &StdPath,
-    info: &api::ProfileObomInfo,
-) -> Result<serde_json::Value, AppError> {
-    let bytes = std::fs::read(path).map_err(|error| {
-        AppError(
-            StatusCode::NOT_FOUND,
-            format!("read profile OBOM {}: {error}", path.display()),
-        )
-    })?;
-    if bytes.len() as u64 != info.size {
-        return Err(AppError(
-            StatusCode::PRECONDITION_FAILED,
-            format!(
-                "profile OBOM size mismatch for {}: expected {}, got {}",
-                path.display(),
-                info.size,
-                bytes.len()
-            ),
-        ));
-    }
-    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
-    let expected_hash = info.hash.strip_prefix("blake3:").ok_or_else(|| {
-        AppError(
-            StatusCode::PRECONDITION_FAILED,
-            format!("profile OBOM hash must use blake3:<hex>, got {}", info.hash),
-        )
-    })?;
-    if actual_hash != expected_hash {
-        return Err(AppError(
-            StatusCode::PRECONDITION_FAILED,
-            format!(
-                "profile OBOM hash mismatch for {}: expected {}, got {}",
-                path.display(),
-                expected_hash,
-                actual_hash
-            ),
-        ));
-    }
-    serde_json::from_slice(&bytes).map_err(|error| {
-        AppError(
-            StatusCode::PRECONDITION_FAILED,
-            format!("parse profile OBOM {}: {error}", path.display()),
-        )
-    })
-}
-
 pub(super) fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
     let catalog = load_profile_catalog_for_service()?;
@@ -2284,9 +2207,7 @@ pub(super) async fn handle_profile_mcp_default_edit(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
-    state
-        .refresh_profile_rule_cache(Some(&profile_id))
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
     log_profile_mutation_applied("profile_mcp_default_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,

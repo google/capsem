@@ -1,6 +1,10 @@
 use super::*;
 
+mod resume;
 mod session_dirs;
+pub(crate) use resume::handle_resume;
+#[cfg(test)]
+pub(crate) use resume::stop_failed_restore_process_under_lock;
 mod transcript;
 pub(crate) use session_dirs::settle_persistent_session_dir;
 use session_dirs::{claim_persistent_name, remove_purged_session_dir};
@@ -364,31 +368,6 @@ pub(super) async fn shutdown_vm_process(
     Ok(Some((session_dir, persistent, pid)))
 }
 
-/// Tear down a warm-restore process that failed to reach ready while the
-/// caller already holds the save/restore locks.
-pub(super) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
-    let Some((uds_path, pid)) = ({
-        let instances = state.instances.lock().unwrap();
-        instances.get(id).map(|i| (i.uds_path.clone(), i.pid))
-    }) else {
-        return;
-    };
-
-    if pid > 0 {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        );
-    }
-
-    tracing::warn!(id, pid, "removing failed warm restore before cold fallback");
-    state.instances.lock().unwrap().remove(id);
-    state.unregister_session_db_handle(id);
-    wait_for_process_exit(pid, std::time::Duration::from_secs(1)).await;
-    let _ = std::fs::remove_file(&uds_path);
-    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-}
-
 #[tracing::instrument(skip_all, fields(vm_id = %id))]
 pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
@@ -510,18 +489,21 @@ pub(super) async fn handle_suspend(
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-    // Update persistent registry
-    {
-        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-            let mut registry = state.persistent_registry.lock().unwrap();
-            if let Some(entry) = registry.get_mut(&key) {
-                entry.suspended = true;
-                entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
-                if let Err(e) = registry.save() {
-                    error!(id, error = %e, "failed to save persistent registry");
+    // Update persistent registry (saves to disk, so off the worker).
+    if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+        let suspended_id = id.clone();
+        state
+            .off_worker(move |state| {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                if let Some(entry) = registry.get_mut(&key) {
+                    entry.suspended = true;
+                    entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
+                    if let Err(e) = registry.save() {
+                        error!(id = suspended_id, error = %e, "failed to save persistent registry");
+                    }
                 }
-            }
-        }
+            })
+            .await?;
     }
 
     Ok(Json(serde_json::json!({ "success": true })))
@@ -591,92 +573,27 @@ pub(super) async fn handle_delete(
     // succeeds. An unsafe or failed delete therefore remains discoverable
     // and can be retried after the underlying problem is repaired.
     if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(&key) {
-            registry.unregister(&key).map_err(|error| {
+        state
+            .off_worker(move |state| {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                let result = if registry.contains(&key) {
+                    registry.unregister(&key)
+                } else {
+                    Ok(())
+                };
+                drop(registry);
+                result
+            })
+            .await?
+            .map_err(|error| {
                 AppError(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("unregister deleted session failed: {error:#}"),
                 )
             })?;
-        }
     }
 
     Ok(Json(json!({ "success": true })))
-}
-
-pub(super) async fn handle_resume(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<ProvisionResponse>, AppError> {
-    // See handle_suspend: same lock, same reason. Restore happens in the
-    // freshly spawned capsem-process's boot, so the lock must bridge the
-    // spawn and the readiness sentinel for a sibling save_state not to
-    // overlap with the restoreMachineStateFromURL call.
-    let _vz_guard = state.save_restore_lock.write().await;
-    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
-
-    let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);
-
-    match state.resume_sandbox(&id, None, None) {
-        Ok(resumed_id) => {
-            let uds_path = state
-                .instance_socket_path(&resumed_id)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
-                error!(id, error = %e, "resume ready-wait failed");
-                if attempted_checkpoint {
-                    warn!(
-                        id,
-                        "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
-                    );
-                    stop_failed_restore_process_under_lock(&state, &resumed_id).await;
-                    state.archive_failed_restore_checkpoint(&resumed_id);
-
-                    match state.resume_sandbox(&resumed_id, None, None) {
-                        Ok(cold_id) => {
-                            let cold_uds_path = state
-                                .instance_socket_path(&cold_id)
-                                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-                            if let Err(cold_e) =
-                                wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
-                            {
-                                error!(id, "cold resume fallback failed after warm restore failure: {cold_e}");
-                                return Err(AppError(
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!(
-                                        "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
-                                    ),
-                                ));
-                            }
-                            state.clear_resume_checkpoint(&cold_id);
-                            return provision_response_for_running(&state, cold_id, cold_uds_path).map(Json);
-                        }
-                        Err(cold_e) => {
-                            error!(
-                                id,
-                                "cold resume fallback spawn failed after warm restore failure: {cold_e}"
-                            );
-                            return Err(AppError(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"),
-                            ));
-                        }
-                    }
-                }
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("resume failed: {e}"),
-                ));
-            }
-            state.clear_resume_checkpoint(&resumed_id);
-            provision_response_for_running(&state, resumed_id, uds_path).map(Json)
-        }
-        Err(e) => {
-            error!(id, error = %e, "resume failed");
-            Err(AppError(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
-        }
-    }
 }
 
 pub(super) fn provision_response_for_running(
@@ -851,8 +768,11 @@ pub(super) async fn handle_purge(
         }
         if persistent {
             if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(&key);
+                state
+                    .off_worker(move |state| {
+                        let _ = state.persistent_registry.lock().unwrap().unregister(&key);
+                    })
+                    .await?;
             }
         }
         if persistent {
@@ -887,9 +807,12 @@ pub(super) async fn handle_purge(
         if !remove_purged_session_dir(&state, &vm_id, session_dir).await {
             continue;
         }
-        let mut registry = state.persistent_registry.lock().unwrap();
-        let _ = registry.unregister(name);
-        drop(registry);
+        let stopped_name = name.clone();
+        state
+            .off_worker(move |state| {
+                let _ = state.persistent_registry.lock().unwrap().unregister(&stopped_name);
+            })
+            .await?;
         persistent_purged += 1;
     }
 
@@ -912,7 +835,7 @@ pub(super) async fn handle_run(
     }
 
     let id = {
-        let existing = existing_session_names(&state);
+        let existing = state.off_worker(|state| existing_session_names(&state)).await?;
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     };
 

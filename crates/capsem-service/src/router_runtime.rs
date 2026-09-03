@@ -196,13 +196,19 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
 pub(super) async fn handle_update_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::UpdateStatusResponse>, AppError> {
-    Ok(Json(update_status_response(&state)))
+    state.off_worker(|state| update_status_response(&state)).await.map(Json)
 }
 
 pub(super) async fn handle_system_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::SystemStatusResponse>, AppError> {
-    let manifest = read_installed_status_document(&state.assets_dir.join("manifest.json"))?;
+    let (manifest, manifest_metadata, updates) = state
+        .off_worker(|state| {
+            let manifest = read_installed_status_document(&state.assets_dir.join("manifest.json"))?;
+            let metadata = read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
+            Ok::<_, AppError>((manifest, metadata, update_status_response(&state)))
+        })
+        .await??;
     capsem_assets::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -215,7 +221,6 @@ pub(super) async fn handle_system_status(
             format!("installed manifest is invalid: {error:#}"),
         )
     })?;
-    let manifest_metadata = read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
     let profiles = if asset_reconcile_has_route_fields(&state) {
         refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog.clone())
     } else {
@@ -228,7 +233,7 @@ pub(super) async fn handle_system_status(
         manifest_metadata,
         profiles,
         corp: corp_info_value()?,
-        updates: update_status_response(&state),
+        updates,
     }))
 }
 

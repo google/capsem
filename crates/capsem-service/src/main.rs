@@ -41,6 +41,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
 mod asset_background;
+mod blocking;
 mod instance_reaper;
 mod profile_status_cache;
 mod session_cleanup;
@@ -1046,72 +1047,6 @@ impl ServiceState {
         for (id, info) in self.drain_dead_instances() {
             info!(id, "removing stale instance record");
             self.scrub_evicted_instance(&id, &info);
-        }
-    }
-
-    fn reconcile_persistent_defunct_from_logs(&self) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-            .unwrap_or_default();
-        let last_ms = self.last_defunct_reconcile_ms.load(Ordering::Acquire);
-        if now_ms.saturating_sub(last_ms) < 1_000 {
-            return;
-        }
-        if self
-            .last_defunct_reconcile_ms
-            .compare_exchange(last_ms, now_ms, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-
-        let candidates: Vec<(String, PathBuf)> = {
-            let registry = self.persistent_registry.lock().unwrap();
-            let instances = self.instances.lock().unwrap();
-            registry
-                .list()
-                .filter(|entry| !entry.defunct)
-                .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
-                .map(|entry| (entry.name.clone(), entry.session_dir.clone()))
-                .collect()
-        };
-
-        let updates: Vec<(String, String)> = candidates
-            .into_iter()
-            .filter_map(|(name, session_dir)| read_boot_failure_tail(&session_dir).map(|tail| (name, tail)))
-            .collect();
-        if updates.is_empty() {
-            return;
-        }
-
-        let mut registry = self.persistent_registry.lock().unwrap();
-        let instances = self.instances.lock().unwrap();
-        let mut changed = false;
-        for (name, tail) in updates {
-            if instances.contains_key(&name) {
-                continue;
-            }
-            if let Some(entry) = registry.get_mut(&name) {
-                if !entry.defunct {
-                    warn!(
-                        name,
-                        cause = capsem_core::session::boot_failure_summary(&tail),
-                        "marking persistent VM defunct from preserved boot logs"
-                    );
-                    entry.defunct = true;
-                    entry.last_error = Some(tail);
-                    entry.suspended = false;
-                    entry.checkpoint_path = None;
-                    changed = true;
-                }
-            }
-        }
-        drop(instances);
-        if changed {
-            if let Err(error) = registry.save() {
-                error!(error = %error, "failed to save persistent registry after defunct reconciliation");
-            }
         }
     }
 

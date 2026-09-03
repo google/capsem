@@ -1,9 +1,11 @@
 use super::*;
 
 mod diagnostics;
+mod fork;
 #[cfg(test)]
 pub(crate) use diagnostics::session_db_triage;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
+pub(crate) use fork::handle_fork;
 
 pub(super) fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
     run_dir.parent().unwrap_or(run_dir).join("sessions").join("main.db")
@@ -761,166 +763,6 @@ pub(super) async fn handle_upload_file(
 // Image API Handlers
 // ---------------------------------------------------------------------------
 
-pub(super) async fn handle_fork(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ForkRequest>,
-) -> Result<Json<ForkResponse>, AppError> {
-    let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    // Check name is not taken
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(name) {
-            return Err(AppError(
-                StatusCode::CONFLICT,
-                format!("sandbox '{}' already exists", name),
-            ));
-        }
-    }
-
-    // Find source: running instance or stopped persistent VM
-    let (
-        session_dir,
-        profile_id,
-        profile_revision,
-        profile_payload_hash,
-        asset_pins,
-        ram_mb,
-        cpus,
-        base_version,
-        uds_path,
-    ) = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            (
-                i.session_dir.clone(),
-                i.profile_id.clone(),
-                i.profile_revision.clone(),
-                i.profile_payload_hash.clone(),
-                i.asset_pins.clone(),
-                i.ram_mb,
-                i.cpus,
-                i.base_version.clone(),
-                Some(i.uds_path.clone()),
-            )
-        } else {
-            drop(instances);
-            if let Some(p) = find_persistent_entry_by_route_id(&state, &id) {
-                (
-                    p.session_dir,
-                    p.profile_id,
-                    p.profile_revision,
-                    p.profile_payload_hash,
-                    p.asset_pins,
-                    p.ram_mb,
-                    p.cpus,
-                    p.base_version,
-                    None,
-                )
-            } else {
-                return Err(AppError(
-                    StatusCode::NOT_FOUND,
-                    format!("source sandbox not found: {}", id),
-                ));
-            }
-        }
-    };
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    state
-        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-
-    // Flush the guest root filesystem so the ext4 system overlay (/dev/vdb
-    // backed by rootfs.img) has pushed dirty pages into the host-visible image
-    // before fork clone. Do not fsfreeze here: the old shell command thawed
-    // before cloning, so it paid freeze latency without actually snapshotting
-    // while frozen.
-    if let Some(ref uds) = uds_path {
-        let flush_id = state.next_job_id();
-        if let Err(e) = send_ipc_command(
-            uds,
-            ServiceToProcess::Exec {
-                id: flush_id,
-                command: "sync; true".to_string(),
-            },
-            Some(10),
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "pre-fork guest sync failed (non-fatal)");
-        }
-    }
-
-    // Clone state into new persistent sandbox. The route/runtime id is
-    // separate from the human display name.
-    let vm_id = new_persistent_vm_id();
-    let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
-    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
-    let _ = std::fs::create_dir_all(&new_session_dir);
-
-    // clone_sandbox_state does fsync + APFS clonefile + walkdir -- all blocking.
-    // Offload to the blocking pool so axum worker threads aren't starved under
-    // concurrent fork load.
-    let clone_dst = new_session_dir.clone();
-    let size_bytes =
-        tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst))
-            .await
-            .map_err(|e| {
-                capsem_service::app_error_logged!(
-                    error,
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "fork: clone-task panic: {e}"
-                )
-            })?
-            .map_err(|e| {
-                capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
-            })?;
-
-    // Register as persistent VM
-    {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        registry
-            .register(PersistentVmEntry {
-                id: vm_id.clone(),
-                name: name.clone(),
-                profile_id,
-                profile_revision,
-                profile_payload_hash,
-                asset_pins,
-                ram_mb,
-                cpus,
-                base_version,
-                created_at: format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-                session_dir: new_session_dir,
-                forked_from: Some(id.clone()),
-                description: payload.description.clone(),
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            })
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        drop(registry);
-    }
-
-    Ok(Json(ForkResponse {
-        id: vm_id,
-        name: name.clone(),
-        size_bytes,
-    }))
-}
-
 /// Outcome of a single provision attempt inside `handle_provision`.
 /// `LaunchdTransient` is the recoverable case: VZ rejected the fresh
 /// VM with the misleading entitlement string while launchd's
@@ -972,6 +814,19 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
     }
 }
 
+/// The preserved process.log tail of a session that died before it was
+/// ready, read off the worker.
+async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
+    let vm_id = id.to_string();
+    state
+        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
+            Some(dir) => read_process_log_tail(&dir, 20),
+            None => "(no preserved log found)".to_string(),
+        })
+        .await
+        .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
+}
+
 pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
     let mut existing: Vec<String> = state
         .instances
@@ -1010,12 +865,13 @@ pub(super) async fn handle_provision(
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
-    let name = payload.name.clone().unwrap_or_else(|| {
-        let existing = existing_session_names(&state);
-        generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
-    });
+    let existing = state.off_worker(|state| existing_session_names(&state)).await?;
+    let name = payload
+        .name
+        .clone()
+        .unwrap_or_else(|| generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
-    if existing_session_names(&state).iter().any(|existing| existing == &name) {
+    if existing.iter().any(|existing| existing == &name) {
         return Err(AppError(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", name),
@@ -1066,9 +922,12 @@ pub(super) async fn handle_provision(
             // crash-before-ready; we only need to undo registration of
             // the persistent entry.
             if attempt > 1 {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(&name);
-                drop(registry);
+                let stale_name = name.clone();
+                let _ = state
+                    .off_worker(move |state| {
+                        let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
+                    })
+                    .await;
                 state.instances.lock().unwrap().remove(&id);
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
@@ -1118,10 +977,7 @@ pub(super) async fn handle_provision(
             // Exhausted retries on launchd transient. Surface the most
             // recent failed-attempt tail so the user sees what VZ said,
             // even though the actual cause is launchd-side saturation.
-            let tail = match find_failed_session_dir(&state.run_dir, &id) {
-                Some(dir) => read_process_log_tail(&dir, 20),
-                None => "(no preserved log found)".to_string(),
-            };
+            let tail = failed_process_log_tail(&state, &id).await;
             error!(
                 id,
                 attempts = timed_out.attempts,
@@ -1224,10 +1080,10 @@ pub(super) async fn provision_attempt(
             // find_failed_session_dir for ephemeral VMs whose dir was
             // renamed to `-failed-*`.
             let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
-                Some(dir) => read_process_log_tail(&dir, 20),
-                None => "(no preserved log found)".to_string(),
-            });
+            let tail = match cached {
+                Some(tail) => tail,
+                None => failed_process_log_tail(state, id).await,
+            };
             return if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
@@ -1415,28 +1271,39 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
 }
 
 pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+    // The fingerprint stats and hashes files for every inactive entry; the
+    // UI polls this route, so it runs off the worker as one unit.
+    match state.off_worker(|state| list_response_bytes(&state)).await {
+        Ok(bytes) => json_bytes_response(bytes),
+        Err(error) => error.into_response(),
+    }
+}
+
+fn list_response_bytes(state: &ServiceState) -> Bytes {
     state.reconcile_persistent_defunct_from_logs();
-    let fingerprint = list_response_fingerprint(&state);
+    let fingerprint = list_response_fingerprint(state);
     if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
         if cached.fingerprint == fingerprint {
-            return json_bytes_response(cached.bytes);
+            return cached.bytes;
         }
     }
 
-    let response = build_list_response(&state);
+    let response = build_list_response(state);
     let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
     *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
         fingerprint,
         bytes: bytes.clone(),
     });
-    json_bytes_response(bytes)
+    bytes
 }
 
 pub(super) async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
-    state.reconcile_persistent_defunct_from_logs();
+    state
+        .off_worker(|state| state.reconcile_persistent_defunct_from_logs())
+        .await?;
     // Check running instances first
     {
         let (instance_data, session_dir) = {
@@ -1465,7 +1332,9 @@ pub(super) async fn handle_info(
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             apply_session_db_status(&state, &mut info, &dir).await;
-            info.storage = state.storage_diagnostics_cached(&dir);
+            info.storage = state
+                .off_worker(move |state| state.storage_diagnostics_cached(&dir))
+                .await?;
             return Ok(Json(info));
         }
     }
@@ -1474,7 +1343,10 @@ pub(super) async fn handle_info(
     let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
+        let resume_entry = entry.clone();
+        let (status, can_resume, blocked_reason) = state
+            .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
+            .await?;
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -1510,7 +1382,10 @@ pub(super) async fn handle_info(
                 }
             };
         apply_session_db_status(&state, &mut info, &entry.session_dir).await;
-        info.storage = state.storage_diagnostics_cached(&entry.session_dir);
+        let session_dir = entry.session_dir.clone();
+        info.storage = state
+            .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+            .await?;
         return Ok(Json(info));
     }
 
@@ -1521,31 +1396,50 @@ pub(super) async fn handle_vm_status(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::VmStatusResponse>, AppError> {
-    state.reconcile_persistent_defunct_from_logs();
-    {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            return Ok(Json(api::VmStatusResponse {
-                id: i.id.clone(),
-                name: i.name.clone(),
-                status: VmLifecycleState::Running,
-                pid: Some(i.pid),
-                persistent: i.persistent,
-                uptime_secs: Some(i.start_time.elapsed().as_secs()),
-                created_at: None,
-                last_error: None,
-                can_resume: false,
-                resume_blocked_reason: None,
-                storage: state.storage_diagnostics_cached(&i.session_dir),
-                available_actions: VmLifecycleState::Running.available_actions(false),
-            }));
-        }
+    state
+        .off_worker(|state| state.reconcile_persistent_defunct_from_logs())
+        .await?;
+    let running = state.instances.lock().unwrap().get(&id).map(|i| {
+        (
+            i.id.clone(),
+            i.name.clone(),
+            i.pid,
+            i.persistent,
+            i.start_time.elapsed().as_secs(),
+            i.session_dir.clone(),
+        )
+    });
+    if let Some((vm_id, name, pid, persistent, uptime_secs, session_dir)) = running {
+        let storage = state
+            .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+            .await?;
+        return Ok(Json(api::VmStatusResponse {
+            id: vm_id,
+            name,
+            status: VmLifecycleState::Running,
+            pid: Some(pid),
+            persistent,
+            uptime_secs: Some(uptime_secs),
+            created_at: None,
+            last_error: None,
+            can_resume: false,
+            resume_blocked_reason: None,
+            storage,
+            available_actions: VmLifecycleState::Running.available_actions(false),
+        }));
     }
 
     {
         if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
             let vm_id = persistent_entry_vm_id(&entry);
-            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
+            let resume_entry = entry.clone();
+            let (status, can_resume, blocked_reason) = state
+                .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
+                .await?;
+            let session_dir = entry.session_dir.clone();
+            let storage = state
+                .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+                .await?;
             return Ok(Json(api::VmStatusResponse {
                 id: vm_id,
                 name: entry.name.clone(),
@@ -1565,7 +1459,7 @@ pub(super) async fn handle_vm_status(
                 } else {
                     blocked_reason
                 },
-                storage: state.storage_diagnostics_cached(&entry.session_dir),
+                storage,
                 available_actions: status.available_actions(can_resume),
             }));
         }
