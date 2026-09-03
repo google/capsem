@@ -78,6 +78,11 @@ pub fn parse(stdout: &str) -> Result<Collected> {
 ///
 /// Bounded: a collector that hangs would otherwise hold the machine lock the
 /// whole gate runs under.
+///
+/// stdout is drained on its own thread from the moment the child starts. The
+/// pipe holds 64 KiB; a collector that prints more than that before exiting
+/// blocks on write until someone reads, and reading only after exit turned
+/// every chatty collector into a reported timeout.
 pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collected> {
     let mut child = Command::new(program)
         .args(args)
@@ -86,12 +91,31 @@ pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collect
         .stderr(Stdio::inherit())
         .spawn()
         .with_context(|| format!("cannot start collector {}", program.display()))?;
+    let mut stdout = child.stdout.take().context("collector stdout was not piped")?;
+    let (drained_tx, drained_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let result = std::io::Read::read_to_end(&mut stdout, &mut output).map(|_| output);
+        let _ = drained_tx.send(result);
+    });
 
     let deadline = std::time::Instant::now() + timeout;
     loop {
         match child.try_wait()? {
             Some(status) => {
-                let output = child.wait_with_output()?;
+                // The pipe closes when its last writer exits. A grandchild the
+                // collector left behind keeps it open, so the wait for EOF is
+                // bounded by the same deadline rather than by that grandchild.
+                let output = drained_rx
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "collector {} exited but its stdout stayed open past {}s: a process it started still holds it",
+                            program.display(),
+                            timeout.as_secs()
+                        )
+                    })?
+                    .context("read collector stdout")?;
                 if !status.success() {
                     bail!(
                         "collector {} exited with {}",
@@ -99,12 +123,14 @@ pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collect
                         status.code().unwrap_or(-1)
                     );
                 }
-                return parse(&String::from_utf8_lossy(&output.stdout))
+                return parse(&String::from_utf8_lossy(&output))
                     .with_context(|| format!("collector {}", program.display()));
             }
             None if std::time::Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                // The reader thread ends by itself once the last writer
+                // closes the pipe; nothing waits on it here.
                 bail!(
                     "collector {} did not finish within {}s",
                     program.display(),
