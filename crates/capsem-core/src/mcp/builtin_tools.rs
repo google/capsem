@@ -10,7 +10,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
-use reqwest::Client;
+use std::net::SocketAddr;
+
 use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
@@ -19,12 +20,14 @@ use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 
 mod html_extract;
+mod upstream;
 
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
 pub use html_extract::{collapse_whitespace, extract_markdown_from_html, extract_text_from_html};
+pub use upstream::{is_public_address, non_public_refusal, resolve_upstream, BuiltinHttpClient};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
@@ -256,16 +259,16 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
 pub async fn call_builtin_tool(
     local_name: &str,
     arguments: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     request_id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => handle_fetch_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
-        "grep_http" => handle_grep_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
-        "http_headers" => handle_http_headers(arguments, client, security_rules, plugin_policy, request_id, db).await,
+        "fetch_http" => handle_fetch_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
+        "grep_http" => handle_grep_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
+        "http_headers" => handle_http_headers(arguments, http, security_rules, plugin_policy, request_id, db).await,
         _ => JsonRpcResponse::err(request_id, -32602, format!("unknown builtin tool: {local_name}")),
     }
 }
@@ -326,7 +329,7 @@ async fn emit_net_event(
 
 async fn handle_fetch_http(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -337,7 +340,7 @@ async fn handle_fetch_http(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -365,6 +368,10 @@ async fn handle_fetch_http(
     let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
     let (start_index, max_length) = pagination_params(args);
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
@@ -473,7 +480,7 @@ fn collect_grep_matches(
 
 async fn handle_grep_http(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -488,7 +495,7 @@ async fn handle_grep_http(
         None => return tool_error(id, "missing required parameter: pattern"),
     };
 
-    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -526,6 +533,10 @@ async fn handle_grep_http(
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
@@ -600,7 +611,7 @@ async fn handle_grep_http(
 
 async fn handle_http_headers(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -613,7 +624,7 @@ async fn handle_http_headers(
 
     let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("HEAD");
 
-    let checked = match evaluate_builtin_http_request(url, method, security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, method, security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -638,6 +649,10 @@ async fn handle_http_headers(
     };
     let (start_index, max_length) = pagination_params(args);
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match method {
         "GET" => client.get(url).send().await,
@@ -744,6 +759,8 @@ fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
 #[derive(Debug, Clone)]
 struct BuiltinHttpDecision {
     domain: String,
+    /// The addresses the boundary judged; the connection is pinned to them.
+    addresses: Vec<SocketAddr>,
     decision: SecurityEnforcementDecision,
 }
 
@@ -763,15 +780,74 @@ fn evaluate_builtin_http_request(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
 ) -> Result<BuiltinHttpDecision, String> {
+    let parsed = parse_tool_url(url)?;
+    let (domain, ip) = url_host(&parsed).ok_or_else(|| "URL has no host".to_string())?;
+    let decision = enforce_builtin_http_event(
+        security_rules,
+        plugin_policy,
+        &domain,
+        tool_event(&parsed, method, &domain, ip),
+    )?;
+    let addresses = ip
+        .map(|ip| vec![SocketAddr::new(ip, parsed.port_or_known_default().unwrap_or(80))])
+        .unwrap_or_default();
+    Ok(BuiltinHttpDecision {
+        domain,
+        addresses,
+        decision,
+    })
+}
+
+/// Judge the URL by name, then by every address the name resolves to, and
+/// hand back the addresses so the connection can be pinned to them.
+///
+/// A non-public address (loopback, private, link-local, ...) is reached only
+/// through an explicit allow rule: host rules are written against names, and
+/// the name is the guest's to choose. Anything the rules block by address
+/// blocks the request whatever the name said.
+async fn authorize_upstream(
+    url: &str,
+    method: &str,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+) -> Result<BuiltinHttpDecision, String> {
+    let by_name = evaluate_builtin_http_request(url, method, security_rules, plugin_policy)?;
+    let parsed = parse_tool_url(url)?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addresses = resolve_upstream(&by_name.domain, port).await?;
+    let mut decision = by_name.decision;
+    for address in &addresses {
+        let event = tool_event(&parsed, method, &by_name.domain, Some(address.ip()));
+        let judged = enforce_builtin_http_event(security_rules, plugin_policy, &by_name.domain, event)
+            .map_err(|reason| format!("{reason} (resolved address {})", address.ip()))?;
+        if !is_public_address(address.ip()) && judged.rule_id.is_none() {
+            return Err(non_public_refusal(&by_name.domain, address.ip()));
+        }
+        if judged.rule_id.is_some() {
+            decision = judged;
+        }
+    }
+    Ok(BuiltinHttpDecision {
+        domain: by_name.domain,
+        addresses,
+        decision,
+    })
+}
+
+fn parse_tool_url(url: &str) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
-        "http" | "https" => {}
-        other => return Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
+        "http" | "https" => Ok(parsed),
+        other => Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
     }
-    let (domain, ip) = url_host(&parsed).ok_or_else(|| "URL has no host".to_string())?;
+}
+
+/// The security event for one tool request, optionally carrying the address
+/// it is about to reach.
+fn tool_event(parsed: &reqwest::Url, method: &str, domain: &str, ip: Option<IpAddr>) -> SecurityEvent {
     let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
-            host: Some(domain.clone()),
+            host: Some(domain.to_string()),
             method: Some(method.to_string()),
             path: Some(parsed.path().to_string()),
             query: parsed.query().map(str::to_string),
@@ -779,7 +855,7 @@ fn evaluate_builtin_http_request(
             body: None,
         })
         .with_http_request(HttpRequestSecurityEvent::new(
-            domain.clone(),
+            domain.to_string(),
             None,
             http::HeaderMap::new(),
             parsed.query().map(str::to_string),
@@ -801,6 +877,15 @@ fn evaluate_builtin_http_request(
             }),
         });
     }
+    event
+}
+
+fn enforce_builtin_http_event(
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    domain: &str,
+    event: SecurityEvent,
+) -> Result<SecurityEnforcementDecision, String> {
     let evaluated = evaluate_security_boundary(security_rules, plugin_policy.clone(), event)
         .map_err(|error| format!("security engine failed: {error}"))?;
     if !evaluated.enforcement.is_allowed() {
@@ -811,10 +896,7 @@ fn evaluate_builtin_http_request(
             .unwrap_or("security rule blocked request");
         return Err(format!("HTTP request blocked: {domain} ({reason})"));
     }
-    Ok(BuiltinHttpDecision {
-        domain,
-        decision: evaluated.enforcement,
-    })
+    Ok(evaluated.enforcement)
 }
 
 /// Paginate text: return (chunk, total_length, has_more).

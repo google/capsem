@@ -24,6 +24,7 @@ use std::sync::Mutex;
 use tracing::info;
 
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
+use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
 use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
@@ -31,18 +32,6 @@ use capsem_proto::mcp_contracts::JsonRpcResponse;
 
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(request_timeout)
-        .connect_timeout(connect_timeout)
-        // Do not follow redirects. The security boundary evaluates only the
-        // originally-requested URL's domain; transparently following a 3xx to
-        // another host would reach a domain the policy never checked (SSRF) and
-        // log the wrong domain. A 3xx is returned to the caller as-is.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-}
 
 // -- Tool parameter types --
 
@@ -164,7 +153,7 @@ struct SnapshotCompactParams {
 
 #[derive(Clone)]
 struct BuiltinHandler {
-    http_client: reqwest::Client,
+    http_client: BuiltinHttpClient,
     db: Arc<DbWriter>,
     security_rules: Arc<SecurityRuleSet>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
@@ -554,8 +543,7 @@ async fn main() -> Result<()> {
     };
 
     let handler = BuiltinHandler {
-        http_client: build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT)
-            .context("failed to build builtin HTTP client")?,
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db,
         security_rules,
         plugin_policy,

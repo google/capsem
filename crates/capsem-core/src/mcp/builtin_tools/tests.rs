@@ -4,6 +4,7 @@ mod bounds;
 mod fixtures;
 mod ip_literals;
 mod markdown;
+mod upstream_binding;
 
 fn test_db() -> Arc<DbWriter> {
     Arc::new(DbWriter::open_in_memory(64).unwrap())
@@ -11,12 +12,9 @@ fn test_db() -> Arc<DbWriter> {
 
 /// Create a reqwest Client with proper User-Agent (matches production config).
 /// Sites like Wikipedia return 403 without one.
-fn test_client() -> Client {
-    Client::builder()
-        .user_agent("capsem-mcp/0.8")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .expect("reqwest client")
+fn test_client() -> BuiltinHttpClient {
+    BuiltinHttpClient::new(std::time::Duration::from_secs(30), std::time::Duration::from_secs(10))
+        .with_user_agent("capsem-mcp/0.8")
 }
 
 async fn spawn_builtin_http_fixture() -> crate::test_support::http::LocalHttpRecorder {
@@ -86,9 +84,18 @@ fn about_fixture_html() -> String {
     )
 }
 
+/// One blocked name, and an explicit allow for the loopback fixtures: a
+/// non-public address is reachable only through an allow rule, so every
+/// test that talks to a local fixture carries one.
 fn default_dev_security_rules() -> SecurityRuleSet {
     crate::net::policy_config::SecurityRuleProfile::parse_toml(
         r#"
+            [profiles.rules.allow_local_fixture]
+            name = "allow_local_fixture"
+            action = "allow"
+            reason = "local test fixture"
+            match = 'http.host == "127.0.0.1"'
+
             [profiles.rules.block_evil_unknown_domain]
             name = "block_evil_unknown_domain"
             action = "block"
@@ -924,7 +931,7 @@ async fn read_body_capped_truncates_oversized_body() {
     )])
     .await
     .unwrap();
-    let resp = test_client()
+    let resp = reqwest::Client::new()
         .get(format!("{}/", recorder.base_url))
         .send()
         .await
@@ -945,7 +952,7 @@ async fn read_body_capped_returns_full_body_under_cap() {
     )])
     .await
     .unwrap();
-    let resp = test_client()
+    let resp = reqwest::Client::new()
         .get(format!("{}/", recorder.base_url))
         .send()
         .await

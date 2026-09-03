@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The built-in HTTP tools now judge the addresses a host resolves to, not
+  only its name, and connect only to the addresses they judged. A name that
+  resolved to loopback, a private range or the cloud metadata address
+  reached it under a host rule that never mentioned the address, and a name
+  whose DNS answer changed between the check and the dial (DNS rebinding)
+  reached anything. An `ip.*` block rule now blocks the request whatever the
+  name said, a non-public address is reachable only through an explicit
+  allow rule, and the connection is pinned to the resolved addresses so a
+  re-resolution reaches nothing new. Profiles that let a built-in tool reach
+  `localhost` or `127.0.0.1` need an allow rule that names it.
 - Service routes no longer block the async runtime on the filesystem. The
   list, info and status routes the UI polls hashed and stat'ed files for
   every saved session on a tokio worker; provision, run, fork, delete,

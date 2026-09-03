@@ -1,9 +1,27 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// A non-public address is reachable only through an explicit allow rule,
+/// so a test that talks to a loopback fixture carries one.
+fn loopback_allowed_rules() -> SecurityRuleSet {
+    capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"
+        [profiles.rules.allow_local_fixture]
+        name = "allow_local_fixture"
+        action = "allow"
+        reason = "local test fixture"
+        match = 'http.host == "127.0.0.1"'
+        "#,
+    )
+    .and_then(|profile| {
+        SecurityRuleSet::compile_profile(&profile, capsem_core::net::policy_config::SecurityRuleSource::User)
+    })
+    .expect("test security rules compile")
+}
+
 fn handler_without_snapshots() -> BuiltinHandler {
     BuiltinHandler {
-        http_client: reqwest::Client::new(),
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db: Arc::new(DbWriter::open_in_memory(8).expect("in-memory DB")),
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
         plugin_policy: Arc::new(BTreeMap::new()),
@@ -217,10 +235,11 @@ async fn spawn_stalled_body_http_server() -> String {
 
 #[tokio::test]
 async fn builtin_http_client_times_out_while_reading_a_stalled_body() {
-    let client = build_http_client(
+    let client = BuiltinHttpClient::new(
         std::time::Duration::from_millis(50),
         std::time::Duration::from_millis(50),
     )
+    .pinned("127.0.0.1", &[])
     .expect("build test client");
     let url = spawn_stalled_body_http_server().await;
 
@@ -242,9 +261,9 @@ async fn http_builtin_flushes_net_event_before_tool_response_returns() {
     let db_path = tmp.path().join("session.db");
     let db = Arc::new(DbWriter::open(&db_path, 16).expect("open test db"));
     let handler = BuiltinHandler {
-        http_client: reqwest::Client::new(),
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db: Arc::clone(&db),
-        security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
+        security_rules: Arc::new(loopback_allowed_rules()),
         plugin_policy: Arc::new(BTreeMap::new()),
         scheduler: None,
         workspace_dir: None,
@@ -436,7 +455,9 @@ async fn spawn_redirecting_http_server() -> String {
 
 #[tokio::test]
 async fn builtin_http_client_does_not_follow_redirects() {
-    let client = build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT).expect("build client");
+    let client = BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT)
+        .pinned("127.0.0.1", &[])
+        .expect("build client");
     let url = spawn_redirecting_http_server().await;
 
     let resp = client
