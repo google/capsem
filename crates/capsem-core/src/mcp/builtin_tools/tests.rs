@@ -2,6 +2,7 @@ use super::*;
 
 mod bounds;
 mod fixtures;
+mod ip_literals;
 mod markdown;
 
 fn test_db() -> Arc<DbWriter> {

@@ -718,8 +718,27 @@ fn get_content_type(resp: &reqwest::Response) -> String {
 fn extract_domain(url: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .and_then(|u| url_host(&u))
+        .map(|(host, _)| host)
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The host of a tool URL as policy and telemetry see it: lowercase without
+/// a DNS-root dot, and an IP literal without its URL brackets. `http://[::1]/`
+/// used to reach the rules as `http.host == "[::1]"` with no `ip` event, so
+/// every `ip.version` / `ip.value` rule written against `127.0.0.1` was blind
+/// to the same loopback spelled in IPv6.
+fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
+    let raw = parsed.host_str()?;
+    let unbracketed = raw
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(raw);
+    if let Ok(ip) = unbracketed.parse::<IpAddr>() {
+        return Some((ip.to_string(), Some(ip)));
+    }
+    let host = crate::net::cert_authority::normalize_host(raw);
+    (!host.is_empty()).then_some((host, None))
 }
 
 #[derive(Debug, Clone)]
@@ -749,10 +768,7 @@ fn evaluate_builtin_http_request(
         "http" | "https" => {}
         other => return Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
     }
-    let domain = parsed
-        .host_str()
-        .ok_or_else(|| "URL has no host".to_string())?
-        .to_string();
+    let (domain, ip) = url_host(&parsed).ok_or_else(|| "URL has no host".to_string())?;
     let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some(domain.clone()),
@@ -776,7 +792,7 @@ fn evaluate_builtin_http_request(
             port: Some(port.to_string()),
         });
     }
-    if let Ok(ip) = domain.parse::<IpAddr>() {
+    if let Some(ip) = ip {
         event = event.with_ip(IpSecurityEvent {
             value: Some(ip.to_string()),
             version: Some(match ip {

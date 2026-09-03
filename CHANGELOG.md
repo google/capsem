@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The built-in HTTP tools now see an IPv6 literal the way they see an IPv4
+  one: `http://[::1]/` reaches the security rules as host `::1` with an
+  `ip.version`/`ip.value` event, so a rule that blocks loopback by address
+  can no longer be walked around by spelling it in IPv6. Tool URL hosts are
+  also lowercased and stripped of a trailing dot before evaluation.
 - When a per-VM socket path is too long for the platform limit, the short
   fallback now lives in `/tmp/capsem-<uid>`, created mode 0700 and refused
   unless it is a real directory owned by the current user and readable by
