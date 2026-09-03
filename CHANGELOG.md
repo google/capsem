@@ -110,6 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Invalid or empty built-in HTTP grep patterns are now rejected before DNS or
+  network authorization, returning the intended validation error without an
+  unnecessary outbound lookup.
 - KVM pause now clears prior vCPU snapshots before publishing the pausing
   lifecycle state, so a freshly parked vCPU snapshot cannot be erased by the
   requesting thread under contention.

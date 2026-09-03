@@ -494,6 +494,13 @@ async fn handle_grep_http(
         Some(p) => p,
         None => return tool_error(id, "missing required parameter: pattern"),
     };
+    if pattern_str.is_empty() {
+        return tool_error(id, "pattern must not be empty");
+    }
+    let re = match regex::RegexBuilder::new(pattern_str).case_insensitive(true).build() {
+        Ok(r) => r,
+        Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
+    };
 
     let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
@@ -523,15 +530,6 @@ async fn handle_grep_http(
     let max_matches = bounded_param(args, "max_matches", DEFAULT_MAX_MATCHES, MAX_GREP_MATCHES);
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
     let (start_index, max_length) = pagination_params(args);
-
-    if pattern_str.is_empty() {
-        return tool_error(id, "pattern must not be empty");
-    }
-
-    let re = match regex::RegexBuilder::new(pattern_str).case_insensitive(true).build() {
-        Ok(r) => r,
-        Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
-    };
 
     let client = match http.pinned(&checked.domain, &checked.addresses) {
         Ok(client) => client,
