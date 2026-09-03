@@ -1,21 +1,31 @@
 //! `GET /vms/{id}/history/transcript` documents a `tail_lines` query
 //! parameter (default 500) and ignored it: the route read the whole
-//! `pty.log` synchronously on a tokio worker and base64-encoded every byte.
+//! `pty.log` synchronously on a tokio worker and base64-encoded every byte
+//! of it -- frame headers and typed input included, since the file is
+//! capsem-process's framed two-direction record.
 
 use super::*;
 use base64::Engine;
+use capsem_core::pty_log::PtyLog;
+
+fn write_output(session_dir: &StdPath, chunks: &[&[u8]]) {
+    let log = PtyLog::open(&session_dir.join("pty.log")).unwrap();
+    for chunk in chunks {
+        log.record_output(chunk);
+    }
+}
 
 fn transcript_state(lines: usize) -> (Arc<ServiceState>, tempfile::TempDir, String) {
     let (state, dir) = make_test_state_with_tempdir();
     let id = "transcript-vm";
     let session_dir = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    let body = (0..lines).fold(String::new(), |mut body, n| {
-        use std::fmt::Write;
-        let _ = write!(body, "line-{n}\r\n");
-        body
-    });
-    std::fs::write(session_dir.join("pty.log"), body).unwrap();
+    let log = PtyLog::open(&session_dir.join("pty.log")).unwrap();
+    for n in 0..lines {
+        log.record_input(b"typed secret\n");
+        log.record_output(format!("line-{n}\r\n").as_bytes());
+    }
+    drop(log);
     insert_fake_instance_with_session_dir(&state, id, std::process::id(), session_dir);
     (state, dir, id.to_string())
 }
@@ -42,6 +52,11 @@ async fn tail_lines_returns_only_the_last_lines() {
     let (state, _dir, id) = transcript_state(10);
     let (bytes, content) = transcript(&state, &id, "?tail_lines=3").await;
     assert_eq!(content, "line-7\r\nline-8\r\nline-9\r\n");
+    let (_, whole) = transcript(&state, &id, "?tail_lines=100").await;
+    assert!(
+        !whole.contains("typed secret"),
+        "input frames never reach the transcript: {whole:?}"
+    );
     assert_eq!(bytes, content.len(), "bytes reports the returned slice, not the file");
 }
 
@@ -66,7 +81,7 @@ async fn tail_lines_larger_than_the_file_returns_everything() {
 async fn an_unterminated_last_line_counts_as_a_line() {
     let (state, _dir, id) = transcript_state(0);
     let session_dir = state.run_dir.join("sessions").join(&id);
-    std::fs::write(session_dir.join("pty.log"), b"first\nsecond\nno-newline").unwrap();
+    write_output(&session_dir, &[b"first\nsec", b"ond\nno-newline"]);
     let (_, content) = transcript(&state, &id, "?tail_lines=2").await;
     assert_eq!(content, "second\nno-newline");
     let (_, content) = transcript(&state, &id, "?tail_lines=0").await;
@@ -77,7 +92,7 @@ async fn an_unterminated_last_line_counts_as_a_line() {
 async fn transcript_survives_bytes_that_are_not_utf8() {
     let (state, _dir, id) = transcript_state(0);
     let session_dir = state.run_dir.join("sessions").join(&id);
-    std::fs::write(session_dir.join("pty.log"), [0xff, 0xfe, b'\n', 0x1b, b'[', b'm', 0xc3]).unwrap();
+    write_output(&session_dir, &[&[0xff, 0xfe, b'\n', 0x1b, b'[', b'm', 0xc3]]);
     let app = build_service_router(Arc::clone(&state));
     let (status, body) = route_request(
         app,

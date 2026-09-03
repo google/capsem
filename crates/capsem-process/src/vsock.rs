@@ -66,7 +66,7 @@ pub(crate) struct VsockOptions {
     pub(crate) vm_ready: Arc<AtomicBool>,
     pub(crate) uds_path: PathBuf,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
-    pub(crate) pty_log: Option<Arc<crate::pty_log::PtyLog>>,
+    pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
 

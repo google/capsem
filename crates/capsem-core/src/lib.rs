@@ -9,6 +9,7 @@ pub mod hypervisor;
 pub mod macros;
 pub mod mcp;
 pub mod net;
+pub mod pty_log;
 pub mod security_engine;
 pub mod session;
 #[cfg(test)]

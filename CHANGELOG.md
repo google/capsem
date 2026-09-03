@@ -125,9 +125,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   created it, and any other user of the host could remove a service's socket
   or bind their own at the path clients were handed. The VZ save/restore
   lock file moves into the same directory.
-- `GET /vms/{id}/history/transcript` honours its documented `tail_lines`
-  parameter (default 500) instead of returning the whole PTY log, reads the
-  file off the async runtime, and reports the bytes it actually returned.
+- `GET /vms/{id}/history/transcript` returns what the terminal showed: it
+  decodes the output entries of capsem-process's framed `pty.log` instead of
+  returning the raw frames with their headers and typed input, honours its
+  documented `tail_lines` parameter (default 500), reads the file off the
+  async runtime, and reports the bytes it actually returned. The PTY log
+  format and its parser now live in `capsem-core`, shared by the writer and
+  the route.
 - A resumed persistent VM now gets the same exit bookkeeping as a freshly
   provisioned one: it is marked suspended when it checkpoints, defunct with
   the process-log tail when it crashes, and its stop is recorded in the

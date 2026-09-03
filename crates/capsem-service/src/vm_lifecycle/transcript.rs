@@ -1,12 +1,13 @@
 use super::*;
 
-/// GET /vms/{id}/history/transcript -- the last `tail_lines` lines of the raw
-/// PTY output, base64-encoded.
+/// GET /vms/{id}/history/transcript -- the last `tail_lines` lines the
+/// terminal showed, base64-encoded.
 ///
-/// `tail_lines` was documented, defaulted to 500, and ignored: the route read
-/// the whole `pty.log` on the tokio worker and encoded every byte of it. The
-/// read now happens on the blocking pool and `bytes` reports the slice that
-/// was returned.
+/// `pty.log` is capsem-process's framed record of both directions; the route
+/// used to return those raw frames, headers and keystrokes included, and
+/// ignored `tail_lines`. It now decodes the output entries through the
+/// shared parser, takes the tail on the blocking pool, and reports the bytes
+/// of the slice it returned.
 pub(crate) async fn handle_history_transcript(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -25,7 +26,7 @@ pub(crate) async fn handle_history_transcript(
 
     let lines = params.tail_lines;
     let output = tokio::task::spawn_blocking(move || {
-        std::fs::read(&pty_log_path).map(|bytes| tail_lines(&bytes, lines).to_vec())
+        capsem_core::pty_log::read_output_bytes(&pty_log_path).map(|shown| tail_lines(&shown, lines).to_vec())
     })
     .await
     .map_err(|e| {

@@ -3,7 +3,6 @@ mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
-mod pty_log;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -615,7 +614,7 @@ async fn run_async_main_loop(
     let db_for_vsock = Arc::clone(&db);
     let shutdown_for_vsock = Arc::clone(&shutdown);
     let shutdown_for_vsock_error = Arc::clone(&shutdown);
-    let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
+    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
         Ok(pl) => Some(Arc::new(pl)),
         Err(e) => {
             warn!(error = %e, "failed to open pty.log");
