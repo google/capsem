@@ -12,6 +12,7 @@ pub mod proctable;
 pub mod telemetry;
 pub mod time;
 pub mod uds;
+pub mod unix;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

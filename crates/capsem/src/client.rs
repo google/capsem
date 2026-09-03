@@ -590,15 +590,25 @@ impl UdsClient {
         };
 
         if let Some(pid) = child.id() {
-            match nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
+            let pid = capsem_foundation::unix::process::ProcessId::try_from(pid)
+                .context("owned one-shot service returned an invalid process id")?;
+            match capsem_foundation::unix::process::send_signal(
+                pid,
+                capsem_foundation::unix::process::Signal::Terminate,
             ) {
-                Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                Ok(
+                    capsem_foundation::unix::process::SignalOutcome::Delivered
+                    | capsem_foundation::unix::process::SignalOutcome::Gone,
+                ) => {}
                 Err(error) => {
-                    let _ = child.start_kill();
-                    let _ = child.wait().await;
-                    return Err(error).context("failed to stop the owned one-shot service");
+                    let mut failure = anyhow::Error::new(error).context("failed to stop the owned one-shot service");
+                    if let Err(fallback_error) = child.start_kill() {
+                        failure = failure.context(format!("fallback child kill also failed: {fallback_error}"));
+                    }
+                    if let Err(reap_error) = child.wait().await {
+                        failure = failure.context(format!("fallback child reap also failed: {reap_error}"));
+                    }
+                    return Err(failure);
                 }
             }
         }

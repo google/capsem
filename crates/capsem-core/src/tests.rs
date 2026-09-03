@@ -203,7 +203,7 @@ fn reexport_surface_compiles() {
 
     // VsockConnection (verify the type exists via hypervisor re-export)
     let conn = VsockConnection::new(42, 5001, Box::new(()));
-    assert_eq!(conn.fd, 42);
+    assert_eq!(conn.raw_fd(), 42);
     assert_eq!(conn.port, 5001);
 
     // Port constants

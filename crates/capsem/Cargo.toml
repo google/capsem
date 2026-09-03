@@ -32,7 +32,6 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
-nix = { version = "0.29", features = ["term", "process", "signal", "fs", "user"] }
 inquire = "0.7"
 blake3 = "1"
 self-replace = "1"

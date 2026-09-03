@@ -24,6 +24,7 @@
 //! on the std socket.
 
 use std::io::{Read, Write};
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -74,15 +75,15 @@ pub fn negotiate_initiator(
     peer_id: impl Into<String>,
     traceparent: impl Into<String>,
 ) -> Result<Hello, HandshakeError> {
-    let prev_nb = ensure_blocking(stream);
+    let was_nonblocking = ensure_blocking(stream)?;
     let result = (|| {
         write_hello(stream, &Hello::ours(peer_id, traceparent))?;
         let peer = read_hello(stream, HELLO_TIMEOUT)?;
         verify(&peer)?;
         Ok(peer)
     })();
-    if let Some(true) = prev_nb {
-        let _ = stream.set_nonblocking(true);
+    if result.is_ok() && was_nonblocking {
+        super::unix::fd::set_nonblocking(stream.as_fd(), true)?;
     }
     result
 }
@@ -103,15 +104,15 @@ fn negotiate_responder_with_timeout(
     traceparent: impl Into<String>,
     timeout: Duration,
 ) -> Result<Hello, HandshakeError> {
-    let prev_nb = ensure_blocking(stream);
+    let was_nonblocking = ensure_blocking(stream)?;
     let result = (|| {
         let peer = read_hello(stream, timeout)?;
         verify(&peer)?;
         write_hello(stream, &Hello::ours(peer_id, traceparent))?;
         Ok(peer)
     })();
-    if let Some(true) = prev_nb {
-        let _ = stream.set_nonblocking(true);
+    if result.is_ok() && was_nonblocking {
+        super::unix::fd::set_nonblocking(stream.as_fd(), true)?;
     }
     result
 }
@@ -121,21 +122,10 @@ fn negotiate_responder_with_timeout(
 /// std `read_exact` / `write_all` bail with WouldBlock instantly on
 /// such streams, which manifested as "peer did not send Hello within
 /// 5000ms" the first time we wired the handshake into the service.
-/// Returns `Some(true)` if the stream WAS non-blocking (so the caller
-/// can restore it), `Some(false)` if it was already blocking, `None`
-/// if the query failed (treat as already-blocking).
-fn ensure_blocking(stream: &UnixStream) -> Option<bool> {
-    use std::os::unix::io::AsRawFd;
-    let fd = stream.as_raw_fd();
-    let was_nb = unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-        if flags < 0 {
-            return None;
-        }
-        Some((flags & libc::O_NONBLOCK) != 0)
-    };
-    let _ = stream.set_nonblocking(false);
-    was_nb
+/// Returns whether the stream was non-blocking so a successful handshake can
+/// restore the original state. Query and mutation failures retain their errno.
+fn ensure_blocking(stream: &UnixStream) -> std::io::Result<bool> {
+    super::unix::fd::set_nonblocking(stream.as_fd(), false)
 }
 
 fn write_hello(stream: &mut UnixStream, hello: &Hello) -> Result<(), HandshakeError> {

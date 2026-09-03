@@ -502,7 +502,10 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
             return;
         }
     };
-    let orphan_pids = find_orphan_capsem_pids(&table, run_dir);
+    let orphan_pids: Vec<u32> = find_orphan_capsem_pids(&table, run_dir)
+        .into_iter()
+        .filter_map(|pid| u32::try_from(pid).ok())
+        .collect();
     if orphan_pids.is_empty() {
         return;
     }
@@ -514,16 +517,13 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
     );
 
     for pid in &orphan_pids {
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*pid), nix::sys::signal::Signal::SIGTERM);
+        process_control::send_or_log(*pid, process_control::Signal::Terminate, "reap-orphan-process");
     }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut probe = process_control::ProcessProbe::new("probe-orphan-process");
     loop {
-        let survivors: Vec<i32> = orphan_pids
-            .iter()
-            .copied()
-            .filter(|&pid| unsafe { nix::libc::kill(pid, 0) } == 0)
-            .collect();
+        let survivors: Vec<u32> = orphan_pids.iter().copied().filter(|&pid| probe.is_alive(pid)).collect();
         if survivors.is_empty() {
             return;
         }
@@ -534,7 +534,7 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
                 "orphan capsem-process did not exit, SIGKILLing"
             );
             for pid in survivors {
-                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
+                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-orphan-process");
             }
             return;
         }
@@ -563,16 +563,14 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
         return;
     }
     let mut signaled_any_vm = false;
+    let mut probe = process_control::ProcessProbe::new("probe-vm-during-service-shutdown");
     for (pid, uds_path, session_dir, persistent) in &pids_and_sockets {
         let pid = *pid;
         if pid > 0 {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
             // (save state, unmount virtiofs). Graceful_shutdown is already holding
             // the axum server open briefly so a short wait is acceptable.
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            process_control::send_or_log(pid, process_control::Signal::Terminate, "service-shutdown-vm");
             signaled_any_vm = true;
         }
         let _ = std::fs::remove_file(uds_path);
@@ -594,7 +592,7 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
         let survivors: Vec<u32> = pids_and_sockets
             .iter()
             .map(|(pid, _, _, _)| *pid)
-            .filter(|&pid| pid > 0 && unsafe { nix::libc::kill(pid as i32, 0) } == 0)
+            .filter(|&pid| pid > 0 && probe.is_alive(pid))
             .collect();
 
         if survivors.is_empty() {
@@ -607,10 +605,7 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
                 "some VMs survived SIGTERM, escalating to SIGKILL"
             );
             for pid in survivors {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid as i32),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
+                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
             }
             break;
         }

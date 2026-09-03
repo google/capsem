@@ -318,7 +318,7 @@ fn list_dir_returns_correct_structure() {
 
     let magika = test_magika();
     let entries = list_dir_recursive(
-        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         2,
@@ -350,7 +350,7 @@ fn list_dir_respects_depth_limit() {
     let magika = test_magika();
     // depth 1: should list "a" but not recurse into "a/b"
     let entries = list_dir_recursive(
-        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,
@@ -370,7 +370,7 @@ fn list_dir_skips_system_but_shows_hidden() {
 
     let magika = test_magika();
     let entries = list_dir_recursive(
-        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,
@@ -394,7 +394,7 @@ fn list_dir_sorts_dirs_first_then_alphabetical() {
 
     let magika = test_magika();
     let entries = list_dir_recursive(
-        &capsem_core::contained_fs::ContainedDir::open_root(ws).unwrap(),
+        &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,

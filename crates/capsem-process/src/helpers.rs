@@ -1,15 +1,17 @@
-use std::os::unix::io::RawFd;
-
-pub(crate) fn clone_fd(fd: RawFd) -> std::io::Result<std::fs::File> {
-    use std::os::unix::io::FromRawFd;
-    if fd == -1 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "invalid file descriptor -1",
-        ));
+pub(crate) fn clone_fd(connection: &capsem_core::VsockConnection, operation: &'static str) -> Option<std::fs::File> {
+    match connection.try_clone_file() {
+        Ok(file) => Some(file),
+        Err(error) => {
+            tracing::warn!(
+                operation,
+                port = connection.port,
+                errno = error.raw_os_error(),
+                error = %error,
+                "vsock descriptor duplication failed"
+            );
+            None
+        }
     }
-    let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
-    file.try_clone()
 }
 
 #[cfg(test)]

@@ -49,8 +49,8 @@ class GatewayInstance:
         self._log_file = None
         self._stdio_log_path = self.tmp_dir / "gateway-stdio.log"
         self._log_path = self.tmp_dir / ".capsem" / "run" / "gateway.log"
-        self.token = None
-        self.port = None
+        self.token = ""
+        self.port = port
 
     def start(self):
         _ensure_gateway_binary_current()

@@ -147,7 +147,10 @@ class Transport:
             target = self._socket_path
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target = (self._host, self._port)
+            host = self._host
+            if host is None:
+                raise ValueError("TCP transport requires a host")
+            target = (host, self._port)
         sock.settimeout(timeout)
         try:
             sock.connect(target)

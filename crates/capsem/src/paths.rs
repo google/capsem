@@ -70,7 +70,7 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
     #[cfg(target_os = "macos")]
     {
         if service_install::plist_path().map(|p| p.exists()).unwrap_or(false) {
-            let uid = nix::unistd::getuid();
+            let uid = capsem_foundation::unix::process::current_uid();
             let status = tokio::process::Command::new("launchctl")
                 .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])
                 .status()

@@ -39,7 +39,6 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
-
 use capsem_foundation::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
@@ -112,14 +111,15 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             let (terminal_conn, control_conn) =
                 collect_terminal_control_pair(&mut vsock_rx, &mut attempt_deferred).await?;
 
-            let initial_ctrl_fd = control_conn.fd;
+            let mut initial_ctrl = control_conn
+                .try_clone_file()
+                .context("duplicate initial control vsock for handshake")?;
             let is_rest = is_restore;
             let cli_env_clone = cli_env.clone();
             let guest_config_clone = guest_config.clone();
 
             let handshake_res = tokio::task::spawn_blocking(move || {
-                let mut fd = clone_fd(initial_ctrl_fd)?;
-                perform_handshake(&mut fd, is_rest, &cli_env_clone, Some(guest_config_clone))
+                perform_handshake(&mut initial_ctrl, is_rest, &cli_env_clone, Some(guest_config_clone))
             })
             .await
             .context("handshake task panicked")?;
@@ -194,13 +194,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("terminal bridge: active");
-            let mut reader = match clone_fd(conn.fd) {
-                Ok(f) => f,
-                Err(_) => continue,
+            let Some(mut reader) = clone_fd(&conn, "duplicate-terminal-vsock-reader") else {
+                continue;
             };
-            let mut writer = match clone_fd(conn.fd) {
-                Ok(f) => f,
-                Err(_) => continue,
+            let Some(mut writer) = clone_fd(&conn, "duplicate-terminal-vsock-writer") else {
+                continue;
             };
             let (tx, mut rx) = mpsc::channel::<Vec<u8>>(128);
 
@@ -257,7 +255,16 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             // socket never EOFs, so joining here parked a runtime worker for
             // good and the new connection was never activated. Shut the
             // socket down so the read returns, then join off the runtime.
-            let _ = nix::sys::socket::shutdown(conn.fd, nix::sys::socket::Shutdown::Both);
+            if let Err(error) = conn.shutdown_both() {
+                if error.kind() != std::io::ErrorKind::NotConnected {
+                    warn!(
+                        operation = "shutdown-terminal-vsock",
+                        errno = error.raw_os_error(),
+                        error = %error,
+                        "failed to wake terminal reader"
+                    );
+                }
+            }
             let _ = tokio::task::spawn_blocking(move || read_handle.join()).await;
         }
         drop(serial_log_tx);
@@ -300,13 +307,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("control bridge: active");
-            let mut writer_fd = match clone_fd(conn.fd) {
-                Ok(f) => f,
-                Err(_) => continue,
+            let Some(mut writer_fd) = clone_fd(&conn, "duplicate-control-vsock-writer") else {
+                continue;
             };
-            let mut reader_fd = match clone_fd(conn.fd) {
-                Ok(f) => f,
-                Err(_) => continue,
+            let Some(mut reader_fd) = clone_fd(&conn, "duplicate-control-vsock-reader") else {
+                continue;
             };
 
             // Re-write every pending (unacked) message on the fresh conn.
@@ -781,12 +786,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             match conn.port {
                 proto::VSOCK_PORT_CONTROL => {
                     info!("control port: connection accepted, performing handshake");
-                    let mut fd = match clone_fd(conn.fd) {
-                        Ok(f) => f,
-                        Err(_) => {
-                            pending_aux.clear();
-                            continue;
-                        }
+                    let Some(mut fd) = clone_fd(&conn, "duplicate-control-vsock-handshake") else {
+                        pending_aux.clear();
+                        continue;
                     };
                     let is_rest = current_is_restore;
                     let cli_env_clone = cli_env.clone();
@@ -935,8 +937,15 @@ fn dispatch_aux_connection(
         Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
-                capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
-                drop(conn);
+                match conn.try_clone_fd() {
+                    Ok(fd) => capsem_core::net::mitm_proxy::handle_connection(fd, config).await,
+                    Err(error) => error!(
+                        operation = "duplicate-mitm-vsock",
+                        errno = error.raw_os_error(),
+                        error = %error,
+                        "MITM connection descriptor unavailable"
+                    ),
+                }
             });
         }
         Some(HostVsockService::DnsProxy) => {
@@ -959,12 +968,8 @@ fn dispatch_aux_connection(
         Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
-                let mut file = match clone_fd(conn.fd) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        error!(error = %e, "exec port: clone_fd failed");
-                        return;
-                    }
+                let Some(mut file) = clone_fd(&conn, "duplicate-exec-vsock") else {
+                    return;
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
@@ -994,12 +999,8 @@ fn dispatch_aux_connection(
             let db_clone = Arc::clone(db);
             let security_rules = Arc::clone(security_rules);
             std::thread::spawn(move || {
-                let mut file = match clone_fd(conn.fd) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        error!(error = %e, "audit port: clone_fd failed");
-                        return;
-                    }
+                let Some(mut file) = clone_fd(&conn, "duplicate-audit-vsock") else {
+                    return;
                 };
                 info!("audit port: connected, reading audit records");
                 serve_audit_records(&mut file, &db_clone, &security_rules);
@@ -1011,9 +1012,8 @@ fn dispatch_aux_connection(
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
             std::thread::spawn(move || {
-                let mut f = match clone_fd(conn.fd) {
-                    Ok(f) => f,
-                    Err(_) => return,
+                let Some(mut f) = clone_fd(&conn, "duplicate-lifecycle-vsock") else {
+                    return;
                 };
                 match read_control_msg(&mut f) {
                     Ok(GuestToHost::ShutdownRequest) => {

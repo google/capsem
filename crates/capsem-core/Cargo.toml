@@ -27,7 +27,7 @@ capsem-credentials = { path = "../capsem-credentials" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
 libc = "0.2"
-nix = { version = "0.29", features = ["dir", "fs"] }
+nix = { version = "0.29", features = ["fs"] }
 blake3 = "1"
 toml = { workspace = true }
 rusqlite = { workspace = true }

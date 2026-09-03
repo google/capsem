@@ -850,8 +850,11 @@ async fn bounded_direct_request_reaps_its_owned_service_and_socket_on_error() {
     assert_eq!(format!("{error:#}"), "request failed");
     assert!(!socket.exists(), "the owned stale socket must be removed");
     assert_eq!(
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(child_pid as i32), None),
-        Err(nix::errno::Errno::ESRCH),
+        capsem_foundation::unix::process::probe(
+            capsem_foundation::unix::process::ProcessId::try_from(child_pid).unwrap(),
+        )
+        .unwrap(),
+        capsem_foundation::unix::process::ProcessState::Gone,
         "the exact direct child must be reaped before the request returns",
     );
 }

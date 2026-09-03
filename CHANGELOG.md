@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Profile mutations now publish the already-validated profile into only the
   affected typed route caches. Orthogonal mutation-ledger writes no longer
   evict session-stat responses, while session and usage writes still do.
+- Host-side process control, descriptor handling, advisory locks,
+  descriptor-relative filesystem containment, and private file publication now
+  share one `capsem-foundation` Unix layer. Owned descriptors eliminate
+  ambiguous close responsibility, expected races retain typed errno-aware
+  outcomes, unexpected failures carry operation context, and Citadel prevents
+  host consumers from bypassing the boundary while preserving reviewed
+  kernel-ABI implementations.
 - Repository-generated and reusable state now has one hard cache root:
   `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
   journals, private gate worktrees, and retained prefix products no longer

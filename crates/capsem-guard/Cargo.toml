@@ -11,8 +11,8 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+capsem-foundation = { path = "../capsem-foundation" }
 thiserror = { workspace = true }
-libc = "0.2"
 tracing = { workspace = true }
 
 [lints]
