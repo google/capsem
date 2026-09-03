@@ -43,6 +43,7 @@ use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
 mod instance_reaper;
+mod process_control;
 mod profile_status_cache;
 mod session_cleanup;
 mod session_db_handles;
@@ -1012,8 +1013,9 @@ impl ServiceState {
     #[must_use = "evicted entries still have filesystem artifacts; pass each to ServiceState::scrub_evicted_instance"]
     fn drain_dead_instances(&self) -> Vec<(String, InstanceInfo)> {
         let mut instances = self.instances.lock().unwrap();
+        let mut probe = process_control::ProcessProbe::new("drain-dead-instances");
         let dead = instances
-            .extract_if(|_, info| unsafe { nix::libc::kill(info.pid as i32, 0) } != 0)
+            .extract_if(|_, info| probe.is_gone(info.pid))
             .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
                 (id, info)

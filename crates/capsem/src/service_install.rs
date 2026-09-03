@@ -261,7 +261,7 @@ pub async fn start_service() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let uid = nix::unistd::getuid();
+        let uid = capsem_foundation::unix::process::current_uid();
         let target = format!("gui/{}/com.capsem.service", uid);
         let status = tokio::process::Command::new("launchctl")
             .args(["kickstart", "-k", &target])
@@ -307,27 +307,27 @@ pub async fn stop_service() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let uid = nix::unistd::getuid();
-        let (primary, fallback) = macos_stop_launchagent_plan(uid.as_raw());
+        let uid = capsem_foundation::unix::process::current_uid();
+        let (primary, fallback) = macos_stop_launchagent_plan(uid);
         let output = tokio::process::Command::new(primary.program)
             .args(primary.args.iter().map(String::as_str))
             .output()
             .await?;
-        if !output.status.success() && macos_launchagent_loaded(uid.as_raw()).await? {
+        if !output.status.success() && macos_launchagent_loaded(uid).await? {
             if let Some(fallback) = fallback {
                 let fallback_output = tokio::process::Command::new(fallback.program)
                     .args(fallback.args.iter().map(String::as_str))
                     .output()
                     .await;
                 if fallback_output.as_ref().map(|o| !o.status.success()).unwrap_or(true)
-                    && macos_launchagent_loaded(uid.as_raw()).await?
+                    && macos_launchagent_loaded(uid).await?
                 {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("failed to stop capsem service: {}", stderr.trim());
                 }
             }
         }
-        wait_for_macos_launchagent_unloaded(uid.as_raw()).await?;
+        wait_for_macos_launchagent_unloaded(uid).await?;
     }
 
     #[cfg(target_os = "linux")]
@@ -409,7 +409,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     let log_dir = PathBuf::from(home).join("Library/Logs/capsem");
     std::fs::create_dir_all(&log_dir).context("cannot create log directory")?;
 
-    let uid = nix::unistd::getuid();
+    let uid = capsem_foundation::unix::process::current_uid();
     let domain = format!("gui/{}", uid);
 
     // Stop existing launchd jobs and kill ALL capsem processes.
@@ -506,7 +506,7 @@ async fn bootstrap_launchagent(domain: &str, plist_file: &Path) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 async fn uninstall_launchagent() -> Result<()> {
-    let uid = nix::unistd::getuid();
+    let uid = capsem_foundation::unix::process::current_uid();
 
     // Uninstall service
     if let Some(plist_file) = plist_path() {

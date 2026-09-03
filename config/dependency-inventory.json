@@ -983,6 +983,7 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "capsem-foundation",
    "libc",
    "tempfile",
    "thiserror",

@@ -58,25 +58,31 @@ pub enum GuardError {
 /// Returns true iff `pid` belongs to an existing (possibly zombie) process
 /// that we have permission to probe. Used for pre-flight checks.
 pub fn is_alive(pid: u32) -> bool {
-    if pid == 0 {
+    use capsem_foundation::unix::process::{probe, ProcessId, ProcessState};
+    let Ok(pid) = ProcessId::try_from(pid) else {
         return false;
+    };
+    match probe(pid) {
+        Ok(ProcessState::Alive) => true,
+        Ok(ProcessState::Gone) => false,
+        Err(error) => {
+            warn!(
+                operation = "guard-parent-liveness-probe",
+                pid = pid.get(),
+                errno = error.raw_os_error(),
+                error = %error,
+                "parent liveness probe failed"
+            );
+            false
+        }
     }
-    // SAFETY: kill with sig=0 performs error-checking only, never delivers a
-    // signal. Safe regardless of pid value.
-    let ret = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    if ret == 0 {
-        return true;
-    }
-    // errno == EPERM means the pid exists but is owned by another uid; still
-    // "alive" for our purposes. Only ESRCH means truly gone.
-    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-    errno == libc::EPERM
 }
 
 /// Returns the current process's parent PID.
 fn current_ppid() -> u32 {
-    // SAFETY: getppid is always safe and cannot fail.
-    unsafe { libc::getppid() as u32 }
+    capsem_foundation::unix::process::parent_process_id()
+        .map(capsem_foundation::unix::process::ProcessId::get)
+        .unwrap_or(0)
 }
 
 /// True while we are still an active child of `expected_parent_pid`.
