@@ -8,7 +8,7 @@ does not become a cycle.
 
 from __future__ import annotations
 
-from . import hostimage, installbuilder
+from . import hostimage, installbuilder, sourcecapture
 from .actions import Call
 from .cachecontrol import CacheControl
 from .command import GateCommand
@@ -25,7 +25,6 @@ from .installimage import (
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .outside import Outside
 from .plan import Plan
-from .sourcecapture import require_recorded
 from .sourcestate import record_step
 
 
@@ -101,7 +100,7 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
 
     def build(context) -> None:
         helper = installbuilder.require_current(context.runner, context.config)
-        source = require_recorded(context.config)
+        source = sourcecapture.require_recorded(context.config)
         identity = build_source_image(
             context.runner,
             context.config,

@@ -72,3 +72,16 @@ def test_composing_install_into_the_gate_does_not_duplicate_the_image() -> None:
     labels = _labels("candidate")
 
     assert labels.count("host-image") == 1
+
+
+def test_install_plan_resolves_the_source_reader_at_execution(monkeypatch) -> None:
+    """An earlier test import must not freeze its temporary source reader."""
+    from capsem_builder.gate import installplan, sourcecapture
+
+    def replacement(_config):
+        return object()
+
+    monkeypatch.setattr(sourcecapture, "require_recorded", replacement)
+
+    assert installplan.sourcecapture.require_recorded is replacement
+    assert not hasattr(installplan, "require_recorded")
