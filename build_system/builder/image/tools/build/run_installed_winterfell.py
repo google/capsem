@@ -27,8 +27,8 @@ WINTERFELL_TESTS = (
 
 
 def _resolve_winterfell_artifact_roots(overrides: dict[str, str]) -> Any:
-    sys.path.insert(0, str(PROJECT_ROOT))
-    module = importlib.import_module("tests.helpers.service")
+    sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    module = importlib.import_module("helpers.service")
     return module.resolve_winterfell_artifact_roots(overrides)
 
 
