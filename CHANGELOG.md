@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reading a session ledger from the service no longer copies every hot
+  table from disk on every request. The external reader syncs only when
+  SQLite reports that another connection committed, and then pulls only the
+  rows above its high-water mark for the append-only ledgers (exec events,
+  which complete in place, are still copied whole). On a 20,000-row ledger
+  a poll with nothing new went from 8 ms to 56 µs and a poll right after a
+  write from 10 ms to 1.7 ms; at 200,000 rows, 90 ms to 3 ms and 110 ms to
+  4 ms. A new criterion bench keeps both numbers measured.
 - Saving the persistent VM registry no longer holds its lock while the file
   is written and fsynced. Every list, info and status poll takes that lock to
   read, so each persist, fork, suspend, exit or purge stalled them for the

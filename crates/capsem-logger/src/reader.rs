@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -362,6 +363,14 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 /// before execution.
 pub struct DbReader {
     conn: Connection,
+    /// `PRAGMA main.data_version` at the last disk sync. It moves only when
+    /// another connection commits to the file, so an unchanged value means
+    /// the memory tables already hold everything on disk.
+    synced_data_version: Cell<Option<i64>>,
+    /// `PRAGMA main.schema_version` at the last schema reconcile; DDL alone
+    /// moves it, so the sqlite_master scan and view creation run only then.
+    synced_schema_version: Cell<Option<i64>>,
+    disk_syncs: Cell<u64>,
 }
 
 impl DbReader {
@@ -377,7 +386,12 @@ impl DbReader {
         })?;
         schema::apply_reader_pragmas(&conn)?;
         schema::record_sqlite_mmap_telemetry(&conn, path, "reader", "open");
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            synced_data_version: Cell::new(None),
+            synced_schema_version: Cell::new(None),
+            disk_syncs: Cell::new(0),
+        })
     }
 
     /// Open an in-memory database (for testing; typically unused since
@@ -395,7 +409,12 @@ impl DbReader {
             schema::create_memory_tables(&conn, &memory_uri)?;
             schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
         })?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            synced_data_version: Cell::new(None),
+            synced_schema_version: Cell::new(None),
+            disk_syncs: Cell::new(0),
+        })
     }
 
     /// Validate that this ledger is structurally ready for route reads.
@@ -412,14 +431,45 @@ impl DbReader {
     /// memory tables are the write truth. Service session route handles use it
     /// because capsem-process owns the writes and disk is the process boundary.
     pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<()> {
+        // The sync copies every hot table from disk into memory; before this
+        // check it ran on every query, so a UI poll cost O(ledger) whether or
+        // not anything had been written -- 8 ms at 20k rows, 90 ms at 200k.
+        // `data_version` is SQLite's own answer to "did another connection
+        // commit since I last looked"; a writer in another process moves it,
+        // this connection's own memory-schema writes do not.
+        let data_version: i64 = self.conn.query_row("PRAGMA main.data_version", [], |row| row.get(0))?;
+        if self.synced_data_version.get() == Some(data_version) {
+            return Ok(());
+        }
+        let schema_version: i64 = self
+            .conn
+            .query_row("PRAGMA main.schema_version", [], |row| row.get(0))?;
+        let schema_changed = self.synced_schema_version.get() != Some(schema_version);
         self.conn.pragma_update(None, "query_only", "OFF")?;
         let result = schema::with_memory_schema_lock(|| {
-            schema::reconcile_memory_tables_from_disk(&self.conn)?;
+            if schema_changed {
+                schema::reconcile_memory_tables_from_disk(&self.conn)?;
+            }
             schema::sync_memory_tables_from_disk(&self.conn, schema::hot_ledger_tables())?;
-            schema::create_memory_read_views(&self.conn)
+            if schema_changed {
+                schema::create_memory_read_views(&self.conn)?;
+            }
+            Ok(())
         });
         let restore = self.conn.pragma_update(None, "query_only", "ON");
+        if result.is_ok() {
+            // Recorded as read before the copy: a commit that lands during
+            // the copy leaves a newer version behind and triggers the next one.
+            self.synced_data_version.set(Some(data_version));
+            self.synced_schema_version.set(Some(schema_version));
+            self.disk_syncs.set(self.disk_syncs.get() + 1);
+        }
         result.and(restore)
+    }
+
+    /// How many times the memory tables were rebuilt from disk.
+    pub fn disk_syncs(&self) -> u64 {
+        self.disk_syncs.get()
     }
 
     fn has_column(&self, table: &str, column: &str) -> bool {
@@ -1720,119 +1770,11 @@ impl DbReader {
     }
 }
 
-fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleEvent> {
-    let rule_action: String = row.get(4)?;
-    let detection_level: String = row.get(5)?;
-    Ok(SecurityRuleEvent {
-        timestamp_unix_ms: row.get(0)?,
-        event_id: row.get(1)?,
-        event_type: row.get(2)?,
-        rule_id: row.get(3)?,
-        rule_action: SecurityRuleAction::parse_str(&rule_action).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                4,
-                rusqlite::types::Type::Text,
-                format!("unknown rule_action {rule_action}").into(),
-            )
-        })?,
-        detection_level: SecurityDetectionLevel::parse_str(&detection_level).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                format!("unknown detection_level {detection_level}").into(),
-            )
-        })?,
-        rule_json: row.get(6)?,
-        event_json: row.get(7)?,
-        trace_id: row.get(8)?,
-        turn_id: row.get(9)?,
-        credential_ref: row.get(10)?,
-    })
-}
-
-fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskEvent> {
-    let status: String = row.get(6)?;
-    Ok(SecurityAskEvent {
-        timestamp_unix_ms: row.get(0)?,
-        ask_id: row.get(1)?,
-        event_id: row.get(2)?,
-        event_type: row.get(3)?,
-        rule_id: row.get(4)?,
-        rule_name: row.get(5)?,
-        status: SecurityAskStatus::parse_str(&status).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                6,
-                rusqlite::types::Type::Text,
-                format!("unknown ask status {status}").into(),
-            )
-        })?,
-        rule_json: row.get(7)?,
-        event_json: row.get(8)?,
-        resolver: row.get(9)?,
-        reason: row.get(10)?,
-        trace_id: row.get(11)?,
-    })
-}
-
-/// Parse an fs_events row into FileEvent. Column order must match the SELECT in queries above.
-fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> {
-    let ts_str: String = row.get(0)?;
-    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
-    let action_str: String = row.get(1)?;
-    Ok(FileEvent {
-        event_id: row.get::<_, Option<String>>(6).ok().flatten(),
-        timestamp,
-        action: FileAction::parse_str(&action_str),
-        path: row.get(2)?,
-        size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
-        trace_id: row.get::<_, Option<String>>(4).ok().flatten(),
-        credential_ref: row.get::<_, Option<String>>(5).ok().flatten(),
-    })
-}
-
-/// Parse an exec_events row into a HistoryEntry for unified history.
-fn read_exec_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
-    Ok(HistoryEntry {
-        timestamp: row.get(0)?,
-        layer: "exec".to_string(),
-        command: row.get(2)?,
-        exit_code: row.get::<_, Option<i64>>(3)?.map(|c| c as i32),
-        duration_ms: row.get::<_, Option<i64>>(4)?.map(|d| d as u64),
-        stdout_preview: row.get(5)?,
-        stderr_preview: row.get(6)?,
-        details: serde_json::json!({
-            "source": row.get::<_, Option<String>>(7)?,
-            "trace_id": row.get::<_, Option<String>>(8)?,
-            "process_name": row.get::<_, Option<String>>(9)?,
-            "exec_id": row.get::<_, i64>(1)?,
-        }),
-    })
-}
-
-/// Parse an audit_events row into a HistoryEntry for unified history.
-fn read_audit_history_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
-    Ok(HistoryEntry {
-        timestamp: row.get(0)?,
-        layer: "audit".to_string(),
-        command: row.get(6)?, // argv
-        exit_code: row.get::<_, Option<i64>>(12)?.map(|c| c as i32),
-        duration_ms: None,
-        stdout_preview: None,
-        stderr_preview: None,
-        details: serde_json::json!({
-            "pid": row.get::<_, i64>(1)?,
-            "ppid": row.get::<_, i64>(2)?,
-            "uid": row.get::<_, i64>(3)?,
-            "exe": row.get::<_, String>(4)?,
-            "comm": row.get::<_, Option<String>>(5)?,
-            "cwd": row.get::<_, Option<String>>(7)?,
-            "tty": row.get::<_, Option<String>>(8)?,
-            "session_id": row.get::<_, Option<i64>>(9)?,
-            "audit_id": row.get::<_, Option<String>>(10)?,
-            "parent_exe": row.get::<_, Option<String>>(11)?,
-        }),
-    })
-}
+mod rows;
+use rows::{
+    read_audit_history_row, read_exec_history_row, read_file_event_row, read_security_ask_event_row,
+    read_security_rule_event_row,
+};
 
 #[cfg(test)]
 mod tests;

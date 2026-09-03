@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use std::time::{Duration, SystemTime};
 
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
@@ -20,6 +21,29 @@ fn setup_reader_with_data() -> DbReader {
         )
         .unwrap();
     reader
+}
+
+fn dns_fixture(idx: usize) -> crate::DnsEvent {
+    crate::DnsEvent {
+        event_id: Some(format!("{idx:012x}")),
+        timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(idx as u64),
+        qname: format!("fixture-{idx}.example"),
+        qtype: 1,
+        qclass: 1,
+        rcode: 0,
+        answer_ip: Some("127.0.0.1".to_string()),
+        decision: crate::Decision::Allowed.as_str().to_string(),
+        matched_rule: None,
+        source_proto: Some("udp".to_string()),
+        process_name: Some("fixture".to_string()),
+        upstream_resolver_ms: 0,
+        trace_id: Some(format!("{idx:016x}")),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        credential_ref: None,
+    }
 }
 
 #[test]
@@ -688,4 +712,132 @@ fn query_raw_returns_row_cap_on_large_results() {
     let json_str = r.query_raw("SELECT id FROM net_events").unwrap();
     let v: Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(v["rows"].as_array().unwrap().len(), 50);
+}
+
+/// The disk sync used to run before every query and copy every hot table
+/// from disk into memory: a UI poll cost O(ledger) whether or not anything
+/// had been written. It now runs only when another connection has committed.
+#[tokio::test]
+async fn disk_sync_runs_only_when_another_connection_committed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = crate::writer::DbWriter::open(&path, 16).expect("writer opens");
+    writer.write(crate::WriteOp::DnsEvent(dns_fixture(1))).await;
+    writer.flush().await;
+
+    let reader = DbReader::open(&path).expect("external reader opens");
+    reader.sync_from_disk().expect("first sync copies the tables");
+    assert_eq!(reader.disk_syncs(), 1);
+    for _ in 0..5 {
+        reader.sync_from_disk().expect("no-op sync");
+    }
+    assert_eq!(reader.disk_syncs(), 1, "polls with nothing committed must copy nothing");
+    let before = reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap();
+    assert!(before.contains("[[1]]"), "{before}");
+
+    writer.write(crate::WriteOp::DnsEvent(dns_fixture(2))).await;
+    writer.flush().await;
+    reader.sync_from_disk().expect("sync after a commit");
+    assert_eq!(
+        reader.disk_syncs(),
+        2,
+        "a commit by the writer must trigger exactly one copy"
+    );
+    let after = reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap();
+    assert!(after.contains("[[2]]"), "{after}");
+    writer.shutdown_blocking();
+}
+
+/// exec_events rows are completed in place, so that table is copied whole
+/// on every resync; the append-only ledgers pull only new rows. Both must
+/// show what is on disk after a commit.
+#[test]
+fn resync_after_a_commit_reflects_in_place_updates_and_appended_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        crate::schema::create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO exec_events (timestamp, exec_id, command) VALUES ('2026-09-03T00:00:00Z', 7, 'ls')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision) VALUES (1, 'a.example', 1, 1, 0, 'allowed')",
+            [],
+        )
+        .unwrap();
+    }
+    let reader = DbReader::open(&path).unwrap();
+    reader.sync_from_disk().unwrap();
+    assert!(reader
+        .query_raw("SELECT exit_code FROM exec_events")
+        .unwrap()
+        .contains("[[null]]"));
+
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE exec_events SET exit_code = 3, duration_ms = 12 WHERE exec_id = 7",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision) VALUES (2, 'b.example', 1, 1, 0, 'denied')",
+            [],
+        )
+        .unwrap();
+    }
+    reader.sync_from_disk().unwrap();
+    let exec = reader
+        .query_raw("SELECT exit_code, duration_ms FROM exec_events")
+        .unwrap();
+    assert!(exec.contains("[[3,12]]"), "in-place completion must be visible: {exec}");
+    let dns = reader.query_raw("SELECT qname FROM dns_events ORDER BY id").unwrap();
+    assert!(
+        dns.contains("a.example") && dns.contains("b.example"),
+        "appended row must be visible: {dns}"
+    );
+    assert_eq!(reader.disk_syncs(), 2);
+}
+
+/// The incremental copy is only correct while the writer never changes a
+/// row of an append-only ledger in place. This holds the writer's SQL to
+/// the list in `UPDATABLE_HOT_TABLES`; a new UPDATE or DELETE on any other
+/// hot table must extend the list, which turns that table back into a full
+/// copy.
+#[test]
+fn writer_updates_only_the_updatable_tables() {
+    let sources = [
+        ("writer.rs", include_str!("../writer.rs")),
+        ("schema.rs", include_str!("../schema.rs")),
+        ("schema/memory_sync.rs", include_str!("../schema/memory_sync.rs")),
+        ("db.rs", include_str!("../db.rs")),
+    ];
+    let mut offences = Vec::new();
+    for (name, source) in sources {
+        for keyword in ["UPDATE ", "DELETE FROM "] {
+            let mut search = 0;
+            while let Some(found) = source[search..].find(keyword) {
+                let at = search + found;
+                search = at + keyword.len();
+                // The statement text plus the format arguments that follow it.
+                let window = &source[at..(at + 400).min(source.len())];
+                let memory_schema = window.starts_with(&format!("{keyword}{{MEMORY_SCHEMA}}"));
+                let session_index = window.starts_with(&format!("{keyword}sessions"));
+                let updatable = crate::schema::UPDATABLE_HOT_TABLES
+                    .iter()
+                    .any(|table| window.contains(table));
+                if !(memory_schema || session_index || updatable) {
+                    offences.push(format!("{name}: {}", window.lines().next().unwrap_or("")));
+                }
+            }
+        }
+    }
+    assert!(
+        offences.is_empty(),
+        "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; extend the list so the \
+         external reader copies that table whole: {offences:?}"
+    );
 }
