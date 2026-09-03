@@ -8,9 +8,7 @@ quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
 from __future__ import annotations
 
 import contextlib
-import http.client
 import json
-import socket
 import statistics
 import subprocess
 import threading
@@ -34,6 +32,7 @@ from helpers.constants import (
     HTTP_TIMEOUT,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
 from helpers.route_health_budget import (
     HOT_ROUTE_REFERENCE_SAMPLES,
@@ -112,41 +111,14 @@ class ConcurrentRouteWriteBenchmark:
     final_default_rule_id: str
 
 
-class UnixHttpConnection(http.client.HTTPConnection):
-    """Persistent HTTP/1.1 client over a Unix domain socket.
-
-    The route-health benchmark must measure Capsem, not `curl` process startup.
-    """
-
-    def __init__(self, socket_path: str, *, timeout: float = 5.0):
-        super().__init__("localhost", timeout=timeout)
-        self.socket_path = socket_path
-
-    def connect(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        sock.connect(self.socket_path)
-        self.sock = sock
-
-
-class TcpNoDelayHttpConnection(http.client.HTTPConnection):
-    """Persistent HTTP/1.1 client with Nagle disabled for route timing."""
-
-    def connect(self) -> None:
-        super().connect()
-        if self.sock is not None:
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-
 class PersistentJsonClient:
     def __init__(
         self,
-        connection_factory: Callable[[], http.client.HTTPConnection],
+        transport: Transport,
         *,
         auth_token: str | None = None,
     ):
-        self._connection_factory = connection_factory
-        self._conn = connection_factory()
+        self._transport = transport
         self._auth_token = auth_token
 
     def get(self, path: str, timeout: int = 20) -> Any:
@@ -156,7 +128,7 @@ class PersistentJsonClient:
         return self._request("POST", path, body, timeout=timeout)
 
     def close(self) -> None:
-        self._conn.close()
+        self._transport.close()
 
     def _request(
         self,
@@ -170,39 +142,28 @@ class PersistentJsonClient:
         headers = {"Content-Type": "application/json", "Connection": "keep-alive"}
         if self._auth_token is not None:
             headers["Authorization"] = f"Bearer {self._auth_token}"
-        self._conn.timeout = timeout
-        try:
-            return self._request_once(method, path, payload, headers)
-        except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError):
-            self._conn.close()
-            self._conn = self._connection_factory()
-            return self._request_once(method, path, payload, headers)
-
-    def _request_once(
-        self,
-        method: str,
-        path: str,
-        payload: bytes | None,
-        headers: dict[str, str],
-    ) -> Any:
-        self._conn.request(method, path, body=payload, headers=headers)
-        response = self._conn.getresponse()
-        raw = response.read()
-        assert 200 <= response.status < 300, (method, path, response.status, raw[:500])
+        status, _, raw = self._transport.request(
+            method,
+            path,
+            body=payload,
+            headers=headers,
+            timeout=timeout,
+        )
+        assert 200 <= status < 300, (method, path, status, raw[:500])
         if not raw:
             return None
         return json.loads(raw.decode("utf-8"))
 
 
 def _fast_service_client(service: ServiceInstance) -> PersistentJsonClient:
-    return PersistentJsonClient(lambda: UnixHttpConnection(str(service.uds_path)))
+    return PersistentJsonClient(Transport(socket_path=str(service.uds_path)))
 
 
 def _fast_gateway_client(gateway: GatewayInstance) -> PersistentJsonClient:
     assert gateway.port is not None
     assert gateway.token is not None
     return PersistentJsonClient(
-        lambda: TcpNoDelayHttpConnection("127.0.0.1", gateway.port, timeout=5.0),
+        Transport(host="127.0.0.1", port=gateway.port),
         auth_token=gateway.token,
     )
 

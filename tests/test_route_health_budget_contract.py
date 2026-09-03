@@ -1,12 +1,12 @@
 from decimal import Decimal
 
+from helpers.route_health_budget import hot_route_budget
 from tests.ironbank.test_route_health import (
     HOT_ROUTE_WINDOW_SAMPLES,
     RouteTiming,
     _assert_hot_route_budget,
     _assert_timing_budget,
     _cpu_delta_seconds,
-    _hot_route_budget,
 )
 
 
@@ -14,7 +14,7 @@ def test_route_health_budget_can_gate_p99_without_single_tail_outlier() -> None:
     timing = RouteTiming(
         label="service /stats during profile-mutation writes",
         samples_ms=[1.1] * 95 + [44.2],
-        service_cpu_s=0.32,
+        service_cpu_s=0.28,
         gateway_cpu_s=None,
     )
 
@@ -76,7 +76,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
         p95_ms=2.0,
         p99_ms=5.0,
         max_ms=None,
-        cpu_s=0.12,
+        cpu_s=0.144,
         cpu_slack_s=0.0,
     )
 
@@ -95,7 +95,7 @@ def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
             p95_ms=2.0,
             p99_ms=5.0,
             max_ms=None,
-            cpu_s=0.12,
+            cpu_s=0.144,
             cpu_slack_s=0.0,
         )
     except AssertionError:
@@ -136,9 +136,9 @@ def test_hot_route_budget_rejects_a_sustained_tail_regression() -> None:
 
 def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
     """Gateway status aggregates several service-owned readiness projections."""
-    direct_status_cpu_s = _hot_route_budget("/status")[2]
-    gateway_status_cpu_s = _hot_route_budget("/status", gateway=True)[2]
-    gateway_vm_list_cpu_s = _hot_route_budget("/vms/list", gateway=True)[2]
+    direct_status_cpu_s = hot_route_budget("/status").cpu_s
+    gateway_status_cpu_s = hot_route_budget("/status", gateway=True).cpu_s
+    gateway_vm_list_cpu_s = hot_route_budget("/vms/list", gateway=True).cpu_s
 
     assert gateway_status_cpu_s > direct_status_cpu_s
     assert gateway_status_cpu_s == gateway_vm_list_cpu_s
@@ -146,7 +146,7 @@ def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
 
 def test_profile_inventory_and_readiness_share_the_richer_budget() -> None:
     """Profile collections must not fall through to the tiny scalar default."""
-    assert _hot_route_budget("/profiles/list") == _hot_route_budget("/profiles/status")
-    assert _hot_route_budget("/profiles/list", gateway=True) == _hot_route_budget(
+    assert hot_route_budget("/profiles/list") == hot_route_budget("/profiles/status")
+    assert hot_route_budget("/profiles/list", gateway=True) == hot_route_budget(
         "/profiles/status", gateway=True
     )

@@ -12,26 +12,27 @@ to be measured, explicitly recorded as measurement debt, or identified as a
 reasoned internal service-only control route. Moving a route from debt to
 measured is what adding coverage looks like.
 
-Requests go straight over the socket, one fresh connection each, the way the
-gateway itself reaches the service. The test helpers' `client()` spawns a
-`curl` process per call, and that cost about 14 ms here against a service
-that answers `/vms/list` in 0.6 ms: every recorded route latency was the
-fork/exec of curl, and the proxy hop was invisible inside it.
+The primary latency series uses a kept-alive connection, matching the UI and
+the gateway's pooled service client. A separate cold series includes socket
+setup so connection regressions remain visible without contaminating route
+execution. Every response must be successful JSON; a fast error is a failed
+benchmark, not an excellent latency result.
 
-Prints raw per-request milliseconds and the process CPU delta; `capsem-bench`
-computes every statistic.
+Prints raw per-request milliseconds plus service and gateway CPU deltas;
+`capsem-bench` computes every statistic.
 """
 
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
-import socket
 import sys
 import time
-import tomllib
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 # Both, because the test helpers import each other as `helpers.*` and the
@@ -40,9 +41,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-import psutil  # noqa: E402
-from helpers.gateway import GatewayInstance  # noqa: E402
-from helpers.service import ServiceInstance  # noqa: E402
+import psutil
+from helpers.gateway import GatewayInstance
+from helpers.http_transport import Transport
+from helpers.process_cpu import process_cpu_seconds
+from helpers.service import ServiceInstance
 
 WARMUP = 2
 
@@ -52,50 +55,58 @@ def measured_routes() -> list[str]:
     return list(config["benchmark"]["routes"]["measured"])
 
 
-def cpu_seconds(process: psutil.Process) -> float:
-    times = process.cpu_times()
-    return float(times.user + times.system)
+@dataclass(frozen=True)
+class Target:
+    label: str
+    transport_factory: Callable[[], Transport]
+    headers: dict[str, str]
+    cpu_processes: dict[str, psutil.Process]
 
 
-class UdsConnection(http.client.HTTPConnection):
-    """HTTP/1.1 over a Unix socket."""
-
-    def __init__(self, socket_path: str):
-        super().__init__("localhost")
-        self.socket_path = socket_path
-
-    def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(self.socket_path)
-
-
-def request(target, path: str) -> None:
-    """One GET on a fresh connection; the body is read and discarded."""
-    kind, *rest = target
-    if kind == "uds":
-        conn = UdsConnection(rest[0])
-        headers = {}
-    else:
-        conn = http.client.HTTPConnection("127.0.0.1", rest[0])
-        headers = {"Authorization": f"Bearer {rest[1]}"}
+def request(transport: Transport, target: Target, path: str) -> None:
+    """Require one successful JSON response."""
+    status, _, body = transport.request("GET", path, headers=target.headers)
+    if not 200 <= status < 300:
+        raise RuntimeError(f"{target.label} {path} returned HTTP {status}: {body[:500]!r}")
     try:
-        conn.request("GET", path, headers=headers)
-        conn.getresponse().read()
+        json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{target.label} {path} returned non-JSON: {body[:500]!r}") from error
+
+
+def sample_warm_route(target: Target, path: str, samples: int) -> tuple[list[float], dict[str, float]]:
+    """Raw kept-alive latency and every participating process's CPU."""
+    transport = target.transport_factory()
+    try:
+        for _ in range(WARMUP):
+            request(transport, target, path)
+        before = {name: process_cpu_seconds(proc) for name, proc in target.cpu_processes.items()}
+        latencies = []
+        for _ in range(samples):
+            started = time.perf_counter()
+            request(transport, target, path)
+            latencies.append((time.perf_counter() - started) * 1000.0)
+        cpu = {
+            name: float(process_cpu_seconds(proc) - before[name])
+            for name, proc in target.cpu_processes.items()
+        }
+        return latencies, cpu
     finally:
-        conn.close()
+        transport.close()
 
 
-def sample_route(target, path: str, process, samples: int) -> tuple[list[float], float]:
-    """Raw per-request milliseconds, and the CPU the server spent on them."""
-    for _ in range(WARMUP):
-        request(target, path)
-    before = cpu_seconds(process)
+def sample_cold_route(target: Target, path: str, samples: int) -> list[float]:
+    """Raw latency including a new socket and HTTP connection."""
     latencies = []
     for _ in range(samples):
-        started = time.perf_counter()
-        request(target, path)
-        latencies.append((time.perf_counter() - started) * 1000.0)
-    return latencies, cpu_seconds(process) - before
+        transport = target.transport_factory()
+        try:
+            started = time.perf_counter()
+            request(transport, target, path)
+            latencies.append((time.perf_counter() - started) * 1000.0)
+        finally:
+            transport.close()
+    return latencies
 
 
 def main() -> int:
@@ -116,26 +127,46 @@ def main() -> int:
 
     service = ServiceInstance()
     service.start()
-    gateway = GatewayInstance(service)
+    gateway = GatewayInstance(service.uds_path)
     gateway.start()
 
     metrics: dict[str, dict] = {}
     try:
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
+        targets = (
+            Target(
+                label="service",
+                transport_factory=lambda: Transport(socket_path=str(service.uds_path)),
+                headers={},
+                cpu_processes={"service": service_proc},
+            ),
+            Target(
+                label="gateway",
+                transport_factory=lambda: Transport(host="127.0.0.1", port=gateway.port),
+                headers={"Authorization": f"Bearer {gateway.token}"},
+                cpu_processes={"gateway": gateway_proc, "downstream_service": service_proc},
+            ),
+        )
         for path in routes:
-            for label, target, process in (
-                ("service", ("uds", str(service.uds_path)), service_proc),
-                ("gateway", ("tcp", gateway.port, gateway.token), gateway_proc),
-            ):
-                print(f"{label} {path}", file=sys.stderr)
-                latencies, cpu = sample_route(target, path, process, samples)
-                metrics[f"{label}.{path}.latency_ms"] = {
+            for target in targets:
+                print(f"{target.label} {path}", file=sys.stderr)
+                latencies, cpu = sample_warm_route(target, path, samples)
+                cold_latencies = sample_cold_route(target, path, samples)
+                metrics[f"{target.label}.{path}.latency_ms"] = {
                     "unit": "milliseconds",
                     "samples": latencies,
                 }
-                # One observation of the whole window, which `n` reports.
-                metrics[f"{label}.{path}.cpu_s"] = {"unit": "seconds", "samples": [cpu]}
+                metrics[f"{target.label}.{path}.cold_latency_ms"] = {
+                    "unit": "milliseconds",
+                    "samples": cold_latencies,
+                }
+                for process_name, cpu_seconds in cpu.items():
+                    suffix = "cpu_s" if process_name == target.label else f"{process_name}_cpu_s"
+                    metrics[f"{target.label}.{path}.{suffix}"] = {
+                        "unit": "seconds",
+                        "samples": [cpu_seconds],
+                    }
     finally:
         gateway.stop()
         service.stop()
