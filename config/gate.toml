@@ -2903,30 +2903,30 @@ p99_ms = 10.0
 cpu_s = 0.18
 
 [benchmark.route_health.budgets.stats_detail.service]
-p95_ms = 12.0
+p95_ms = 15.0
 p99_ms = 35.0
 cpu_s = 0.70
 [benchmark.route_health.budgets.stats_detail.gateway]
-p95_ms = 16.0
+p95_ms = 20.0
 p99_ms = 45.0
 cpu_s = 0.90
 
 [benchmark.route_health.budgets.aggregate_ledger.service]
 p95_ms = 7.0
-p99_ms = 14.0
+p99_ms = 15.0
 cpu_s = 0.30
 [benchmark.route_health.budgets.aggregate_ledger.gateway]
 p95_ms = 9.0
-p99_ms = 18.0
+p99_ms = 20.0
 cpu_s = 0.42
 
 [benchmark.route_health.budgets.ledger.service]
 p95_ms = 7.0
-p99_ms = 14.0
+p99_ms = 15.0
 cpu_s = 0.14
 [benchmark.route_health.budgets.ledger.gateway]
 p95_ms = 9.0
-p99_ms = 18.0
+p99_ms = 20.0
 cpu_s = 0.20
 
 [benchmark.route_health.budgets.assets_status.service]
@@ -3072,9 +3072,12 @@ quick_timeout_secs = 60
 
 [benchmark_regression]
 # Product benchmarks use the latest checked-in result as evidence. A release
-# fails when any measured duration or allocated-byte metric grows by more than
-# this ratio; there is deliberately no independently authored seconds/MB cap.
-maximum_factor = 1.2
+# fails when a measured duration or allocated-byte metric grows by more than
+# this ratio and clears its observed variance.
+maximum_factor = 1.1
+# A percentage attached to nanoseconds is not product performance. Time
+# changes remain visible below this resolution but have no release authority.
+minimum_time_resolution_ms = 1.0
 
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating

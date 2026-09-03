@@ -1,7 +1,9 @@
 mod collector;
 mod commands;
+mod comparison;
 mod machine;
 mod protocol;
+mod protocol_record;
 mod scenarios;
 mod schema;
 mod stats;
@@ -91,12 +93,15 @@ struct RunArgs {
 #[derive(Parser, Debug, Clone, Copy)]
 pub(crate) struct Thresholds {
     /// A metric may grow by this ratio before it counts as a regression.
-    #[arg(long, default_value_t = 1.2)]
+    #[arg(long, default_value_t = 1.1)]
     pub(crate) maximum_factor: f64,
     /// Multiplier on the evidence's own spread. A move inside its baseline's
     /// noise is reported but never called significant.
     #[arg(long, default_value_t = 1.0)]
     pub(crate) noise_factor: f64,
+    /// Smallest resolution with product-performance meaning.
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) minimum_time_resolution_ms: f64,
 }
 
 #[derive(Parser, Debug)]
@@ -224,7 +229,7 @@ async fn main() -> Result<()> {
             let (channel, commit, profile) = (args.channel.clone(), args.commit.clone(), args.profile.clone());
             let artifact = run_protocol(args).await?;
             if let Some(root) = destination {
-                let record = commands::protocol_record(
+                let record = protocol_record::build(
                     &artifact,
                     &channel,
                     &commit,
@@ -254,7 +259,7 @@ async fn main() -> Result<()> {
         Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()?),
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
-            return commands::compare(
+            return comparison::compare(
                 &args.baseline,
                 &args.current,
                 dimension,
@@ -263,7 +268,7 @@ async fn main() -> Result<()> {
                 args.thresholds,
             );
         }
-        Command::Verify(args) => return commands::verify(&args.records, &args.evidence, args.thresholds),
+        Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.thresholds),
         Command::Run(args) => {
             let wanted = commands::select_dimensions(&args.dimensions)?;
             return commands::run_dimensions(

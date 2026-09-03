@@ -13,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::schema::Unit;
+
 /// The distribution of one metric, as recorded.
 ///
 /// Serialized into `capsem.bench.v1`, so field names are the wire format.
@@ -154,8 +156,10 @@ pub struct Comparison {
     pub ratio: f64,
     /// Grew past the allowed ratio.
     pub regressed: bool,
+    /// Moved by at least the smallest meaningful resolution in this unit.
+    pub material: bool,
     /// Grew past the allowed ratio *and* past the noise the evidence itself
-    /// shows. Only this should ever fail a release.
+    /// shows, by a materially large amount. Only this should fail a release.
     pub significant: bool,
 }
 
@@ -171,8 +175,10 @@ pub fn compare(
     statistic: Statistic,
     baseline: &Summary,
     current: &Summary,
+    unit: Unit,
     maximum_factor: f64,
     noise_factor: f64,
+    minimum_time_resolution_ms: f64,
 ) -> Comparison {
     let before = baseline.at(statistic);
     let after = current.at(statistic);
@@ -194,7 +200,8 @@ pub fn compare(
 
     let regressed = ratio > maximum_factor;
     let noise_band = baseline.cv * noise_factor;
-    let significant = regressed && (ratio - 1.0) > noise_band;
+    let material = delta_abs >= minimum_delta(unit, minimum_time_resolution_ms);
+    let significant = regressed && material && (ratio - 1.0) > noise_band;
 
     Comparison {
         key: key.to_string(),
@@ -205,7 +212,27 @@ pub fn compare(
         delta_pct,
         ratio,
         regressed,
+        material,
         significant,
+    }
+}
+
+/// Express one time floor in the native unit of each metric.
+///
+/// A 300 ns operation becoming 600 ns is a dramatic percentage attached to
+/// no product-visible duration. Non-time metrics retain ratio-only judgment.
+fn minimum_delta(unit: Unit, minimum_time_resolution_ms: f64) -> f64 {
+    match unit {
+        Unit::Seconds => minimum_time_resolution_ms / 1_000.0,
+        Unit::Milliseconds => minimum_time_resolution_ms,
+        Unit::Nanoseconds => minimum_time_resolution_ms * 1_000_000.0,
+        Unit::Bytes
+        | Unit::Megabytes
+        | Unit::RequestsPerSecond
+        | Unit::MegabitsPerSecond
+        | Unit::Operations
+        | Unit::Ratio
+        | Unit::Count => 0.0,
     }
 }
 

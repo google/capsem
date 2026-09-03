@@ -84,6 +84,13 @@ def test_non_finite_measurements_are_rejected() -> None:
         )
 
 
+def test_route_ceilings_use_human_time_increments() -> None:
+    with pytest.raises(ValidationError, match="5ms increment"):
+        from capsem_builder.gate.benchmarkschema import RouteBudgetConfig
+
+        RouteBudgetConfig(p95_ms=16.0, p99_ms=45.0, cpu_s=0.5)
+
+
 def test_route_ceiling_scales_cpu_but_not_latency() -> None:
     budget = scaled_hot_route_budget(
         "/profiles/code/detection/rules/list",

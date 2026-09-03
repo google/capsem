@@ -1,4 +1,22 @@
 use super::{compare, Statistic, Summary};
+use crate::schema::Unit;
+
+const MAXIMUM_FACTOR: f64 = 1.1;
+const NOISE_FACTOR: f64 = 1.0;
+const MINIMUM_TIME_RESOLUTION_MS: f64 = 1.0;
+
+fn compare_ms(baseline: &Summary, current: &Summary) -> super::Comparison {
+    compare(
+        "routes.gateway./vms/list.latency_ms",
+        Statistic::Median,
+        baseline,
+        current,
+        Unit::Milliseconds,
+        MAXIMUM_FACTOR,
+        NOISE_FACTOR,
+        MINIMUM_TIME_RESOLUTION_MS,
+    )
+}
 
 /// 1..=100 has percentiles that can be checked by hand.
 fn hundred() -> Vec<f64> {
@@ -93,14 +111,7 @@ fn steady(value: f64) -> Summary {
 
 #[test]
 fn growth_inside_the_allowed_ratio_is_not_a_regression() {
-    let verdict = compare(
-        "routes.gateway./vms/list.cpu_s",
-        Statistic::Median,
-        &steady(0.10),
-        &steady(0.11),
-        1.2,
-        1.0,
-    );
+    let verdict = compare_ms(&steady(100.0), &steady(110.0));
     assert!(!verdict.regressed);
     assert!(!verdict.significant);
     assert!((verdict.ratio - 1.1).abs() < 1e-9);
@@ -109,14 +120,7 @@ fn growth_inside_the_allowed_ratio_is_not_a_regression() {
 
 #[test]
 fn growth_past_the_ratio_on_a_quiet_metric_is_significant() {
-    let verdict = compare(
-        "routes.gateway./vms/list.cpu_s",
-        Statistic::Median,
-        &steady(0.10),
-        &steady(0.20),
-        1.2,
-        1.0,
-    );
+    let verdict = compare_ms(&steady(100.0), &steady(200.0));
     assert!(verdict.regressed);
     assert!(verdict.significant, "a doubling on a flat baseline is real");
 }
@@ -127,14 +131,7 @@ fn the_same_move_on_a_noisy_baseline_is_not_significant() {
     // evidence itself wobbles at least as much, so the run has not learned
     // anything and must not hold a release.
     let noisy = Summary::of(&[0.02, 0.18, 0.04, 0.16, 0.10, 0.06, 0.14, 0.10]).expect("summarizes");
-    let verdict = compare(
-        "routes.gateway./vms/list.cpu_s",
-        Statistic::Median,
-        &noisy,
-        &steady(0.13),
-        1.2,
-        1.0,
-    );
+    let verdict = compare_ms(&noisy, &steady(0.13));
     assert!(verdict.regressed, "the ratio is still breached");
     assert!(
         !verdict.significant,
@@ -149,8 +146,10 @@ fn a_zero_baseline_reports_infinity_rather_than_no_change() {
         Statistic::Mean,
         &steady(0.0),
         &steady(5.0),
-        1.2,
-        1.0,
+        Unit::Nanoseconds,
+        MAXIMUM_FACTOR,
+        NOISE_FACTOR,
+        MINIMUM_TIME_RESOLUTION_MS,
     );
     assert!(verdict.ratio.is_infinite());
     assert!(verdict.regressed);
@@ -163,8 +162,10 @@ fn two_zeroes_are_unchanged() {
         Statistic::Mean,
         &steady(0.0),
         &steady(0.0),
-        1.2,
-        1.0,
+        Unit::Count,
+        MAXIMUM_FACTOR,
+        NOISE_FACTOR,
+        MINIMUM_TIME_RESOLUTION_MS,
     );
     assert_eq!(verdict.ratio, 1.0);
     assert!(!verdict.regressed);
@@ -177,12 +178,47 @@ fn an_improvement_is_never_a_regression() {
         Statistic::Median,
         &steady(900.0),
         &steady(450.0),
-        1.2,
-        1.0,
+        Unit::Milliseconds,
+        MAXIMUM_FACTOR,
+        NOISE_FACTOR,
+        MINIMUM_TIME_RESOLUTION_MS,
     );
     assert!(!verdict.regressed);
     assert!(verdict.delta_abs < 0.0);
     assert!((verdict.delta_pct + 50.0).abs() < 1e-9);
+}
+
+#[test]
+fn nanosecond_percentages_have_no_release_authority() {
+    let verdict = compare(
+        "criterion.metrics.increment_ns",
+        Statistic::Median,
+        &steady(300.0),
+        &steady(900.0),
+        Unit::Nanoseconds,
+        MAXIMUM_FACTOR,
+        NOISE_FACTOR,
+        MINIMUM_TIME_RESOLUTION_MS,
+    );
+    assert!(verdict.regressed, "the threefold movement remains visible");
+    assert!(!verdict.material, "600 ns has no product-level meaning");
+    assert!(!verdict.significant);
+}
+
+#[test]
+fn a_sub_millisecond_wobble_is_not_material() {
+    let verdict = compare_ms(&steady(1.0), &steady(1.9));
+    assert!(verdict.regressed);
+    assert!(!verdict.material);
+    assert!(!verdict.significant);
+}
+
+#[test]
+fn time_movement_at_one_millisecond_can_gate() {
+    let verdict = compare_ms(&steady(5.0), &steady(6.0));
+    assert!(verdict.regressed);
+    assert!(verdict.material);
+    assert!(verdict.significant);
 }
 
 #[test]
