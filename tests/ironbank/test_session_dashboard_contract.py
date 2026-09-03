@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import platform
+import tomllib
 import uuid
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
 

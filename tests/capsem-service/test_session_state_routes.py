@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
-import tomllib
 from helpers.service import ServiceInstance, materialize_test_profiles
 
 DEFUNCT_ID = "33333333-3333-4333-8333-333333333333"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import threading
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 from helpers.http_transport import Transport
@@ -57,10 +58,11 @@ class ScriptedTransport(Transport):
         self.factory = factory
         self.created: list[Connection] = []
 
-    def _new_connection(self, _timeout: float) -> http.client.HTTPConnection:
+    def _new_connection(self, timeout: float) -> http.client.HTTPConnection:
+        del timeout
         connection = self.factory()
         self.created.append(connection)
-        return connection  # type: ignore[return-value]
+        return cast(http.client.HTTPConnection, connection)
 
 
 def test_shared_transport_owns_one_connection_per_concurrent_thread() -> None:

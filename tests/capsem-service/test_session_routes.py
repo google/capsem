@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import json
 import platform
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import blake3
-import tomllib
 from helpers.service import ServiceInstance, materialize_test_profiles
 
 DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"

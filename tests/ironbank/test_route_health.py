@@ -1053,6 +1053,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
+        assert gateway.token is not None
         service_client = service.client()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         assert service.proc is not None

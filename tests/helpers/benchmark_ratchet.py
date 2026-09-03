@@ -18,11 +18,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tomllib
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from pydantic import BaseModel, ConfigDict, Field
 
 

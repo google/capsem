@@ -39,10 +39,17 @@ BudgetName = Literal[
 
 
 class Timing(Protocol):
-    label: str
-    samples_ms: list[float]
-    service_cpu_s: float
-    gateway_cpu_s: float | None
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def samples_ms(self) -> list[float]: ...
+
+    @property
+    def service_cpu_s(self) -> float: ...
+
+    @property
+    def gateway_cpu_s(self) -> float | None: ...
 
     @property
     def p50_ms(self) -> float: ...
