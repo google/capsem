@@ -147,9 +147,9 @@ def test_service_client_preserves_failure_evidence_before_delete(tmp_path, monke
     service = svc_mod.ServiceInstance()
     client = service.client()
     monkeypatch.setattr(
-        client,
-        "_curl",
-        lambda *_args, **_kwargs: {"success": True},
+        client._transport,
+        "request",
+        lambda *_args, **_kwargs: (200, {}, b'{"success":true}'),
     )
 
     try:
@@ -185,7 +185,11 @@ def test_service_client_preserves_explicit_diagnostic_evidence_before_delete(
     monkeypatch.setattr(svc_mod, "preserve_tmp_dir_on_failure", _record_preserve)
     service = svc_mod.ServiceInstance()
     client = service.client()
-    monkeypatch.setattr(client, "_curl", lambda *_args, **_kwargs: {"success": True})
+    monkeypatch.setattr(
+        client._transport,
+        "request",
+        lambda *_args, **_kwargs: (200, {}, b'{"success":true}'),
+    )
 
     try:
         client.delete("/vms/first/delete")
