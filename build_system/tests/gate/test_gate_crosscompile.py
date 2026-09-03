@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache.objects import digest_file, verify
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
@@ -1143,11 +1144,10 @@ def test_the_builder_receives_every_name_for_the_target(
     assert f"bash /src/{BUILD_SCRIPT}" in build
 
 
-def test_the_lane_shares_no_named_volume_with_any_other_run(
+def test_the_lane_reuses_one_accounted_target_volume_per_architecture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A shared /cargo-target across architectures would rebuild the world on
-    every alternation; a per-architecture registry would refetch the index."""
+    """Cargo output survives gates without mixing architectures or stores."""
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
@@ -1155,22 +1155,13 @@ def test_the_lane_shares_no_named_volume_with_any_other_run(
     _run_lane(_rail(runner))
 
     build = runner.matching(r"docker create")[0]
-    # Reimplemented from a test that required exactly the opposite, and was
-    # right at the time: the cargo caches were shared named volumes and the
-    # target dir was one per architecture.
-    #
-    # They mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
-    # where `Dockerfile.host-builder` installs the toolchain, the cross-targets
-    # and its tools -- so the image carried all of it and the container saw a
-    # volume instead.
-    #
-    # The build directory is still off the host filesystem; it is simply
-    # anonymous, so Docker allocates one per container and reclaims it with
-    # that container rather than carrying it between two gates.
     assert "capsem-cargo-registry" not in build
     assert "capsem-rustup" not in build
-    assert "capsem-host-target" not in build
-    assert "-v /cargo-target" in build, f"the build directory left the container: {build}"
+    volume = CONFIG.package.cargo_target_volume.format(arch=TARGET.name)
+    assert f"-v {volume}:{CONFIG.package.cargo_target_mount}" in build
+    docker = cachelayout.cache_paths(CONFIG).policy.runtimes["docker"]
+    assert isinstance(docker, DockerRuntimePolicy)
+    assert volume.startswith(docker.volume_prefixes)
 
 
 def test_the_package_lane_mounts_no_git_metadata(

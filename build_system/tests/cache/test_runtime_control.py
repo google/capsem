@@ -65,6 +65,7 @@ def policy() -> CachePolicy:
                 log_stage="logs",
                 image_prefixes=("capsem-",),
                 container_prefixes=("capsem-",),
+                volume_prefixes=("capsem-package-target-",),
                 build_cache_owned=True,
                 maximum_age_hours=72,
                 keep_image_generations=1,
@@ -211,6 +212,28 @@ def test_optional_unavailable_runtime_does_not_block_retention() -> None:
     assert plan.actions == () and plan.violations == ()
 
 
+def test_docker_capacity_reclaims_inactive_compiler_volume() -> None:
+    inventory = RuntimeInventory(
+        runtime_id="docker",
+        kind=RuntimeKind.DOCKER,
+        available=True,
+        generated_ns=1,
+        native_bytes=100,
+        owned_bytes=100,
+        resources=(resource(ResourceKind.VOLUME, "capsem-package-target-arm64", 0, size=100),),
+    )
+
+    plan = plan_runtime_prune(
+        RuntimeSnapshot(generated_ns=1, native_bytes=100, owned_bytes=100, runtimes=(inventory,)),
+        policy(),
+    )
+
+    assert [(action.operation, action.target) for action in plan.actions] == [
+        (RuntimeOperation.REMOVE_VOLUME, "capsem-package-target-arm64")
+    ]
+    assert plan.violations == ()
+
+
 def test_runtime_apply_uses_exact_argv_and_journals(tmp_path: Path) -> None:
     now = 1
     inventory = RuntimeInventory(
@@ -337,6 +360,7 @@ def test_cold_clean_never_selects_active_or_foreign_resources() -> None:
         resources=(
             resource(ResourceKind.CONTAINER, "stopped", 1),
             resource(ResourceKind.CONTAINER, "running", 1, protected=True),
+            resource(ResourceKind.VOLUME, "capsem-package-target-arm64", 1),
             resource(ResourceKind.IMAGE, "foreign", 1).model_copy(update={"owned": False}),
         ),
     )
@@ -346,6 +370,7 @@ def test_cold_clean_never_selects_active_or_foreign_resources() -> None:
 
     plan = plan_runtime_clean(snapshot, controlled_policy())
 
-    assert [(item.operation, item.target) for item in plan.actions] == [
-        (RuntimeOperation.REMOVE_CONTAINER, "stopped")
-    ]
+    assert {(item.operation, item.target) for item in plan.actions} == {
+        (RuntimeOperation.REMOVE_CONTAINER, "stopped"),
+        (RuntimeOperation.REMOVE_VOLUME, "capsem-package-target-arm64"),
+    }

@@ -38,6 +38,7 @@ def docker_policy() -> DockerRuntimePolicy:
         log_stage="logs",
         image_prefixes=("capsem-",),
         container_prefixes=("capsem-",),
+        volume_prefixes=("capsem-package-target-",),
         build_cache_owned=True,
         maximum_age_hours=72,
         keep_image_generations=2,
@@ -46,6 +47,13 @@ def docker_policy() -> DockerRuntimePolicy:
 
 def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        if argv[1:4] == ("system", "df", "-v"):
+            return command(
+                argv,
+                '{"Volumes":[{"Name":"capsem-package-target-arm64",'
+                '"Size":"2GB","Links":"0","CreatedAt":"2026-08-01T00:00:00Z"},'
+                '{"Name":"foreign","Size":"9GB","Links":"0"}]}',
+            )
         if argv[1:3] == ("system", "df"):
             return command(
                 argv,
@@ -86,10 +94,11 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
 
     assert report.available is True
     assert report.native_bytes == 102_000_000_000
-    assert report.owned_bytes == 96_003_000_000
+    assert report.owned_bytes == 98_003_000_000
     assert [resource.kind for resource in report.resources] == [
         ResourceKind.IMAGE,
         ResourceKind.CONTAINER,
+        ResourceKind.VOLUME,
         ResourceKind.BUILD_CACHE,
     ]
     assert report.resources[0].protected is True

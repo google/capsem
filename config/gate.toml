@@ -528,6 +528,7 @@ default_channel = "stable"
 toolchain_pin = "rust-toolchain.toml"
 clock_script = "build_system/scripts/build/sync-container-clock.py"
 cargo_target_mount = "/cargo-target"
+cargo_target_volume = "capsem-package-target-{arch}"
 package_suffix = ".deb"
 # The container the build runs in, kept until its output has been copied out.
 # `--rm` and `docker cp` are mutually exclusive, which is the same constraint
@@ -564,10 +565,8 @@ container_output_dir = "/package-output"
 # The trailing `/.` copies the directory's *contents*; without it the package
 # nests one level down from where `resolve()` looks.
 container_output_contents = "/package-output/."
-# Per-architecture, so alternating targets does not rebuild the world.
-# No `target_volume`. The build directory is an anonymous volume, spelled by
-# its container path in `cargo_target_mount` and allocated per container, so
-# there is no name for two gates to share.
+# A policy-owned Docker volume per architecture preserves Cargo fingerprints
+# across source-isolated gates without mixing incompatible target libraries.
 
 [package.builder]
 dockerfile = "build_system/docker/Dockerfile.package-builder"

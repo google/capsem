@@ -142,6 +142,10 @@ class PackageRail:
             # Docker storage per gate to avoid a mount that was never the race.
             Mount.generated(str(self.content.assets), f"{mount}/{assets_destination}"),
             Mount.generated(str(self.content.config), f"{mount}/{config_destination}"),
+            Mount(
+                self._package.cargo_target_volume.format(arch=self.target.name),
+                self._package.cargo_target_mount,
+            ),
         )
 
         docker = Docker(self._runner)
@@ -185,7 +189,6 @@ class PackageRail:
             # gates shared.
             scratch=(
                 *(f"{mount}/{path}" for path in self._package.writable_paths),
-                self._package.cargo_target_mount,
             ),
             workdir=mount,
             secret_env=frozenset(signing),

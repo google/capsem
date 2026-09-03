@@ -375,6 +375,7 @@ inventory_retry_delay_milliseconds = 250
 log_stage = "container-logs"
 image_prefixes = ["capsem-"]
 container_prefixes = ["capsem-"]
+volume_prefixes = ["capsem-package-target-"]
 build_cache_owned = true
 maximum_age_hours = 72
 keep_image_generations = 1

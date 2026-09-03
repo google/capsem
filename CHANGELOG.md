@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies, strict receipts make every reused byte auditable, and runtime boot
   evidence remains fresh rather than being mistaken for construction output.
 - `just cache` now reconciles repository usage with owned Docker images,
-  containers, BuildKit data, and Tart VMs through bounded typed adapters.
+  containers, persistent per-architecture package compiler volumes, BuildKit
+  data, and Tart VMs through bounded typed adapters. Package builds retain
+  Cargo fingerprints across gates instead of compiling both targets cold.
   Every owner exposes the same description, scope, maximum size, warm size,
   and prune strategy through `just cache stats`; prune previews protect active
   and foreign resources, and applied cleanup is exact, reasoned, and journaled.

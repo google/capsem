@@ -265,6 +265,7 @@ class PackageConfig(Strict):
     toolchain_pin: str
     clock_script: str
     cargo_target_mount: str
+    cargo_target_volume: str
     package_suffix: str
     lane_container: str
     generated_inputs: tuple[str, ...]

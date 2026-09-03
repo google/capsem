@@ -26,6 +26,7 @@ def _argv(
     docker_operations = {
         RuntimeOperation.REMOVE_IMAGE,
         RuntimeOperation.REMOVE_CONTAINER,
+        RuntimeOperation.REMOVE_VOLUME,
         RuntimeOperation.PRUNE_BUILD_CACHE,
         RuntimeOperation.CLEAR_BUILD_CACHE,
     }
@@ -39,6 +40,8 @@ def _argv(
         return (runtime.command, "image", "rm", action.target)
     if action.operation is RuntimeOperation.REMOVE_CONTAINER:
         return (runtime.command, "container", "rm", action.target)
+    if action.operation is RuntimeOperation.REMOVE_VOLUME:
+        return (runtime.command, "volume", "rm", action.target)
     if action.operation is RuntimeOperation.PRUNE_BUILD_CACHE:
         if not isinstance(runtime, DockerRuntimePolicy):  # narrowed for the type checker
             raise AssertionError("validated Docker operation lost its runtime type")

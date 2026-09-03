@@ -21,17 +21,22 @@ def _docker_actions(
 ) -> tuple[tuple[RuntimePruneAction, ...], tuple[str, ...]]:
     actions: list[RuntimePruneAction] = []
     for resource in inventory.resources:
-        if resource.kind is ResourceKind.CONTAINER:
+        if resource.kind in {ResourceKind.CONTAINER, ResourceKind.VOLUME}:
             expired = (
                 resource.created_ns > 0
                 and inventory.generated_ns
                 >= resource.created_ns + policy.maximum_age_hours * NANOSECONDS_PER_HOUR
             )
             if resource.owned and expired and not resource.protected:
+                operation = (
+                    RuntimeOperation.REMOVE_CONTAINER
+                    if resource.kind is ResourceKind.CONTAINER
+                    else RuntimeOperation.REMOVE_VOLUME
+                )
                 actions.append(
                     RuntimePruneAction(
                         runtime_id=inventory.runtime_id,
-                        operation=RuntimeOperation.REMOVE_CONTAINER,
+                        operation=operation,
                         target=resource.identity,
                         logical_bytes=resource.logical_bytes,
                         reason=f"stopped owned container older than {policy.maximum_age_hours}h",
@@ -65,6 +70,34 @@ def _docker_actions(
                 )
             )
             projected -= reclaim
+    if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
+        volumes = sorted(
+            (
+                item
+                for item in inventory.resources
+                if item.kind is ResourceKind.VOLUME
+                and item.owned
+                and not item.protected
+                and item.identity not in selected
+            ),
+            key=lambda item: (item.last_used_ns, item.identity),
+        )
+        for volume in volumes:
+            if projected <= policy.warm_size_bytes:
+                break
+            actions.append(
+                RuntimePruneAction(
+                    runtime_id=inventory.runtime_id,
+                    operation=RuntimeOperation.REMOVE_VOLUME,
+                    target=volume.identity,
+                    logical_bytes=volume.logical_bytes,
+                    reason=(
+                        f"Docker cache exceeded max size {policy.max_size_bytes}; "
+                        f"recover to warm size {policy.warm_size_bytes}"
+                    ),
+                )
+            )
+            projected -= min(projected, volume.logical_bytes)
     violations = [*image_violations]
     if projected > policy.max_size_bytes:
         violations.append(
@@ -141,6 +174,9 @@ def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
                 targets = item.names
             elif item.kind is ResourceKind.CONTAINER:
                 operation = RuntimeOperation.REMOVE_CONTAINER
+                targets = (item.identity,)
+            elif item.kind is ResourceKind.VOLUME:
+                operation = RuntimeOperation.REMOVE_VOLUME
                 targets = (item.identity,)
             elif item.kind is ResourceKind.BUILD_CACHE:
                 operation = RuntimeOperation.CLEAR_BUILD_CACHE

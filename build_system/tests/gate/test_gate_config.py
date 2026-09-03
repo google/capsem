@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from pydantic import ValidationError
@@ -295,17 +296,19 @@ def test_the_preinstall_admin_is_not_the_installed_one(
     assert config.install.preinstall_admin.startswith(config.install.preinstall_root)
 
 
-def test_the_package_lane_names_no_volume_at_all(config) -> None:
-    """Was: the per-architecture `/cargo-target` volume must differ per arch.
-
-    It did, and it had to, because a shared named volume rebuilt the world on
-    every alternation. There is no named volume now -- the build directory is
-    anonymous, so Docker allocates one per container and reclaims it with that
-    container, which is per-architecture by construction and shares nothing
-    between two gates.
-    """
+def test_the_package_lane_uses_one_policy_owned_volume_per_architecture(config) -> None:
+    """Alternating architectures must neither collide nor compile cold."""
     assert not hasattr(config.package, "volumes")
     assert config.package.cargo_target_mount.startswith("/")
+    names = {
+        config.package.cargo_target_volume.format(arch=arch.name)
+        for arch in config.architectures.values()
+    }
+    assert len(names) == len(config.architectures)
+    docker = load_policy(PROJECT_ROOT).runtimes["docker"]
+    assert isinstance(docker, DockerRuntimePolicy)
+    prefixes = docker.volume_prefixes
+    assert all(name.startswith(prefixes) for name in names)
 
 
 def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(

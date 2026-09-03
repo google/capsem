@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 import time
-from datetime import UTC, datetime
-from decimal import Decimal
 
+from . import dockervolumes
+from .dockerformat import json_lines, parse_size, reclaimable_size, timestamp
 from .runtimeexec import CommandRunner, execute
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -18,71 +17,17 @@ from .runtimemodels import (
     RuntimeResource,
 )
 
-SIZE_UNITS = {
-    "B": 1,
-    "KB": 1000,
-    "MB": 1000**2,
-    "GB": 1000**3,
-    "TB": 1000**4,
-    "KIB": 1024,
-    "MIB": 1024**2,
-    "GIB": 1024**3,
-    "TIB": 1024**4,
-}
-
-
-def _parse_size(value: str, *, signed: bool) -> int:
-    token = value.strip().split()[0].replace(",", "")
-    sign = "-?" if signed else ""
-    match = re.fullmatch(
-        rf"({sign}[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)([A-Za-z]+)",
-        token,
-    )
-    if match is None or match.group(2).upper() not in SIZE_UNITS:
-        raise ValueError(f"unsupported Docker size: {value!r}")
-    return int(Decimal(match.group(1)) * SIZE_UNITS[match.group(2).upper()])
-
-
-def parse_size(value: str) -> int:
-    return _parse_size(value, signed=False)
-
-
-def _reclaimable_size(value: str) -> int:
-    # Docker 29 can subtract shared image layers below zero. Reclaimable bytes
-    # are capacity, not debt, so normalize that native accounting artifact here.
-    return max(0, _parse_size(value, signed=True))
-
-
-def _timestamp(value: str) -> int:
-    if not value:
-        return 0
-    normalized = value.removesuffix(" UTC").replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S %z")
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1_000_000_000)
-
-
-def _json_lines(output: str) -> tuple[dict[str, object], ...]:
-    rows = tuple(json.loads(line) for line in output.splitlines() if line.strip())
-    if any(not isinstance(row, dict) for row in rows):
-        raise ValueError("Docker JSON-lines output contains a non-object")
-    return rows
-
 
 def _categories(output: str) -> tuple[RuntimeCategory, ...]:
     rows = []
-    for raw in _json_lines(output):
+    for raw in json_lines(output):
         rows.append(
             RuntimeCategory(
                 name=str(raw["Type"]),
                 count=int(str(raw["TotalCount"])),
                 active=int(str(raw["Active"])),
                 logical_bytes=parse_size(str(raw["Size"])),
-                reclaimable_bytes=_reclaimable_size(str(raw["Reclaimable"])),
+                reclaimable_bytes=reclaimable_size(str(raw["Reclaimable"])),
             )
         )
     return tuple(rows)
@@ -126,7 +71,7 @@ def _owned_images(
     ids = sorted(
         {
             str(row["ID"])
-            for row in _json_lines(listed.stdout)
+            for row in json_lines(listed.stdout)
             if any(str(row["Repository"]).startswith(prefix) for prefix in policy.image_prefixes)
         }
     )
@@ -157,15 +102,15 @@ def _owned_images(
         )
         if not names:
             continue
-        timestamp = _timestamp(created)
+        created_at = timestamp(created)
         resources.append(
             RuntimeResource(
                 kind=ResourceKind.IMAGE,
                 identity=identity,
                 names=names,
                 logical_bytes=int(size),
-                created_ns=timestamp,
-                last_used_ns=timestamp,
+                created_ns=created_at,
+                last_used_ns=created_at,
                 active=any(name in used_images for name in names),
                 owned=True,
                 protected=any(name in used_images for name in names),
@@ -194,13 +139,13 @@ def _containers(
         raise ValueError(result.stderr or "Docker container inventory failed")
     resources = []
     used_images = set()
-    for raw in _json_lines(result.stdout):
+    for raw in json_lines(result.stdout):
         used_images.add(str(raw.get("Image", "")))
         name = str(raw.get("Names", ""))
         if not any(name.startswith(prefix) for prefix in policy.container_prefixes):
             continue
         active = str(raw.get("State", "")).lower() == "running"
-        created = _timestamp(str(raw.get("CreatedAt", "")))
+        created = timestamp(str(raw.get("CreatedAt", "")))
         resources.append(
             RuntimeResource(
                 kind=ResourceKind.CONTAINER,
@@ -229,6 +174,7 @@ def inventory(
         storage = categories(policy, runner=runner)
         containers, used_images = _containers(policy, runner)
         images = _owned_images(policy, runner, used_images)
+        volumes = dockervolumes.inventory(policy, runner=runner)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         return RuntimeInventory(
             runtime_id=runtime_id,
@@ -257,7 +203,7 @@ def inventory(
         if policy.build_cache_owned and build is not None
         else ()
     )
-    resources = (*images, *containers, *build_resource)
+    resources = (*images, *containers, *volumes, *build_resource)
     return RuntimeInventory(
         runtime_id=runtime_id,
         kind=RuntimeKind.DOCKER,

@@ -117,6 +117,7 @@ def test_runtime_policy_references_an_owned_log_stage() -> None:
         log_stage="missing",
         image_prefixes=("capsem-",),
         container_prefixes=("capsem-",),
+        volume_prefixes=("capsem-package-target-",),
         build_cache_owned=True,
         maximum_age_hours=72,
         keep_image_generations=2,

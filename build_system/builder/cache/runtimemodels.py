@@ -31,6 +31,7 @@ class RuntimeKind(StrEnum):
 class ResourceKind(StrEnum):
     IMAGE = "image"
     CONTAINER = "container"
+    VOLUME = "volume"
     BUILD_CACHE = "build-cache"
     VM = "vm"
 
@@ -38,6 +39,7 @@ class ResourceKind(StrEnum):
 class RuntimeOperation(StrEnum):
     REMOVE_IMAGE = "remove-image"
     REMOVE_CONTAINER = "remove-container"
+    REMOVE_VOLUME = "remove-volume"
     PRUNE_BUILD_CACHE = "prune-build-cache"
     CLEAR_BUILD_CACHE = "clear-build-cache"
     DELETE_VM = "delete-vm"
@@ -54,11 +56,12 @@ class DockerRuntimePolicy(CacheContract):
     log_stage: StrictStr
     image_prefixes: tuple[StrictStr, ...]
     container_prefixes: tuple[StrictStr, ...]
+    volume_prefixes: tuple[StrictStr, ...]
     build_cache_owned: StrictBool
     maximum_age_hours: PositiveInt
     keep_image_generations: PositiveInt
 
-    @field_validator("image_prefixes", "container_prefixes", mode="before")
+    @field_validator("image_prefixes", "container_prefixes", "volume_prefixes", mode="before")
     @classmethod
     def arrays_are_frozen(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
@@ -69,9 +72,9 @@ class DockerRuntimePolicy(CacheContract):
             raise ValueError("Docker cache requires docker scope and prune strategy")
         if not self.command or any(character.isspace() for character in self.command):
             raise ValueError("Docker command must be one executable token")
-        if not self.image_prefixes or not self.container_prefixes:
+        if not self.image_prefixes or not self.container_prefixes or not self.volume_prefixes:
             raise ValueError("Docker ownership prefixes must be non-empty")
-        prefixes = (*self.image_prefixes, *self.container_prefixes)
+        prefixes = (*self.image_prefixes, *self.container_prefixes, *self.volume_prefixes)
         if any(not prefix or prefix.isspace() for prefix in prefixes):
             raise ValueError("Docker ownership prefixes must contain visible text")
         return self
