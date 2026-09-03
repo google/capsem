@@ -154,7 +154,7 @@ Loader changes: `corp_config_paths()` returns [/etc, ~/.capsem/] with first-wins
 
 ## Test harness
 
-Docker-based e2e tests in `tests/capsem-install/`:
+Docker-based e2e tests in `tests/capsem_install/`:
 
 | File | Tests |
 |------|-------|

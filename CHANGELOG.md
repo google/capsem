@@ -4201,7 +4201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source contract asserts a Rust test name against production source instead of
   the sibling `tests.rs` the test lives in. This class cost two release
   attempts: sixteen contracts under `tests/capsem-release/`, then five more
-  under `tests/capsem-install/` that run only inside the Docker install gate and
+  under `tests/capsem_install/` that run only inside the Docker install gate and
   so stayed invisible until forty minutes into a release run. The guard resolves
   each assertion's target through the AST, per function scope, so contracts that
   legitimately name a relocated test while asserting it against a test module or
@@ -9824,7 +9824,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the published manifest, curl-checks every `<base>/v<tag>/<arch>-<name>` URL
   is reachable, AND runs the just-released binary's `capsem update --assets`
   against real GitHub. Closes the gap that hid the URL bug for one release.
-- Fixed `tests/capsem-install/test_asset_download.py`: fake release dir was
+- Fixed `tests/capsem_install/test_asset_download.py`: fake release dir was
   at `v<asset_version>` (mirroring the same buggy mental model as the code).
   Now at `v<binary_version>` so it actually models GitHub.
 - Dropped the `_build-host` dependency from `just test-install`. The recipe
@@ -9864,7 +9864,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tauri` v2.11.0 crate (`cargo tauri build` refuses mismatched majors/minors).
 
 ### Fixed (install-test fixture)
-- `tests/capsem-install/test_asset_download.py` hardcoded `serve_dir/v1.0.1/`
+- `tests/capsem_install/test_asset_download.py` hardcoded `serve_dir/v1.0.1/`
   for the fake release dir, but the installed binary builds asset URLs from
   its own `CARGO_PKG_VERSION` (e.g. `v1.0.1777065213`). Every run inside the
   install-test container 404'd. Replaced with `f"v{_binary_version()}"` -- a
@@ -11167,7 +11167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ManifestV2::resolve()` looks up) and removes the legacy `v1.0.*/`
   directories that accumulated from the old v1 layout. Also updated
   `build_system/scripts/test/simulate-install.sh` to honor the same layout so
-  `tests/capsem-install/` agrees with production.
+  `tests/capsem_install/` agrees with production.
 
 ### Added
 - **`capsem setup` actually downloads VM assets, and `capsem update --assets`
@@ -11182,9 +11182,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download target.
 
 ### Tests
-- **`tests/capsem-install/` is now safe to run bare-metal.** The module-level
+- **`tests/capsem_install/` is now safe to run bare-metal.** The module-level
   `CAPSEM_DIR` previously hardcoded `$HOME/.capsem`, so running
-  `pytest tests/capsem-install/` clobbered the developer's real install
+  `pytest tests/capsem_install/` clobbered the developer's real install
   (`simulate-install.sh` overwrote binaries; `test_full_uninstall` literally
   asserted `~/.capsem` was removed). `conftest.py` now provisions a temp
   `CAPSEM_HOME` for the session and auto-skips the `live_system` tier
@@ -11210,7 +11210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build failures") with no duplicate compile (clippy is a strict superset of
   check). Smoke additionally gained `pnpm run check` in its parallel block --
   previously a Svelte/TS type error only surfaced under `just test`.
-- **`just test` ignores `tests/capsem-recipes/` and `tests/capsem-install/`
+- **`just test` ignores `tests/capsem-recipes/` and `tests/capsem_install/`
   in its parallel pytest stage.** Both directories contain tests that
   `subprocess.run(["cargo", "build", ...])` from inside pytest; under `-n 4`
   this atomically replaced the codesigned `capsem-service` / `capsem-process`
@@ -11549,9 +11549,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection" / "VM never exec-ready" cascades. Each site now scopes the
   match to its own install prefix:
   - `build_system/scripts/test/simulate-install.sh` matches `$INSTALL_DIR/<name>`.
-  - `tests/capsem-install/conftest.py::_kill_service` matches
+  - `tests/capsem_install/conftest.py::_kill_service` matches
     `$INSTALL_DIR/<name>`.
-  - `tests/capsem-install/test_service_install.py` matches
+  - `tests/capsem_install/test_service_install.py` matches
     `$INSTALL_DIR/capsem-service`.
   - `crates/capsem/src/uninstall.rs` and
     `crates/capsem/src/service_install.rs` use `current_exe().parent()` to

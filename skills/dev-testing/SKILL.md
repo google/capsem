@@ -417,7 +417,7 @@ scope, so a contract that legitimately names a relocated test while asserting it
 against a test module or spec document is not flagged.
 
 **Why it matters.** This layout change broke sixteen contracts under
-`tests/capsem-release/`, then five more under `tests/capsem-install/` that run
+`tests/capsem-release/`, then five more under `tests/capsem_install/` that run
 only inside the Docker install gate -- invisible until forty minutes into a
 release run. Nothing about the failure pointed at a moved function; it read as a
 broken release.
@@ -449,7 +449,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
 | Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
-| Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
+| Install | `capsem_install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
 `just test` is the only public complete local verification. `just fast-test`
 is incomplete feedback, `just focus-test` selects a closed existing owner, and

@@ -354,7 +354,7 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 
 # The suite proving the installed package, run from inside the container.
 [install.suite]
-path = "tests/capsem-install/"
+path = "tests/capsem_install/"
 glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_report_check = "build_system/scripts/build/check-macos-native-glowup.py"
 serve_script = "build_system/release_site/scripts/serve-release-test-root.py"
@@ -2100,7 +2100,7 @@ coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-re
 #                    and a guard with two owners has none
 broad_ignores = [
     "tests/capsem-recipes",
-    "tests/capsem-install",
+    "tests/capsem_install",
     "tests/capsem-build-chain",
     "tests/capsem-release",
     "tests/citadel",

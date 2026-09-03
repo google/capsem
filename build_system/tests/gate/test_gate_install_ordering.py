@@ -368,7 +368,7 @@ def test_the_proofs_run_against_the_installed_package(
 
     runner.assert_order(
         r"dpkg -i",
-        r"pytest tests/capsem-install/",
+        r"pytest tests/capsem_install/",
         r"local-release-glowup\.py",
     )
 

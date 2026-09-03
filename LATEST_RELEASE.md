@@ -27,7 +27,7 @@ version: 1.6.1785421421
   source contract asserts a Rust test name against production source instead of
   the sibling `tests.rs` the test lives in. This class cost two release
   attempts: sixteen contracts under `tests/capsem-release/`, then five more
-  under `tests/capsem-install/` that run only inside the Docker install gate and
+  under `tests/capsem_install/` that run only inside the Docker install gate and
   so stayed invisible until forty minutes into a release run. The guard resolves
   each assertion's target through the AST, per function scope, so contracts that
   legitimately name a relocated test while asserting it against a test module or

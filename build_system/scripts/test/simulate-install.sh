@@ -16,7 +16,7 @@ ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>
 CONFIG_ROOT="${3:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
 
 # Honor CAPSEM_HOME so the install-test suite can redirect this script into
-# an isolated temp dir (see tests/capsem-install/conftest.py::_resolve_capsem_home).
+# an isolated temp dir (see tests/capsem_install/conftest.py::_resolve_capsem_home).
 CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
 INSTALL_DIR="$CAPSEM_HOME_DIR/bin"
 ASSETS_DST="$CAPSEM_HOME_DIR/assets"

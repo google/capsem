@@ -62,7 +62,7 @@ def _resolve_capsem_home() -> Path:
     ``~/.capsem`` -- `test_full_uninstall` literally asserts it got removed,
     and `simulate-install.sh` would overwrite binaries the developer had
     just installed. We isolate under a dedicated temp dir so bare-metal
-    `pytest tests/capsem-install/` is always safe.
+    `pytest tests/capsem_install/` is always safe.
 
     Exceptions:
       - ``CAPSEM_DEB_INSTALLED=1`` (Docker install-test harness): we are
@@ -122,7 +122,11 @@ def fresh_capsem_binary() -> Path:
     )
 
     repo_root = Path(__file__).resolve().parents[2]
-    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", repo_root / "cache" / "target" / "cargo" / "debug"))
+    bin_src = Path(
+        os.environ.get(
+            "CAPSEM_BIN_SRC", repo_root / "cache" / "target" / "cargo" / "debug"
+        )
+    )
     binary = bin_src / "capsem"
     source_paths = (
         repo_root / "crates" / "capsem" / "src" / "update.rs",
@@ -150,7 +154,9 @@ def fresh_capsem_binary() -> Path:
     return binary
 
 
-def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess[str]:
+def run_capsem(
+    *args: str, timeout: int = DEFAULT_TIMEOUT
+) -> subprocess.CompletedProcess[str]:
     """Run the installed capsem binary with capture + timeout."""
     return subprocess.run(
         [str(INSTALL_DIR / "capsem"), *args],
@@ -316,7 +322,10 @@ def _ensure_installed() -> None:
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
         ["bash", str(script), bin_src, assets_src, config_src],
-        capture_output=True, text=True, timeout=60, check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
     )
     assert result.returncode == 0, (
         f"simulate-install.sh failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"

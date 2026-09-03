@@ -116,7 +116,7 @@ def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:
     argv = _argv(pytestsuite.broad(CONFIG, profile="code"))
 
     assert "--ignore=tests/capsem-recipes" in argv
-    assert "--ignore=tests/capsem-install" in argv
+    assert "--ignore=tests/capsem_install" in argv
 
 
 def test_the_serial_snapshot_files_are_excluded_from_the_parallel_run() -> None:

@@ -9,11 +9,11 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import tomllib
 import yaml
 from blake3 import blake3
 from capsem_builder.release.tools import (
@@ -1119,9 +1119,9 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     tests = "\n".join(
         (PROJECT_ROOT / path).read_text()
         for path in (
-            "tests/capsem-install/conftest.py",
-            "tests/capsem-install/test_asset_download.py",
-            "tests/capsem-install/test_update.py",
+            "tests/capsem_install/conftest.py",
+            "tests/capsem_install/test_asset_download.py",
+            "tests/capsem_install/test_update.py",
         )
     )
     issued = _planned("install-image")

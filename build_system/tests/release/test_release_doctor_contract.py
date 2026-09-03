@@ -2190,7 +2190,7 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
 
 def test_self_update_docs_match_verified_package_execution() -> None:
     update_rs = _source_text("crates/capsem/src/update.rs")
-    install_tests = _source_text("tests/capsem-install/test_update.py")
+    install_tests = _source_text("tests/capsem_install/test_update.py")
     install_skill = _source_text("skills/dev-installation/SKILL.md")
     architecture_skill = _skill_text("skills/site-architecture/SKILL.md")
     service_docs = _source_text("web/docs/src/content/docs/architecture/service-architecture.md")
@@ -2217,7 +2217,7 @@ def test_self_update_docs_match_verified_package_execution() -> None:
 
 def test_installation_skill_documents_full_host_binary_cohort() -> None:
     install_skill = _source_text("skills/dev-installation/SKILL.md")
-    install_fixture = _source_text("tests/capsem-install/conftest.py")
+    install_fixture = _source_text("tests/capsem_install/conftest.py")
 
     binaries_match = re.search(r"BINARIES = \[(.*?)\]", install_fixture, re.S)
     assert binaries_match is not None
@@ -5677,7 +5677,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "build_system/scripts/build/materialize-config.sh",
         "build_system/builder/release/tools/build_complete_release_channel.py",
         "build_system/builder/release/tools/local_release_glowup.py",
-        "tests/capsem-install",
+        "tests/capsem_install",
         "justfile",
     )
     for relative in fixture_paths:
@@ -5829,7 +5829,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert rejected.returncode != 0, f"guard accepted workflow default {selection}"
         assert "silently defaults" in rejected.stderr
 
-    installed_update_test = tmp_path / "tests/capsem-install/test_update.py"
+    installed_update_test = tmp_path / "tests/capsem_install/test_update.py"
     original_installed_update_test = installed_update_test.read_text()
     for override in ("CAPSEM_RELEASE_MANIFEST_URL", "CAPSEM_RELEASE_HEALTH_URL"):
         installed_update_test.write_text(
@@ -5967,7 +5967,7 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     )[0]
 
     assert "pytest tests/ --cov" not in coverage_step
-    assert "tests/capsem-install" not in coverage_step
+    assert "tests/capsem_install" not in coverage_step
     assert "tests/capsem-serial" not in coverage_step
     assert "tests/ironbank" not in coverage_step
     assert "tests/capsem-mcp" not in coverage_step
