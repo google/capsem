@@ -553,6 +553,9 @@ fn main() {
             let pending_responses: PendingResponses =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
             let (ctrl_sender, ctrl_rx) = CtrlSender::new(std::sync::Arc::clone(&pending_responses));
+            // The audit tailer owns its host connection and reconnects on its
+            // own, so it is spawned once for the process, not per bridge.
+            thread::spawn(audit_reader_loop);
             let bridge_shared = BridgeShared {
                 exec_inflight: std::sync::Arc::clone(&exec_inflight),
                 exec_done: std::sync::Arc::clone(&exec_done),
@@ -843,11 +846,6 @@ fn run_bridge(
             done_for_ctrl,
             pending_for_ctrl,
         );
-    });
-
-    // Spawn audit log reader thread (tails auditd output, streams to host).
-    thread::spawn(move || {
-        audit_reader_loop();
     });
 
     // Main I/O bridge: master PTY <-> vsock terminal port.

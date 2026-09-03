@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest agent's audit tailer reconnects to the host audit port instead
+  of exiting on the first failed write, keeps the frame it could not send
+  for the next connection, and bounds its table of partial audit records.
 - The service refuses to start when its persistent VM registry file is
   unreadable or corrupt instead of starting with an empty registry and
   overwriting the file on the next persist. Startup hydration keys session
