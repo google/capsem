@@ -32,24 +32,6 @@ class CacheControl:
             check=check,
         )
 
-    def release(self, boundary: str, *, best_effort: bool = False) -> None:
-        """Release exact working images after their final consumer."""
-        control = self._policy.control
-        if control is None or boundary not in control.docker.releases:
-            expected = () if control is None else tuple(sorted(control.docker.releases))
-            raise GateError(
-                f"unknown cache release boundary {boundary!r}; expected "
-                f"{', '.join(expected) or 'a configured boundary'}"
-            )
-        self._run(
-            "release",
-            boundary,
-            "--apply",
-            "--reason",
-            f"gate completed cache boundary {boundary}",
-            check=not best_effort,
-        )
-
     def image_policy(self, resource: str) -> ImageCachePolicy:
         """Return one typed Docker image owner from the sole cache policy."""
         if self._policy.control is None:

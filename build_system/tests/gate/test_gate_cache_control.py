@@ -2,11 +2,9 @@
 
 from pathlib import Path
 
-import pytest
 from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.cachecontrol import CacheControl
-from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
 
@@ -15,24 +13,12 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 CACHE_POLICY = load_policy(PROJECT_ROOT)
 
 
-def test_release_names_one_configured_final_consumer_boundary() -> None:
-    runner = RecordingRunner(PROJECT_ROOT)
+def test_host_builder_is_a_typed_retained_cache_owner() -> None:
+    policy = CacheControl(RecordingRunner(PROJECT_ROOT)).image_policy("capsem-host-builder")
 
-    CacheControl(runner).release("after-install")
-
-    assert runner.matching(
-        r"capsem-cache --repository .* --policy-repository .* release after-install --apply "
-        r"--reason 'gate completed cache boundary after-install'"
-    )
-
-
-def test_unknown_release_boundary_fails_before_a_process_runs() -> None:
-    runner = RecordingRunner(PROJECT_ROOT)
-
-    with pytest.raises(GateError, match="unknown cache release boundary 'imaginary'"):
-        CacheControl(runner).release("imaginary")
-
-    assert runner.commands == []
+    assert policy.repository == "capsem-host-builder"
+    assert policy.prune_strategy.value == "generational"
+    assert policy.maximum_count == 1
 
 
 def test_failure_capture_is_best_effort_and_carries_identity() -> None:

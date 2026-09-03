@@ -8,7 +8,7 @@ import click
 
 from .api import CacheOperation, CacheRequest
 from .config import load_policy
-from .dockerimages import plan_release, plan_repository_reclaim
+from .dockerimages import plan_repository_reclaim
 from .failureartifacts import capture_failure as capture_failure_bundle
 from .paths import CachePaths
 from .registry import CacheRegistry
@@ -59,21 +59,6 @@ def reclaim_image(context, resource_id, keep, protect, apply, reason) -> None:
     policy, paths, snapshot = _state(context, docker_control=True)
     try:
         plan = plan_repository_reclaim(snapshot, policy, resource_id, keep=keep, protect=protect)
-    except ValueError as error:
-        raise click.ClickException(str(error)) from error
-    _apply(paths, policy, plan, apply=apply, reason=reason)
-
-
-@click.command("release")
-@click.argument("boundary")
-@click.option("--apply", is_flag=True)
-@click.option("--reason", default="final cache consumer completed")
-@click.pass_context
-def release_boundary(context, boundary, apply, reason) -> None:
-    """Release exact working images at one lifetime boundary."""
-    policy, paths, snapshot = _state(context, docker_control=True)
-    try:
-        plan = plan_release(snapshot, policy, boundary)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
     _apply(paths, policy, plan, apply=apply, reason=reason)
@@ -133,7 +118,6 @@ def register(group: click.Group) -> None:
     """Register native commands without growing the generic CLI module."""
     for command in (
         reclaim_image,
-        release_boundary,
         enforce,
         capture_failure,
     ):

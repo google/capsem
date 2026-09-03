@@ -82,6 +82,10 @@ after usage crosses `max_size_bytes`. `enforce` is an applied preflight and
 fails if protected state prevents compliance. `clean` is the explicit cold
 operation; it still preserves active leases and protected generations.
 
+Retained cache lifetime ends only through these typed operations. Do not add
+consumer-boundary releases, post-test eviction hooks, or other subsystem
+lifecycle paths that bypass the owner's warm/max/age/count policy.
+
 Every applied mutation is exact, ownership-scoped, and journaled. Do not use
 broad `docker system prune`, direct Tart deletion, `rm` over cache roots, or
 backend-specific cache CLI commands. Foreign Docker/Tart resources are visible

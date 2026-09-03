@@ -1362,22 +1362,18 @@ def test_obsolete_named_volume_release_steps_are_gone() -> None:
     assert not [label for label in plan if "storage.completed" in label]
 
 
-def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
-    """After the *second* consumer, never between the assets and the assembly.
-
-    `capsem-host-builder` is a dependency of both package builds, so its final
-    tag survives until neither needs it.
-    """
+def test_full_gate_retains_the_host_builder_as_a_bounded_cache() -> None:
+    """The shared parent stays reusable after its consumers complete."""
     order = _gate_order()
 
-    # `after-install`, not `after-packages`: the install helper derives from
-    # the exact local host builder before the source image is sealed, so the
-    # packages are not the last thing that needs the parent tag.
     import tomllib
 
     policy = tomllib.loads((PROJECT_ROOT / "config/cache.toml").read_text())
-    release = policy["control"]["docker"]["releases"]["after-install"]
-    assert release == {"images": ["capsem-host-builder:latest"]}
+    control = policy["control"]["docker"]
+    assert "releases" not in control
+    owner = control["images"]["capsem-host-builder"]
+    assert owner["repository"] == "capsem-host-builder"
+    assert owner["prune_strategy"] == "generational"
     assert (
         _at(order, "package.arm64")
         < _at(order, "package.x86_64")

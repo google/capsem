@@ -40,9 +40,16 @@ class OrphanAccounting(Resource, name="orphan-accounting"):
     def __init__(self, config, runner: Runner) -> None:
         self._settings = config.candidate
         self._runner = runner
+        self._baseline = config.path(self._settings.orphan_baseline_file)
 
     def _orphan(self, action: str, *, check: bool = True) -> int:
-        return self._runner.script(self._settings.orphan_script, action, check=check)
+        return self._runner.script(
+            self._settings.orphan_script,
+            action,
+            "--baseline-file",
+            self._baseline,
+            check=check,
+        )
 
     def acquire(self) -> None:
         self._orphan("baseline")

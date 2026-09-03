@@ -57,27 +57,6 @@ class ImageCachePolicy(CacheContract):
         return self.maximum_age_hours * 3600
 
 
-class ReleaseBoundary(BaseModel):
-    """Exact working image tags released after their final consumer."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    images: tuple[StrictStr, ...]
-
-    @field_validator("images", mode="before")
-    @classmethod
-    def images_are_frozen(cls, value: object) -> object:
-        return tuple(value) if isinstance(value, list) else value
-
-    @model_validator(mode="after")
-    def values_are_canonical(self) -> ReleaseBoundary:
-        if not self.images or len(self.images) != len(set(self.images)):
-            raise ValueError("release boundary images must be non-empty and unique")
-        if any(not image.strip() or any(char.isspace() for char in image) for image in self.images):
-            raise ValueError("release boundary images must be exact Docker references")
-        return self
-
-
 class DockerControlPolicy(BaseModel):
     """Repository and lifetime policy for the Docker runtime cache."""
 
@@ -85,7 +64,6 @@ class DockerControlPolicy(BaseModel):
 
     runtime_id: StrictStr
     images: dict[StrictStr, ImageCachePolicy]
-    releases: dict[StrictStr, ReleaseBoundary]
 
     @model_validator(mode="after")
     def policy_is_connected(self) -> DockerControlPolicy:

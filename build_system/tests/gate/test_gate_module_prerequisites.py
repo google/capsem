@@ -8,8 +8,8 @@ earlier workflow job or by a developer machine."
 `install` did not. Its plan was one step, while the input-keyed install helper
 derives from the exact local host builder -- an image built by a *different*
 phase. Inside the complete gate that phase happened to run first; on its own,
-and on any machine where the previous run released the tag at `after-install`,
-the build failed with `pull access denied`.
+and on any machine where the retained tag was absent, the build failed with
+`pull access denied`.
 
 It also validated the canonical assets/config pair without producing the
 config half. A wider gate incidentally materialized it, so focused install

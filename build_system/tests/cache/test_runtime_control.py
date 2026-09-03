@@ -8,9 +8,8 @@ from capsem_builder.cache.controlmodels import (
     DockerControlPolicy,
     FailureArtifactPolicy,
     ImageCachePolicy,
-    ReleaseBoundary,
 )
-from capsem_builder.cache.dockerimages import plan_release, plan_repository_reclaim
+from capsem_builder.cache.dockerimages import plan_repository_reclaim
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.runtimemodels import (
@@ -90,7 +89,6 @@ def controlled_policy() -> CachePolicy:
                     keep_previous=0,
                 ),
             },
-            releases={"after-tool": ReleaseBoundary(images=("capsem-working:latest",))},
         ),
         failure_artifacts=FailureArtifactPolicy(
             stage="logs",
@@ -112,6 +110,19 @@ def test_docker_control_rejects_unknown_fields() -> None:
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         DockerControlPolicy.model_validate(
             {**values.docker.model_dump(), "legacy_capacity_rail": {}}
+        )
+
+
+def test_docker_control_rejects_legacy_release_boundaries() -> None:
+    values = controlled_policy().control
+    assert values is not None
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        DockerControlPolicy.model_validate(
+            {
+                **values.docker.model_dump(),
+                "releases": {"after-tool": {"images": ["capsem-working:latest"]}},
+            }
         )
 
 
@@ -315,38 +326,6 @@ def test_repository_reclaim_requires_present_anchor_and_preserves_receipts() -> 
             "tool",
             keep="capsem-tool:missing",
         )
-
-
-def test_release_removes_only_exact_inactive_working_image() -> None:
-    working = RuntimeResource(
-        kind=ResourceKind.IMAGE,
-        identity="sha256:working",
-        names=("capsem-working:latest",),
-        logical_bytes=20,
-        created_ns=1,
-        last_used_ns=1,
-        active=False,
-        owned=True,
-        protected=False,
-    )
-    inventory = RuntimeInventory(
-        runtime_id="docker",
-        kind=RuntimeKind.DOCKER,
-        available=True,
-        generated_ns=2,
-        native_bytes=20,
-        owned_bytes=20,
-        resources=(working,),
-    )
-    snapshot = RuntimeSnapshot(
-        generated_ns=2, native_bytes=20, owned_bytes=20, runtimes=(inventory,)
-    )
-
-    plan = plan_release(snapshot, controlled_policy(), "after-tool")
-
-    assert [(item.operation, item.target) for item in plan.actions] == [
-        (RuntimeOperation.REMOVE_IMAGE, "capsem-working:latest")
-    ]
 
 
 def test_cold_clean_never_selects_active_or_foreign_resources() -> None:

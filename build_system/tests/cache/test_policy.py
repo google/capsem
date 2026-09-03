@@ -79,6 +79,10 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())
+    host_builder = policy.control.docker.images["capsem-host-builder"]
+    assert host_builder.repository == "capsem-host-builder"
+    assert host_builder.warm_size_bytes == 8 * 1024**3
+    assert host_builder.max_size_bytes == 16 * 1024**3
 
 
 def test_cache_authority_environment_is_required_and_canonical() -> None:

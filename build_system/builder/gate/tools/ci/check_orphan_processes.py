@@ -38,7 +38,6 @@ from pathlib import Path
 import psutil
 
 PROJECT_ROOT = Path(os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())).resolve()
-DEFAULT_BASELINE = PROJECT_ROOT / "cache" / "target" / "gate-process-baseline.json"
 
 # A gate that just finished may still have companions winding down: capsem-guard
 # polls parent liveness every 100ms and the service gives its VM children a
@@ -215,7 +214,7 @@ def read_baseline(path: Path) -> dict[int, float]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("baseline", "check"))
-    parser.add_argument("--baseline-file", type=Path, default=DEFAULT_BASELINE)
+    parser.add_argument("--baseline-file", type=Path, required=True)
     # Scoping the scan is what keeps this safe to test. A test that swept the
     # whole checkout could reap a sibling xdist worker's live service.
     parser.add_argument("--root", type=Path, default=PROJECT_ROOT)

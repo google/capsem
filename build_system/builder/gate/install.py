@@ -115,7 +115,6 @@ class InstallGate:
             self._graph.clear_handoff()
             self._container.return_paths()
             self._container.stop()
-            self._cache.release("after-install", best_effort=True)
             self._cache.prune(best_effort=True)
 
         self._container.verify_rosetta_survived()

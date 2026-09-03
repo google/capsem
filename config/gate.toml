@@ -750,6 +750,7 @@ keep_awake_marker = "CAPSEM_TEST_CAFFEINATED"
 
 source_digest_script = "build_system/scripts/build/source-state-digest.py"
 orphan_script = "build_system/scripts/ci/check-orphan-processes.py"
+orphan_baseline_file = "cache/state/gate-process-baseline.json"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
 source_state_file = "cache/state/gate-source.json"

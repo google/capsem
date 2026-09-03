@@ -320,11 +320,11 @@ def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(
     )
 
 
-def test_cache_release_boundaries_have_no_capacity_rail_side_channel() -> None:
+def test_cache_control_has_no_one_off_release_side_channel() -> None:
     control = load_policy(PROJECT_ROOT).control
     assert control is not None
 
-    assert all("rail" not in release.model_dump() for release in control.docker.releases.values())
+    assert not hasattr(control.docker, "releases")
 
 
 # ---------------------------------------------------------------------------

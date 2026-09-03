@@ -384,13 +384,6 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
         r"docker run --rm",
     )
     assert not runner.ran(r"--no-cache")
-    # And it reclaims nothing on the way out. It used to release the parity
-    # lane's builder rail from here, which was ordered only by the line it sat
-    # on -- so once this preflight moved ahead of that lane, the release landed
-    # 164ms before `cache-ownership` ran the image it had just deleted.
-    assert not runner.ran(r"capsem-cache .* release"), (
-        "the preflight releases another lane's rail; that rail's own step does"
-    )
 
 
 def test_install_dependency_materialization_is_the_only_network_open_phase() -> None:

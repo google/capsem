@@ -2081,17 +2081,8 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "continue-on-error: true" not in create_release
 
 
-def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
-    """The exact install-image graph finishes before its rail is released.
-
-    Releasing it earlier makes the rebuild-on-smoke-failure path cold, and
-    releasing it never starves the package rails that follow. It used to be a
-    statement at the end of the preflight, ordered by the line it sat on --
-    which held until the composed plan put the preflight ahead of the parity
-    lane, and then the release landed 164ms before `cache-ownership` ran the
-    image it had just deleted. It is a step with edges now, so "after" is a
-    property of the graph rather than of the file.
-    """
+def test_install_parent_is_retained_by_the_typed_cache_policy() -> None:
+    """The shared parent remains reusable and bounded after install."""
     source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installplan.py").read_text()
     identity_source = (
         PROJECT_ROOT / "build_system" / "builder" / "gate" / "installimage.py"
@@ -2108,11 +2099,9 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
         "and its own step hands the image back"
     )
 
-    # Nothing releases it early any more. Both package builds run it, and the
-    # install proof's image is `FROM` it, so `after-install` -- released on the
-    # way out of that proof -- is the first point at which nothing needs it.
+    # Every consumer is ordered behind the shared parent.
     labels = list(_gate_labels())
-    release = labels.index("glowup.install")
+    install = labels.index("glowup.install")
     for consumer in (
         "install.cache",
         "install.materialize",
@@ -2122,19 +2111,21 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
         "linux-rust",
     ):
         if consumer in labels:
-            assert labels.index(consumer) < release
+            assert labels.index(consumer) < install
     # The lane is eight phases now; the build is the one that runs the image.
     for package in ("package.arm64.build", "package.x86_64.build"):
-        assert labels.index(package) < release, (
-            "the package builds run this image; releasing it first is exit 125"
+        assert labels.index(package) < install, (
+            "the package builds run this image; consuming it first is exit 125"
         )
 
     from capsem_builder.cache.config import load_policy
 
     control = load_policy(PROJECT_ROOT).control
     assert control is not None
-    release = control.docker.releases["after-install"]
-    assert release.images == ("capsem-host-builder:latest",)
+    assert not hasattr(control.docker, "releases")
+    owner = control.docker.images["capsem-host-builder"]
+    assert owner.repository == "capsem-host-builder"
+    assert owner.maximum_count == 1
 
     # An image that merely exists is not current: every later phase revalidates
     # its input-key label and exact platform child before use.

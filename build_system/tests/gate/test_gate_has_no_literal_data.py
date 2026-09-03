@@ -24,8 +24,8 @@ value they do not recognise.
 in the form the user meets it. The argument must be a value that came from
 somewhere.
 
-What is deliberately *not* forbidden: cache and boundary IDs. `release("after-install")`
-and `enforce("docker")` name which entry to look up, and an unknown one
+What is deliberately *not* forbidden: cache owner IDs. `enforce("docker")`
+names which entry to look up, and an unknown one
 raises immediately with the legal set listed. That is an API, not a copy.
 """
 

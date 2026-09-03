@@ -201,6 +201,7 @@ class CandidateConfig(Strict):
     keep_awake_marker: str
     source_digest_script: str
     orphan_script: str
+    orphan_baseline_file: str
     source_state_file: str
     source_snapshot_dir: str
     colima: str

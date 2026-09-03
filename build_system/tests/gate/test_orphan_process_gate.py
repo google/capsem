@@ -278,10 +278,12 @@ def test_gate_takes_a_baseline_and_checks_it() -> None:
     accounting, runner, _ = _accounting()
 
     accounting.acquire()
-    assert "baseline" in " ".join(runner.commands[-1].argv), (
+    baseline_command = " ".join(runner.commands[-1].argv)
+    assert "baseline" in baseline_command, (
         "without a baseline the check cannot tell this run's processes from a "
         "developer's own dev daemon, so it can only be reckless or useless"
     )
+    assert "cache/state/gate-process-baseline.json" in baseline_command
     accounting.release()
     assert "check" in " ".join(runner.commands[-1].argv)
 

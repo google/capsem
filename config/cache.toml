@@ -407,6 +407,16 @@ max_size_bytes = 17179869184 # 16 GiB
 prune_strategy = "generational"
 repository = "capsem-linux-rust-base"
 
+[control.docker.images.capsem-host-builder]
+description = "Shared host compiler image retained across package and install test rounds."
+scope = "docker"
+warm_size_bytes = 8589934592 # 8 GiB
+max_size_bytes = 17179869184 # 16 GiB
+prune_strategy = "generational"
+repository = "capsem-host-builder"
+maximum_count = 1
+maximum_age_hours = 336
+
 [control.docker.images.capsem-guest-rust-arm64]
 description = "Docker image generations for capsem-guest-rust-arm64."
 scope = "docker"
@@ -474,9 +484,6 @@ prune_strategy = "generational"
 repository = "capsem-install-builder"
 maximum_count = 3
 maximum_age_hours = 336
-
-[control.docker.releases.after-install]
-images = ["capsem-host-builder:latest"]
 
 [control.failure_artifacts]
 stage = "test-evidence"
