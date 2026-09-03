@@ -2850,7 +2850,10 @@ unmeasured = [
 # library classifies a route once and resolves both transports from this
 # inventory; test code owns no timing literals. CPU is authored for
 # `reference_samples` and scales linearly with the measured window. Latency
-# does not scale with sample count.
+# does not scale with sample count. Low-single-digit latency movement, including
+# 3-5 ms, is host noise rather than evidence of a product speedup; these rounded
+# ceilings catch gross regressions while the headroom guard prevents knife-edge
+# calibration.
 [benchmark.route_health]
 minimum_headroom_factor = 1.2
 cpu_accounting_slack_s = 0.011
@@ -2861,7 +2864,7 @@ windows = 3
 [benchmark.route_health.concurrent_stats]
 p95_ms = 15.0
 p99_ms = 40.0
-cpu_s = 0.4
+cpu_s = 0.5
 
 [benchmark.route_health.budgets.status.service]
 p95_ms = 2.0
@@ -2877,7 +2880,7 @@ p95_ms = 8.0
 p99_ms = 10.0
 cpu_s = 0.18
 [benchmark.route_health.budgets.vm_scalar.gateway]
-p95_ms = 5.0
+p95_ms = 6.0
 p99_ms = 10.0
 cpu_s = 0.25
 

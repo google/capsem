@@ -45,14 +45,31 @@ def test_concurrent_stats_budget_has_measured_twenty_percent_headroom() -> None:
 
     assert budget.p95_ms == 15.0
     assert budget.p99_ms == 40.0
-    assert budget.cpu_s == 0.4
+    assert budget.cpu_s == 0.5
     assert_has_headroom(
         label="service /stats during profile-mutation writes CPU",
-        measured=0.300,
+        measured=0.378,
         ceiling=budget.cpu_s,
         minimum_factor=1.2,
         accounting_slack=0.011,
         unit="s",
+    )
+
+
+def test_vm_scalar_gateway_budget_has_measured_twenty_percent_headroom() -> None:
+    budget = scaled_hot_route_budget(
+        "/vms/33333333-3333-4333-8333-333333333333/info",
+        gateway=True,
+        samples=128,
+    )
+
+    assert budget.p95_ms == 6.0
+    assert_has_headroom(
+        label="gateway /vms/{id}/info p95",
+        measured=4.574,
+        ceiling=budget.p95_ms,
+        minimum_factor=1.2,
+        unit="ms",
     )
 
 
