@@ -210,6 +210,7 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
 fn test_app_state(uds_path: &str) -> AppState {
     AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new(uds_path)),
         uds_path: uds_path.into(),
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -563,6 +564,7 @@ async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
 
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new(&path)),
         uds_path: path.into(),
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),

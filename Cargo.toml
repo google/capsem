@@ -181,9 +181,10 @@ rustls-pemfile = "2"
 tokio-rustls = "0.26"
 webpki-roots = "0.26"
 hyper = { version = "1", features = ["http1", "server", "client"] }
-hyper-util = { version = "0.1", features = ["tokio", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1", "client-legacy"] }
 http-body-util = "0.1"
 http = "1"
+tower-service = "0.3"
 axum = "0.8"
 reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls-webpki-roots"], default-features = false }
 futures = "0.3"

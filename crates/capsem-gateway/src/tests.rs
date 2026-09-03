@@ -30,6 +30,7 @@ impl Drop for EnvGuard {
 fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new(uds_path)),
         uds_path: uds_path.into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
@@ -44,6 +45,7 @@ fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
 fn service_proxy_app(uds_path: &str) -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new(uds_path)),
         uds_path: uds_path.into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
@@ -589,6 +591,7 @@ async fn health_version_matches_cargo_pkg() {
 fn token_app() -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test-secret-token-64chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new("/tmp/test.sock")),
         uds_path: "/tmp/test.sock".into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
@@ -641,6 +644,7 @@ async fn token_allows_ipv6_loopback() {
 fn cors_app() -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new("/tmp/test.sock")),
         uds_path: "/tmp/test.sock".into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
@@ -860,6 +864,7 @@ async fn token_rejects_external_ipv6() {
 async fn events_ws_without_upgrade_header_is_rejected() {
     let state = Arc::new(AppState {
         token: "t".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new("/tmp/x.sock")),
         uds_path: "/tmp/x.sock".into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),

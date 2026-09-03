@@ -12,6 +12,7 @@ use crate::status::StatusCache;
 fn test_state(token: &str) -> Arc<AppState> {
     Arc::new(AppState {
         token: token.to_string(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new("/tmp/nonexistent.sock")),
         uds_path: "/tmp/nonexistent.sock".into(),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),

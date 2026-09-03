@@ -27,6 +27,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 http.workspace = true
+tower-service.workspace = true
 bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }

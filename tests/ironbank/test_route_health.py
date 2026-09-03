@@ -12,6 +12,7 @@ import http.client
 import json
 import socket
 import statistics
+import subprocess
 import threading
 import time
 import uuid
@@ -34,6 +35,7 @@ from helpers.constants import (
     HTTP_TIMEOUT,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance, vm_name, wait_exec_ready
 
 from tests.ironbank.test_stats_detail_contract import (
@@ -268,10 +270,9 @@ def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> No
 
 def _cpu_seconds(proc: psutil.Process) -> Decimal:
     try:
-        times = proc.cpu_times()
-    except psutil.Error as error:  # pragma: no cover - test infra failure path
+        return process_cpu_seconds(proc)
+    except (OSError, ValueError, psutil.Error) as error:  # pragma: no cover
         raise AssertionError(f"unable to read CPU times for pid {proc.pid}: {error}") from error
-    return Decimal(str(times.user)) + Decimal(str(times.system))
 
 
 def _cpu_delta_seconds(*, after: Decimal, before: Decimal) -> float:
@@ -422,9 +423,9 @@ def _assert_timing_budget(
         assert timing.max_ms <= max_ms, (
             f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; samples={timing.samples_ms}"
         )
-    # psutil reports process CPU from OS accounting ticks. The default allows
-    # one tick for quantization; callers that compare an exact accounted tick
-    # boundary may explicitly pass zero slack.
+    # Linux uses nanosecond scheduler accounting; the portable fallback still
+    # reports OS accounting ticks. Preserve one tick of cross-platform slack;
+    # callers comparing an exact accounted boundary may explicitly pass zero.
     assert timing.service_cpu_s <= cpu_s + cpu_slack_s, (
         f"{timing.label} service CPU={timing.service_cpu_s:.3f}s > {cpu_s:.3f}s"
     )
@@ -1248,7 +1249,14 @@ def run_concurrent_route_read_write_benchmark(
                     # overlap without inventing a fake DB path.
                     if index < len(actions) - 1:
                         time.sleep(0.002)
-            except BaseException as error:  # pragma: no cover - surfaced below
+            except (
+                AssertionError,
+                KeyError,
+                OSError,
+                TypeError,
+                ValueError,
+                subprocess.SubprocessError,
+            ) as error:  # pragma: no cover - surfaced below
                 writer_errors.append(error)
             finally:
                 writer_done.set()

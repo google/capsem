@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The TCP gateway now pools its HTTP-over-UDS service connections and streams
+  already-sized JSON responses without copying them into a second buffer,
+  reducing hot control-route CPU while retaining request limits and headers.
 - Repository-generated and reusable state now has one hard cache root:
   `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
   journals, private gate worktrees, and retained prefix products no longer

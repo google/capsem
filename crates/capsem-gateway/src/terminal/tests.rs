@@ -189,6 +189,7 @@ use tower::ServiceExt;
 fn terminal_app(uds_path: &str) -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(std::path::Path::new(uds_path)),
         uds_path: uds_path.into(),
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -269,6 +270,7 @@ async fn websocket_relay_echoes_text() {
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock.clone(),
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -339,6 +341,7 @@ async fn websocket_relay_handles_process_disconnect() {
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -398,6 +401,7 @@ async fn ws_test_setup(
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -569,6 +573,7 @@ async fn websocket_relay_fails_on_missing_uds() {
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -613,6 +618,7 @@ async fn websocket_relay_invalid_id_via_ws_client() {
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
@@ -887,6 +893,7 @@ async fn websocket_relay_sends_close_frame_on_uds_failure() {
     let service_sock = dir.path().join("service.sock");
     let state = Arc::new(AppState {
         token: "test".into(),
+        service_client: crate::service_client::ServiceClient::new(&service_sock),
         uds_path: service_sock,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
