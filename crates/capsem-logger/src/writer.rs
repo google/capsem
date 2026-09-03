@@ -303,6 +303,8 @@ impl DbWriter {
         let conn = Connection::open_with_flags(path, flags)?;
         conn.busy_timeout(Duration::from_secs(5))?;
         schema::apply_pragmas(&conn)?;
+        // One statement per table per target; the default 16 would evict.
+        conn.set_prepared_statement_cache_capacity(64);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
@@ -337,6 +339,8 @@ impl DbWriter {
     pub fn open_in_memory(capacity: usize) -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?;
+        // One statement per table per target; the default 16 would evict.
+        conn.set_prepared_statement_cache_capacity(64);
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
         let memory_uri = schema::memory_uri_for_name(&format!(
@@ -948,6 +952,16 @@ fn flush_dirty_tables_to_disk(
     Ok(())
 }
 
+/// Execute through the connection's prepared-statement cache.
+///
+/// Every insert here is one of a small fixed set of statements (one per
+/// table, per memory or disk target). `Connection::execute` parsed and
+/// planned that SQL again for every row, and on a busy proxy the parser
+/// showed up in the writer thread's profile next to the inserts themselves.
+fn execute_cached(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> rusqlite::Result<usize> {
+    conn.prepare_cached(sql)?.execute(params)
+}
+
 fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     let req_body = cap_field(&event.request_body_preview);
@@ -955,7 +969,8 @@ fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) ->
     let req_headers = cap_field(&event.request_headers);
     let resp_headers = cap_field(&event.response_headers);
     let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
-    conn.execute(
+    execute_cached(
+        conn,
         &format!("INSERT INTO {} (
             event_id, timestamp, domain, port, decision, process_name, pid,
             method, path, query, status_code,
@@ -1034,7 +1049,8 @@ fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) ->
 fn insert_file_event(conn: &Connection, event: &FileEvent, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     let (directory, name) = split_event_path(&event.path);
-    conn.execute(
+    execute_cached(
+        conn,
         &format!("INSERT INTO {} (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", target.table("fs_events")),
         params![
@@ -1072,7 +1088,8 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> ru
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     if call.method == "tools/call" {
         let tool_name = call.tool_name.as_deref().unwrap_or("");
-        conn.execute(
+        execute_cached(
+        conn,
             &format!("INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
                 tool_name, arguments, response_preview, origin, transport, server_name, method, request_id,
@@ -1172,7 +1189,8 @@ fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlit
     let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
     let stored = &bytes[..stored_len];
     let created_at = format_timestamp(SystemTime::now());
-    conn.execute(
+    execute_cached(
+        conn,
         "INSERT OR REPLACE INTO event_body_blobs (
             event_id, event_type, source_table, direction, content_type,
             original_bytes, stored_bytes, truncated, body_hash, body,
@@ -1200,7 +1218,8 @@ fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlit
 
 fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
-    conn.execute(
+    execute_cached(
+        conn,
         &format!(
             "INSERT INTO {} (
             event_id, timestamp, exec_id, command, source, trace_id, turn_id, process_name, credential_ref
@@ -1226,7 +1245,8 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: WriteTarget) 
 fn update_exec_event(conn: &Connection, complete: &ExecEventComplete, target: WriteTarget) -> rusqlite::Result<()> {
     let stdout_preview = cap_field(&complete.stdout_preview);
     let stderr_preview = cap_field(&complete.stderr_preview);
-    conn.execute(
+    execute_cached(
+        conn,
         &format!(
             "UPDATE {} SET
             exit_code = ?1,
@@ -1253,244 +1273,11 @@ fn update_exec_event(conn: &Connection, complete: &ExecEventComplete, target: Wr
     Ok(())
 }
 
-fn insert_dns_event(conn: &Connection, event: &DnsEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
-            answer_ip, source_proto, process_name, upstream_resolver_ms, trace_id, turn_id,
-            policy_mode, policy_action, policy_rule, policy_reason, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-            target.table("dns_events")
-        ),
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            event.qname,
-            i64::from(event.qtype),
-            i64::from(event.qclass),
-            i64::from(event.rcode),
-            event.decision,
-            event.matched_rule,
-            event.answer_ip,
-            event.source_proto,
-            event.process_name,
-            event.upstream_resolver_ms as i64,
-            event.trace_id,
-            event.trace_id,
-            event.policy_mode,
-            event.policy_action,
-            event.policy_rule,
-            event.policy_reason,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_audit_event(conn: &Connection, event: &AuditEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id, turn_id, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            target.table("audit_events")
-        ),
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            i64::from(event.pid),
-            i64::from(event.ppid),
-            i64::from(event.uid),
-            event.exe,
-            event.comm,
-            event.argv,
-            event.cwd,
-            event.session_id.map(i64::from),
-            event.tty,
-            event.audit_id,
-            event.exec_event_id,
-            event.parent_exe,
-            event.trace_id,
-            event.trace_id,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_substitution_event(
-    conn: &Connection,
-    event: &SubstitutionEvent,
-    target: WriteTarget,
-) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            event_id, timestamp, material_class, source, event_type, algorithm,
-            substitution_ref, outcome, provider, confidence, trace_id, turn_id, context_json
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            target.table("substitution_events")
-        ),
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            event.material_class,
-            event.source,
-            event.event_type,
-            event.algorithm,
-            event.substitution_ref,
-            event.outcome,
-            event.provider,
-            event.confidence,
-            event.trace_id,
-            event.trace_id,
-            event.context_json,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_security_rule_event(
-    conn: &Connection,
-    event: &SecurityRuleEvent,
-    target: WriteTarget,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            timestamp_unix_ms, event_id, event_type, rule_id,
-            rule_action, detection_level, rule_json, event_json, trace_id, turn_id, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            target.table("security_rule_events")
-        ),
-        params![
-            event.timestamp_unix_ms,
-            event.event_id,
-            event.event_type,
-            event.rule_id,
-            event.rule_action.as_str(),
-            event.detection_level.as_str(),
-            event.rule_json,
-            event.event_json,
-            event.trace_id,
-            event.turn_id,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_security_ask_event(conn: &Connection, event: &SecurityAskEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            timestamp_unix_ms, ask_id, event_id, event_type, rule_id, rule_name,
-            status, rule_json, event_json, resolver, reason, trace_id
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            target.table("security_ask_events")
-        ),
-        params![
-            event.timestamp_unix_ms,
-            event.ask_id,
-            event.event_id,
-            event.event_type,
-            event.rule_id,
-            event.rule_name,
-            event.status.as_str(),
-            event.rule_json,
-            event.event_json,
-            event.resolver,
-            event.reason,
-            event.trace_id,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_security_decision_event(
-    conn: &Connection,
-    event: &SecurityDecisionEvent,
-    target: WriteTarget,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            timestamp_unix_ms, event_id, event_type, stage, actor,
-            rule_id, plugin_id, previous_decision, requested_decision,
-            effective_decision, reason, event_json, trace_id, turn_id, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            target.table("security_decision_events")
-        ),
-        params![
-            event.timestamp_unix_ms,
-            event.event_id,
-            event.event_type,
-            event.stage.as_str(),
-            event.actor,
-            event.rule_id,
-            event.plugin_id,
-            event.previous_decision.as_str(),
-            event.requested_decision.as_str(),
-            event.effective_decision.as_str(),
-            event.reason,
-            event.event_json,
-            event.trace_id,
-            event.turn_id,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_profile_mutation_event(
-    conn: &Connection,
-    event: &ProfileMutationEvent,
-    target: WriteTarget,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        &format!(
-            "INSERT INTO {} (
-            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
-            affected_path, target_kind, target_key, operation, rule_id,
-            old_hash, old_size, new_hash, new_size, status, error, trace_id
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-            target.table("profile_mutation_events")
-        ),
-        params![
-            event.timestamp_unix_ms,
-            event.mutation_id,
-            event.profile_id,
-            event.actor,
-            event.category,
-            event.filename,
-            event.affected_path,
-            event.target_kind,
-            event.target_key,
-            event.operation,
-            event.rule_id,
-            event.old_hash,
-            event.old_size as i64,
-            event.new_hash,
-            event.new_size as i64,
-            event.status.as_str(),
-            event.error,
-            event.trace_id,
-        ],
-    )?;
-    Ok(())
-}
+mod event_rows;
+use event_rows::{
+    insert_audit_event, insert_dns_event, insert_profile_mutation_event, insert_security_ask_event,
+    insert_security_decision_event, insert_security_rule_event, insert_substitution_event,
+};
 
 #[cfg(test)]
 mod tests;

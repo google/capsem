@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The session ledger writer reuses prepared statements instead of parsing
+  the SQL of every insert again. Under load the writer thread's profile was
+  a fifth SQL parsing; write throughput doubled (66,000 to 134,000 events
+  per second at 1,024-event batches), which is CPU the proxy gets back and
+  requests that no longer wait on a full telemetry queue.
 - The guest network proxy no longer serializes the two steps in front of
   every outbound connection: attributing the connecting process from
   `/proc` and opening the vsock to the host now run at the same time, so the
