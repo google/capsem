@@ -237,3 +237,29 @@ fn one_byte_first_chunk_defers_classification() {
     }
     assert_eq!(b.as_ref(), b"hi");
 }
+
+// -- cumulative decompressed-output cap --
+
+#[test]
+fn cap_decoded_passes_bytes_under_budget() {
+    let (out, total, capped) = cap_decoded(2, vec![9, 9], 10);
+    assert_eq!(out, vec![9, 9]);
+    assert_eq!(total, 4);
+    assert!(!capped);
+}
+
+#[test]
+fn cap_decoded_truncates_and_caps_at_budget() {
+    let (out, total, capped) = cap_decoded(0, vec![1, 2, 3, 4, 5], 3);
+    assert_eq!(out, vec![1, 2, 3], "output truncated to the remaining budget");
+    assert_eq!(total, 3);
+    assert!(capped, "reaching the cap must latch the capped flag");
+}
+
+#[test]
+fn cap_decoded_reaching_budget_exactly_caps() {
+    let (out, total, capped) = cap_decoded(1, vec![1, 2], 3);
+    assert_eq!(out, vec![1, 2]);
+    assert_eq!(total, 3);
+    assert!(capped);
+}

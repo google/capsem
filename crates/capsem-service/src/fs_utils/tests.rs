@@ -116,17 +116,6 @@ fn extract_magika_info_smoke() {
 }
 
 #[test]
-fn identify_file_sync_returns_unknown_for_missing_file() {
-    let session = test_magika();
-    let missing = std::path::Path::new("/nonexistent/path/that/does/not/exist.bin");
-    let (label, mime, group, is_text) = identify_file_sync(&session, missing);
-    assert_eq!(label, "unknown");
-    assert_eq!(mime, "application/octet-stream");
-    assert_eq!(group, "unknown");
-    assert!(!is_text);
-}
-
-#[test]
 fn identify_file_sync_round_trips_real_file() {
     let dir = tempfile::tempdir().unwrap();
     let txt = dir.path().join("a.txt");
@@ -134,8 +123,13 @@ fn identify_file_sync_round_trips_real_file() {
     f.write_all(b"plain text content\n").unwrap();
     drop(f);
     let session = test_magika();
-    let (label, mime, _group, is_text) = identify_file_sync(&session, &txt);
+    let mut file = std::fs::File::open(&txt).unwrap();
+    let (label, mime, _group, is_text) = identify_file_sync(&session, &txt, &mut file);
     assert!(is_text, "ASCII text not recognized as text, got label={label}");
+    assert_eq!(mime, "text/plain");
+
+    let (label, mime, _group, is_text) = identify_bytes_sync(&session, &txt, b"plain text content\n");
+    assert!(is_text, "bytes path disagrees with file path, got label={label}");
     assert_eq!(mime, "text/plain");
 }
 
@@ -146,6 +140,7 @@ fn identify_file_sync_uses_extension_and_utf8_fallback_for_small_text() {
     std::fs::write(&txt, b"x\n").unwrap();
     let detected = normalize_file_type(
         &txt,
+        b"x\n",
         (
             "unknown".into(),
             "application/octet-stream".into(),
@@ -178,7 +173,8 @@ fn a_short_key_value_line_is_not_reliably_plain_text() {
     // depends on the random part does.
     let ambiguous = dir.path().join("ambiguous.txt");
     std::fs::write(&ambiguous, b"upload:fps-0000000000000000b135823cc1684885\n").unwrap();
-    let (_, ambiguous_mime, _, _) = identify_file_sync(&magika, &ambiguous);
+    let (_, ambiguous_mime, _, _) =
+        identify_file_sync(&magika, &ambiguous, &mut std::fs::File::open(&ambiguous).unwrap());
     assert_ne!(
         ambiguous_mime, "text/plain",
         "a `key: value` line is what a classifier is entitled to read as \
@@ -208,7 +204,7 @@ fn a_short_key_value_line_is_not_reliably_plain_text() {
             ),
         )
         .unwrap();
-        let (_, mime, _, is_text) = identify_file_sync(&magika, &prose);
+        let (_, mime, _, is_text) = identify_file_sync(&magika, &prose, &mut std::fs::File::open(&prose).unwrap());
         assert_eq!(mime, "text/plain", "prose must classify as prose: {nonce}");
         assert!(is_text);
     }

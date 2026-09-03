@@ -19,6 +19,12 @@ const VIRTIO_ID_CONSOLE: u32 = 3;
 const QUEUE_SIZE: u16 = 256;
 
 /// Virtio console device backed by pipe I/O.
+/// Most bytes copied out of one guest descriptor. A descriptor can declare
+/// any length inside guest RAM; copying gigabytes into a host buffer on the
+/// vCPU thread, under the transport lock, is not something console output
+/// needs. Longer descriptors are truncated at the cap.
+pub(super) const MAX_CONSOLE_TX_BYTES: usize = 64 * 1024;
+
 pub(super) struct VirtioConsoleDevice {
     /// Write end of the output pipe (guest output -> host reads).
     tx_fd: RawFd,
@@ -103,6 +109,11 @@ impl VirtioDevice for VirtioConsoleDevice {
         Ok(())
     }
 
+    fn reset(&mut self) {
+        self.transmitq = None;
+        self.mem = None;
+    }
+
     fn queue_notify(&mut self, queue_index: u32) -> bool {
         let mut completed = false;
         if queue_index == 1 {
@@ -114,32 +125,47 @@ impl VirtioDevice for VirtioConsoleDevice {
             };
             while let Some(chain) = queue.pop() {
                 let mut written = 0u32;
+                let mut buf = Vec::new();
                 for desc in &chain.descriptors {
                     if desc.is_write_only() {
                         continue;
                     }
-                    if let Some(ptr) = mem.gpa_to_host(desc.addr) {
-                        let mut offset = 0usize;
-                        while offset < desc.len as usize {
-                            let ret = unsafe {
-                                libc::write(
-                                    self.tx_fd,
-                                    ptr.add(offset) as *const libc::c_void,
-                                    desc.len as usize - offset,
-                                )
-                            };
-                            if ret <= 0 {
-                                tracing::warn!(
-                                    event_name = "virtio.console.write_error",
-                                    errno = %std::io::Error::last_os_error(),
-                                    "failed to write guest console output"
-                                );
-                                break;
-                            }
-                            offset += ret as usize;
-                        }
-                        written = written.saturating_add(offset as u32);
+                    // Validate the whole [addr, addr+len) range before touching
+                    // host memory: a boundary descriptor with a large len must
+                    // never write host heap past the guest-RAM mmap to the fd.
+                    buf.clear();
+                    let len = (desc.len as usize).min(MAX_CONSOLE_TX_BYTES);
+                    if len < desc.len as usize {
+                        tracing::debug!(
+                            event_name = "virtio.console.tx_truncated",
+                            declared = desc.len,
+                            copied = len,
+                            "console descriptor longer than the copy cap; truncated"
+                        );
                     }
+                    if !mem.read_guest_buffer(desc.addr, len, &mut buf) {
+                        continue;
+                    }
+                    let mut offset = 0usize;
+                    while offset < buf.len() {
+                        let ret = unsafe {
+                            libc::write(
+                                self.tx_fd,
+                                buf[offset..].as_ptr() as *const libc::c_void,
+                                buf.len() - offset,
+                            )
+                        };
+                        if ret <= 0 {
+                            tracing::warn!(
+                                event_name = "virtio.console.write_error",
+                                errno = %std::io::Error::last_os_error(),
+                                "failed to write guest console output"
+                            );
+                            break;
+                        }
+                        offset += ret as usize;
+                    }
+                    written = written.saturating_add(offset as u32);
                 }
                 tracing::trace!(
                     event_name = "virtio.console.transmit_complete",

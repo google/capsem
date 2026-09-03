@@ -20,10 +20,11 @@ use rmcp::model::{Implementation, InitializeResult, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use tracing::info;
 
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
+use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
 use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
@@ -31,13 +32,6 @@ use capsem_proto::mcp_contracts::JsonRpcResponse;
 
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(request_timeout)
-        .connect_timeout(connect_timeout)
-        .build()
-}
 
 // -- Tool parameter types --
 
@@ -159,7 +153,7 @@ struct SnapshotCompactParams {
 
 #[derive(Clone)]
 struct BuiltinHandler {
-    http_client: reqwest::Client,
+    http_client: BuiltinHttpClient,
     db: Arc<DbWriter>,
     security_rules: Arc<SecurityRuleSet>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
@@ -253,9 +247,12 @@ impl BuiltinHandler {
         Parameters(params): Parameters<SnapshotPaginationParams>,
     ) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
-        let sched = sched.lock().await;
-        let resp = file_tools::handle_list_changed_files(&to_args(&params), &sched, &ws, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_list_changed_files(&args, &sched, &ws, None)
+        })
+        .await?;
         extract_text(resp)
     }
 
@@ -265,9 +262,12 @@ impl BuiltinHandler {
     )]
     async fn snapshots_list(&self, Parameters(params): Parameters<SnapshotPaginationParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
-        let sched = sched.lock().await;
-        let resp = file_tools::handle_list_snapshots(&to_args(&params), &sched, &ws, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_list_snapshots(&args, &sched, &ws, None)
+        })
+        .await?;
         extract_text(resp)
     }
 
@@ -277,12 +277,12 @@ impl BuiltinHandler {
     )]
     async fn snapshots_revert(&self, Parameters(params): Parameters<SnapshotRevertParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
-        let (resp, file_event) = {
-            let sched = sched.lock().await;
-            let result = file_tools::handle_revert_file_with_security_event(&to_args(&params), &sched, &ws, None);
-            drop(sched);
-            result
-        };
+        let args = to_args(&params);
+        let (resp, file_event) = run_snapshot_blocking(move || {
+            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_revert_file_with_security_event(&args, &sched, &ws, None)
+        })
+        .await?;
         if let Some(file_event) = file_event {
             capsem_core::security_engine::emit_file_security_write_and_rules(
                 &self.db,
@@ -300,9 +300,12 @@ impl BuiltinHandler {
     )]
     async fn snapshots_create(&self, Parameters(params): Parameters<SnapshotNameParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
-        let mut sched = sched.lock().await;
-        let resp = file_tools::handle_snapshot(&to_args(&params), &mut sched, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let mut sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_snapshot(&args, &mut sched, None)
+        })
+        .await?;
         extract_text(resp)
     }
 
@@ -312,18 +315,24 @@ impl BuiltinHandler {
     )]
     async fn snapshots_delete(&self, Parameters(params): Parameters<SnapshotDeleteParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
-        let sched = sched.lock().await;
-        let resp = file_tools::handle_delete_snapshot(&to_args(&params), &sched, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_delete_snapshot(&args, &sched, None)
+        })
+        .await?;
         extract_text(resp)
     }
 
     #[tool(name = "snapshots_history", description = "Show revert history for the session.")]
     async fn snapshots_history(&self, Parameters(params): Parameters<SnapshotHistoryParams>) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
-        let sched = sched.lock().await;
-        let resp = file_tools::handle_snapshots_history(&to_args(&params), &sched, &ws, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_snapshots_history(&args, &sched, &ws, None)
+        })
+        .await?;
         extract_text(resp)
     }
 
@@ -333,11 +342,32 @@ impl BuiltinHandler {
     )]
     async fn snapshots_compact(&self, Parameters(params): Parameters<SnapshotCompactParams>) -> Result<String, String> {
         let (sched, _ws) = self.snapshot_state()?;
-        let mut sched = sched.lock().await;
-        let resp = file_tools::handle_snapshots_compact(&to_args(&params), &mut sched, None);
-        drop(sched);
+        let args = to_args(&params);
+        let resp = run_snapshot_blocking(move || {
+            let mut sched = sched.lock().unwrap_or_else(|e| e.into_inner());
+            file_tools::handle_snapshots_compact(&args, &mut sched, None)
+        })
+        .await?;
         extract_text(resp)
     }
+}
+
+/// Run a snapshot operation off the async worker pool.
+///
+/// The snapshot handlers do heavy synchronous work -- walkdir, clonefile,
+/// blake3 over the whole workspace -- while holding the scheduler lock. Running
+/// that directly on a tokio worker (as the handlers previously did) stalls the
+/// rmcp runtime and every concurrent tool call for its duration. `spawn_blocking`
+/// moves it to the blocking pool; the closure takes the (std) scheduler lock so
+/// the operations still serialize against each other.
+async fn run_snapshot_blocking<F, R>(f: F) -> Result<R, String>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("snapshot task failed: {e}"))
 }
 
 impl BuiltinHandler {
@@ -513,8 +543,7 @@ async fn main() -> Result<()> {
     };
 
     let handler = BuiltinHandler {
-        http_client: build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT)
-            .context("failed to build builtin HTTP client")?,
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db,
         security_rules,
         plugin_policy,

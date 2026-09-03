@@ -225,6 +225,12 @@ impl VirtQueue {
         // Acquire: ensure we see descriptor writes made by the driver
         // before the avail index update. Required by virtio spec when
         // device and driver run on different threads.
+        // A zero-size queue never has descriptors and would divide by zero in
+        // the ring-index computation below. The cold DRIVER_OK path does not
+        // clamp the guest-supplied QUEUE_NUM, so treat size 0 as always empty.
+        if self.size == 0 {
+            return None;
+        }
         fence(Ordering::Acquire);
         let avail_idx = self.read_avail_idx();
         if self.next_avail == avail_idx {
@@ -293,6 +299,11 @@ impl VirtQueue {
     /// Devices that complete multiple descriptor chains from one notification
     /// can call this repeatedly and publish them with one `flush_used()`.
     pub fn push_used_deferred(&mut self, head: u16, len: u32) {
+        // Guard against a guest-supplied zero-size queue (see `pop`): the used
+        // ring has no slots and `% size` would panic the host process.
+        if self.size == 0 {
+            return;
+        }
         let used_index = self.next_used % self.size;
         self.write_used_ring(used_index, head, len);
         self.next_used = self.next_used.wrapping_add(1);

@@ -174,6 +174,11 @@ fn main() {
 
 fn connect_framed(process_name: &str, pending: PendingRequests, stdout: Arc<Mutex<io::Stdout>>) -> FramedConnection {
     let fd = vsock_connect_retry(VSOCK_HOST_CID, MCP_TRANSPORT_PORT, "mcp-framed");
+    // The framed transport has no keepalive: the host writes nothing between
+    // frames and a tool call may take minutes. With the receive timeout in
+    // place, every idle gap over 30s tore the connection down and every
+    // pending request got a spurious disconnect error.
+    vsock_io::clear_recv_timeout(fd);
 
     // Keep the established diagnostic metadata prefix so host logs can still
     // attribute the connection. The framed envelope carries authoritative

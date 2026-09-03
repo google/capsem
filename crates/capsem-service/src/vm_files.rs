@@ -1,5 +1,16 @@
 use super::*;
 
+mod diagnostics;
+mod storage;
+#[cfg(test)]
+pub(crate) use storage::statvfs_bytes;
+pub(crate) use storage::storage_diagnostics;
+mod fork;
+#[cfg(test)]
+pub(crate) use diagnostics::session_db_triage;
+pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
+pub(crate) use fork::handle_fork;
+
 pub(super) fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
     run_dir.parent().unwrap_or(run_dir).join("sessions").join("main.db")
 }
@@ -367,76 +378,104 @@ pub(super) fn find_failed_session_dir(run_dir: &std::path::Path, id: &str) -> Op
 
 use axum::http::StatusCode;
 use capsem_service::errors::AppError;
-use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
+use std::ffi::OsString;
+
+use capsem_core::contained_fs::{is_symlink_refusal, ContainedDir, EntryKind};
+use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize_file_path, unknown_file_type};
+use nix::fcntl::OFlag;
+use nix::sys::stat::Mode;
 
 // ---------------------------------------------------------------------------
 // Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
 // ---------------------------------------------------------------------------
+//
+// The workspace is a VirtioFS share the guest writes at will, so every symlink
+// in it is guest-controlled. Nothing here resolves a guest-influenced path by
+// name: the root is opened once and every step below it is an `openat` that
+// refuses symlinks (see `capsem_core::contained_fs`). Path-based checks --
+// canonicalize, exists, metadata -- were answered for one file and acted on
+// for another, and for a dangling link or a missing parent they were not
+// answered at all: an upload to `notes.txt -> ~/.ssh/authorized_keys` landed
+// on the host.
 
-/// Resolve a sanitized relative path to an absolute workspace path on the host.
-/// Returns (workspace_root, resolved_path). Verifies the resolved path is
-/// inside the workspace via canonicalize + starts_with.
-pub(super) fn resolve_workspace_path(
+fn session_dir_for(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    if let Some(info) = instances.get(id) {
+        return Ok(info.session_dir.clone());
+    }
+    drop(instances);
+    // Check persistent registry for stopped VMs
+    let reg = state.persistent_registry.lock().unwrap();
+    reg.data
+        .vms
+        .get(id)
+        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+        .map(|e| e.session_dir.clone())
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+}
+
+/// Open the workspace root of sandbox `id` as a containment handle.
+pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
+    let session_dir = session_dir_for(state, id)?;
+    let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
+    ContainedDir::open_root(&root).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("open workspace {}: {e}", root.display()),
+        )
+    })
+}
+
+/// A containment failure as the client sees it: a symlink anywhere on the
+/// path is a refusal, an absent component is not found, a file named where a
+/// directory was expected is a bad request, anything else is the host's.
+pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
+    if is_symlink_refusal(&e) {
+        AppError(
+            StatusCode::FORBIDDEN,
+            "path leaves the workspace through a symlink".into(),
+        )
+    } else if e.kind() == std::io::ErrorKind::NotFound {
+        AppError(StatusCode::NOT_FOUND, "path not found".into())
+    } else if e.kind() == std::io::ErrorKind::InvalidInput
+        || e.raw_os_error() == Some(nix::errno::Errno::ENOTDIR as i32)
+    {
+        AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
+    } else {
+        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
+    }
+}
+
+/// Resolve a sanitized relative path to the handle of its parent directory and
+/// its final name. With `create`, missing parent directories are made. A
+/// symlink or special file already at the final name is refused here, and
+/// again race-free by `O_NOFOLLOW` when the caller opens it.
+pub(super) fn resolve_workspace_target(
     state: &ServiceState,
     id: &str,
     sanitized: &str,
-) -> Result<(PathBuf, PathBuf), AppError> {
-    let session_dir = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(info) = instances.get(id) {
-            info.session_dir.clone()
-        } else {
-            drop(instances);
-            // Check persistent registry for stopped VMs
-            let reg = state.persistent_registry.lock().unwrap();
-            reg.data
-                .vms
-                .get(id)
-                .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-                .map(|e| e.session_dir.clone())
-                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
-        }
-    };
-    let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    let target = workspace_root.join(sanitized);
-
-    // Canonicalize requires the path to exist for files; for listing we may
-    // also target the workspace root itself. Use the parent if target doesn't exist.
-    let canonical = if target.exists() {
-        target.canonicalize()
+    create: bool,
+) -> Result<(ContainedDir, OsString), AppError> {
+    let rel = StdPath::new(sanitized);
+    let name = rel
+        .file_name()
+        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "path has no file name".into()))?
+        .to_owned();
+    let parent_rel = rel.parent().unwrap_or_else(|| StdPath::new(""));
+    let root = workspace_root(state, id)?;
+    let parent = if create {
+        root.walk_creating(parent_rel, Mode::from_bits_truncate(0o755))
     } else {
-        // For upload: parent must exist and be inside workspace
-        if let Some(parent) = target.parent() {
-            if parent.exists() {
-                let canon_parent = parent
-                    .canonicalize()
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
-                let ws_canon = workspace_root.canonicalize().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("canonicalize workspace: {e}"),
-                    )
-                })?;
-                if !canon_parent.starts_with(&ws_canon) {
-                    return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
-                }
-                return Ok((workspace_root, target));
-            }
-        }
-        return Ok((workspace_root, target));
+        root.walk(parent_rel)
     }
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("canonicalize: {e}")))?;
-
-    let ws_canon = workspace_root.canonicalize().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("canonicalize workspace: {e}"),
-        )
-    })?;
-    if !canonical.starts_with(&ws_canon) {
-        return Err(AppError(StatusCode::FORBIDDEN, "path outside workspace".into()));
+    .map_err(workspace_io_error)?;
+    if parent.entry_kind(&name).map_err(workspace_io_error)? == Some(EntryKind::Other) {
+        return Err(AppError(
+            StatusCode::FORBIDDEN,
+            "path names a symlink or special file".into(),
+        ));
     }
-    Ok((workspace_root, canonical))
+    Ok((parent, name))
 }
 
 // ---------------------------------------------------------------------------
@@ -446,9 +485,9 @@ pub(super) fn resolve_workspace_path(
 #[derive(Deserialize)]
 pub(super) struct FileListQuery {
     #[serde(default)]
-    path: Option<String>,
+    pub(super) path: Option<String>,
     #[serde(default = "default_file_depth")]
-    depth: u32,
+    pub(super) depth: u32,
 }
 
 pub(super) fn default_file_depth() -> u32 {
@@ -460,58 +499,41 @@ pub(super) struct FileContentQuery {
     pub(super) path: String,
 }
 
-/// Recursively list a directory up to `max_depth`.
+/// Recursively list a directory up to `max_depth`. Symlinks and special
+/// files are neither followed nor shown.
 pub(super) fn list_dir_recursive(
-    base: &std::path::Path,
+    dir: &ContainedDir,
     rel_prefix: &str,
     current_depth: u32,
     max_depth: u32,
     magika: &Mutex<magika::Session>,
 ) -> Vec<FileListEntry> {
-    let mut entries = Vec::new();
-    let read = match std::fs::read_dir(base) {
-        Ok(r) => r,
-        Err(_) => return entries,
+    let mut items = match dir.entries() {
+        Ok(items) => items,
+        Err(_) => return Vec::new(),
     };
-
-    let mut items: Vec<_> = read.flatten().collect();
+    // Skip the system directory (rootfs overlay, not user content)
+    items.retain(|item| item.kind != EntryKind::Other && item.name != "system");
     items.sort_by(|a, b| {
-        let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        b_is_dir.cmp(&a_is_dir).then_with(|| a.file_name().cmp(&b.file_name()))
+        let a_is_dir = a.kind == EntryKind::Directory;
+        let b_is_dir = b.kind == EntryKind::Directory;
+        b_is_dir.cmp(&a_is_dir).then_with(|| a.name.cmp(&b.name))
     });
 
+    let mut entries = Vec::with_capacity(items.len());
     for item in items {
-        let name = item.file_name().to_string_lossy().into_owned();
-        // Skip the system directory (rootfs overlay, not user content)
-        if name == "system" {
-            continue;
-        }
+        let name = item.name.to_string_lossy().into_owned();
         let rel_path = if rel_prefix.is_empty() {
             name.clone()
         } else {
             format!("{rel_prefix}/{name}")
         };
-        let meta = match item.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
 
-        if meta.is_dir() {
+        if item.kind == EntryKind::Directory {
             let children = if current_depth < max_depth {
-                Some(list_dir_recursive(
-                    &base.join(&name),
-                    &rel_path,
-                    current_depth + 1,
-                    max_depth,
-                    magika,
-                ))
+                dir.descend(&item.name)
+                    .ok()
+                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth, magika))
             } else {
                 None
             };
@@ -520,24 +542,26 @@ pub(super) fn list_dir_recursive(
                 path: rel_path,
                 entry_type: "directory".into(),
                 size: 0,
-                mtime,
+                mtime: item.mtime_secs,
                 mime: None,
                 label: None,
                 is_text: None,
                 children,
             });
-        } else if meta.is_file() {
-            let (lbl, mime_str, _group, text) = identify_file_sync(magika, &base.join(&name));
-            let (mime, label, is_text) = (Some(mime_str), Some(lbl), Some(text));
+        } else {
+            let (label, mime, _group, is_text) = match dir.open_file(&item.name, OFlag::O_RDONLY, Mode::empty()) {
+                Ok(mut file) => identify_file_sync(magika, StdPath::new(&name), &mut file),
+                Err(_) => unknown_file_type(),
+            };
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
                 entry_type: "file".into(),
-                size: meta.len(),
-                mtime,
-                mime,
-                label,
-                is_text,
+                size: item.size,
+                mtime: item.mtime_secs,
+                mime: Some(mime),
+                label: Some(label),
+                is_text: Some(is_text),
                 children: None,
             });
         }
@@ -555,55 +579,16 @@ pub(super) async fn handle_list_files(
         Some(p) if !p.is_empty() => sanitize_file_path(p)?,
         _ => String::new(),
     };
+    let target = workspace_root(&state, &id)?
+        .walk(StdPath::new(&rel_path))
+        .map_err(workspace_io_error)?;
 
-    let (workspace_root, target) = if rel_path.is_empty() {
-        // List workspace root -- get session_dir directly
-        let session_dir = {
-            let instances = state.instances.lock().unwrap();
-            if let Some(info) = instances.get(&id) {
-                info.session_dir.clone()
-            } else {
-                drop(instances);
-                let reg = state.persistent_registry.lock().unwrap();
-                reg.data
-                    .vms
-                    .get(&id)
-                    .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-                    .map(|e| e.session_dir.clone())
-                    .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
-            }
-        };
-        let ws = capsem_core::guest_share_dir(&session_dir).join("workspace");
-        (ws.clone(), ws)
-    } else {
-        resolve_workspace_path(&state, &id, &rel_path)?
-    };
+    // Directory reads and Magika are blocking I/O -- run in spawn_blocking
+    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth, &state.magika))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
-    if !target.exists() {
-        return Err(AppError(StatusCode::NOT_FOUND, "path not found".into()));
-    }
-
-    // Compute relative prefix for the listing
-    let rel_prefix = target
-        .strip_prefix(&workspace_root)
-        .unwrap_or(std::path::Path::new(""))
-        .to_string_lossy()
-        .into_owned();
-
-    // read_dir + metadata are blocking I/O -- run in spawn_blocking
-    let magika = state.magika.lock().unwrap();
-    // We can't send MutexGuard across threads; re-acquire inside spawn_blocking
-    drop(magika);
-    let magika_ref = {
-        // Clone Arc to move into blocking task
-        let state_clone = Arc::clone(&state);
-        let target = target.clone();
-        tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_prefix, 1, depth, &state_clone.magika))
-            .await
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?
-    };
-
-    Ok(Json(FileListResponse { entries: magika_ref }))
+    Ok(Json(FileListResponse { entries }))
 }
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -674,32 +659,29 @@ pub(super) async fn handle_download_file(
     Query(params): Query<FileContentQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let sanitized = sanitize_file_path(&params.path)?;
-    let (_ws_root, resolved) = resolve_workspace_path(&state, &id, &sanitized)?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, false)?;
 
-    if !resolved.is_file() {
-        return Err(AppError(StatusCode::NOT_FOUND, "file not found".into()));
-    }
-
-    let meta = std::fs::metadata(&resolved)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("metadata: {e}")))?;
-    if meta.len() > MAX_FILE_SIZE {
-        return Err(AppError(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!("file too large: {} bytes (max {})", meta.len(), MAX_FILE_SIZE),
-        ));
-    }
-
-    // Read file and detect type in spawn_blocking
+    // Open without following symlinks, read, and detect type in spawn_blocking
     let state_clone = Arc::clone(&state);
-    let resolved_clone = resolved.clone();
     let (data, mime, filename) = tokio::task::spawn_blocking(move || {
-        let data = std::fs::read(&resolved_clone)
+        use std::io::Read;
+        let file = parent
+            .open_file(&name, OFlag::O_RDONLY, Mode::empty())
+            .map_err(workspace_io_error)?;
+        // Read one byte past the cap rather than trusting a length the guest
+        // can grow between stat and read.
+        let mut data = Vec::new();
+        file.take(MAX_FILE_SIZE + 1)
+            .read_to_end(&mut data)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
-        let (_, mime_str, _, _) = identify_file_sync(&state_clone.magika, &resolved_clone);
-        let name = resolved_clone
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "download".into());
+        if data.len() as u64 > MAX_FILE_SIZE {
+            return Err(AppError(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("file too large (max {MAX_FILE_SIZE} bytes)"),
+            ));
+        }
+        let name = name.to_string_lossy().into_owned();
+        let (_, mime_str, _, _) = identify_bytes_sync(&state_clone.magika, StdPath::new(&name), &data);
         // Sanitize the filename for Content-Disposition
         let safe_name: String = name
             .chars()
@@ -745,12 +727,11 @@ pub(super) async fn handle_upload_file(
     body: axum::body::Bytes,
 ) -> Result<Json<UploadResponse>, AppError> {
     let sanitized = sanitize_file_path(&params.path)?;
-    let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, true)?;
 
     let mut data = body.to_vec();
     let size = data.len() as u64;
     let preview = file_security_preview_bytes(&data);
-    let target_for_write = target.clone();
 
     if let Some(rewritten) =
         log_file_boundary(&state, &id, FileBoundaryAction::Import, sanitized, preview, size, None).await?
@@ -759,25 +740,17 @@ pub(super) async fn handle_upload_file(
     }
     let written_size = data.len() as u64;
 
-    // Write file in spawn_blocking (blocking I/O)
+    // Write without following symlinks, in spawn_blocking (blocking I/O)
     tokio::task::spawn_blocking(move || {
-        if let Some(parent) = target_for_write.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {e}")))?;
-        }
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(&target_for_write)
-            .and_then(|f| {
-                use std::io::Write;
-                let mut f = f;
-                f.write_all(&data)?;
-                Ok(())
-            })
+        use std::io::Write;
+        let mut file = parent
+            .open_file(
+                &name,
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                Mode::from_bits_truncate(0o644),
+            )
+            .map_err(workspace_io_error)?;
+        file.write_all(&data)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
         Ok::<_, AppError>(())
     })
@@ -793,166 +766,6 @@ pub(super) async fn handle_upload_file(
 // ---------------------------------------------------------------------------
 // Image API Handlers
 // ---------------------------------------------------------------------------
-
-pub(super) async fn handle_fork(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ForkRequest>,
-) -> Result<Json<ForkResponse>, AppError> {
-    let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    // Check name is not taken
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(name) {
-            return Err(AppError(
-                StatusCode::CONFLICT,
-                format!("sandbox '{}' already exists", name),
-            ));
-        }
-    }
-
-    // Find source: running instance or stopped persistent VM
-    let (
-        session_dir,
-        profile_id,
-        profile_revision,
-        profile_payload_hash,
-        asset_pins,
-        ram_mb,
-        cpus,
-        base_version,
-        uds_path,
-    ) = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            (
-                i.session_dir.clone(),
-                i.profile_id.clone(),
-                i.profile_revision.clone(),
-                i.profile_payload_hash.clone(),
-                i.asset_pins.clone(),
-                i.ram_mb,
-                i.cpus,
-                i.base_version.clone(),
-                Some(i.uds_path.clone()),
-            )
-        } else {
-            drop(instances);
-            if let Some(p) = find_persistent_entry_by_route_id(&state, &id) {
-                (
-                    p.session_dir,
-                    p.profile_id,
-                    p.profile_revision,
-                    p.profile_payload_hash,
-                    p.asset_pins,
-                    p.ram_mb,
-                    p.cpus,
-                    p.base_version,
-                    None,
-                )
-            } else {
-                return Err(AppError(
-                    StatusCode::NOT_FOUND,
-                    format!("source sandbox not found: {}", id),
-                ));
-            }
-        }
-    };
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    state
-        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-
-    // Flush the guest root filesystem so the ext4 system overlay (/dev/vdb
-    // backed by rootfs.img) has pushed dirty pages into the host-visible image
-    // before fork clone. Do not fsfreeze here: the old shell command thawed
-    // before cloning, so it paid freeze latency without actually snapshotting
-    // while frozen.
-    if let Some(ref uds) = uds_path {
-        let flush_id = state.next_job_id();
-        if let Err(e) = send_ipc_command(
-            uds,
-            ServiceToProcess::Exec {
-                id: flush_id,
-                command: "sync; true".to_string(),
-            },
-            Some(10),
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "pre-fork guest sync failed (non-fatal)");
-        }
-    }
-
-    // Clone state into new persistent sandbox. The route/runtime id is
-    // separate from the human display name.
-    let vm_id = new_persistent_vm_id();
-    let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
-    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
-    let _ = std::fs::create_dir_all(&new_session_dir);
-
-    // clone_sandbox_state does fsync + APFS clonefile + walkdir -- all blocking.
-    // Offload to the blocking pool so axum worker threads aren't starved under
-    // concurrent fork load.
-    let clone_dst = new_session_dir.clone();
-    let size_bytes =
-        tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst))
-            .await
-            .map_err(|e| {
-                capsem_service::app_error_logged!(
-                    error,
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "fork: clone-task panic: {e}"
-                )
-            })?
-            .map_err(|e| {
-                capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
-            })?;
-
-    // Register as persistent VM
-    {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        registry
-            .register(PersistentVmEntry {
-                id: vm_id.clone(),
-                name: name.clone(),
-                profile_id,
-                profile_revision,
-                profile_payload_hash,
-                asset_pins,
-                ram_mb,
-                cpus,
-                base_version,
-                created_at: format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-                session_dir: new_session_dir,
-                forked_from: Some(id.clone()),
-                description: payload.description.clone(),
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            })
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        drop(registry);
-    }
-
-    Ok(Json(ForkResponse {
-        id: vm_id,
-        name: name.clone(),
-        size_bytes,
-    }))
-}
 
 /// Outcome of a single provision attempt inside `handle_provision`.
 /// `LaunchdTransient` is the recoverable case: VZ rejected the fresh
@@ -1005,6 +818,19 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
     }
 }
 
+/// The preserved process.log tail of a session that died before it was
+/// ready, read off the worker.
+async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
+    let vm_id = id.to_string();
+    state
+        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
+            Some(dir) => read_process_log_tail(&dir, 20),
+            None => "(no preserved log found)".to_string(),
+        })
+        .await
+        .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
+}
+
 pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
     let mut existing: Vec<String> = state
         .instances
@@ -1043,12 +869,13 @@ pub(super) async fn handle_provision(
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
-    let name = payload.name.clone().unwrap_or_else(|| {
-        let existing = existing_session_names(&state);
-        generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
-    });
+    let existing = state.off_worker(|state| existing_session_names(&state)).await?;
+    let name = payload
+        .name
+        .clone()
+        .unwrap_or_else(|| generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
-    if existing_session_names(&state).iter().any(|existing| existing == &name) {
+    if existing.iter().any(|existing| existing == &name) {
         return Err(AppError(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", name),
@@ -1099,9 +926,12 @@ pub(super) async fn handle_provision(
             // crash-before-ready; we only need to undo registration of
             // the persistent entry.
             if attempt > 1 {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(&name);
-                drop(registry);
+                let stale_name = name.clone();
+                let _ = state
+                    .off_worker(move |state| {
+                        let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
+                    })
+                    .await;
                 state.instances.lock().unwrap().remove(&id);
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
@@ -1151,10 +981,7 @@ pub(super) async fn handle_provision(
             // Exhausted retries on launchd transient. Surface the most
             // recent failed-attempt tail so the user sees what VZ said,
             // even though the actual cause is launchd-side saturation.
-            let tail = match find_failed_session_dir(&state.run_dir, &id) {
-                Some(dir) => read_process_log_tail(&dir, 20),
-                None => "(no preserved log found)".to_string(),
-            };
+            let tail = failed_process_log_tail(&state, &id).await;
             error!(
                 id,
                 attempts = timed_out.attempts,
@@ -1239,26 +1066,44 @@ pub(super) async fn provision_attempt(
     // guest is already dead. The window is deliberately shorter than a
     // normal cold boot: create must catch synchronous launch failures, while
     // exec/file routes own the full readiness wait for valid slow boots.
-    let uds_path = state.instance_socket_path(id);
+    let uds_path = match state.instance_socket_path(id) {
+        Ok(path) => path,
+        Err(e) => return ProvisionAttemptOutcome::ProvisionError(e),
+    };
     let ready_path = uds_path.with_extension("ready");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
-    loop {
-        if ready_path.exists() {
-            return ProvisionAttemptOutcome::Ready { uds_path };
-        }
-        let still_alive = state.instances.lock().unwrap().contains_key(id);
-        if !still_alive {
+    // The shared backoff, like every other wait in this crate: a launch
+    // failure is seen within milliseconds instead of on the next 50 ms tick.
+    let launch = poll_until(
+        capsem_foundation::poll::PollOpts {
+            label: "provision-launch",
+            timeout: std::time::Duration::from_millis(500),
+            initial_delay: std::time::Duration::from_millis(5),
+            max_delay: std::time::Duration::from_millis(50),
+        },
+        || async {
+            if ready_path.exists() {
+                return Some(true);
+            }
+            let still_alive = state.instances.lock().unwrap().contains_key(id);
+            (!still_alive).then_some(false)
+        },
+    )
+    .await;
+    match launch {
+        Ok(true) => ProvisionAttemptOutcome::Ready { uds_path },
+        Err(_) => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
+        Ok(false) => {
             // Crash before ready. Prefer the persistent entry's
             // cached last_error (already computed by the child-exit
             // handler) to avoid re-reading the log; fall back to
             // find_failed_session_dir for ephemeral VMs whose dir was
             // renamed to `-failed-*`.
             let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = cached.unwrap_or_else(|| match find_failed_session_dir(&state.run_dir, id) {
-                Some(dir) => read_process_log_tail(&dir, 20),
-                None => "(no preserved log found)".to_string(),
-            });
-            return if is_launchd_cleanup_transient(&tail) {
+            let tail = match cached {
+                Some(tail) => tail,
+                None => failed_process_log_tail(state, id).await,
+            };
+            if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
                     "provision: detected launchd-cleanup transient (misleading 'entitlement' error)"
@@ -1266,49 +1111,9 @@ pub(super) async fn provision_attempt(
                 ProvisionAttemptOutcome::LaunchdTransient
             } else {
                 ProvisionAttemptOutcome::BootCrash { tail }
-            };
+            }
         }
-        if tokio::time::Instant::now() >= deadline {
-            return ProvisionAttemptOutcome::StillBootingTimedOut { uds_path };
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-}
-
-#[cfg(unix)]
-pub(super) fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.blocks() * 512
-}
-
-#[cfg(not(unix))]
-pub(super) fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
-    metadata.len()
-}
-
-pub(super) fn statvfs_bytes<BlockCount>(blocks: BlockCount, block_size: u64) -> u64
-where
-    BlockCount: Into<u64>,
-{
-    blocks.into().saturating_mul(block_size)
-}
-
-pub(super) fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-    let rootfs_image_path = capsem_core::guest_share_dir(session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
-    let stat = nix::sys::statvfs::statvfs(session_dir).ok()?;
-    let block_size = stat.block_size();
-
-    Some(api::StorageDiagnostics {
-        rootfs_image_path: rootfs_image_path.to_string_lossy().to_string(),
-        rootfs_image_logical_bytes: metadata.len(),
-        rootfs_image_physical_bytes: physical_bytes(&metadata),
-        host_total_bytes: statvfs_bytes(stat.blocks(), block_size),
-        host_free_bytes: statvfs_bytes(stat.blocks_free(), block_size),
-        host_available_bytes: statvfs_bytes(stat.blocks_available(), block_size),
-        guest_overlay_device: "/dev/vdb".into(),
-        guest_overlay_mount: "/".into(),
-    })
 }
 
 pub(super) fn append_fingerprint_field(out: &mut String, value: &str) {
@@ -1445,28 +1250,39 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
 }
 
 pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+    // The fingerprint stats and hashes files for every inactive entry; the
+    // UI polls this route, so it runs off the worker as one unit.
+    match state.off_worker(|state| list_response_bytes(&state)).await {
+        Ok(bytes) => json_bytes_response(bytes),
+        Err(error) => error.into_response(),
+    }
+}
+
+fn list_response_bytes(state: &ServiceState) -> Bytes {
     state.reconcile_persistent_defunct_from_logs();
-    let fingerprint = list_response_fingerprint(&state);
+    let fingerprint = list_response_fingerprint(state);
     if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
         if cached.fingerprint == fingerprint {
-            return json_bytes_response(cached.bytes);
+            return cached.bytes;
         }
     }
 
-    let response = build_list_response(&state);
+    let response = build_list_response(state);
     let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
     *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
         fingerprint,
         bytes: bytes.clone(),
     });
-    json_bytes_response(bytes)
+    bytes
 }
 
 pub(super) async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
-    state.reconcile_persistent_defunct_from_logs();
+    state
+        .off_worker(|state| state.reconcile_persistent_defunct_from_logs())
+        .await?;
     // Check running instances first
     {
         let (instance_data, session_dir) = {
@@ -1495,7 +1311,9 @@ pub(super) async fn handle_info(
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             apply_session_db_status(&state, &mut info, &dir).await;
-            info.storage = state.storage_diagnostics_cached(&dir);
+            info.storage = state
+                .off_worker(move |state| state.storage_diagnostics_cached(&dir))
+                .await?;
             return Ok(Json(info));
         }
     }
@@ -1504,7 +1322,10 @@ pub(super) async fn handle_info(
     let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
         let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
+        let resume_entry = entry.clone();
+        let (status, can_resume, blocked_reason) = state
+            .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
+            .await?;
         let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
         info.name = Some(entry.name.clone());
         info.ram_mb = Some(entry.ram_mb);
@@ -1521,9 +1342,29 @@ pub(super) async fn handle_info(
             info.resume_blocked_reason = blocked_reason;
         }
         info.refresh_available_actions();
-        info.size_bytes = capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
+        // Disk usage is a recursive walk of the session dir (including every
+        // snapshot clone). Run it off the async worker so it does not stall the
+        // axum runtime, and log rather than silently swallow a failure.
+        let session_dir = entry.session_dir.clone();
+        info.size_bytes =
+            match tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::sandbox_disk_usage(&session_dir))
+                .await
+            {
+                Ok(Ok(bytes)) => Some(bytes),
+                Ok(Err(error)) => {
+                    tracing::debug!(error = %error, "sandbox disk usage computation failed");
+                    None
+                }
+                Err(error) => {
+                    tracing::debug!(error = %error, "sandbox disk usage task failed");
+                    None
+                }
+            };
         apply_session_db_status(&state, &mut info, &entry.session_dir).await;
-        info.storage = state.storage_diagnostics_cached(&entry.session_dir);
+        let session_dir = entry.session_dir.clone();
+        info.storage = state
+            .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+            .await?;
         return Ok(Json(info));
     }
 
@@ -1534,31 +1375,50 @@ pub(super) async fn handle_vm_status(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::VmStatusResponse>, AppError> {
-    state.reconcile_persistent_defunct_from_logs();
-    {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            return Ok(Json(api::VmStatusResponse {
-                id: i.id.clone(),
-                name: i.name.clone(),
-                status: VmLifecycleState::Running,
-                pid: Some(i.pid),
-                persistent: i.persistent,
-                uptime_secs: Some(i.start_time.elapsed().as_secs()),
-                created_at: None,
-                last_error: None,
-                can_resume: false,
-                resume_blocked_reason: None,
-                storage: state.storage_diagnostics_cached(&i.session_dir),
-                available_actions: VmLifecycleState::Running.available_actions(false),
-            }));
-        }
+    state
+        .off_worker(|state| state.reconcile_persistent_defunct_from_logs())
+        .await?;
+    let running = state.instances.lock().unwrap().get(&id).map(|i| {
+        (
+            i.id.clone(),
+            i.name.clone(),
+            i.pid,
+            i.persistent,
+            i.start_time.elapsed().as_secs(),
+            i.session_dir.clone(),
+        )
+    });
+    if let Some((vm_id, name, pid, persistent, uptime_secs, session_dir)) = running {
+        let storage = state
+            .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+            .await?;
+        return Ok(Json(api::VmStatusResponse {
+            id: vm_id,
+            name,
+            status: VmLifecycleState::Running,
+            pid: Some(pid),
+            persistent,
+            uptime_secs: Some(uptime_secs),
+            created_at: None,
+            last_error: None,
+            can_resume: false,
+            resume_blocked_reason: None,
+            storage,
+            available_actions: VmLifecycleState::Running.available_actions(false),
+        }));
     }
 
     {
         if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
             let vm_id = persistent_entry_vm_id(&entry);
-            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
+            let resume_entry = entry.clone();
+            let (status, can_resume, blocked_reason) = state
+                .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
+                .await?;
+            let session_dir = entry.session_dir.clone();
+            let storage = state
+                .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
+                .await?;
             return Ok(Json(api::VmStatusResponse {
                 id: vm_id,
                 name: entry.name.clone(),
@@ -1578,7 +1438,7 @@ pub(super) async fn handle_vm_status(
                 } else {
                     blocked_reason
                 },
-                storage: state.storage_diagnostics_cached(&entry.session_dir),
+                storage,
                 available_actions: status.available_actions(can_resume),
             }));
         }
@@ -1748,375 +1608,6 @@ pub(super) async fn handle_stats_summary(
     }))
 }
 
-pub(super) async fn handle_logs(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<LogsResponse>, AppError> {
-    let session_dir = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(i) = instances.get(&id) {
-            i.session_dir.clone()
-        } else {
-            match find_persistent_entry_by_route_id(&state, &id).map(|e| e.session_dir) {
-                Some(dir) => dir,
-                None => {
-                    // VM might have crashed on boot. preserve_failed_session_dir
-                    // renames `sessions/<id>` to `sessions/<id>-failed-<suffix>`,
-                    // so the most recent `<id>-failed-*` still has the logs the
-                    // user needs to debug the crash. Without this branch
-                    // `capsem logs <id>` just returns 404 after a boot failure,
-                    // which is exactly when logs matter most.
-                    match find_failed_session_dir(&state.run_dir, &id) {
-                        Some(dir) => dir,
-                        None => return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))),
-                    }
-                }
-            }
-        }
-    };
-
-    let serial_log_path = session_dir.join("serial.log");
-    let process_log_path = session_dir.join("process.log");
-
-    // Bounded and rotation-aware. `serial.log` is guest-controlled console
-    // output written through `CappedLogWriter`, so it both rotates and can be
-    // arbitrarily large -- reading the whole bare file lost the rotated slice
-    // and let the guest choose the allocation.
-    let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = capsem_foundation::telemetry::read_log_tail(&serial_log_path, SESSION_LOG_TAIL_MAX_BYTES);
-        let process = capsem_foundation::telemetry::read_log_tail(&process_log_path, SESSION_LOG_TAIL_MAX_BYTES);
-        (serial, process)
-    })
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
-
-    Ok(Json(LogsResponse {
-        logs: serial_logs.as_deref().unwrap_or("").to_string(),
-        serial_logs,
-        process_logs,
-    }))
-}
-
-/// `GET /panics?since=30m&limit=20` -- structured panic + backtrace
-/// extractor across all host log files. Returns JSON array. Used by the
-/// `capsem_panics` MCP tool.
-pub(super) async fn handle_panics(
-    State(state): State<Arc<ServiceState>>,
-    axum::extract::Query(params): axum::extract::Query<TriageQuery>,
-) -> Result<axum::Json<serde_json::Value>, AppError> {
-    let since_unix = params
-        .since
-        .as_deref()
-        .and_then(triage::parse_since)
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let limit = params.limit.unwrap_or(20).min(200);
-
-    let run_dir = state.run_dir.clone();
-    let home = capsem_foundation::paths::capsem_home();
-
-    let mut all_panics: Vec<triage::PanicEvent> = Vec::new();
-    for binary in ["service", "mcp", "gateway", "tray"] {
-        if let Some(path) = triage::host_log_path(&run_dir, binary) {
-            all_panics.extend(triage::scan_panics_in_file(
-                &path,
-                &format!("capsem-{binary}"),
-                since_unix,
-            ));
-        }
-    }
-    if let Some(path) = triage::latest_app_log(&home) {
-        all_panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
-    }
-
-    all_panics.truncate(limit);
-    Ok(axum::Json(serde_json::json!({ "panics": all_panics })))
-}
-
-/// `GET /triage?id=<vm>&since=30m&limit=20` -- ranked summary of recent
-/// panics, errors, and slow ops across host logs (and, when `id` is
-/// provided, session.db error rows). Used by the `capsem_triage` MCP
-/// tool.
-pub(super) async fn handle_triage(
-    State(state): State<Arc<ServiceState>>,
-    axum::extract::Query(params): axum::extract::Query<TriageQuery>,
-) -> Result<axum::Json<serde_json::Value>, AppError> {
-    let since_str = params.since.clone().unwrap_or_else(|| "30m".to_string());
-    let since_unix = triage::parse_since(&since_str)
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let limit = params.limit.unwrap_or(20).min(200);
-
-    let run_dir = state.run_dir.clone();
-    let home = capsem_foundation::paths::capsem_home();
-
-    let mut panics: Vec<triage::PanicEvent> = Vec::new();
-    let mut errors: Vec<triage::ErrorEvent> = Vec::new();
-    let mut slow_ops: Vec<triage::SlowOpEvent> = Vec::new();
-
-    for binary in ["service", "mcp", "gateway", "tray"] {
-        if let Some(path) = triage::host_log_path(&run_dir, binary) {
-            let bin_label = format!("capsem-{binary}");
-            panics.extend(triage::scan_panics_in_file(&path, &bin_label, since_unix));
-            errors.extend(triage::scan_errors_in_file(&path, &bin_label, since_unix, limit));
-            slow_ops.extend(triage::scan_slow_ops_in_file(&path, &bin_label, since_unix, 500));
-        }
-    }
-    if let Some(path) = triage::latest_app_log(&home) {
-        panics.extend(triage::scan_panics_in_file(&path, "capsem-app", since_unix));
-        errors.extend(triage::scan_errors_in_file(&path, "capsem-app", since_unix, limit));
-    }
-
-    panics.truncate(limit);
-    errors.truncate(limit);
-    slow_ops.truncate(limit);
-
-    // When `id` is set, add session-scoped error signals from the canonical
-    // session ledger. The future DB-owned mem layer can make this fast; the
-    // service route does not own a separate logged-data copy.
-    let session_block = if let Some(ref vm_id) = params.id {
-        triage_for_vm(&state, vm_id, limit).await?
-    } else {
-        serde_json::json!({})
-    };
-
-    // Build a deterministic ranked-list of the highest-blast-radius items
-    // first: panics > unhandled-enum warns > slow_op events > everything else.
-    let mut rank: Vec<String> = Vec::new();
-    for p in panics.iter().take(5) {
-        rank.push(format!(
-            "panic {} in {} at {} -- {}",
-            p.ts.as_str().chars().take(19).collect::<String>(),
-            p.binary,
-            p.location.clone().unwrap_or_else(|| "?".into()),
-            p.message.chars().take(120).collect::<String>(),
-        ));
-    }
-    for e in errors.iter().filter(|e| e.target.as_deref() == Some("ipc")).take(3) {
-        rank.push(format!(
-            "ipc-warn {} in {} -- {}",
-            e.ts.as_str().chars().take(19).collect::<String>(),
-            e.binary,
-            e.message.chars().take(120).collect::<String>(),
-        ));
-    }
-    for s in slow_ops.iter().take(3) {
-        rank.push(format!(
-            "slow_op {} {} {}ms in {}",
-            s.ts.as_str().chars().take(19).collect::<String>(),
-            s.op,
-            s.duration_ms,
-            s.binary,
-        ));
-    }
-
-    let out = serde_json::json!({
-        "since": since_str,
-        "session_id": params.id,
-        "host": {
-            "panics": panics,
-            "errors": errors,
-            "slow_ops": slow_ops,
-        },
-        "session": session_block,
-        "rank": rank,
-    });
-    Ok(axum::Json(out))
-}
-
-pub(super) async fn session_db_triage(
-    vm_id: &str,
-    db: &capsem_logger::DbHandle,
-    db_path: &std::path::Path,
-    limit: usize,
-) -> anyhow::Result<serde_json::Value> {
-    db.ready()
-        .await
-        .map_err(|error| anyhow!("session triage ledger is not ready for {vm_id}: {error}"))?;
-    let denied_net_sql = format!(
-        "SELECT timestamp, domain, decision, status_code, duration_ms \
-         FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let tool_errors_sql = format!(
-        "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
-                policy_rule, policy_reason, error_message, duration_ms \
-         FROM tool_calls \
-         WHERE origin IN ('native', 'mcp', 'builtin', 'local') \
-           AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let exec_failures_sql = format!(
-        "SELECT timestamp, exec_id, command, exit_code, duration_ms \
-         FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-
-    async fn read_query(
-        db: &capsem_logger::DbHandle,
-        vm_id: &str,
-        db_path: &std::path::Path,
-        query_name: &str,
-        sql: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        let raw = db.query(sql, &[]).await.map_err(|error| {
-            error!(
-                vm_id,
-                query_name,
-                db_path = %db_path.display(),
-                error = %error,
-                "session triage ledger query failed"
-            );
-            anyhow!("session triage query {query_name} failed: {error}")
-        })?;
-        serde_json::from_str(&raw).map_err(|error| {
-            error!(
-                vm_id,
-                query_name,
-                db_path = %db_path.display(),
-                error = %error,
-                "session triage ledger query returned invalid JSON"
-            );
-            anyhow!("session triage query {query_name} returned invalid JSON: {error}")
-        })
-    }
-
-    let denied_net_v = read_query(db, vm_id, db_path, "denied_net", &denied_net_sql).await?;
-    let tool_errors_v = read_query(db, vm_id, db_path, "tool_errors", &tool_errors_sql).await?;
-    let exec_failures_v = read_query(db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
-
-    Ok(serde_json::json!({
-        "denied_net": denied_net_v,
-        "tool_errors": tool_errors_v,
-        "exec_failures": exec_failures_v,
-    }))
-}
-
-pub(super) fn limit_columnar_query_json(value: &serde_json::Value, limit: usize) -> serde_json::Value {
-    let columns = value.get("columns").cloned().unwrap_or_else(|| json!([]));
-    let rows = value
-        .get("rows")
-        .and_then(|value| value.as_array())
-        .map(|rows| rows.iter().take(limit).cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
-    json!({
-        "columns": columns,
-        "rows": rows,
-    })
-}
-
-pub(super) fn limit_triage_session_block(value: &serde_json::Value, limit: usize) -> serde_json::Value {
-    json!({
-        "denied_net": limit_columnar_query_json(&value["denied_net"], limit),
-        "tool_errors": limit_columnar_query_json(&value["tool_errors"], limit),
-        "exec_failures": limit_columnar_query_json(&value["exec_failures"], limit),
-    })
-}
-
-pub(super) async fn triage_for_vm(
-    state: &ServiceState,
-    vm_id: &str,
-    limit: usize,
-) -> Result<serde_json::Value, AppError> {
-    let session_dir = match resolve_session_dir(state, vm_id) {
-        Ok(session_dir) => session_dir,
-        Err(_) => {
-            return Ok(json!({ "missing": true, "reason": "session not found" }));
-        }
-    };
-    let db_path = session_db_path_for_session_dir(&session_dir);
-    if !db_path.exists() {
-        return Ok(json!({ "missing": true, "reason": "session not found" }));
-    }
-    let db = open_ready_session_db(state, vm_id, "triage", &db_path).await?;
-    let session = session_db_triage(vm_id, &db, &db_path, limit).await.map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read triage ledger for {vm_id}: {error}"),
-        )
-    })?;
-    Ok(limit_triage_session_block(&session, limit))
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub(super) struct TriageQuery {
-    /// Lookback window. Default "30m". Accepts "5m", "1h", "24h", or
-    /// RFC3339 ("2026-05-02T17:30:00Z").
-    since: Option<String>,
-    /// Max items per category. Default 20, capped at 200.
-    limit: Option<usize>,
-    /// Optional session id (reserved for the future session.db query).
-    id: Option<String>,
-}
-
-/// `GET /host-logs/{name}?grep=&tail=&max_bytes=` -- read a host-side log
-/// file by symbolic name. Hard-coded allowlist (no path traversal). Used
-/// by the `capsem_host_logs` MCP tool (T3) but the endpoint already lands
-/// in this commit so a future T3 sub-sprint can wire the MCP tool without
-/// touching the service.
-pub(super) async fn handle_host_logs(
-    State(state): State<Arc<ServiceState>>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    axum::extract::Query(params): axum::extract::Query<HostLogsQuery>,
-) -> Result<String, AppError> {
-    let path = if name == "app" {
-        triage::latest_app_log(&capsem_foundation::paths::capsem_home())
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?
-    } else {
-        triage::host_log_path(&state.run_dir, &name)
-            .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown log name: {name}")))?
-    };
-    let max_bytes = params.max_bytes.unwrap_or(100 * 1024).min(5 * 1024 * 1024);
-    // `service.log` names a daily-rotated stream, so opening that exact name
-    // returns nothing the moment it has rotated -- this endpoint reported an
-    // empty log for a service that was writing normally. Reading through the
-    // stream reader also removes the fourth hand-rolled copy of seek-from-end
-    // and trim-the-partial-line in this crate.
-    let text = tokio::task::spawn_blocking(move || {
-        capsem_foundation::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
-    })
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
-
-    // Apply grep + tail post-filters here so the wire surface to the
-    // capsem_host_logs MCP tool can avoid two round-trips.
-    let mut text = text;
-    if let Some(pat) = &params.grep {
-        text = text.lines().filter(|l| l.contains(pat)).collect::<Vec<_>>().join("\n");
-    }
-    if let Some(n) = params.tail {
-        let lines: Vec<&str> = text.lines().collect();
-        let start = lines.len().saturating_sub(n);
-        text = lines[start..].join("\n");
-    }
-    Ok(text)
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub(super) struct HostLogsQuery {
-    grep: Option<String>,
-    tail: Option<usize>,
-    max_bytes: Option<u64>,
-}
-
-pub(super) async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<String, AppError> {
-    let log_path = state.run_dir.join("service.log");
-
-    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        // `service.log` names a daily-rotated stream, not a file. Resolution
-        // and tailing live in one place so every consumer sees the same log.
-        capsem_foundation::telemetry::read_log_tail(&log_path, 100 * 1024)
-            .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
-    })
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    Ok(text)
-}
-
 #[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
 pub(super) async fn send_ipc_command(
     uds_path: &std::path::Path,
@@ -2126,14 +1617,15 @@ pub(super) async fn send_ipc_command(
     let stream = tokio::net::UnixStream::connect(uds_path)
         .await
         .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
-    let mut std_stream = stream
+    let std_stream = stream
         .into_std()
         .map_err(|e| format!("failed to convert stream: {e}"))?;
-    capsem_foundation::ipc_handshake::negotiate_initiator(
-        &mut std_stream,
+    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+        std_stream,
         "capsem-service",
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
+    .await
     .map_err(|e| format!("IPC handshake failed: {e}"))?;
     let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
         channel_from_std(std_stream).map_err(|e| format!("failed to create IPC channel: {e}"))?;

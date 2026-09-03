@@ -17,6 +17,7 @@ from log_streams import read_log_stream
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 from .constants import BIN_DIR
+from .http_transport import Transport
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
@@ -115,17 +116,15 @@ class GatewayInstance:
                 self.token = token_path.read_text().strip()
                 self.port = int(port_path.read_text().strip())
                 # Verify HTTP health check responds
+                probe = Transport(host="127.0.0.1", port=self.port)
                 try:
-                    result = subprocess.run(
-                        ["curl", "-s", "--max-time", "2", f"http://127.0.0.1:{self.port}/health"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    if result.returncode == 0 and "ok" in result.stdout.lower():
+                    _, _, body = probe.request("GET", "/health", timeout=2)
+                    if b"ok" in body.lower():
                         return
                 except Exception:
                     pass
+                finally:
+                    probe.close()
             time.sleep(0.2)
 
         self.stop()
@@ -186,105 +185,88 @@ class TcpHttpClient:
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url
         self.token = token
+        host, _, port = base_url.removeprefix("http://").partition(":")
+        self._transport = Transport(host=host, port=int(port))
 
-    def _curl(self, method, path, body=None, timeout=30, use_auth=True):
-        cmd = [
-            "curl",
-            "-s",
-            "-S",
-            "-X",
-            method,
-            "-H",
-            "Content-Type: application/json",
-            "--max-time",
-            str(timeout),
-        ]
+    def _headers(self, use_auth, extra=None):
+        headers = {"Content-Type": "application/json", **(extra or {})}
         if use_auth:
-            cmd += ["-H", f"Authorization: Bearer {self.token}"]
-        if body is not None:
-            cmd += ["-d", json.dumps(body)]
-        cmd.append(f"{self.base_url}{path}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
-        if result.returncode != 0:
-            raise ConnectionError(f"curl failed (rc={result.returncode}): {result.stderr}")
-        if not result.stdout.strip():
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
+    def call(self, method, path, *, body=None, headers=None, use_auth=True, timeout=30):
+        """One request: (status, lower-cased response headers, body bytes).
+
+        A 4xx or 5xx is a response, not an error. `body` is sent as given
+        (bytes); `headers` are added to (and may override) the defaults.
+        """
+        return self._transport.request(
+            method, path, headers=self._headers(use_auth, headers), body=body, timeout=timeout
+        )
+
+    def call_json(self, method, path, body=None, *, use_auth=True, timeout=30):
+        """(status, payload): JSON when the body parses, the text when it does
+        not, None when it is empty."""
+        payload = None if body is None else json.dumps(body).encode()
+        status, _, data = self.call(method, path, body=payload, use_auth=use_auth, timeout=timeout)
+        text = data.decode(errors="replace")
+        if not text.strip():
+            return status, None
+        try:
+            return status, json.loads(text)
+        except json.JSONDecodeError:
+            return status, text
+
+    def _raw(self, method, path, body=None, timeout=30, use_auth=True, extra_headers=None):
+        payload = None if body is None else json.dumps(body).encode()
+        status, _, data = self.call(
+            method, path, body=payload, headers=extra_headers, use_auth=use_auth, timeout=timeout
+        )
+        return status, data
+
+    def _request(self, method, path, body=None, timeout=30, use_auth=True):
+        _, data = self._raw(method, path, body, timeout=timeout, use_auth=use_auth)
+        if not data.strip():
             return None
-        return json.loads(result.stdout)
+        return json.loads(data)
 
     def get(self, path, timeout=30, use_auth=True):
-        return self._curl("GET", path, timeout=timeout, use_auth=use_auth)
+        return self._request("GET", path, timeout=timeout, use_auth=use_auth)
 
     def post(self, path, body=None, timeout=60, use_auth=True):
-        return self._curl("POST", path, body, timeout=timeout, use_auth=use_auth)
+        return self._request("POST", path, body, timeout=timeout, use_auth=use_auth)
 
     def patch(self, path, body=None, timeout=60, use_auth=True):
-        return self._curl("PATCH", path, body, timeout=timeout, use_auth=use_auth)
+        return self._request("PATCH", path, body, timeout=timeout, use_auth=use_auth)
 
     def delete(self, path, timeout=30, use_auth=True):
-        return self._curl("DELETE", path, timeout=timeout, use_auth=use_auth)
+        return self._request("DELETE", path, timeout=timeout, use_auth=use_auth)
 
     def get_raw(self, path, timeout=30, use_auth=True):
-        """Return raw curl output (status code + body) for status assertions."""
-        cmd = [
-            "curl",
-            "-s",
-            "-S",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--max-time",
-            str(timeout),
-        ]
-        if use_auth:
-            cmd += ["-H", f"Authorization: Bearer {self.token}"]
-        cmd.append(f"{self.base_url}{path}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
-        return int(result.stdout.strip()) if result.stdout.strip() else 0
+        """The status code alone, 0 when the request could not be made."""
+        try:
+            status, _ = self._raw("GET", path, timeout=timeout, use_auth=use_auth)
+        except ConnectionError:
+            return 0
+        return status
 
     def get_status_and_body(self, path, timeout=30, use_auth=True, extra_headers=None):
-        """Return (status_code, body_text) tuple."""
-        cmd = [
-            "curl",
-            "-s",
-            "-S",
-            "-w",
-            "\n%{http_code}",
-            "--max-time",
-            str(timeout),
-        ]
-        if use_auth:
-            cmd += ["-H", f"Authorization: Bearer {self.token}"]
-        for k, v in (extra_headers or {}).items():
-            cmd += ["-H", f"{k}: {v}"]
-        cmd.append(f"{self.base_url}{path}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
-        lines = result.stdout.rsplit("\n", 1)
-        body = lines[0] if len(lines) > 1 else ""
-        status = int(lines[-1]) if lines[-1].strip().isdigit() else 0
-        return status, body
+        """Return (status_code, body_text) tuple; (0, "") when the request could not be made."""
+        try:
+            status, data = self._raw("GET", path, timeout=timeout, use_auth=use_auth, extra_headers=extra_headers)
+        except ConnectionError:
+            return 0, ""
+        return status, data.decode(errors="replace")
 
     def ws_upgrade_status(self, path, timeout=5):
         """Send a WebSocket upgrade request, return the HTTP status code."""
-        cmd = [
-            "curl",
-            "-s",
-            "-S",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--max-time",
-            str(timeout),
-            "-H",
-            "Connection: Upgrade",
-            "-H",
-            "Upgrade: websocket",
-            "-H",
-            "Sec-WebSocket-Version: 13",
-            "-H",
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-            f"{self.base_url}{path}",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
-        return int(result.stdout.strip()) if result.stdout.strip() else 0
+        return self._transport.status_line(
+            path,
+            {
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+                "Sec-WebSocket-Version": "13",
+                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            },
+            timeout=timeout,
+        )

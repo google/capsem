@@ -59,16 +59,28 @@ fn write_read_control_msg_exec_roundtrip() {
 }
 
 #[test]
-fn read_control_msg_oversized_frame_rejected() {
+fn read_control_msg_discards_an_oversized_frame_and_reads_the_next() {
     let (mut reader, mut writer) = pipe_files();
-    // Write a length prefix that exceeds MAX_FRAME_SIZE
-    let fake_len = (MAX_FRAME_SIZE + 1).to_be_bytes();
-    writer.write_all(&fake_len).unwrap();
-    drop(writer);
+    let oversized = MAX_FRAME_SIZE as usize + 1;
+    // A pipe holds 64 KiB; write the 2 MiB frame from another thread.
+    let producer = std::thread::spawn(move || {
+        writer.write_all(&(oversized as u32).to_be_bytes()).unwrap();
+        writer.write_all(&vec![0xAB; oversized]).unwrap();
+        writer
+            .write_all(&capsem_proto::encode_guest_msg(&GuestToHost::Ack { id: 9 }).unwrap())
+            .unwrap();
+    });
 
-    let result = read_control_msg(&mut reader);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("too large"));
+    let err = read_control_msg(&mut reader).unwrap_err();
+    assert!(
+        err.downcast_ref::<ControlFrameTooLarge>().is_some(),
+        "an oversized frame is its own error so the bridge can keep the connection: {err}"
+    );
+    assert!(err.to_string().contains("too large"));
+
+    let next = read_control_msg(&mut reader).expect("the stream realigns on the frame after the discarded one");
+    assert!(matches!(next, GuestToHost::Ack { id: 9 }), "{next:?}");
+    producer.join().unwrap();
 }
 
 #[test]

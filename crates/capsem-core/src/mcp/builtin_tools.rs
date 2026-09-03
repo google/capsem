@@ -10,17 +10,24 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
-use reqwest::Client;
+use std::net::SocketAddr;
+
 use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+
+mod html_extract;
+mod upstream;
+
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
+pub use html_extract::{collapse_whitespace, extract_markdown_from_html, extract_text_from_html};
+pub use upstream::{is_public_address, non_public_refusal, resolve_upstream, BuiltinHttpClient};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
@@ -31,6 +38,64 @@ pub(crate) const DEFAULT_MAX_LENGTH: u64 = 5000;
 const DEFAULT_CONTEXT_LINES: u64 = 3;
 const DEFAULT_MAX_MATCHES: u64 = 50;
 const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
+
+/// Ceilings for guest-supplied pagination and grep parameters. The values
+/// arrive as `u64` straight from the tool call; without a clamp
+/// `max_length: 18446744073709551615` overflows the slice arithmetic (a panic
+/// in debug, an out-of-range slice in release) and `context_lines: u64::MAX`
+/// does the same in the grep window.
+pub(crate) const MAX_PAGE_LENGTH: usize = MAX_FETCH_BODY_BYTES;
+pub(crate) const MAX_START_INDEX: usize = 1 << 32;
+const MAX_CONTEXT_LINES: usize = 1_000;
+const MAX_GREP_MATCHES: usize = 10_000;
+
+/// Read an unsigned integer parameter, defaulting when absent or not an
+/// unsigned integer, and clamp it to `ceiling`.
+pub(crate) fn bounded_param(args: &Value, key: &str, default: u64, ceiling: usize) -> usize {
+    args.get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(default)
+        .try_into()
+        .unwrap_or(usize::MAX)
+        .min(ceiling)
+}
+
+/// `(start_index, max_length)` for every paginated tool, clamped.
+pub(crate) fn pagination_params(args: &Value) -> (usize, usize) {
+    (
+        bounded_param(args, "start_index", 0, MAX_START_INDEX),
+        bounded_param(args, "max_length", DEFAULT_MAX_LENGTH, MAX_PAGE_LENGTH),
+    )
+}
+
+/// Ceiling on an HTTP response body read by the builtin tools. `resp.text()`
+/// buffers the whole body, so an unbounded (or hostile) response would OOM the
+/// builtin subprocess. Bodies larger than this are truncated; the tools already
+/// paginate their output, so a generous cap never affects normal pages.
+const MAX_FETCH_BODY_BYTES: usize = 25 * 1024 * 1024;
+
+/// Read an HTTP response body into a String, reading at most `cap` bytes.
+///
+/// Streams chunks and stops once the cap is reached, so a multi-gigabyte or
+/// never-ending response cannot exhaust memory. Bytes are decoded lossily,
+/// matching the text-oriented builtin tools (binary content is rejected
+/// upstream by content-type).
+async fn read_body_capped(mut resp: reqwest::Response, cap: usize) -> Result<String, String> {
+    let mut buf: Vec<u8> = Vec::new();
+    while buf.len() < cap {
+        match resp.chunk().await.map_err(|e| e.to_string())? {
+            Some(chunk) => {
+                let take = (cap - buf.len()).min(chunk.len());
+                buf.extend_from_slice(&chunk[..take]);
+                if take < chunk.len() {
+                    break; // cap reached mid-chunk; stop pulling the body
+                }
+            }
+            None => break,
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
 
 /// Build a JSON schema property for an integer parameter.
 fn schema_int(description: &str) -> Value {
@@ -194,16 +259,16 @@ pub fn builtin_tool_defs() -> Vec<McpToolDef> {
 pub async fn call_builtin_tool(
     local_name: &str,
     arguments: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     request_id: Option<Value>,
     db: &Arc<DbWriter>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => handle_fetch_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
-        "grep_http" => handle_grep_http(arguments, client, security_rules, plugin_policy, request_id, db).await,
-        "http_headers" => handle_http_headers(arguments, client, security_rules, plugin_policy, request_id, db).await,
+        "fetch_http" => handle_fetch_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
+        "grep_http" => handle_grep_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
+        "http_headers" => handle_http_headers(arguments, http, security_rules, plugin_policy, request_id, db).await,
         _ => JsonRpcResponse::err(request_id, -32602, format!("unknown builtin tool: {local_name}")),
     }
 }
@@ -264,7 +329,7 @@ async fn emit_net_event(
 
 async fn handle_fetch_http(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -275,7 +340,7 @@ async fn handle_fetch_http(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -301,12 +366,12 @@ async fn handle_fetch_http(
     let domain = checked.domain.clone();
 
     let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
@@ -327,7 +392,7 @@ async fn handle_fetch_http(
         );
     }
 
-    let body = match resp.text().await {
+    let body = match read_body_capped(resp, MAX_FETCH_BODY_BYTES).await {
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
@@ -357,14 +422,14 @@ async fn handle_fetch_http(
     };
 
     let (chunk, total, has_more) = paginate(&text, start_index, max_length);
+    let next_index = start_index.saturating_add(chunk.len());
     let mut output = format!("URL: {url}\nDomain: {domain}\nContent length: {total}\n");
     if start_index > 0 || has_more {
-        output.push_str(&format!("Showing: {start_index}..{}\n", start_index + chunk.len()));
+        output.push_str(&format!("Showing: {start_index}..{next_index}\n"));
         if has_more {
             output.push_str(&format!(
-                "Remaining: {} characters. Use start_index={} to continue.\n",
-                total - start_index - chunk.len(),
-                start_index + chunk.len()
+                "Remaining: {} characters. Use start_index={next_index} to continue.\n",
+                total.saturating_sub(next_index),
             ));
         }
     }
@@ -378,9 +443,44 @@ async fn handle_fetch_http(
 // grep_http
 // ---------------------------------------------------------------------------
 
+/// Collect grep match blocks and the true total match count.
+///
+/// Counts *every* matching line so the caller can report an accurate total,
+/// but builds a context block only for the first `max_matches` -- the earlier
+/// `break`-after-increment left `match_count` at `max_matches + 1`, which
+/// misreported the total whenever more than one match was truncated.
+fn collect_grep_matches(
+    lines: &[&str],
+    re: &regex::Regex,
+    context_lines: usize,
+    max_matches: usize,
+) -> (Vec<String>, usize) {
+    let mut blocks = Vec::new();
+    let mut total = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if !re.is_match(line) {
+            continue;
+        }
+        total += 1;
+        if total > max_matches {
+            continue;
+        }
+        let start = i.saturating_sub(context_lines);
+        let end = i.saturating_add(context_lines).saturating_add(1).min(lines.len());
+        let mut block = String::new();
+        for (offset, line) in lines[start..end].iter().enumerate() {
+            let j = start + offset;
+            let marker = if j == i { ">>>" } else { "   " };
+            block.push_str(&format!("{marker} {}: {}\n", j + 1, line));
+        }
+        blocks.push(block);
+    }
+    (blocks, total)
+}
+
 async fn handle_grep_http(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -395,7 +495,7 @@ async fn handle_grep_http(
         None => return tool_error(id, "missing required parameter: pattern"),
     };
 
-    let checked = match evaluate_builtin_http_request(url, "GET", security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -419,20 +519,10 @@ async fn handle_grep_http(
         }
     };
 
-    let context_lines = args
-        .get("context_lines")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_CONTEXT_LINES) as usize;
-    let max_matches = args
-        .get("max_matches")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_MATCHES) as usize;
+    let context_lines = bounded_param(args, "context_lines", DEFAULT_CONTEXT_LINES, MAX_CONTEXT_LINES);
+    let max_matches = bounded_param(args, "max_matches", DEFAULT_MAX_MATCHES, MAX_GREP_MATCHES);
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
     if pattern_str.is_empty() {
         return tool_error(id, "pattern must not be empty");
@@ -443,6 +533,10 @@ async fn handle_grep_http(
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match client.get(url).send().await {
         Ok(r) => r,
@@ -463,7 +557,7 @@ async fn handle_grep_http(
         );
     }
 
-    let body = match resp.text().await {
+    let body = match read_body_capped(resp, MAX_FETCH_BODY_BYTES).await {
         Ok(t) => t,
         Err(e) => return tool_error(id, &format!("failed to read response body: {e}")),
     };
@@ -489,26 +583,7 @@ async fn handle_grep_http(
     let text = if raw { body } else { extract_text_from_html(&body) };
 
     let lines: Vec<&str> = text.lines().collect();
-    let mut matches = Vec::new();
-    let mut match_count = 0;
-
-    for (i, line) in lines.iter().enumerate() {
-        if re.is_match(line) {
-            match_count += 1;
-            if match_count > max_matches {
-                break;
-            }
-            let start = i.saturating_sub(context_lines);
-            let end = (i + context_lines + 1).min(lines.len());
-            let mut block = String::new();
-            for (offset, line) in lines[start..end].iter().enumerate() {
-                let j = start + offset;
-                let marker = if j == i { ">>>" } else { "   " };
-                block.push_str(&format!("{marker} {}: {}\n", j + 1, line));
-            }
-            matches.push(block);
-        }
-    }
+    let (matches, match_count) = collect_grep_matches(&lines, &re, context_lines, max_matches);
 
     let mut output = format!("URL: {url}\nPattern: {pattern_str}\nMatches found: {match_count}\n");
     if match_count > max_matches {
@@ -521,11 +596,9 @@ async fn handle_grep_http(
 
     let (chunk, total, has_more) = paginate(&output, start_index, max_length);
     if has_more {
-        let header = format!(
-            "Content length: {total}\nShowing: {start_index}..{}\nUse start_index={} to continue.\n\n",
-            start_index + chunk.len(),
-            start_index + chunk.len()
-        );
+        let next_index = start_index.saturating_add(chunk.len());
+        let header =
+            format!("Content length: {total}\nShowing: {start_index}..{next_index}\nUse start_index={next_index} to continue.\n\n");
         tool_ok(id, &format!("{header}{chunk}"))
     } else {
         tool_ok(id, &chunk)
@@ -538,7 +611,7 @@ async fn handle_grep_http(
 
 async fn handle_http_headers(
     args: &Value,
-    client: &Client,
+    http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
@@ -551,7 +624,7 @@ async fn handle_http_headers(
 
     let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("HEAD");
 
-    let checked = match evaluate_builtin_http_request(url, method, security_rules, plugin_policy) {
+    let checked = match authorize_upstream(url, method, security_rules, plugin_policy).await {
         Ok(checked) => checked,
         Err(e) => {
             let blocked = blocked_decision(e.clone());
@@ -574,12 +647,12 @@ async fn handle_http_headers(
             return tool_error(id, &e);
         }
     };
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
+    let client = match http.pinned(&checked.domain, &checked.addresses) {
+        Ok(client) => client,
+        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
+    };
     let start = Instant::now();
     let resp = match method {
         "GET" => client.get(url).send().await,
@@ -660,13 +733,34 @@ fn get_content_type(resp: &reqwest::Response) -> String {
 fn extract_domain(url: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .and_then(|u| url_host(&u))
+        .map(|(host, _)| host)
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The host of a tool URL as policy and telemetry see it: lowercase without
+/// a DNS-root dot, and an IP literal without its URL brackets. `http://[::1]/`
+/// used to reach the rules as `http.host == "[::1]"` with no `ip` event, so
+/// every `ip.version` / `ip.value` rule written against `127.0.0.1` was blind
+/// to the same loopback spelled in IPv6.
+fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
+    let raw = parsed.host_str()?;
+    let unbracketed = raw
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(raw);
+    if let Ok(ip) = unbracketed.parse::<IpAddr>() {
+        return Some((ip.to_string(), Some(ip)));
+    }
+    let host = crate::net::hostname::normalize_host(raw);
+    (!host.is_empty()).then_some((host, None))
 }
 
 #[derive(Debug, Clone)]
 struct BuiltinHttpDecision {
     domain: String,
+    /// The addresses the boundary judged; the connection is pinned to them.
+    addresses: Vec<SocketAddr>,
     decision: SecurityEnforcementDecision,
 }
 
@@ -686,18 +780,74 @@ fn evaluate_builtin_http_request(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
 ) -> Result<BuiltinHttpDecision, String> {
+    let parsed = parse_tool_url(url)?;
+    let (domain, ip) = url_host(&parsed).ok_or_else(|| "URL has no host".to_string())?;
+    let decision = enforce_builtin_http_event(
+        security_rules,
+        plugin_policy,
+        &domain,
+        tool_event(&parsed, method, &domain, ip),
+    )?;
+    let addresses = ip
+        .map(|ip| vec![SocketAddr::new(ip, parsed.port_or_known_default().unwrap_or(80))])
+        .unwrap_or_default();
+    Ok(BuiltinHttpDecision {
+        domain,
+        addresses,
+        decision,
+    })
+}
+
+/// Judge the URL by name, then by every address the name resolves to, and
+/// hand back the addresses so the connection can be pinned to them.
+///
+/// A non-public address (loopback, private, link-local, ...) is reached only
+/// through an explicit allow rule: host rules are written against names, and
+/// the name is the guest's to choose. Anything the rules block by address
+/// blocks the request whatever the name said.
+async fn authorize_upstream(
+    url: &str,
+    method: &str,
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+) -> Result<BuiltinHttpDecision, String> {
+    let by_name = evaluate_builtin_http_request(url, method, security_rules, plugin_policy)?;
+    let parsed = parse_tool_url(url)?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addresses = resolve_upstream(&by_name.domain, port).await?;
+    let mut decision = by_name.decision;
+    for address in &addresses {
+        let event = tool_event(&parsed, method, &by_name.domain, Some(address.ip()));
+        let judged = enforce_builtin_http_event(security_rules, plugin_policy, &by_name.domain, event)
+            .map_err(|reason| format!("{reason} (resolved address {})", address.ip()))?;
+        if !is_public_address(address.ip()) && judged.rule_id.is_none() {
+            return Err(non_public_refusal(&by_name.domain, address.ip()));
+        }
+        if judged.rule_id.is_some() {
+            decision = judged;
+        }
+    }
+    Ok(BuiltinHttpDecision {
+        domain: by_name.domain,
+        addresses,
+        decision,
+    })
+}
+
+fn parse_tool_url(url: &str) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
     match parsed.scheme() {
-        "http" | "https" => {}
-        other => return Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
+        "http" | "https" => Ok(parsed),
+        other => Err(format!("only http:// and https:// URLs are supported (got {other}://)")),
     }
-    let domain = parsed
-        .host_str()
-        .ok_or_else(|| "URL has no host".to_string())?
-        .to_string();
+}
+
+/// The security event for one tool request, optionally carrying the address
+/// it is about to reach.
+fn tool_event(parsed: &reqwest::Url, method: &str, domain: &str, ip: Option<IpAddr>) -> SecurityEvent {
     let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
-            host: Some(domain.clone()),
+            host: Some(domain.to_string()),
             method: Some(method.to_string()),
             path: Some(parsed.path().to_string()),
             query: parsed.query().map(str::to_string),
@@ -705,7 +855,7 @@ fn evaluate_builtin_http_request(
             body: None,
         })
         .with_http_request(HttpRequestSecurityEvent::new(
-            domain.clone(),
+            domain.to_string(),
             None,
             http::HeaderMap::new(),
             parsed.query().map(str::to_string),
@@ -718,7 +868,7 @@ fn evaluate_builtin_http_request(
             port: Some(port.to_string()),
         });
     }
-    if let Ok(ip) = domain.parse::<IpAddr>() {
+    if let Some(ip) = ip {
         event = event.with_ip(IpSecurityEvent {
             value: Some(ip.to_string()),
             version: Some(match ip {
@@ -727,6 +877,15 @@ fn evaluate_builtin_http_request(
             }),
         });
     }
+    event
+}
+
+fn enforce_builtin_http_event(
+    security_rules: &SecurityRuleSet,
+    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    domain: &str,
+    event: SecurityEvent,
+) -> Result<SecurityEnforcementDecision, String> {
     let evaluated = evaluate_security_boundary(security_rules, plugin_policy.clone(), event)
         .map_err(|error| format!("security engine failed: {error}"))?;
     if !evaluated.enforcement.is_allowed() {
@@ -737,288 +896,7 @@ fn evaluate_builtin_http_request(
             .unwrap_or("security rule blocked request");
         return Err(format!("HTTP request blocked: {domain} ({reason})"));
     }
-    Ok(BuiltinHttpDecision {
-        domain,
-        decision: evaluated.enforcement,
-    })
-}
-
-/// Extract visible text from HTML using scraper (html5ever).
-/// Skips script, style, noscript, svg, and template elements.
-/// Inserts newlines around block elements.
-pub fn extract_text_from_html(html: &str) -> String {
-    use scraper::Html;
-
-    let doc = Html::parse_document(html);
-    let mut output = String::new();
-    let root = doc.root_element();
-
-    // Prefer <body> if present, otherwise use the root
-    let start = scraper::Selector::parse("body")
-        .ok()
-        .and_then(|sel| doc.select(&sel).next())
-        .map(|el| el.id())
-        .unwrap_or_else(|| root.id());
-
-    extract_text_recursive_scraper(&doc, start, &mut output);
-    collapse_whitespace(&output)
-}
-
-/// Convert HTML to markdown, preserving headings, links, lists, bold/italic,
-/// code blocks, and blockquotes.
-pub fn extract_markdown_from_html(html: &str) -> String {
-    use scraper::Html;
-
-    let doc = Html::parse_document(html);
-    let mut output = String::new();
-    let root = doc.root_element();
-
-    let start = scraper::Selector::parse("body")
-        .ok()
-        .and_then(|sel| doc.select(&sel).next())
-        .map(|el| el.id())
-        .unwrap_or_else(|| root.id());
-
-    extract_md_recursive(&doc, start, &mut output);
-    collapse_whitespace(&output)
-}
-
-const SKIP_TAGS: &[&str] = &["script", "style", "noscript", "svg", "template"];
-const BLOCK_TAGS: &[&str] = &[
-    "p",
-    "div",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "li",
-    "tr",
-    "br",
-    "hr",
-    "section",
-    "article",
-    "header",
-    "footer",
-    "nav",
-    "main",
-    "blockquote",
-    "pre",
-    "table",
-    "ul",
-    "ol",
-    "dl",
-    "dt",
-    "dd",
-    "figcaption",
-    "figure",
-    "details",
-    "summary",
-];
-
-fn extract_text_recursive_scraper(doc: &scraper::Html, node_id: ego_tree::NodeId, output: &mut String) {
-    let node_ref = match doc.tree.get(node_id) {
-        Some(n) => n,
-        None => return,
-    };
-
-    match node_ref.value() {
-        scraper::Node::Text(text) => {
-            output.push_str(text);
-        }
-        scraper::Node::Element(el) => {
-            let tag = el.name.local.as_ref();
-            if SKIP_TAGS.contains(&tag) {
-                return;
-            }
-            let is_block = BLOCK_TAGS.contains(&tag);
-            if is_block {
-                output.push('\n');
-            }
-            for child in node_ref.children() {
-                extract_text_recursive_scraper(doc, child.id(), output);
-            }
-            if is_block {
-                output.push('\n');
-            }
-        }
-        scraper::Node::Document => {
-            for child in node_ref.children() {
-                extract_text_recursive_scraper(doc, child.id(), output);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn extract_md_recursive(doc: &scraper::Html, node_id: ego_tree::NodeId, output: &mut String) {
-    let node_ref = match doc.tree.get(node_id) {
-        Some(n) => n,
-        None => return,
-    };
-
-    match node_ref.value() {
-        scraper::Node::Text(text) => {
-            output.push_str(text);
-        }
-        scraper::Node::Element(el) => {
-            let tag = el.name.local.as_ref();
-            if SKIP_TAGS.contains(&tag) {
-                return;
-            }
-
-            match tag {
-                "h1" => {
-                    output.push_str("\n# ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "h2" => {
-                    output.push_str("\n## ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "h3" => {
-                    output.push_str("\n### ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "h4" => {
-                    output.push_str("\n#### ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "h5" => {
-                    output.push_str("\n##### ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "h6" => {
-                    output.push_str("\n###### ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "a" => {
-                    let href = el.attr("href").unwrap_or("");
-                    output.push('[');
-                    md_children(doc, node_ref, output);
-                    output.push_str("](");
-                    output.push_str(href);
-                    output.push(')');
-                }
-                "strong" | "b" => {
-                    output.push_str("**");
-                    md_children(doc, node_ref, output);
-                    output.push_str("**");
-                }
-                "em" | "i" => {
-                    output.push('_');
-                    md_children(doc, node_ref, output);
-                    output.push('_');
-                }
-                "code" => {
-                    output.push('`');
-                    md_children(doc, node_ref, output);
-                    output.push('`');
-                }
-                "pre" => {
-                    output.push_str("\n```\n");
-                    md_children(doc, node_ref, output);
-                    output.push_str("\n```\n");
-                }
-                "blockquote" => {
-                    output.push_str("\n> ");
-                    md_children(doc, node_ref, output);
-                    output.push('\n');
-                }
-                "li" => {
-                    // Check parent to decide bullet vs number
-                    if let Some(parent) = node_ref.parent() {
-                        if let scraper::Node::Element(pel) = parent.value() {
-                            if pel.name.local.as_ref() == "ol" {
-                                // Find our index among siblings
-                                let idx = parent.children()
-                                    .filter(|c| matches!(c.value(), scraper::Node::Element(e) if e.name.local.as_ref() == "li"))
-                                    .position(|c| c.id() == node_id)
-                                    .unwrap_or(0);
-                                output.push_str(&format!("\n{}. ", idx + 1));
-                            } else {
-                                output.push_str("\n- ");
-                            }
-                        } else {
-                            output.push_str("\n- ");
-                        }
-                    } else {
-                        output.push_str("\n- ");
-                    }
-                    md_children(doc, node_ref, output);
-                }
-                "br" => {
-                    output.push('\n');
-                }
-                "hr" => {
-                    output.push_str("\n---\n");
-                }
-                "img" => {
-                    let alt = el.attr("alt").unwrap_or("");
-                    if !alt.is_empty() {
-                        output.push_str(&format!("[image: {alt}]"));
-                    }
-                }
-                _ => {
-                    let is_block = BLOCK_TAGS.contains(&tag);
-                    if is_block {
-                        output.push('\n');
-                    }
-                    md_children(doc, node_ref, output);
-                    if is_block {
-                        output.push('\n');
-                    }
-                }
-            }
-        }
-        scraper::Node::Document => {
-            for child in node_ref.children() {
-                extract_md_recursive(doc, child.id(), output);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn md_children(doc: &scraper::Html, node_ref: ego_tree::NodeRef<scraper::Node>, output: &mut String) {
-    for child in node_ref.children() {
-        extract_md_recursive(doc, child.id(), output);
-    }
-}
-
-/// Collapse runs of whitespace and newlines into single space/newline, then trim.
-pub fn collapse_whitespace(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut prev_was_newline = false;
-    let mut prev_was_space = false;
-
-    for ch in input.chars() {
-        if ch == '\n' {
-            if !prev_was_newline {
-                result.push('\n');
-            }
-            prev_was_newline = true;
-            prev_was_space = false;
-        } else if ch.is_whitespace() {
-            if !prev_was_space && !prev_was_newline {
-                result.push(' ');
-            }
-            prev_was_space = true;
-        } else {
-            prev_was_newline = false;
-            prev_was_space = false;
-            result.push(ch);
-        }
-    }
-
-    result.trim().to_string()
+    Ok(evaluated.enforcement)
 }
 
 /// Paginate text: return (chunk, total_length, has_more).
@@ -1029,7 +907,7 @@ pub fn paginate(text: &str, start: usize, max: usize) -> (String, usize, bool) {
     if safe_start >= total {
         return (String::new(), total, false);
     }
-    let safe_end = text.floor_char_boundary((safe_start + max).min(total));
+    let safe_end = text.floor_char_boundary(safe_start.saturating_add(max).min(total));
     let chunk = &text[safe_start..safe_end];
     (chunk.to_string(), total, safe_end < total)
 }

@@ -77,7 +77,7 @@ pub struct ProvisionResponse {
     pub available_actions: Vec<VmAction>,
     /// The UDS path the per-VM capsem-process is listening on. Clients MUST
     /// use this value rather than recomputing it -- the service may fall back
-    /// to a short hashed path under /tmp/capsem/ when the preferred path
+    /// to a short hashed path under /tmp/capsem-<uid>/ when the preferred path
     /// would exceed SUN_LEN. See capsem_foundation::uds::instance_socket_path.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
@@ -818,7 +818,6 @@ pub struct TranscriptQuery {
     pub tail_lines: usize,
 }
 
-#[allow(dead_code)]
 fn default_tail_lines() -> usize {
     500
 }

@@ -320,6 +320,8 @@ fn test_obom_json() -> String {
 
 #[path = "tests/channel_build.rs"]
 mod channel_build;
+#[path = "tests/channel_build_bounds.rs"]
+mod channel_build_bounds;
 #[path = "tests/channel_validation.rs"]
 mod channel_validation;
 #[path = "tests/image_build.rs"]

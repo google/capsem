@@ -1317,6 +1317,7 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     assert "ENV RUSTUP_AUTO_INSTALL=0" in helper
     assert "ENV CARGO_NET_OFFLINE=true" in helper
     assert "cargo build --locked --offline -p capsem --bin capsem" in source
+    assert "mount=type=cache,id=capsem-install-source-cargo-${TARGETARCH}" in source
     assert "RUSTUP_AUTO_INSTALL=0" in source
     assert "COPY --from=source-cli --chmod=0555" in source
     assert config.install.source_cli in issued

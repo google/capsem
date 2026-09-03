@@ -52,7 +52,9 @@ impl RuntimeProfileConfig {
             .map_err(anyhow::Error::msg)
             .with_context(|| format!("validate {}", active_profile_path.display()))?;
         let (profile_settings, corp_settings) = active.merged_policy_inputs();
-        let merged = MergedPolicies::from_files(&profile_settings, &corp_settings);
+        let merged = MergedPolicies::from_files(&profile_settings, &corp_settings)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("merge active profile policies for {}", active.id))?;
         let mut network = merged.network;
         capsem_core::net::policy_config::apply_network_config(&active.network, &mut network);
         let security_rules = active

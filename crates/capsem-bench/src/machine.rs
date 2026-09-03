@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::Path;
 
-use capsem_core::proctable::Process;
+use capsem_foundation::proctable::Process;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::Host;
@@ -149,10 +149,8 @@ fn strays_from_processes(processes: &[Process], self_pid: u32) -> Vec<String> {
 }
 
 /// Capsem processes already running, which compete for the CPU being measured.
-pub fn running_capsem_processes() -> Vec<String> {
-    capsem_core::proctable::processes()
-        .map(|processes| strays_from_processes(&processes, std::process::id()))
-        .unwrap_or_default()
+pub fn running_capsem_processes() -> std::io::Result<Vec<String>> {
+    capsem_foundation::proctable::processes().map(|processes| strays_from_processes(&processes, std::process::id()))
 }
 
 /// Observe this machine and judge it.

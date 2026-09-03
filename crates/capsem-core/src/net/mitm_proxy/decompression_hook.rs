@@ -106,6 +106,23 @@ fn parse_gzip_header(buf: &[u8]) -> HeaderParse {
     HeaderParse::Parsed { header_len: pos }
 }
 
+/// Bound the total decompressed output to `remaining = cap - total`.
+///
+/// The streaming hook decompresses inline, so without a ceiling a hostile
+/// upstream's compression bomb inflates host memory (and the guest-forwarded
+/// body) without limit. Returns the bytes to emit (truncated to the remaining
+/// budget), the new running total, and whether the cap has now been reached.
+fn cap_decoded(total: usize, mut decoded: Vec<u8>, cap: usize) -> (Vec<u8>, usize, bool) {
+    let remaining = cap.saturating_sub(total);
+    if decoded.len() >= remaining {
+        decoded.truncate(remaining);
+        (decoded, cap, true)
+    } else {
+        let new_total = total + decoded.len();
+        (decoded, new_total, false)
+    }
+}
+
 /// Per-request decoder state.
 #[derive(Default)]
 struct DecompressionState {
@@ -114,6 +131,10 @@ struct DecompressionState {
     /// `is_gzip` and `decoder` only meaningful after `initialized`.
     is_gzip: bool,
     decoder: Option<Decompress>,
+    /// Running count of decompressed bytes emitted, and whether the cumulative
+    /// cap has been hit (further output is dropped once capped).
+    total_out: usize,
+    capped: bool,
     /// Pending bytes while we wait to either parse a complete gzip
     /// header or rule out gzip via magic-byte mismatch.
     header_buf: Vec<u8>,
@@ -199,6 +220,13 @@ impl ChunkHook for DecompressionHook {
 
         let state = ctx.state::<DecompressionState>(DecompressionState::default);
 
+        // Once the cumulative decompressed cap is hit, drop everything further:
+        // a compression bomb must not keep inflating host memory or the body.
+        if state.capped {
+            *chunk = Bytes::new();
+            return;
+        }
+
         if !state.initialized {
             // Append this chunk to the header buffer and try to parse.
             state.header_buf.extend_from_slice(chunk);
@@ -224,6 +252,10 @@ impl ChunkHook for DecompressionHook {
                     let buffered = std::mem::take(&mut state.header_buf);
                     let body = &buffered[header_len..];
                     let decoded = decompress_chunk(&mut decoder, body);
+                    let (decoded, total, capped) =
+                        cap_decoded(state.total_out, decoded, crate::net::decompress::MAX_DECOMPRESSED_BODY);
+                    state.total_out = total;
+                    state.capped = capped;
                     state.decoder = Some(decoder);
                     state.is_gzip = true;
                     state.initialized = true;
@@ -238,6 +270,10 @@ impl ChunkHook for DecompressionHook {
         }
         let decoder = state.decoder.as_mut().expect("is_gzip implies decoder initialized");
         let decoded = decompress_chunk(decoder, chunk);
+        let (decoded, total, capped) =
+            cap_decoded(state.total_out, decoded, crate::net::decompress::MAX_DECOMPRESSED_BODY);
+        state.total_out = total;
+        state.capped = capped;
         *chunk = Bytes::from(decoded);
     }
 

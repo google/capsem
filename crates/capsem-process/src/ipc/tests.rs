@@ -135,7 +135,7 @@ revision = "test.1"
                     }],
                 },
                 capsem_proto::mcp_aggregator::AggregatorMethod::Refresh { .. } => AggregatorResult::Ok { ok: true },
-                capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments } => {
+                capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments, .. } => {
                     AggregatorResult::CallResult {
                         result: serde_json::json!({"tool": name, "arguments": arguments}),
                     }
@@ -376,6 +376,36 @@ revision = "test.1"
             error: Some(error),
         } if error == "write fixture failed"
     ));
+
+    // A write the guest could never decode is refused at once with the
+    // reason, instead of being framed, dropped by the guest, and replayed
+    // until the watchdog gives up.
+    service_tx
+        .send(ServiceToProcess::WriteFile {
+            id: 21,
+            path: "/root/huge.bin".to_string(),
+            data: vec![0u8; capsem_proto::MAX_FRAME_SIZE as usize + 1],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        service_rx.recv().await.unwrap(),
+        ProcessToService::WriteFileResult {
+            id: 21,
+            success: false,
+            error: Some(error),
+        } if error.contains("too large")
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), ctrl_rx.recv())
+            .await
+            .is_err(),
+        "an oversized WriteFile must never reach the guest bridge"
+    );
+    assert!(
+        !job_store.jobs.lock().unwrap().contains_key(&21),
+        "no job may be parked for a refused write"
+    );
 
     service_tx
         .send(ServiceToProcess::ReadFile {

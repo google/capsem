@@ -5,11 +5,11 @@ through the real gateway binary against the mock UDS service.
 """
 
 import os
-import subprocess
 import tempfile
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID
+from helpers.gateway import TcpHttpClient
 
 pytestmark = pytest.mark.gateway
 
@@ -68,23 +68,10 @@ class TestProxyEndpointCoverage:
 
     def test_post_inspect_not_forwarded(self, gw_client):
         """Raw SQL inspection is not a gateway product route."""
-        result = subprocess.run(
-            [
-                "curl", "-s", "-S",
-                "-o", "/dev/null",
-                "-w", "%{http_code}",
-                "-X", "POST",
-                "-H", "Content-Type: application/json",
-                "-H", f"Authorization: Bearer {gw_client.token}",
-                "-d", '{"sql":"SELECT 1"}',
-                f"{gw_client.base_url}/vms/11111111-1111-4111-8111-111111111111/inspect",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert result.stdout.strip() == "404"
+        status = gw_client.call(
+            "POST", "/vms/11111111-1111-4111-8111-111111111111/inspect", body=b'{"sql":"SELECT 1"}'
+        )[0]
+        assert status == 404
 
     def test_post_persist(self, gw_client):
         """POST /vms/{id}/save converts ephemeral to persistent."""
@@ -176,44 +163,37 @@ class TestProxyEdgeCases:
             f.write(b"x" * (10 * 1024 * 1024))
             tmp_path = f.name
         try:
-            result = subprocess.run(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                 "--max-time", "30", "-X", "POST",
-                 "-H", f"Authorization: Bearer {gateway_env.token}",
-                 "-H", "Content-Type: application/octet-stream",
-                 "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/boundary.bin"],
-                capture_output=True, text=True, timeout=60,
-            )
-            status = result.stdout.strip()
+            with open(tmp_path, "rb") as payload:
+                status = TcpHttpClient(gateway_env.base_url, gateway_env.token).call(
+                    "POST",
+                    "/vms/11111111-1111-4111-8111-111111111111/files/content?path=/root/boundary.bin",
+                    body=payload.read(),
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=30,
+                )[0]
             # 10MB exactly should be accepted (limit rejects >10MB)
-            assert status == "200", f"10MB body returned {status}, expected 200"
+            assert status == 200, f"10MB body returned {status}, expected 200"
         finally:
             os.unlink(tmp_path)
 
     def test_head_request_through_gateway(self, gateway_env):
         """HEAD request is forwarded and returns no body."""
-        result = subprocess.run(
-            ["curl", "-s", "-D", "-", "-o", "/dev/null",
-             "--max-time", "5", "-X", "HEAD",
-             "-H", f"Authorization: Bearer {gateway_env.token}",
-             f"http://127.0.0.1:{gateway_env.port}/vms/list"],
-            capture_output=True, text=True, timeout=10,
-        )
+        status, headers, body = TcpHttpClient(gateway_env.base_url, gateway_env.token).call("HEAD", "/vms/list")
         # HEAD should return headers but no body
-        assert "HTTP/" in result.stdout
+        assert status > 0 and headers
+        assert body == b""
 
     def test_options_request_cors(self, gateway_env):
         """OPTIONS preflight returns CORS headers without auth."""
-        result = subprocess.run(
-            ["curl", "-s", "-D", "-",
-             "--max-time", "5", "-X", "OPTIONS",
-             "-H", "Origin: http://localhost:3000",
-             "-H", "Access-Control-Request-Method: POST",
-             "-H", "Access-Control-Request-Headers: authorization,content-type",
-             f"http://127.0.0.1:{gateway_env.port}/vms/create"],
-            capture_output=True, text=True, timeout=10,
+        _, headers, _ = TcpHttpClient(gateway_env.base_url, gateway_env.token).call(
+            "OPTIONS",
+            "/vms/create",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+            use_auth=False,
         )
-        headers = result.stdout.lower()
         assert "access-control-allow-origin" in headers
         assert "access-control-allow-methods" in headers

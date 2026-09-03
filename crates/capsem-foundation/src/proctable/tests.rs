@@ -1,4 +1,4 @@
-//! The shared enumerator has to find real processes; the cheapest real process
+//! The shared process enumerator has to find real processes; the cheapest one
 //! to assert about is the one running the test.
 
 use super::{processes, running_processes};

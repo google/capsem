@@ -1,6 +1,6 @@
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 use tracing::warn;
 
@@ -9,7 +9,8 @@ use crate::{credential_store_account, CredentialProvider};
 
 pub const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
 
-static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(test)]
+mod tests;
 
 pub(crate) fn backend_name() -> &'static str {
     if store_path_override().is_some() {
@@ -57,27 +58,19 @@ fn disk_store_write(
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    let _guard = store_lock()
-        .lock()
-        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let _guard = StoreLock::exclusive(path)?;
     let mut map = disk_store_load(path)?;
     map.insert(
         credential_store_account(provider, credential_ref),
         raw_value.to_string(),
     );
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("create credential store dir: {error}"))?;
-    }
     let json =
         serde_json::to_string_pretty(&map).map_err(|error| format!("serialize credential disk store: {error}"))?;
-    std::fs::write(path, json).map_err(|error| format!("write credential disk store: {error}"))?;
-    restrict_secret_file(path)
+    write_secret_file(path, json.as_bytes())
 }
 
 fn disk_store_read(path: &Path, provider: CredentialProvider, credential_ref: &str) -> Result<String, String> {
-    let _guard = store_lock()
-        .lock()
-        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let _guard = StoreLock::shared(path)?;
     let map = disk_store_load(path)?;
     let account = credential_store_account(provider, credential_ref);
     map.get(&account)
@@ -86,9 +79,7 @@ fn disk_store_read(path: &Path, provider: CredentialProvider, credential_ref: &s
 }
 
 fn disk_store_hydrate(path: &Path) -> Result<Vec<(CredentialProvider, String, String)>, String> {
-    let _guard = store_lock()
-        .lock()
-        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let _guard = StoreLock::shared(path)?;
     let map = disk_store_load(path)?;
     let mut entries = Vec::new();
     for (account, raw_value) in map {
@@ -101,8 +92,53 @@ fn disk_store_hydrate(path: &Path) -> Result<Vec<(CredentialProvider, String, St
     Ok(entries)
 }
 
-fn store_lock() -> &'static Mutex<()> {
-    STORE_LOCK.get_or_init(|| Mutex::new(()))
+/// Cross-process lock on the store, held for one read-modify-write.
+///
+/// Every `capsem-process` on the host captures into the same file, and a
+/// capture is load -> insert -> write-temp -> rename. A process-local mutex
+/// orders that inside one process only; two processes interleave and the
+/// later rename drops everything the earlier one added. The lock is an
+/// `flock(2)` on a sibling file (never the store itself: the store is renamed
+/// into place, so a lock on its inode would not survive the swap) and is
+/// taken before the load, so the map written is the map that was read.
+struct StoreLock {
+    _file: File,
+}
+
+impl StoreLock {
+    fn exclusive(store: &Path) -> Result<Self, String> {
+        let file = Self::open(store)?;
+        file.lock().map_err(|error| format!("lock credential store: {error}"))?;
+        Ok(Self { _file: file })
+    }
+
+    fn shared(store: &Path) -> Result<Self, String> {
+        let file = Self::open(store)?;
+        file.lock_shared()
+            .map_err(|error| format!("lock credential store for reading: {error}"))?;
+        Ok(Self { _file: file })
+    }
+
+    fn open(store: &Path) -> Result<File, String> {
+        let parent = store
+            .parent()
+            .ok_or_else(|| "credential store path has no parent directory".to_string())?;
+        std::fs::create_dir_all(parent).map_err(|error| format!("create credential store dir: {error}"))?;
+        let file_name = store
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("credential-store.json");
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options
+            .open(parent.join(format!(".{file_name}.lock")))
+            .map_err(|error| format!("open credential store lock: {error}"))
+    }
 }
 
 fn disk_store_load(path: &Path) -> Result<HashMap<String, String>, String> {
@@ -121,14 +157,51 @@ fn parse_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
     Some((credential_provider_from_str(provider)?, credential_ref))
 }
 
+/// Write the plaintext credential store owner-only and atomically.
+///
+/// The store holds every provider's raw secret, so it must never exist even
+/// briefly as a world-readable file. The previous `fs::write` + `chmod` left a
+/// 0644 window under the default umask. Here the bytes go into a sibling temp
+/// created 0600, then a rename swings it into place -- the target is never
+/// observable at looser permissions or as a partial file.
 #[cfg(unix)]
-fn restrict_secret_file(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("restrict credential disk store permissions: {error}"))
+fn write_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "credential store path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("credential-store.json");
+    let tmp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|error| format!("create credential store temp: {error}"))?;
+    // `.mode()` applies only when the temp is freshly created; a pre-existing
+    // temp keeps its old mode, so force 0600 before any secret is written.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("restrict credential store temp: {error}"))?;
+    file.write_all(data)
+        .map_err(|error| format!("write credential store temp: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync credential store temp: {error}"))?;
+    drop(file);
+
+    std::fs::rename(&tmp, path).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename credential store into place: {error}")
+    })
 }
 
 #[cfg(not(unix))]
-fn restrict_secret_file(_path: &Path) -> Result<(), String> {
-    Ok(())
+fn write_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    std::fs::write(path, data).map_err(|error| format!("write credential disk store: {error}"))
 }

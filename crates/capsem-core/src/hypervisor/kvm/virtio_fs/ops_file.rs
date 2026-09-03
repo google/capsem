@@ -4,8 +4,24 @@ use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::os::unix::fs::PermissionsExt;
 
+use std::os::unix::fs::OpenOptionsExt;
+
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
+
+/// Every host open on behalf of the guest: never follow a final symlink, never
+/// block on a special file, never leak the fd across exec. Regular files ignore
+/// `O_NONBLOCK`, so data I/O is unchanged.
+pub(super) const NO_FOLLOW_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+
+/// The errno for opening `path` as a file: it must exist and be regular.
+pub(super) fn require_regular_file(path: &std::path::Path) -> Result<(), i32> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => Ok(()),
+        Ok(_) => Err(libc::EACCES),
+        Err(e) => Err(fuse::io_error_to_errno(&e)),
+    }
+}
 
 impl FuseProcessor {
     pub(super) fn do_open(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -17,6 +33,19 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        // Containment: opening follows a final symlink, and a guest symlink can
+        // point outside the share. Resolve to a canonical in-share path first
+        // (intra-workspace symlinks still work); refuse anything that escapes.
+        let path = match self.inodes.contained_target(&path) {
+            Some(p) => p,
+            None => return fuse::error_response(header.unique, -libc::EACCES),
+        };
+        // Only regular files are opened here (the guest kernel handles FIFOs
+        // and devices itself); open(2) on a FIFO would park the single FUSE
+        // worker until a peer appeared, taking the whole share with it.
+        if let Err(errno) = require_regular_file(&path) {
+            return fuse::error_response(header.unique, -errno);
+        }
 
         let flags = open_in.flags as i32;
         let accmode = flags & libc::O_ACCMODE;
@@ -32,6 +61,7 @@ impl FuseProcessor {
             .write(writable)
             .append(append)
             .truncate(flags & libc::O_TRUNC != 0)
+            .custom_flags(NO_FOLLOW_FLAGS)
             .open(&path)
         {
             Ok(f) => f,
@@ -142,6 +172,7 @@ impl FuseProcessor {
                     .write(true)
                     .append(flags & libc::O_APPEND != 0)
                     .create_new(true)
+                    .custom_flags(NO_FOLLOW_FLAGS)
                     .open(&child_path)
                 {
                     Ok(f) => f,
@@ -169,11 +200,19 @@ impl FuseProcessor {
             }
         };
 
-        // File already exists -- open it
-        let path = match self.inodes.get(ino) {
+        // File already exists -- open it, with the same containment as OPEN:
+        // a guest symlink at this name must not be followed to its target.
+        let stored = match self.inodes.get(ino) {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
+        let path = match self.inodes.contained_target(&stored) {
+            Some(p) => p,
+            None => return fuse::error_response(header.unique, -libc::EACCES),
+        };
+        if let Err(errno) = require_regular_file(&path) {
+            return fuse::error_response(header.unique, -errno);
+        }
         let flags = create_in.flags as i32;
         let accmode = flags & libc::O_ACCMODE;
         let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
@@ -182,6 +221,7 @@ impl FuseProcessor {
             .write(true)
             .append(flags & libc::O_APPEND != 0)
             .truncate(flags & libc::O_TRUNC != 0)
+            .custom_flags(NO_FOLLOW_FLAGS)
             .open(&path)
         {
             Ok(f) => f,

@@ -7,8 +7,6 @@ gateway is allowed to forward it.
 
 from __future__ import annotations
 
-import json
-import subprocess
 from typing import Any
 
 from helpers.route_matrix import RouteSpec, assert_profile_route_matrix
@@ -17,29 +15,9 @@ PROFILES = ("code", "co-work")
 
 
 def _uds_request(client: Any, spec: RouteSpec) -> Any:
-    cmd = [
-        "curl",
-        "-s",
-        "-S",
-        "--unix-socket",
-        client.socket_path,
-        "-X",
-        spec.method,
-        "-H",
-        "Content-Type: application/json",
-        "-w",
-        "\n%{http_code}",
-        "--max-time",
-        "30",
-        f"http://localhost{spec.path}",
-    ]
-    if spec.body is not None:
-        cmd.extend(["-d", json.dumps(spec.body)])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-    assert result.returncode == 0, (spec.path, result.stderr)
-    body, _, status_text = result.stdout.rpartition("\n")
-    assert status_text == "200", (spec.path, status_text, body)
-    return json.loads(body)
+    status, payload = client.call_json(spec.method, spec.path, spec.body, timeout=30)
+    assert status == 200, (spec.path, status, payload)
+    return payload
 
 
 def test_profile_route_contract_exists_for_every_ui_profile(client: Any) -> None:

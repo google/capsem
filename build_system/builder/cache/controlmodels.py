@@ -134,6 +134,13 @@ class DockerControlPolicy(BaseModel):
             raise ValueError("Docker image repositories must be unique")
         return self
 
+    def image_generation_limit(self, repository: str, *, default: int) -> int:
+        """Return the configured total generations retained for a repository."""
+        for image in self.images.values():
+            if image.repository == repository and image.maximum_count is not None:
+                return image.maximum_count
+        return default
+
 
 class FailureArtifactPolicy(BaseModel):
     """Bounded evidence retained when an expensive gate fails."""

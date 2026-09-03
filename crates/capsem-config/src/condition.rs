@@ -119,6 +119,7 @@ impl ConditionAtom {
         if let Some(inner) = atom.strip_prefix("has(").and_then(|s| s.strip_suffix(')')) {
             let field = inner.trim();
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::Has {
                 field: field.to_string(),
             });
@@ -127,6 +128,7 @@ impl ConditionAtom {
         for method in ["matches", "contains", "endsWith", "startsWith"] {
             if let Some((field, argument)) = parse_method_call(atom, method)? {
                 validate(field)?;
+                validate_field_name(field)?;
                 let expected = parse_string_literal(argument)?;
                 let method = match method {
                     "matches" => StringMethod::Matches {
@@ -146,6 +148,7 @@ impl ConditionAtom {
 
         if let Some(field) = parse_zero_arg_method_call(atom, "contains_pii")? {
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::ContainsPii {
                 field: field.to_string(),
             });
@@ -153,6 +156,7 @@ impl ConditionAtom {
 
         if let Some((field, operator, value)) = parse_comparison(atom)? {
             validate(field)?;
+            validate_field_name(field)?;
             return Ok(Self::Comparison {
                 field: field.to_string(),
                 operator,
@@ -464,35 +468,101 @@ fn find_operator(atom: &str, operator: &str) -> Result<Option<usize>, String> {
     Ok(None)
 }
 
+/// A field name must be present and shaped like a dotted path; `has()` or
+/// `== "x"` with nothing in front compiled to an atom that could never match.
+fn validate_field_name(field: &str) -> Result<(), String> {
+    if field.is_empty() {
+        return Err("policy condition names an empty field".into());
+    }
+    if field.split('.').any(|segment| segment.is_empty())
+        || !field
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    {
+        return Err(format!("policy condition field {field:?} is not a dotted identifier"));
+    }
+    Ok(())
+}
+
+/// Decode one quoted CEL string literal.
+///
+/// Rule generators emit JSON-escaped literals and rule authors write CEL
+/// escapes; both must compare against the decoded value, or a rule whose value
+/// holds a quote, a backslash, or a newline compiles and never matches. Only
+/// the escapes that JSON, CEL and the regex engine all read the same way are
+/// decoded: `\\ \" \' \/ \n \t \r \xHH \uHHHH \UHHHHHHHH`. Every other
+/// backslash sequence is kept verbatim, because the shipped rules write regex
+/// classes as `\.` and `\d` inside `matches()` literals and a regex reads
+/// `\b` as a word boundary, not a backspace. So `"\\."` and `"\."` both reach
+/// the regex engine as `\.`.
 fn parse_string_literal(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.len() < 2 {
-        return Err("CEL comparison value must be a string literal".into());
-    }
+    let mut chars = value.trim().chars();
+    let quote = match chars.next() {
+        Some(quote @ ('\'' | '"')) => quote,
+        _ => return Err("CEL comparison value must be a string literal".into()),
+    };
 
-    let quote = value.as_bytes()[0] as char;
-    if quote != '\'' && quote != '"' {
-        return Err("CEL comparison value must be a string literal".into());
-    }
-
-    let mut escaped = false;
-    for (index, ch) in value[1..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
+    let mut out = String::new();
+    while let Some(ch) = chars.next() {
         if ch == quote {
-            let close = index + 1;
-            if !value[close + 1..].trim().is_empty() {
+            if !chars.as_str().trim().is_empty() {
                 return Err("CEL string literal has trailing content".into());
             }
-            return Ok(value[1..close].to_string());
+            return Ok(out);
         }
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(escape) = chars.next() else { break };
+        let decoded = match escape {
+            '\\' | '"' | '\'' | '/' => escape,
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            'x' => char_from_code(take_hex(&mut chars, 2)?)?,
+            'u' => {
+                let code = take_hex(&mut chars, 4)?;
+                if (0xD800..=0xDBFF).contains(&code) {
+                    if chars.next() != Some('\\') || chars.next() != Some('u') {
+                        return Err("CEL string literal has a lone high surrogate escape".into());
+                    }
+                    let low = take_hex(&mut chars, 4)?;
+                    if !(0xDC00..=0xDFFF).contains(&low) {
+                        return Err("CEL string literal has an invalid surrogate pair escape".into());
+                    }
+                    char_from_code(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00))?
+                } else {
+                    char_from_code(code)?
+                }
+            }
+            'U' => char_from_code(take_hex(&mut chars, 8)?)?,
+            other => {
+                out.push('\\');
+                other
+            }
+        };
+        out.push(decoded);
     }
 
     Err("policy condition has an unterminated string literal".into())
 }
+
+fn take_hex(chars: &mut std::str::Chars<'_>, count: usize) -> Result<u32, String> {
+    let mut code = 0u32;
+    for _ in 0..count {
+        let digit = chars
+            .next()
+            .and_then(|ch| ch.to_digit(16))
+            .ok_or_else(|| format!("CEL string literal escape needs {count} hex digits"))?;
+        code = code * 16 + digit;
+    }
+    Ok(code)
+}
+
+fn char_from_code(code: u32) -> Result<char, String> {
+    char::from_u32(code).ok_or_else(|| format!("CEL string literal escape U+{code:04X} is not a character"))
+}
+
+#[cfg(test)]
+mod tests;

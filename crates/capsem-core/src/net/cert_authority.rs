@@ -1,20 +1,27 @@
 /// Certificate authority for MITM proxy: loads the static Capsem CA keypair
 /// and mints short-lived leaf certificates on demand for each domain.
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, RwLock};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
+
+use lru::LruCache;
 
 use rcgen::{CertificateParams, IsCa, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::ClientHello;
 use rustls::sign::CertifiedKey;
 
+/// Most leaf certificates kept alive at once. The guest chooses the SNI, so
+/// an unbounded map let a loop over random names grow host memory for the
+/// life of the VM; a real workload talks to far fewer hosts than this.
+const LEAF_CACHE_CAPACITY: usize = 1024;
+
 /// Holds the static CA keypair and caches minted leaf certificates.
 pub struct CertAuthority {
     ca_cert: rcgen::Certificate,
     ca_key: KeyPair,
     ca_cert_der: CertificateDer<'static>,
-    cache: RwLock<HashMap<String, Arc<CertifiedKey>>>,
+    cache: Mutex<LruCache<String, Arc<CertifiedKey>>>,
 }
 
 impl CertAuthority {
@@ -33,41 +40,31 @@ impl CertAuthority {
             ca_cert,
             ca_key,
             ca_cert_der,
-            cache: RwLock::new(HashMap::new()),
+            cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(LEAF_CACHE_CAPACITY).expect("leaf cache capacity is non-zero"),
+            )),
         })
     }
 
-    /// Get or mint a `CertifiedKey` for the given domain.
-    ///
-    /// Uses a `RwLock` cache: read-lock for cache hits, write-lock only on miss.
-    /// Leaf certs are ECDSA P-256, valid from 2026-01-01 to now+1y, with SAN=domain.
+    /// Get or mint a `CertifiedKey` for the given domain, keyed on its
+    /// normalized form. Leaf certs are ECDSA P-256, valid from 2026-01-01 to
+    /// now+1y, with SAN=domain. Minting takes well under a millisecond, so it
+    /// happens under the lock rather than racing two mints for one name.
     pub fn certified_key_for_domain(&self, domain: &str) -> anyhow::Result<Arc<CertifiedKey>> {
-        // Fast path: cache hit under read lock.
-        {
-            let cache = self.cache.read().unwrap();
-            if let Some(key) = cache.get(domain) {
-                return Ok(Arc::clone(key));
-            }
+        let host = crate::net::hostname::normalize_host(domain);
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(key) = cache.get(&host) {
+            return Ok(Arc::clone(key));
         }
-
-        // Slow path: mint and cache under write lock.
-        let mut cache = self.cache.write().unwrap();
-        // Double-check after acquiring write lock (another thread may have raced).
-        if let Some(key) = cache.get(domain).map(Arc::clone) {
-            drop(cache);
-            return Ok(key);
-        }
-
-        let certified_key = self.mint_leaf(domain)?;
-        let arc = Arc::new(certified_key);
-        cache.insert(domain.to_string(), Arc::clone(&arc));
+        let arc = Arc::new(self.mint_leaf(&host)?);
+        cache.put(host, Arc::clone(&arc));
         drop(cache);
         Ok(arc)
     }
 
     /// Number of cached certificates.
     pub fn cache_size(&self) -> usize {
-        self.cache.read().unwrap().len()
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Mint a leaf certificate for the given domain, signed by the CA.
@@ -137,13 +134,20 @@ impl fmt::Debug for MitmCertResolver {
 
 impl rustls::server::ResolvesServerCert for MitmCertResolver {
     fn resolve(&self, hello: ClientHello) -> Option<Arc<CertifiedKey>> {
-        let domain = hello.server_name()?;
-        *self.resolved_domain.lock().unwrap() = Some(domain.to_owned());
+        // The SNI is guest-controlled. Normalize it once here so the domain
+        // handed to policy, dial, and telemetry is the same identity the leaf
+        // is minted for: rustls accepts `Example.COM.` and a rule on
+        // `example.com` must still fire.
+        let domain = crate::net::hostname::normalize_host(hello.server_name()?);
+        if domain.is_empty() {
+            return None;
+        }
+        *self.resolved_domain.lock().unwrap_or_else(|e| e.into_inner()) = Some(domain.clone());
 
         // Always mint a cert, even for blocked domains. This lets us complete
         // the TLS handshake, read the HTTP request (method, path), and return
         // a proper 403 response with telemetry.
-        self.ca.certified_key_for_domain(domain).ok()
+        self.ca.certified_key_for_domain(&domain).ok()
     }
 }
 

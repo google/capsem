@@ -113,3 +113,78 @@ fn a_real_collector_round_trips() {
     let collected = error.expect("echo is a valid collector");
     assert_eq!(collected.metrics["cpu_s"].samples.len(), 3);
 }
+
+const FLOOD_THEN_DOCUMENT: &str = "head -c 204800 /dev/zero | tr '\\0' a; echo; printf '%s\\n' \"$1\"";
+
+#[test]
+fn a_collector_that_prints_more_than_a_pipe_buffer_completes_promptly() {
+    // stdout is a pipe with a 64 KiB buffer. A collector that prints more
+    // than that before exiting blocks on write until someone reads, and a
+    // runner that only reads after exit turns every chatty collector into a
+    // reported timeout.
+    let started = std::time::Instant::now();
+    let collected = run(
+        Path::new("sh"),
+        &[
+            "-c".to_string(),
+            FLOOD_THEN_DOCUMENT.to_string(),
+            "sh".to_string(),
+            SAMPLE.to_string(),
+        ],
+        Duration::from_secs(20),
+    )
+    .expect("a chatty collector still completes");
+    assert_eq!(collected.metrics["cpu_s"].samples.len(), 3);
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "must not wait for the timeout: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_collector_that_floods_stdout_then_hangs_is_still_killed() {
+    let script = "head -c 204800 /dev/zero | tr '\\0' a; exec sleep 30";
+    let started = std::time::Instant::now();
+    let error = run(
+        Path::new("sh"),
+        &["-c".to_string(), script.to_string()],
+        Duration::from_millis(500),
+    )
+    .expect_err("must time out");
+    assert!(error.to_string().contains("did not finish"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+}
+
+#[test]
+fn a_collector_that_floods_stdout_and_fails_reports_its_status() {
+    let script = "head -c 204800 /dev/zero | tr '\\0' a; exit 3";
+    let error = run(
+        Path::new("sh"),
+        &["-c".to_string(), script.to_string()],
+        Duration::from_secs(20),
+    )
+    .expect_err("must refuse");
+    assert!(error.to_string().contains("exited with 3"), "{error}");
+}
+
+#[test]
+fn a_grandchild_holding_stdout_open_after_exit_is_bounded_by_the_deadline() {
+    // The collector exits cleanly, but a background process it started still
+    // holds the stdout pipe; EOF would arrive only when that process ends.
+    let script = "sleep 5 & printf '%s\\n' \"$1\"; exit 0";
+    let started = std::time::Instant::now();
+    let error = run(
+        Path::new("sh"),
+        &[
+            "-c".to_string(),
+            script.to_string(),
+            "sh".to_string(),
+            SAMPLE.to_string(),
+        ],
+        Duration::from_millis(500),
+    )
+    .expect_err("must not wait for the grandchild");
+    assert!(error.to_string().contains("stdout stayed open"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+}

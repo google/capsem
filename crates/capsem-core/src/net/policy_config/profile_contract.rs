@@ -1247,7 +1247,7 @@ impl ActiveProfileFile {
             network: corp.network.clone(),
             ..SettingsFile::default()
         };
-        let merged_network = super::builder::MergedPolicies::from_files(&network_profile, &network_corp).network;
+        let merged_network = super::builder::MergedPolicies::from_files(&network_profile, &network_corp)?.network;
         let mut network = super::builder::network_config_from_policy_and_dns(&merged_network, corp.network.dns.clone());
         network.upstream_overrides = corp.network.upstream_overrides.clone();
 
@@ -1304,7 +1304,7 @@ impl ActiveProfileFile {
     pub fn compile_security_rule_set(&self) -> Result<SecurityRuleSet, String> {
         self.validate()?;
         let (profile, corp) = self.merged_policy_inputs();
-        Ok(super::builder::MergedPolicies::from_files(&profile, &corp).security_rules)
+        Ok(super::builder::MergedPolicies::from_files(&profile, &corp)?.security_rules)
     }
 
     pub fn model_endpoint_registry(&self) -> Result<ModelEndpointRegistry, String> {

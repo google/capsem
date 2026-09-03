@@ -94,18 +94,65 @@ impl InodeTable {
         Ok(canonical)
     }
 
+    /// Join `name` under `parent_ino`, only if the parent is a real in-share
+    /// directory reached without any symlink (see `contained_dir`). Every
+    /// namespace operation builds its host path here, so a symlink inode --
+    /// or a directory the guest has since replaced with a link -- can never be
+    /// the parent of a create, unlink, rename, mkdir, mknod, symlink or link.
     pub fn child_path(&self, parent_ino: u64, name: &[u8]) -> Option<PathBuf> {
         let name_str = valid_child_name(name)?;
-        Some(self.entries.get(&parent_ino)?.host_path.join(name_str))
+        Some(self.contained_dir(parent_ino)?.join(name_str))
+    }
+
+    /// The inode's stored path, if it is a directory inside the share whose
+    /// path contains no symlink component.
+    ///
+    /// The host must never follow a guest-controlled symlink. A symlink inode
+    /// stores its own link path, and a guest can also remove a directory and
+    /// put a link at its old name after the inode was looked up, so the stored
+    /// path is re-verified at use: it must canonicalize to itself. The FUSE
+    /// worker is single-threaded, so the guest cannot change the tree between
+    /// this check and the operation that follows it.
+    pub(crate) fn contained_dir(&self, ino: u64) -> Option<PathBuf> {
+        let path = self.get(ino)?;
+        if !self.is_contained_real_path(path) {
+            return None;
+        }
+        std::fs::symlink_metadata(path)
+            .ok()
+            .filter(std::fs::Metadata::is_dir)
+            .map(|_| path.clone())
+    }
+
+    /// `path` is inside the share and no component of it is a symlink.
+    pub(crate) fn is_contained_real_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.root_canonical) && path.canonicalize().is_ok_and(|canonical| canonical == path)
+    }
+
+    /// `path` names an existing entry (regular file, directory, symlink, or
+    /// special file) whose parent directory is contained and symlink-free, so
+    /// a no-follow operation on the entry itself stays inside the share.
+    pub(crate) fn is_contained_entry(&self, path: &Path) -> bool {
+        path.parent().is_some_and(|parent| self.is_contained_real_path(parent))
+            && std::fs::symlink_metadata(path).is_ok()
+    }
+
+    /// Canonicalize `path` and return it only if it resolves inside the share.
+    ///
+    /// A symlink inode stores its own in-root path (so readlink et al. operate
+    /// on the link, not its target), so any operation that *follows* the link
+    /// to a real file must first prove the target stays within the share. Guest
+    /// symlinks can point anywhere; without this a `ln -s /etc/passwd escape`
+    /// inside the workspace would be followed straight to the host file.
+    pub(crate) fn contained_target(&self, path: &Path) -> Option<PathBuf> {
+        let canonical = path.canonicalize().ok()?;
+        canonical.starts_with(&self.root_canonical).then_some(canonical)
     }
 
     /// Resolve a child name under a parent inode. Returns inode number.
     /// Validates path traversal security: the resolved path must be under root.
     pub fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> Option<u64> {
-        let name_str = valid_child_name(name)?;
-
-        let parent_path = self.entries.get(&parent_ino)?.host_path.clone();
-        let child_path = parent_path.join(name_str);
+        let child_path = self.child_path(parent_ino, name)?;
         let meta = std::fs::symlink_metadata(&child_path).ok()?;
         let entry_path = if meta.file_type().is_symlink() {
             child_path

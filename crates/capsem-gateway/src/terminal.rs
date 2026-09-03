@@ -110,7 +110,7 @@ fn validate_vm_id(id: &str) -> Result<(), &'static str> {
 }
 
 /// Derive the per-VM WebSocket UDS path from the service socket and VM ID.
-fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> PathBuf {
+fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> std::io::Result<PathBuf> {
     let run_dir = service_uds
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -131,7 +131,17 @@ pub async fn handle_terminal_ws(
             .into_response();
     }
 
-    let uds_path = terminal_uds_path(&state.uds_path, &id);
+    let uds_path = match terminal_uds_path(&state.uds_path, &id) {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::error!(%id, error = %e, "terminal socket path unavailable");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": format!("terminal socket path unavailable: {e}")})),
+            )
+                .into_response();
+        }
+    };
 
     ws.on_upgrade(move |socket| handle_socket(socket, uds_path))
         .into_response()

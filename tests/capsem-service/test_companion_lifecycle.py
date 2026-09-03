@@ -33,6 +33,7 @@ from pathlib import Path
 
 import psutil
 import pytest
+from helpers.http_transport import Transport
 from helpers.service import ServiceInstance
 from helpers.sign import sign_binary
 
@@ -840,24 +841,14 @@ def _spawn_service_on_fixed_port(
     start = time.time()
     while time.time() - start < 15:
         if uds_path.exists():
+            probe = Transport(socket_path=str(uds_path))
             try:
-                r = subprocess.run(
-                    [
-                        "curl",
-                        "-s",
-                        "--unix-socket",
-                        str(uds_path),
-                        "--max-time",
-                        "2",
-                        "http://localhost/vms/list",
-                    ],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if r.returncode == 0:
-                    return proc
+                probe.request("GET", "/vms/list", timeout=2)
+                return proc
             except Exception:
                 pass
+            finally:
+                probe.close()
         time.sleep(0.1)
     proc.kill()
     proc.wait(timeout=5)

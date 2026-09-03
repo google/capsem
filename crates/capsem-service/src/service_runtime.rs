@@ -166,7 +166,7 @@ pub(super) async fn run_service() -> Result<()> {
     });
 
     let registry_path = run_dir.join("persistent_registry.json");
-    let persistent_registry = PersistentRegistry::load(registry_path);
+    let persistent_registry = PersistentRegistry::load(registry_path)?;
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"
@@ -240,7 +240,7 @@ pub(super) async fn run_service() -> Result<()> {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(persistent_registry),
+        persistent_registry: SharedRegistry::new(persistent_registry),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
@@ -487,7 +487,7 @@ pub(super) fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path
 /// SIGTERM -> 2s poll -> SIGKILL. An unreadable table is reported; no matching
 /// process is ordinary and silent.
 pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let table = match capsem_core::proctable::running_processes() {
+    let table = match capsem_foundation::proctable::running_processes() {
         Ok(table) => table,
         // Loudly. This used to shell out to `ps` and return silently when the
         // spawn failed, which is indistinguishable from finding no orphans --

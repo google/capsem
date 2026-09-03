@@ -38,30 +38,8 @@ def _gateway_request(client: TcpHttpClient, spec: RouteSpec) -> Any:
 
 
 def _gateway_post_status_and_body(client: TcpHttpClient, spec: RouteSpec) -> tuple[int, str]:
-    import subprocess
-
-    cmd = [
-        "curl",
-        "-s",
-        "-S",
-        "-X",
-        "POST",
-        "-H",
-        f"Authorization: Bearer {client.token}",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        json.dumps(spec.body or {}),
-        "-w",
-        "\n%{http_code}",
-        "--max-time",
-        "30",
-        f"{client.base_url}{spec.path}",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-    assert result.returncode == 0, (spec.path, result.stderr)
-    body, _, status_text = result.stdout.rpartition("\n")
-    return int(status_text), body
+    status, _, body = client.call("POST", spec.path, body=json.dumps(spec.body or {}).encode(), timeout=30)
+    return status, body.decode(errors="replace")
 
 
 def test_profile_ui_routes_exist_through_service_and_gateway() -> None:

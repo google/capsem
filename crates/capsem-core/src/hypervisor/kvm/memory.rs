@@ -525,6 +525,49 @@ impl GuestMemoryRef {
         }
         Ok(())
     }
+
+    /// Copy `data` into the guest buffer at `gpa`, but only if the entire
+    /// destination range is backed by one contiguous RAM span. Returns the
+    /// number of bytes written (0 if the range escapes RAM). Device write
+    /// paths (FUSE responses, console TX) MUST route through this instead of
+    /// translating only the first byte with `gpa_to_host` and then copying a
+    /// guest-controlled length -- that is a guest->host OOB write primitive.
+    pub fn write_guest_buffer(&self, gpa: u64, data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+        match self.gpa_range_to_host(gpa, data.len() as u64) {
+            Some(ptr) => {
+                // SAFETY: gpa_range_to_host proved the whole [gpa, gpa+len)
+                // range is backed by RAM, so `ptr..ptr+len` is in bounds.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                }
+                data.len()
+            }
+            None => 0,
+        }
+    }
+
+    /// Append `len` bytes from the guest buffer at `gpa` to `dst`, but only if
+    /// the entire source range is backed by one contiguous RAM span. Returns
+    /// `false` (appending nothing) if the range escapes RAM. Device read paths
+    /// (FUSE request gather) MUST route through this rather than `gpa_to_host`
+    /// plus a guest-controlled length, which reads host memory past the mmap.
+    pub fn read_guest_buffer(&self, gpa: u64, len: usize, dst: &mut Vec<u8>) -> bool {
+        if len == 0 {
+            return true;
+        }
+        match self.gpa_range_to_host(gpa, len as u64) {
+            Some(ptr) => {
+                // SAFETY: gpa_range_to_host proved the whole [gpa, gpa+len)
+                // range is backed by RAM, so reading `len` bytes is in bounds.
+                dst.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr.cast_const(), len) });
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]

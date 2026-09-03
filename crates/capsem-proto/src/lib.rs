@@ -623,14 +623,41 @@ pub fn looks_like_ipc_frame(data: &[u8]) -> bool {
 // Framing: [4-byte BE length][RMP payload]
 // ---------------------------------------------------------------------------
 
-/// Encode a `HostToGuest` message into a length-prefixed RMP frame.
-pub fn encode_host_msg(msg: &HostToGuest) -> Result<Vec<u8>> {
-    let payload = rmp_serde::to_vec_named(msg).context("failed to encode HostToGuest")?;
+/// Prefix an RMP payload with its big-endian length, refusing what the peer
+/// would refuse: both control readers drop any frame whose length prefix is
+/// over `MAX_FRAME_SIZE`, and a frame that was never decoded is never acked,
+/// so the sender would replay it on every reconnect for the life of the VM.
+fn length_prefixed(payload: Vec<u8>, what: &str) -> Result<Vec<u8>> {
+    if payload.len() > MAX_FRAME_SIZE as usize {
+        bail!(
+            "{what} frame of {} bytes exceeds MAX_FRAME_SIZE ({MAX_FRAME_SIZE}); the peer would drop it",
+            payload.len()
+        );
+    }
     let len = payload.len() as u32;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(&payload);
     Ok(frame)
+}
+
+/// Whether `msg` fits one control frame. rmp encodes a `Vec<u8>` as an array
+/// of one- or two-byte integers, so only encoding can answer this exactly.
+pub fn host_msg_fits_frame(msg: &HostToGuest) -> bool {
+    encode_host_msg(msg).is_ok()
+}
+
+/// Whether `msg` fits one control frame. See `host_msg_fits_frame`.
+pub fn guest_msg_fits_frame(msg: &GuestToHost) -> bool {
+    encode_guest_msg(msg).is_ok()
+}
+
+/// Encode a `HostToGuest` message into a length-prefixed RMP frame.
+pub fn encode_host_msg(msg: &HostToGuest) -> Result<Vec<u8>> {
+    length_prefixed(
+        rmp_serde::to_vec_named(msg).context("failed to encode HostToGuest")?,
+        "HostToGuest",
+    )
 }
 
 /// Decode a `HostToGuest` message from an RMP payload (without the length prefix).
@@ -640,12 +667,10 @@ pub fn decode_host_msg(payload: &[u8]) -> Result<HostToGuest> {
 
 /// Encode a `GuestToHost` message into a length-prefixed RMP frame.
 pub fn encode_guest_msg(msg: &GuestToHost) -> Result<Vec<u8>> {
-    let payload = rmp_serde::to_vec_named(msg).context("failed to encode GuestToHost")?;
-    let len = payload.len() as u32;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&payload);
-    Ok(frame)
+    length_prefixed(
+        rmp_serde::to_vec_named(msg).context("failed to encode GuestToHost")?,
+        "GuestToHost",
+    )
 }
 
 /// Decode a `GuestToHost` message from an RMP payload (without the length prefix).

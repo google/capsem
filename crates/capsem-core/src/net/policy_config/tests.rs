@@ -67,6 +67,8 @@ mod config_validation;
 mod guest_runtime;
 #[path = "tests/merged_policies.rs"]
 mod merged_policies;
+#[path = "tests/provider_security_rules.rs"]
+mod provider_security_rules;
 #[path = "tests/resolution.rs"]
 mod resolution;
 #[path = "tests/settings_management.rs"]

@@ -1,5 +1,15 @@
 use super::*;
 
+mod resume;
+mod session_dirs;
+pub(crate) use resume::handle_resume;
+#[cfg(test)]
+pub(crate) use resume::stop_failed_restore_process_under_lock;
+mod transcript;
+pub(crate) use session_dirs::settle_persistent_session_dir;
+use session_dirs::{claim_persistent_name, remove_purged_session_dir};
+pub(super) use transcript::handle_history_transcript;
+
 // History endpoints
 
 /// Helper: resolve session_dir from instance ID (running or persistent).
@@ -165,37 +175,6 @@ pub(super) async fn handle_history_counts(
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
-/// GET /vms/{id}/history/transcript -- raw PTY output (base64-encoded).
-pub(super) async fn handle_history_transcript(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Query(_params): Query<api::TranscriptQuery>,
-) -> Result<Json<api::TranscriptResponse>, AppError> {
-    use base64::Engine;
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let pty_log_path = session_dir.join("pty.log");
-
-    if !pty_log_path.exists() {
-        return Ok(Json(api::TranscriptResponse {
-            content: String::new(),
-            bytes: 0,
-        }));
-    }
-
-    let output = std::fs::read(&pty_log_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read pty.log: {e}"),
-        )
-    })?;
-
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&output);
-    Ok(Json(api::TranscriptResponse {
-        bytes: output.len(),
-        content: encoded,
-    }))
-}
-
 /// Acquire the host-wide VZ lifecycle flock (`startup::VzHostLock`)
 /// from an async context. The underlying `flock(2)` syscall is blocking
 /// and can wait on a sibling service; wrap in `spawn_blocking` so we
@@ -325,13 +304,13 @@ pub(super) async fn shutdown_vm_process(
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
-            if let Ok(mut std_stream) = stream.into_std() {
-                if capsem_foundation::ipc_handshake::negotiate_initiator(
-                    &mut std_stream,
+            if let Ok(std_stream) = stream.into_std() {
+                if let Ok((std_stream, _)) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+                    std_stream,
                     "capsem-service",
                     capsem_foundation::telemetry::current_parent_traceparent(),
                 )
-                .is_ok()
+                .await
                 {
                     if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
                         capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
@@ -389,31 +368,6 @@ pub(super) async fn shutdown_vm_process(
     Ok(Some((session_dir, persistent, pid)))
 }
 
-/// Tear down a warm-restore process that failed to reach ready while the
-/// caller already holds the save/restore locks.
-pub(super) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
-    let Some((uds_path, pid)) = ({
-        let instances = state.instances.lock().unwrap();
-        instances.get(id).map(|i| (i.uds_path.clone(), i.pid))
-    }) else {
-        return;
-    };
-
-    if pid > 0 {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        );
-    }
-
-    tracing::warn!(id, pid, "removing failed warm restore before cold fallback");
-    state.instances.lock().unwrap().remove(id);
-    state.unregister_session_db_handle(id);
-    wait_for_process_exit(pid, std::time::Duration::from_secs(1)).await;
-    let _ = std::fs::remove_file(&uds_path);
-    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-}
-
 #[tracing::instrument(skip_all, fields(vm_id = %id))]
 pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
@@ -447,17 +401,18 @@ pub(super) async fn handle_suspend(
             format!("failed to connect to VM IPC: {e}"),
         )
     })?;
-    let mut std_stream = stream.into_std().map_err(|e| {
+    let std_stream = stream.into_std().map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to convert stream: {e}"),
         )
     })?;
-    capsem_foundation::ipc_handshake::negotiate_initiator(
-        &mut std_stream,
+    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+        std_stream,
         "capsem-service",
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
+    .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
     let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
         AppError(
@@ -534,18 +489,21 @@ pub(super) async fn handle_suspend(
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-    // Update persistent registry
-    {
-        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-            let mut registry = state.persistent_registry.lock().unwrap();
-            if let Some(entry) = registry.get_mut(&key) {
-                entry.suspended = true;
-                entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
-                if let Err(e) = registry.save() {
-                    error!(id, error = %e, "failed to save persistent registry");
+    // Update persistent registry (saves to disk, so off the worker).
+    if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+        let suspended_id = id.clone();
+        state
+            .off_worker(move |state| {
+                let mut registry = state.persistent_registry.lock().unwrap();
+                if let Some(entry) = registry.get_mut(&key) {
+                    entry.suspended = true;
+                    entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
+                    if let Err(e) = registry.save() {
+                        error!(id = suspended_id, error = %e, "failed to save persistent registry");
+                    }
                 }
-            }
-        }
+            })
+            .await?;
     }
 
     Ok(Json(serde_json::json!({ "success": true })))
@@ -615,88 +573,25 @@ pub(super) async fn handle_delete(
     // succeeds. An unsafe or failed delete therefore remains discoverable
     // and can be retried after the underlying problem is repaired.
     if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(&key) {
-            registry.unregister(&key).map_err(|error| {
+        state
+            .off_worker(move |state| {
+                let registry = state.persistent_registry.lock().unwrap();
+                if registry.contains(&key) {
+                    registry.unregister(&key)
+                } else {
+                    Ok(())
+                }
+            })
+            .await?
+            .map_err(|error| {
                 AppError(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("unregister deleted session failed: {error:#}"),
                 )
             })?;
-        }
     }
 
     Ok(Json(json!({ "success": true })))
-}
-
-pub(super) async fn handle_resume(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<ProvisionResponse>, AppError> {
-    // See handle_suspend: same lock, same reason. Restore happens in the
-    // freshly spawned capsem-process's boot, so the lock must bridge the
-    // spawn and the readiness sentinel for a sibling save_state not to
-    // overlap with the restoreMachineStateFromURL call.
-    let _vz_guard = state.save_restore_lock.write().await;
-    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
-
-    let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);
-
-    match state.resume_sandbox(&id, None, None) {
-        Ok(resumed_id) => {
-            let uds_path = state.instance_socket_path(&resumed_id);
-            if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
-                error!(id, error = %e, "resume ready-wait failed");
-                if attempted_checkpoint {
-                    warn!(
-                        id,
-                        "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
-                    );
-                    stop_failed_restore_process_under_lock(&state, &resumed_id).await;
-                    state.archive_failed_restore_checkpoint(&resumed_id);
-
-                    match state.resume_sandbox(&resumed_id, None, None) {
-                        Ok(cold_id) => {
-                            let cold_uds_path = state.instance_socket_path(&cold_id);
-                            if let Err(cold_e) =
-                                wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
-                            {
-                                error!(id, "cold resume fallback failed after warm restore failure: {cold_e}");
-                                return Err(AppError(
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!(
-                                        "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
-                                    ),
-                                ));
-                            }
-                            state.clear_resume_checkpoint(&cold_id);
-                            return provision_response_for_running(&state, cold_id, cold_uds_path).map(Json);
-                        }
-                        Err(cold_e) => {
-                            error!(
-                                id,
-                                "cold resume fallback spawn failed after warm restore failure: {cold_e}"
-                            );
-                            return Err(AppError(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"),
-                            ));
-                        }
-                    }
-                }
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("resume failed: {e}"),
-                ));
-            }
-            state.clear_resume_checkpoint(&resumed_id);
-            provision_response_for_running(&state, resumed_id, uds_path).map(Json)
-        }
-        Err(e) => {
-            error!(id, error = %e, "resume failed");
-            Err(AppError(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
-        }
-    }
 }
 
 pub(super) fn provision_response_for_running(
@@ -734,20 +629,9 @@ pub(super) async fn handle_persist(
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    // Check name is not taken
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(name) {
-            return Err(AppError(
-                StatusCode::CONFLICT,
-                format!("persistent VM \"{}\" already exists", name),
-            ));
-        }
-    }
-
     // Find the running ephemeral instance
     let (
-        old_session_dir,
+        live_session_dir,
         profile_id,
         profile_revision,
         profile_payload_hash,
@@ -790,81 +674,51 @@ pub(super) async fn handle_persist(
         .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
-    // Move session dir to persistent location without changing the runtime id.
-    let new_session_dir = state.run_dir.join("persistent").join(&id);
-    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
-    std::fs::rename(&old_session_dir, &new_session_dir).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to move session dir: {e}"),
-        )
-    })?;
+    // Claim the name and register the session where it lives. The directory
+    // moves under persistent/ once the process has exited (see
+    // `settle_persistent_session_dir`); a running process holds it by path.
+    let entry = PersistentVmEntry {
+        id: id.clone(),
+        name: name.clone(),
+        profile_id: profile_id.clone(),
+        profile_revision: profile_revision.clone(),
+        profile_payload_hash: profile_payload_hash.clone(),
+        asset_pins: asset_pins.clone(),
+        ram_mb,
+        cpus,
+        base_version,
+        created_at: format!(
+            "{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ),
+        session_dir: live_session_dir,
+        forked_from: forked_from.clone(),
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env,
+    };
+    let claim_state = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("persist task failed: {e}")))??;
 
-    // Register in persistent registry
-    {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        registry
-            .register(PersistentVmEntry {
-                id: id.clone(),
-                name: name.clone(),
-                profile_id: profile_id.clone(),
-                profile_revision: profile_revision.clone(),
-                profile_payload_hash: profile_payload_hash.clone(),
-                asset_pins: asset_pins.clone(),
-                ram_mb,
-                cpus,
-                base_version,
-                created_at: format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-                session_dir: new_session_dir.clone(),
-                forked_from: forked_from.clone(),
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env,
-            })
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        drop(registry);
-    }
-
-    // Update instance info in-place
+    // Update instance info in-place; the session dir and its DB handle stay.
     {
         let mut instances = state.instances.lock().unwrap();
-        if let Some(info) = instances.remove(&id) {
-            state.unregister_session_db_handle(&id);
-            if session_db_path_for_session_dir(&new_session_dir).exists() {
-                state
-                    .register_session_db_handle(&id, &new_session_dir)
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            }
-            instances.insert(
-                id.clone(),
-                InstanceInfo {
-                    id: id.clone(),
-                    name: name.clone(),
-                    profile_id,
-                    profile_revision,
-                    profile_payload_hash,
-                    asset_pins,
-                    pid: info.pid,
-                    uds_path: info.uds_path,
-                    session_dir: new_session_dir,
-                    ram_mb: info.ram_mb,
-                    cpus: info.cpus,
-                    start_time: info.start_time,
-                    base_version: info.base_version,
-                    persistent: true,
-                    env: info.env,
-                    forked_from,
-                },
-            );
+        if let Some(info) = instances.get_mut(&id) {
+            info.name = name.clone();
+            info.profile_id = profile_id;
+            info.profile_revision = profile_revision;
+            info.profile_payload_hash = profile_payload_hash;
+            info.asset_pins = asset_pins;
+            info.persistent = true;
+            info.forked_from = forked_from;
         }
     }
 
@@ -907,16 +761,18 @@ pub(super) async fn handle_purge(
         let Some((id, session_dir, persistent)) = result? else {
             continue;
         };
+        if !remove_purged_session_dir(&state, &id, session_dir).await {
+            continue;
+        }
         if persistent {
             if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let _ = registry.unregister(&key);
+                state
+                    .off_worker(move |state| {
+                        let _ = state.persistent_registry.lock().unwrap().unregister(&key);
+                    })
+                    .await?;
             }
         }
-        let dir = session_dir;
-        tokio::task::spawn_blocking(move || {
-            let _ = std::fs::remove_dir_all(&dir);
-        });
         if persistent {
             persistent_purged += 1;
         } else {
@@ -937,16 +793,24 @@ pub(super) async fn handle_purge(
             .collect()
     };
     for name in &stopped_names {
-        let session_dir = {
+        let entry = {
             let registry = state.persistent_registry.lock().unwrap();
-            registry.get(name).map(|e| e.session_dir.clone())
+            registry
+                .get(name)
+                .map(|e| (persistent_entry_vm_id(e), e.session_dir.clone()))
         };
-        if let Some(dir) = session_dir {
-            let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir)).await;
+        let Some((vm_id, session_dir)) = entry else {
+            continue;
+        };
+        if !remove_purged_session_dir(&state, &vm_id, session_dir).await {
+            continue;
         }
-        let mut registry = state.persistent_registry.lock().unwrap();
-        let _ = registry.unregister(name);
-        drop(registry);
+        let stopped_name = name.clone();
+        state
+            .off_worker(move |state| {
+                let _ = state.persistent_registry.lock().unwrap().unregister(&stopped_name);
+            })
+            .await?;
         persistent_purged += 1;
     }
 
@@ -969,7 +833,7 @@ pub(super) async fn handle_run(
     }
 
     let id = {
-        let existing = existing_session_names(&state);
+        let existing = state.off_worker(|state| existing_session_names(&state)).await?;
         generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
     };
 
@@ -1016,7 +880,9 @@ pub(super) async fn handle_run(
         // lifecycle rail. The child does its Apple VZ start/restore before it
         // writes the ready sentinel; releasing earlier reintroduces the
         // sibling-service overlap this lock exists to prevent.
-        let uds_path = state.instance_socket_path(&id);
+        let uds_path = state
+            .instance_socket_path(&id)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
             drop(_vz_host_guard);
             drop(_vz_guard);
@@ -1034,7 +900,9 @@ pub(super) async fn handle_run(
         }
     }
 
-    let uds_path = state.instance_socket_path(&id);
+    let uds_path = state
+        .instance_socket_path(&id)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // 2. Execute command.
     let job_id = state.next_job_id();
@@ -1075,6 +943,5 @@ pub(super) async fn handle_run(
         )),
         Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
     };
-
     response
 }

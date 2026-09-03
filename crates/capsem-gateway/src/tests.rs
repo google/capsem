@@ -5,6 +5,9 @@ use tower::ServiceExt;
 
 use crate::status::StatusCache;
 
+mod hostile;
+mod route_forwarding;
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
@@ -39,522 +42,6 @@ fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
         .route("/", axum::routing::get(handle_health))
         .with_state(state.clone());
     (app, state)
-}
-
-fn service_proxy_app(uds_path: &str) -> axum::Router {
-    let state = Arc::new(AppState {
-        token: "test".into(),
-        uds_path: uds_path.into(),
-        status_cache: StatusCache::new(),
-        auth_failures: AuthFailureTracker::new(),
-        events_tx: tokio::sync::broadcast::channel(16).0,
-    });
-    service_proxy_routes().with_state(state)
-}
-
-#[tokio::test]
-async fn gateway_unknown_paths_are_not_forwarded_to_service() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .uri("/not-a-capsem-api")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_profile_assets_edit_is_not_forwarded() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("PATCH")
-                .uri("/profiles/code/assets/edit")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    for (method, uri) in [
-        ("POST", "/profiles/create"),
-        ("PATCH", "/profiles/code/edit"),
-        ("DELETE", "/profiles/code/delete"),
-        ("POST", "/profiles/code/clone"),
-    ] {
-        let resp = app
-            .clone()
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_update_status_route_is_get_only() {
-    let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
-    let get_resp = app
-        .clone()
-        .oneshot(
-            http::Request::builder()
-                .method("GET")
-                .uri("/update/status")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(get_resp.status(), http::StatusCode::BAD_GATEWAY);
-
-    let post_resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("POST")
-                .uri("/update/status")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(post_resp.status(), http::StatusCode::METHOD_NOT_ALLOWED);
-}
-
-#[tokio::test]
-async fn gateway_update_action_routes_are_post_only() {
-    for uri in ["/update/check", "/update/apply"] {
-        let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
-        let post_resp = app
-            .clone()
-            .oneshot(
-                http::Request::builder()
-                    .method("POST")
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(post_resp.status(), http::StatusCode::BAD_GATEWAY, "{uri}");
-
-        let get_resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method("GET")
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(get_resp.status(), http::StatusCode::METHOD_NOT_ALLOWED, "{uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_fake_vm_mutation_routes_are_not_forwarded() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    for (method, uri) in [
-        ("PATCH", "/vms/test-vm/edit"),
-        ("POST", "/vms/test-vm/restart"),
-        ("POST", "/vms/test-vm/reload-profile"),
-    ] {
-        let resp = app
-            .clone()
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_security_routes_are_explicitly_forwarded() {
-    for (method, uri) in [
-        ("GET", "/vms/test-vm/security/latest"),
-        ("GET", "/vms/test-vm/security/status"),
-        ("GET", "/vms/test-vm/detection/latest"),
-        ("GET", "/vms/test-vm/detection/status"),
-        ("GET", "/vms/test-vm/enforcement/latest"),
-        ("GET", "/vms/test-vm/enforcement/status"),
-        ("GET", "/security/latest"),
-        ("GET", "/security/status"),
-        ("GET", "/enforcement/latest"),
-        ("GET", "/enforcement/status"),
-        ("GET", "/detection/latest"),
-        ("GET", "/detection/status"),
-        ("GET", "/profiles/list"),
-        ("GET", "/profiles/status"),
-        ("GET", "/update/status"),
-        ("POST", "/update/check"),
-        ("POST", "/update/apply"),
-        ("POST", "/profiles/reload"),
-        ("GET", "/profiles/code/info"),
-        ("GET", "/profiles/code/obom"),
-        ("POST", "/profiles/code/validate"),
-        ("POST", "/vms/create"),
-        ("GET", "/vms/list"),
-        ("GET", "/vms/test-vm/info"),
-        ("GET", "/vms/test-vm/status"),
-        ("GET", "/vms/test-vm/snapshots/status"),
-        ("GET", "/vms/test-vm/snapshots/list"),
-        ("GET", "/vms/test-vm/logs"),
-        ("POST", "/vms/test-vm/exec"),
-        ("POST", "/vms/test-vm/files/write"),
-        ("POST", "/vms/test-vm/files/read"),
-        ("GET", "/vms/test-vm/files/list"),
-        ("GET", "/vms/test-vm/files/content?path=/root/a.txt"),
-        ("POST", "/vms/test-vm/files/content?path=/root/a.txt"),
-        ("GET", "/vms/test-vm/history"),
-        ("GET", "/vms/test-vm/history/processes"),
-        ("GET", "/vms/test-vm/history/counts"),
-        ("GET", "/vms/test-vm/history/transcript"),
-        ("GET", "/vms/test-vm/stats/detail"),
-        ("GET", "/vms/test-vm/stats/summary"),
-        ("GET", "/vms/test-vm/timeline"),
-        ("POST", "/vms/test-vm/stop"),
-        ("POST", "/vms/test-vm/pause"),
-        ("DELETE", "/vms/test-vm/delete"),
-        ("POST", "/vms/test-vm/start"),
-        ("POST", "/vms/test-vm/resume"),
-        ("POST", "/vms/test-vm/save"),
-        ("GET", "/vms/test-vm/save/status"),
-        ("GET", "/vms/test-vm/fork/status"),
-        ("POST", "/vms/test-vm/fork"),
-        ("POST", "/profiles/code/enforcement/evaluate"),
-        ("GET", "/profiles/code/enforcement/info"),
-        ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
-        ("DELETE", "/profiles/code/enforcement/rules/eicar_block/delete"),
-        ("POST", "/profiles/code/enforcement/reload"),
-        ("GET", "/profiles/code/enforcement/rules/list"),
-        ("POST", "/profiles/code/detection/evaluate"),
-        ("GET", "/profiles/code/detection/info"),
-        ("PUT", "/profiles/code/detection/rules/eicar_detect/edit"),
-        ("DELETE", "/profiles/code/detection/rules/eicar_detect/delete"),
-        ("POST", "/profiles/code/detection/reload"),
-        ("GET", "/profiles/code/detection/rules/list"),
-        ("GET", "/profiles/code/assets/status"),
-        ("GET", "/profiles/code/assets/info"),
-        ("POST", "/profiles/code/assets/ensure"),
-        ("GET", "/profiles/code/skills/info"),
-        ("GET", "/profiles/code/skills/list"),
-        ("POST", "/profiles/code/skills/add"),
-        ("PATCH", "/profiles/code/skills/build/edit"),
-        ("DELETE", "/profiles/code/skills/build/delete"),
-        ("GET", "/profiles/code/plugins/list"),
-        ("GET", "/profiles/code/plugins/info"),
-        ("GET", "/profiles/code/plugins/dummy_pre_eicar/info"),
-        ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
-        ("GET", "/profiles/code/plugins/credential_broker/credentials/info"),
-        ("POST", "/profiles/code/plugins/credential_broker/credentials/reload"),
-        ("GET", "/profiles/code/mcp/info"),
-        ("GET", "/profiles/code/mcp/servers/list"),
-        ("GET", "/profiles/code/mcp/default/info"),
-        ("PATCH", "/profiles/code/mcp/default/edit"),
-        ("PUT", "/profiles/code/mcp/servers/local/edit"),
-        ("DELETE", "/profiles/code/mcp/servers/local/delete"),
-        ("GET", "/profiles/code/mcp/servers/local/tools/list"),
-        ("POST", "/profiles/code/mcp/servers/local/refresh"),
-        ("PATCH", "/profiles/code/mcp/servers/local/tools/echo/edit"),
-        ("POST", "/profiles/code/mcp/servers/local/tools/echo/call"),
-        ("PUT", "/corp/edit"),
-        ("GET", "/settings/info"),
-        ("PATCH", "/settings/edit"),
-        ("POST", "/profiles/code/reload"),
-        ("GET", "/corp/info"),
-        ("POST", "/corp/validate"),
-        ("POST", "/corp/reload"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::BAD_GATEWAY, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_vm_lifecycle_routes() {
-    for (method, uri) in [
-        ("POST", "/provision"),
-        ("GET", "/list"),
-        ("GET", "/info/test-vm"),
-        ("POST", "/stop/test-vm"),
-        ("GET", "/logs/test-vm"),
-        ("POST", "/inspect/test-vm"),
-        ("POST", "/exec/test-vm"),
-        ("POST", "/write_file/test-vm"),
-        ("POST", "/read_file/test-vm"),
-        ("GET", "/files/test-vm"),
-        ("GET", "/files/test-vm/content?path=/root/a.txt"),
-        ("POST", "/files/test-vm/content?path=/root/a.txt"),
-        ("GET", "/history/test-vm"),
-        ("GET", "/history/test-vm/processes"),
-        ("GET", "/history/test-vm/counts"),
-        ("GET", "/history/test-vm/transcript"),
-        ("GET", "/timeline/test-vm"),
-        ("POST", "/suspend/test-vm"),
-        ("DELETE", "/delete/test-vm"),
-        ("POST", "/resume/test-vm"),
-        ("POST", "/persist/test-vm"),
-        ("POST", "/fork/test-vm"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_plugin_authoring_routes() {
-    for (method, uri) in [
-        ("GET", "/plugins"),
-        ("GET", "/plugins/test-vm"),
-        ("GET", "/plugins/test-vm/dummy_pre_eicar"),
-        ("POST", "/plugins/test-vm/dummy_pre_eicar"),
-        ("GET", "/plugins/global/dummy_pre_eicar"),
-        ("POST", "/plugins/global/dummy_pre_eicar"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_profile_credential_routes() {
-    for (method, uri) in [
-        ("GET", "/profiles/code/credentials/info"),
-        ("GET", "/profiles/code/credentials/status"),
-        ("GET", "/profiles/code/credentials/list"),
-        ("POST", "/profiles/code/credentials/reload"),
-        ("GET", "/profiles/code/credentials/openai/info"),
-        ("DELETE", "/profiles/code/credentials/openai/delete"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_enforcement_authoring_routes() {
-    for (method, uri) in [
-        ("POST", "/enforcements/evaluate"),
-        ("POST", "/enforcements/rules/eicar_block"),
-        ("DELETE", "/enforcements/rules/eicar_block"),
-        ("POST", "/enforcements/reload"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_ledger_routes() {
-    for (method, uri) in [
-        ("GET", "/security/test-vm/latest"),
-        ("GET", "/security/test-vm/info"),
-        ("GET", "/detections/test-vm/latest"),
-        ("GET", "/detections/test-vm/info"),
-        ("GET", "/enforcements/test-vm/latest"),
-        ("GET", "/enforcements/test-vm/info"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_corp_config_route() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("POST")
-                .uri("/corp-config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_global_asset_routes() {
-    for (method, uri) in [("GET", "/assets/status"), ("POST", "/assets/ensure")] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_magic_settings_route() {
-    for (method, uri) in [("GET", "/settings"), ("POST", "/settings")] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_settings_utility_routes() {
-    for (method, uri) in [
-        ("GET", "/settings/presets"),
-        ("POST", "/settings/presets/high"),
-        ("POST", "/settings/lint"),
-        ("POST", "/settings/validate-key"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_global_reload_route() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("POST")
-                .uri("/reload-config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_mcp_policy_route() {
-    for (method, uri) in [
-        ("GET", "/mcp/policy"),
-        ("GET", "/mcp/servers"),
-        ("GET", "/mcp/tools"),
-        ("POST", "/mcp/tools/refresh"),
-        ("POST", "/mcp/tools/local__echo/approve"),
-        ("POST", "/mcp/tools/local__echo/call"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
 }
 
 #[tokio::test]
@@ -874,4 +361,171 @@ async fn events_ws_without_upgrade_header_is_rejected() {
         .await
         .unwrap();
     assert_ne!(resp.status(), http::StatusCode::OK);
+}
+
+// --- Host header: DNS rebinding ---
+//
+// `/token` is unauthenticated and gated by the peer being loopback. A page at
+// `http://evil.example:19222` whose DNS answer flips to 127.0.0.1 is a
+// same-origin caller from a loopback peer: CORS never enters into it, and the
+// token came back. The Host header is the one thing a rebinding page cannot
+// forge, so every request must name a loopback host.
+
+fn guarded_app() -> (axum::Router, Arc<AppState>) {
+    let (_, state) = token_app();
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(handle_health))
+        .route("/token", axum::routing::get(handle_token))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state.clone());
+    (app, state)
+}
+
+async fn get_with_host(app: axum::Router, path: &str, host: Option<&str>) -> http::Response<Body> {
+    let mut builder = http::Request::builder().uri(path);
+    if let Some(host) = host {
+        builder = builder.header(http::header::HOST, host);
+    }
+    let mut req = builder.body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+    app.oneshot(req).await.unwrap()
+}
+
+#[tokio::test]
+async fn token_refuses_a_rebound_host_from_a_loopback_peer() {
+    let (app, state) = guarded_app();
+    let resp = get_with_host(app, "/token", Some("evil.example:19222")).await;
+    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        !String::from_utf8_lossy(&body).contains(&state.token),
+        "the token must not leave for a foreign host"
+    );
+}
+
+#[tokio::test]
+async fn every_route_refuses_a_rebound_host() {
+    for host in [
+        "evil.example",
+        "evil.example:19222",
+        "localhost.evil.example",
+        "127.0.0.1.evil.example:80",
+    ] {
+        let (app, _) = guarded_app();
+        let resp = get_with_host(app, "/health", Some(host)).await;
+        assert_eq!(resp.status(), http::StatusCode::FORBIDDEN, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn loopback_hosts_in_every_spelling_are_accepted() {
+    for host in [
+        "localhost",
+        "localhost:19222",
+        "LOCALHOST:19222",
+        "127.0.0.1",
+        "127.0.0.1:19222",
+        "[::1]",
+        "[::1]:19222",
+    ] {
+        let (app, state) = guarded_app();
+        let resp = get_with_host(app, "/token", Some(host)).await;
+        assert_eq!(resp.status(), http::StatusCode::OK, "host {host}");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["token"], state.token, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn a_request_without_a_host_header_is_not_a_browser_and_passes() {
+    // Browsers always send Host, so an absent header cannot be a rebinding
+    // page; refusing it would only break raw HTTP/1.0 tooling.
+    let (app, _) = guarded_app();
+    let resp = get_with_host(app, "/health", None).await;
+    assert_eq!(resp.status(), http::StatusCode::OK);
+}
+
+// --- Constant-time token comparison ---
+
+#[test]
+fn token_comparison_does_not_depend_on_prefix_agreement() {
+    assert!(auth::token_matches("abc", "abc"));
+    assert!(!auth::token_matches("abd", "abc"));
+    assert!(!auth::token_matches("ab", "abc"));
+    assert!(!auth::token_matches("abcd", "abc"));
+    assert!(!auth::token_matches("", "abc"));
+}
+
+// --- Request spans must not record the query string ---
+//
+// The browser WebSocket API cannot set headers, so `/events` and `/terminal`
+// authenticate with `?token=`. tower-http's default span records the full
+// URI at debug, and the gateway log runs `tower_http=debug`, so every such
+// request wrote the bearer token into gateway.log in clear text.
+
+#[derive(Default)]
+struct TraceCapture {
+    records: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+struct TraceCaptureVisitor<'a>(&'a mut Vec<String>);
+
+impl tracing::field::Visit for TraceCaptureVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push(format!("{}={value:?}", field.name()));
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for TraceCapture {
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        _id: &tracing::span::Id,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut records = self.records.lock().unwrap();
+        attrs.record(&mut TraceCaptureVisitor(&mut records));
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut records = self.records.lock().unwrap();
+        event.record(&mut TraceCaptureVisitor(&mut records));
+    }
+}
+
+#[tokio::test]
+async fn request_spans_record_the_path_but_never_the_query() {
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let capture = TraceCapture::default();
+    let records = std::sync::Arc::clone(&capture.records);
+    let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(capture));
+
+    let (_, state) = health_app("/tmp/test.sock");
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(handle_health))
+        .layer(request_trace_layer())
+        .with_state(state);
+    let req = http::Request::builder()
+        .uri("/health?token=SECRET-QUERY-TOKEN")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).with_subscriber(dispatcher).await.unwrap();
+    assert_eq!(resp.status(), http::StatusCode::OK);
+
+    let records = std::mem::take(&mut *records.lock().unwrap());
+    assert!(
+        records.iter().any(|r| r.contains("/health")),
+        "the span must still name the path: {records:?}"
+    );
+    assert!(
+        !records.iter().any(|r| r.contains("SECRET-QUERY-TOKEN")),
+        "the query string carries the WebSocket token and must not be logged: {records:?}"
+    );
 }

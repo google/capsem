@@ -186,3 +186,28 @@ fn allows_subdirectory_traversal() {
     let sub_ino = table.lookup(1, b"sub").unwrap();
     assert!(table.lookup(sub_ino, b"file.txt").is_some());
 }
+
+#[cfg(unix)]
+#[test]
+fn contained_target_rejects_symlink_escaping_the_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let outside = dir.path().join("secret.txt");
+    std::fs::write(&outside, b"secret").unwrap();
+    let table = InodeTable::new(&root).unwrap();
+
+    // A guest symlink inside the share pointing outside it must not resolve to
+    // the host file (which do_open would otherwise follow and open).
+    let escape = root.join("escape");
+    std::os::unix::fs::symlink(&outside, &escape).unwrap();
+    assert!(
+        table.contained_target(&escape).is_none(),
+        "a symlink resolving outside the share must be refused"
+    );
+
+    // An in-share regular file resolves fine.
+    let inside = root.join("ok.txt");
+    std::fs::write(&inside, b"ok").unwrap();
+    assert!(table.contained_target(&inside).is_some());
+}

@@ -6,12 +6,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
 from log_streams import read_log_stream
 
 from .constants import (
@@ -23,6 +23,7 @@ from .constants import (
     content_profiles_root,
     host_bin_root,
 )
+from .http_transport import Transport
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
@@ -554,25 +555,14 @@ class ServiceInstance:
         while time.time() - start < 15:
             if self.uds_path.exists():
                 # Socket file exists -- verify server is actually accepting connections
+                probe = Transport(socket_path=str(self.uds_path))
                 try:
-                    result = subprocess.run(
-                        [
-                            "curl",
-                            "-s",
-                            "--unix-socket",
-                            str(self.uds_path),
-                            "--max-time",
-                            "2",
-                            "http://localhost/vms/list",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    if result.returncode == 0:
-                        return
+                    probe.request("GET", "/vms/list", timeout=2)
+                    return
                 except Exception:
                     pass
+                finally:
+                    probe.close()
             time.sleep(0.5)
 
         self.stop()

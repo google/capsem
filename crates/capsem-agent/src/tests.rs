@@ -3,6 +3,10 @@ use super::*;
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
 
+use super::audit::{extract_audit_id, extract_audit_timestamp_us, extract_execve_argv, extract_field};
+
+mod control_loop;
+
 fn make_pipe() -> (RawFd, RawFd) {
     let mut fds = [0 as RawFd; 2];
     assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
@@ -548,8 +552,19 @@ fn read_exec_started(exec_host: &mut std::os::unix::net::UnixStream) -> u64 {
 }
 
 /// Helper: receive ExecDone from mpsc channel, return (id, exit_code).
-fn recv_exec_done(rx: &std::sync::mpsc::Receiver<GuestToHost>) -> (u64, i32) {
-    match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
+fn test_ctrl_channel() -> (CtrlSender, SharedCtrlReceiver) {
+    CtrlSender::new(std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::new(),
+    )))
+}
+
+fn recv_exec_done(rx: &SharedCtrlReceiver) -> (u64, i32) {
+    let received = rx
+        .lock()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    match received {
         GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
         other => panic!("expected ExecDone, got {other:?}"),
     }
@@ -577,7 +592,7 @@ fn exec_echo_captures_output_and_exit_code() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
 
     let exec_fd = exec_guest.into_raw_fd();
 
@@ -604,7 +619,7 @@ fn exec_nonzero_exit_code() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -627,7 +642,7 @@ fn exec_boot_env_passed_to_child() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     let env = vec![("CAPSEM_TEST_VAR".to_string(), "test_value_42".to_string())];
@@ -652,7 +667,7 @@ fn exec_stderr_captured() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -677,7 +692,7 @@ fn exec_sentinel_in_output_is_not_stripped() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -704,7 +719,7 @@ fn exec_large_output_no_truncation() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -936,8 +951,55 @@ fn read_nofollow_works_for_regular_file() {
     let dir = std::env::temp_dir();
     let path = dir.join("capsem-test-read-nofollow");
     std::fs::write(&path, b"world").unwrap();
-    assert_eq!(read_nofollow(path.to_str().unwrap()).unwrap(), b"world");
+    assert_eq!(read_nofollow(path.to_str().unwrap(), usize::MAX).unwrap(), b"world");
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn read_nofollow_refuses_a_file_over_the_frame_budget() {
+    let dir = std::env::temp_dir();
+    let path = dir.join("capsem-test-read-nofollow-budget");
+    std::fs::write(&path, b"0123456789").unwrap();
+    let err = read_nofollow(path.to_str().unwrap(), 9).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::FileTooLarge, "{err}");
+    assert_eq!(read_nofollow(path.to_str().unwrap(), 10).unwrap(), b"0123456789");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn file_read_reply_for_an_oversized_file_is_an_error_that_fits_a_frame() {
+    // A reply the host cannot decode is never acked and replays forever, so
+    // the reply for a file that does not fit must be a small Error frame.
+    let path = "/root/blob.bin".to_string();
+    let too_big = GuestToHost::FileContent {
+        id: 7,
+        path: path.clone(),
+        data: vec![0xFF; MAX_FRAME_SIZE as usize],
+    };
+    assert!(!capsem_proto::guest_msg_fits_frame(&too_big));
+    let reply = GuestToHost::Error {
+        id: 7,
+        message: format!("failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"),
+    };
+    assert!(capsem_proto::guest_msg_fits_frame(&reply));
+}
+
+#[test]
+fn frame_or_drop_evicts_an_unframeable_reply_from_the_replay_map() {
+    let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let too_big = GuestToHost::FileContent {
+        id: 7,
+        path: "/root/blob.bin".to_string(),
+        data: vec![0xFF; MAX_FRAME_SIZE as usize],
+    };
+    pending.lock().unwrap().insert(7, too_big.clone());
+    assert!(frame_or_drop(&too_big, &pending).is_none());
+    assert!(
+        pending.lock().unwrap().is_empty(),
+        "a frame the host would never ack must not be replayed on every reconnect"
+    );
+    let ack = GuestToHost::Ack { id: 7 };
+    assert!(frame_or_drop(&ack, &pending).is_some());
 }
 
 #[test]
@@ -964,7 +1026,7 @@ fn read_nofollow_rejects_symlink() {
     std::fs::write(&target, b"secret").unwrap();
     let _ = std::fs::remove_file(&link);
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    let err = read_nofollow(link.to_str().unwrap());
+    let err = read_nofollow(link.to_str().unwrap(), usize::MAX);
     assert!(err.is_err(), "read through symlink must fail");
     std::fs::remove_file(&target).ok();
     std::fs::remove_file(&link).ok();
@@ -1035,7 +1097,7 @@ fn write_nofollow_truncates_existing() {
 
 #[test]
 fn read_nofollow_nonexistent_returns_error() {
-    let result = read_nofollow("/tmp/capsem-test-rn-nonexistent-xyzzy");
+    let result = read_nofollow("/tmp/capsem-test-rn-nonexistent-xyzzy", usize::MAX);
     assert!(result.is_err());
 }
 
@@ -1050,7 +1112,7 @@ fn exec_stdout_and_stderr_both_appear_in_merged_stream() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     // Generate distinct output on both stdout and stderr
@@ -1083,7 +1145,7 @@ fn exec_invalid_command_returns_nonzero() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1105,7 +1167,7 @@ fn exec_empty_command_succeeds() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1131,7 +1193,7 @@ fn exec_fd_closed_before_exec_done() {
     use std::os::unix::net::UnixStream;
 
     let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
     let exec_fd = exec_guest.into_raw_fd();
 
     std::thread::spawn(move || {
@@ -1350,288 +1412,6 @@ fn file_delete_roundtrip_over_pipe() {
 }
 
 // -------------------------------------------------------------------
-// control_loop integration tests
-// -------------------------------------------------------------------
-
-/// Feed host messages into control_loop and collect guest responses.
-fn run_control_loop_with_messages(messages: Vec<HostToGuest>) -> Vec<GuestToHost> {
-    run_control_loop_with_messages_and_pending(messages, None).0
-}
-
-/// Same as `run_control_loop_with_messages` but exposes the
-/// pending_responses map so AckReply tests can inspect it.
-fn run_control_loop_with_messages_and_pending(
-    messages: Vec<HostToGuest>,
-    seed: Option<Vec<(u64, GuestToHost)>>,
-) -> (
-    Vec<GuestToHost>,
-    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
-) {
-    let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
-    let pty = openpty(None, None).expect("openpty");
-    let master_fd = pty.master.as_raw_fd();
-    // Spawn a child so we have a real PID for control_loop.
-    let mut child = std::process::Command::new("sleep")
-        .arg("300")
-        .spawn()
-        .expect("spawn sleep");
-    let child_pid = Pid::from_raw(child.id() as i32);
-
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel();
-
-    // Write all messages then close the write end so control_loop
-    // sees EOF and exits.
-    for msg in &messages {
-        let frame = capsem_proto::encode_host_msg(msg).unwrap();
-        write_all_fd(ctrl_write_fd, &frame).unwrap();
-    }
-    unsafe {
-        libc::close(ctrl_write_fd);
-    }
-
-    let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Some(entries) = seed {
-        let mut p = pending.lock().unwrap();
-        for (id, msg) in entries {
-            p.insert(id, msg);
-        }
-    }
-    let pending_for_loop = std::sync::Arc::clone(&pending);
-
-    let handle = thread::spawn(move || {
-        control_loop(
-            ctrl_read_fd,
-            master_fd,
-            child_pid,
-            &[],
-            ctrl_tx,
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            pending_for_loop,
-        );
-    });
-
-    handle.join().unwrap();
-
-    // Kill the sleep process immediately using std (handles waitpid internally).
-    let _ = child.kill();
-    let _ = child.wait();
-    unsafe {
-        libc::close(ctrl_read_fd);
-    }
-
-    // Drain the channel.
-    let mut responses = Vec::new();
-    while let Ok(msg) = ctrl_rx.try_recv() {
-        responses.push(msg);
-    }
-    (responses, pending)
-}
-
-#[test]
-fn control_loop_ping_responds_with_pong() {
-    let responses = run_control_loop_with_messages(vec![HostToGuest::Ping { epoch_secs: 0 }]);
-    assert_eq!(responses.len(), 1);
-    assert!(matches!(responses[0], GuestToHost::Pong));
-}
-
-#[test]
-fn control_loop_multiple_pings() {
-    let responses = run_control_loop_with_messages(vec![
-        HostToGuest::Ping { epoch_secs: 0 },
-        HostToGuest::Ping { epoch_secs: 0 },
-        HostToGuest::Ping { epoch_secs: 0 },
-    ]);
-    assert_eq!(responses.len(), 3);
-    for r in &responses {
-        assert!(matches!(r, GuestToHost::Pong));
-    }
-}
-
-#[test]
-fn control_loop_resize_changes_pty_winsize() {
-    let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
-    let pty = openpty(None, None).expect("openpty");
-    let master_fd = pty.master.as_raw_fd();
-    let mut child = std::process::Command::new("sleep")
-        .arg("300")
-        .spawn()
-        .expect("spawn sleep");
-    let child_pid = Pid::from_raw(child.id() as i32);
-    let (ctrl_tx, _ctrl_rx) = std::sync::mpsc::channel();
-
-    // Send resize then close.
-    let frame = capsem_proto::encode_host_msg(&HostToGuest::Resize { cols: 132, rows: 43 }).unwrap();
-    write_all_fd(ctrl_write_fd, &frame).unwrap();
-    unsafe {
-        libc::close(ctrl_write_fd);
-    }
-
-    let master_fd_check = master_fd;
-    let handle = thread::spawn(move || {
-        control_loop(
-            ctrl_read_fd,
-            master_fd,
-            child_pid,
-            &[],
-            ctrl_tx,
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        );
-    });
-    handle.join().unwrap();
-
-    // Verify the PTY was resized.
-    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::ioctl(master_fd_check, libc::TIOCGWINSZ, &mut ws) };
-    assert_eq!(ret, 0);
-    assert_eq!(ws.ws_col, 132);
-    assert_eq!(ws.ws_row, 43);
-
-    let _ = child.kill();
-    let _ = child.wait();
-    unsafe {
-        libc::close(ctrl_read_fd);
-    }
-}
-
-#[test]
-fn control_loop_file_write_path_traversal_rejected() {
-    // Path traversal is rejected by validate_file_path (before workspace check),
-    // so this works on macOS even though /root doesn't exist.
-    let responses = run_control_loop_with_messages(vec![HostToGuest::FileWrite {
-        id: 20,
-        path: "/etc/../etc/passwd".into(),
-        data: b"evil".to_vec(),
-        mode: 0o644,
-    }]);
-    // First response is the Ack (sent on receipt before processing,
-    // so the host bridge can clear the pending-ack map even when
-    // the agent later rejects the request); second is the Error.
-    assert_eq!(responses.len(), 2);
-    assert!(matches!(responses[0], GuestToHost::Ack { id: 20 }));
-    match &responses[1] {
-        GuestToHost::Error { id, message } => {
-            assert_eq!(*id, 20);
-            assert!(
-                message.contains("rejected") || message.contains("traversal"),
-                "got: {message}"
-            );
-        }
-        other => panic!("expected Error for traversal, got {other:?}"),
-    }
-}
-
-#[test]
-fn control_loop_file_read_rejected_outside_workspace() {
-    // /etc/hostname is outside /root workspace, rejected by validate_file_path_safe
-    // (or by workspace root canonicalization failure on macOS).
-    let responses = run_control_loop_with_messages(vec![HostToGuest::FileRead {
-        id: 10,
-        path: "/etc/hostname".into(),
-    }]);
-    assert_eq!(responses.len(), 2);
-    assert!(matches!(responses[0], GuestToHost::Ack { id: 10 }));
-    match &responses[1] {
-        GuestToHost::Error { id, .. } => assert_eq!(*id, 10),
-        other => panic!("expected Error, got {other:?}"),
-    }
-}
-
-#[test]
-fn control_loop_file_delete_rejected_outside_workspace() {
-    let responses = run_control_loop_with_messages(vec![HostToGuest::FileDelete {
-        id: 30,
-        path: "/tmp/some-file".into(),
-    }]);
-    assert_eq!(responses.len(), 2);
-    assert!(matches!(responses[0], GuestToHost::Ack { id: 30 }));
-    match &responses[1] {
-        GuestToHost::Error { id, .. } => assert_eq!(*id, 30),
-        other => panic!("expected Error, got {other:?}"),
-    }
-}
-
-#[test]
-fn control_loop_unhandled_message_does_not_crash() {
-    // BootConfig is unexpected during control_loop (it's a boot-phase message).
-    // control_loop should log it and continue.
-    let responses = run_control_loop_with_messages(vec![
-        HostToGuest::BootConfig {
-            epoch_secs: 12345,
-            traceparent: String::new(),
-        },
-        HostToGuest::Ping { epoch_secs: 0 },
-    ]);
-    // The BootConfig is just logged, only the Ping produces a response.
-    assert_eq!(responses.len(), 1);
-    assert!(matches!(responses[0], GuestToHost::Pong));
-}
-
-#[test]
-fn control_loop_eof_exits_cleanly() {
-    // Empty message list = immediate EOF on the pipe = control_loop exits.
-    let responses = run_control_loop_with_messages(vec![]);
-    assert!(responses.is_empty());
-}
-
-#[test]
-fn control_loop_ack_reply_removes_pending_entry() {
-    // Seed pending_responses with two entries, send AckReply for one,
-    // verify only the matching entry was removed.
-    let seed = vec![
-        (42, GuestToHost::ExecDone { id: 42, exit_code: 0 }),
-        (43, GuestToHost::FileOpDone { id: 43 }),
-    ];
-    let (_responses, pending) =
-        run_control_loop_with_messages_and_pending(vec![HostToGuest::AckReply { id: 42 }], Some(seed));
-    let p = pending.lock().unwrap();
-    assert_eq!(p.len(), 1);
-    assert!(!p.contains_key(&42));
-    assert!(p.contains_key(&43));
-    drop(p);
-}
-
-#[test]
-fn control_loop_ack_reply_for_unknown_id_is_no_op() {
-    // AckReply for an id that is not in pending_responses should be a no-op
-    // (e.g. a duplicate AckReply from a replayed response that landed twice).
-    let (_responses, pending) =
-        run_control_loop_with_messages_and_pending(vec![HostToGuest::AckReply { id: 9999 }], None);
-    assert!(pending.lock().unwrap().is_empty());
-}
-
-#[test]
-fn ackable_response_id_covers_response_variants() {
-    assert_eq!(
-        ackable_response_id(&GuestToHost::ExecDone { id: 1, exit_code: 0 }),
-        Some(1)
-    );
-    assert_eq!(ackable_response_id(&GuestToHost::FileOpDone { id: 2 }), Some(2));
-    assert_eq!(
-        ackable_response_id(&GuestToHost::FileContent {
-            id: 3,
-            path: "/x".into(),
-            data: vec![]
-        }),
-        Some(3)
-    );
-    assert_eq!(
-        ackable_response_id(&GuestToHost::Error {
-            id: 4,
-            message: "x".into()
-        }),
-        Some(4)
-    );
-    // Non-ackable variants
-    assert_eq!(ackable_response_id(&GuestToHost::Pong), None);
-    assert_eq!(ackable_response_id(&GuestToHost::Ack { id: 5 }), None);
-    assert_eq!(ackable_response_id(&GuestToHost::SnapshotReady), None);
-    assert_eq!(ackable_response_id(&GuestToHost::Ready { version: "x".into() }), None);
-}
-
-// -------------------------------------------------------------------
 // Boot timing: exact boundary
 // -------------------------------------------------------------------
 
@@ -1797,4 +1577,137 @@ fn execve_argv_passes_hex_encoded_arguments_through_unchanged() {
     let line = "type=EXECVE msg=audit(1713100000.001:42): argc=2 a0=\"sh\" a1=2D6C61";
 
     assert_eq!(extract_execve_argv(line).as_deref(), Some("sh 2D6C61"));
+}
+
+// -----------------------------------------------------------------------
+// Boot log env preview
+// -----------------------------------------------------------------------
+
+#[test]
+fn env_preview_truncates_on_a_character_boundary() {
+    let straddling = format!("{}é-rest", "a".repeat(39));
+    assert_eq!(env_preview(&straddling), format!("{}é...", "a".repeat(39)));
+    let straddling_later = format!("{}日本語", "a".repeat(40));
+    assert_eq!(env_preview(&straddling_later), format!("{}...", "a".repeat(40)));
+    assert_eq!(env_preview("short"), "short");
+    assert_eq!(env_preview(&"x".repeat(40)), "x".repeat(40));
+    assert_eq!(env_preview(&"x".repeat(41)), format!("{}...", "x".repeat(40)));
+    assert_eq!(env_preview(""), "");
+}
+
+// -----------------------------------------------------------------------
+// Control writer: one channel across reconnects
+// -----------------------------------------------------------------------
+//
+// The writer thread used to own the only receiver of a per-connection
+// channel. An exec still running when the connection died finished into a
+// dropped receiver, its ExecDone was never parked (the writer did the
+// parking), and the host -- which has no exec watchdog -- waited forever.
+
+fn read_guest_frame(host: &mut std::os::unix::net::UnixStream) -> GuestToHost {
+    let mut len_buf = [0u8; 4];
+    host.read_exact(&mut len_buf).unwrap();
+    let mut payload = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+    host.read_exact(&mut payload).unwrap();
+    capsem_proto::decode_guest_msg(&payload).unwrap()
+}
+
+/// Read frames until `want` accepts one; replayed duplicates are allowed.
+fn wait_for_frame(host: &mut std::os::unix::net::UnixStream, want: impl Fn(&GuestToHost) -> bool) -> GuestToHost {
+    host.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    loop {
+        let msg = read_guest_frame(host);
+        if want(&msg) {
+            return msg;
+        }
+    }
+}
+
+struct WriterConn {
+    host: std::os::unix::net::UnixStream,
+    guest_fd: RawFd,
+    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+fn spawn_writer_conn(sender: &CtrlSender, rx: &SharedCtrlReceiver) -> WriterConn {
+    use std::os::unix::io::IntoRawFd;
+    let (host, guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    let guest_fd = guest.into_raw_fd();
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let handle = {
+        let rx = std::sync::Arc::clone(rx);
+        let sender = sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        std::thread::spawn(move || control_writer_loop(&rx, &sender, guest_fd, -1, &alive))
+    };
+    WriterConn {
+        host,
+        guest_fd,
+        alive,
+        handle,
+    }
+}
+
+impl WriterConn {
+    fn finish(self) {
+        self.alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        drop(self.host);
+        self.handle.join().unwrap();
+        unsafe {
+            libc::close(self.guest_fd);
+        }
+    }
+}
+
+#[test]
+fn exec_done_finished_after_a_reconnect_reaches_the_new_connection() {
+    let (sender, rx) = test_ctrl_channel();
+
+    let mut first = spawn_writer_conn(&sender, &rx);
+    sender.send(GuestToHost::Ack { id: 1 }).unwrap();
+    assert!(matches!(read_guest_frame(&mut first.host), GuestToHost::Ack { id: 1 }));
+    // The host goes away and the bridge exits.
+    first.finish();
+
+    // The exec that was running finishes now, into the same channel.
+    sender.send(GuestToHost::ExecDone { id: 7, exit_code: 3 }).unwrap();
+
+    let mut second = spawn_writer_conn(&sender, &rx);
+    let done = wait_for_frame(&mut second.host, |m| matches!(m, GuestToHost::ExecDone { id: 7, .. }));
+    assert!(matches!(done, GuestToHost::ExecDone { id: 7, exit_code: 3 }));
+    second.finish();
+}
+
+#[test]
+fn a_message_the_dying_writer_consumed_is_delivered_by_the_next_one() {
+    let (sender, rx) = test_ctrl_channel();
+
+    let first = spawn_writer_conn(&sender, &rx);
+    // The host dies without anyone telling the writer.
+    drop(first.host);
+    // The writer consumes this, fails to write it, and must hand it on.
+    sender.send(GuestToHost::ExecDone { id: 9, exit_code: 0 }).unwrap();
+    first.handle.join().unwrap();
+    assert!(
+        !first.alive.load(std::sync::atomic::Ordering::SeqCst),
+        "a failed write ends the connection"
+    );
+    unsafe {
+        libc::close(first.guest_fd);
+    }
+
+    let mut second = spawn_writer_conn(&sender, &rx);
+    let done = wait_for_frame(&mut second.host, |m| matches!(m, GuestToHost::ExecDone { id: 9, .. }));
+    assert!(matches!(done, GuestToHost::ExecDone { id: 9, exit_code: 0 }));
+    second.finish();
+}
+
+#[test]
+fn ackable_responses_are_parked_at_send_time_and_pongs_are_not() {
+    let (sender, _rx) = test_ctrl_channel();
+    sender.send(GuestToHost::Pong).unwrap();
+    sender.send(GuestToHost::ExecDone { id: 4, exit_code: 0 }).unwrap();
+    let parked: Vec<u64> = sender.pending.lock().unwrap().keys().copied().collect();
+    assert_eq!(parked, vec![4]);
 }

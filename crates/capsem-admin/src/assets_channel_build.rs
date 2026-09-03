@@ -502,6 +502,45 @@ pub(super) fn validate_release_date(date: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuse any manifest key that is not exactly one path component.
+///
+/// Arch and asset names are joined into paths on both sides of a release
+/// build, and `auditfs::stage` creates parents and unlinks the destination
+/// before copying, so a key containing a separator or `..` is a write and a
+/// delete wherever it points. The manifest parser already rejects these; this
+/// is the check at the point of use, for a release built without it.
+fn single_path_component(value: &str, what: &str) -> Result<()> {
+    let mut components = Path::new(value).components();
+    let single_normal =
+        matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none();
+    if value.is_empty() || value.contains('\0') || value.contains(['/', '\\']) || value.contains("..") || !single_normal
+    {
+        return Err(anyhow!("{what} {value:?} is not a single path component"));
+    }
+    Ok(())
+}
+
+/// Where a published asset lives: `release_dir/<arch>-<name>`, and nowhere else.
+pub(super) fn release_asset_destination(release_dir: &Path, arch: &str, logical_name: &str) -> Result<PathBuf> {
+    single_path_component(arch, "asset architecture key")?;
+    single_path_component(logical_name, "asset name")?;
+    let destination = release_dir.join(format!("{arch}-{logical_name}"));
+    if destination.parent() != Some(release_dir) {
+        return Err(anyhow!(
+            "refusing to stage {arch}/{logical_name} outside {}",
+            release_dir.display()
+        ));
+    }
+    Ok(destination)
+}
+
+/// Where a source asset lives: `assets_dir/<arch>/<name>`, and nowhere else.
+pub(super) fn source_asset_path(assets_dir: &Path, arch: &str, logical_name: &str) -> Result<PathBuf> {
+    single_path_component(arch, "asset architecture key")?;
+    single_path_component(logical_name, "asset name")?;
+    Ok(assets_dir.join(arch).join(logical_name))
+}
+
 pub(super) fn copy_assets_channel_release_assets(
     assets_dir: &Path,
     release_dir: &Path,
@@ -511,8 +550,8 @@ pub(super) fn copy_assets_channel_release_assets(
     let mut copied = 0;
     for (arch, assets) in &mut release.arches {
         for (logical_name, entry) in assets {
-            let dst = release_dir.join(format!("{arch}-{logical_name}"));
-            let src = assets_dir.join(arch).join(logical_name);
+            let dst = release_asset_destination(release_dir, arch, logical_name)?;
+            let src = source_asset_path(assets_dir, arch, logical_name)?;
             let (bytes, digest) = copy_file_with_digest(&src, &dst)?;
             validate_asset_digest(arch, logical_name, entry, bytes, &digest)?;
             if entry.sha256.is_empty() {
@@ -541,7 +580,7 @@ pub(super) fn hydrate_current_asset_entry_sha256(
             if !entry.sha256.is_empty() {
                 continue;
             }
-            let source = assets_dir.join(arch).join(logical_name);
+            let source = source_asset_path(assets_dir, arch, logical_name)?;
             let (bytes, digest) = file_digest(&source).with_context(|| {
                 format!(
                     "hydrate current asset {asset_version} {arch}/{logical_name} from {}",

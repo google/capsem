@@ -22,15 +22,12 @@ NANOSECONDS_PER_HOUR = 3_600_000_000_000
 
 def _repository(name: str) -> str:
     without_digest = name.split("@", 1)[0]
-    return (
-        without_digest.rsplit(":", 1)[0]
-        if without_digest.rfind(":") > without_digest.rfind("/")
-        else without_digest
-    )
+    tag = without_digest.rfind(":")
+    return without_digest[:tag] if tag > without_digest.rfind("/") else without_digest
 
 
 def _docker_actions(
-    inventory: RuntimeInventory, policy: DockerRuntimePolicy
+    inventory: RuntimeInventory, policy: DockerRuntimePolicy, cache_policy: CachePolicy
 ) -> tuple[RuntimePruneAction, ...]:
     actions: list[RuntimePruneAction] = []
     groups: dict[str, list[RuntimeResource]] = defaultdict(list)
@@ -71,10 +68,15 @@ def _docker_actions(
                     maximum_age_hours=policy.maximum_age_hours,
                 )
             )
-    for resources in groups.values():
+    for repository, resources in groups.items():
+        keep_generations = policy.keep_image_generations
+        if cache_policy.control is not None:
+            keep_generations = cache_policy.control.docker.image_generation_limit(
+                repository, default=keep_generations
+            )
         ordered = sorted(resources, key=lambda item: (item.created_ns, item.identity), reverse=True)
         for position, resource in enumerate(ordered):
-            if resource.protected or position < policy.keep_image_generations:
+            if resource.protected or position < keep_generations:
                 continue
             actions.append(
                 RuntimePruneAction(
@@ -84,7 +86,7 @@ def _docker_actions(
                     logical_bytes=resource.logical_bytes,
                     reason=(
                         f"superseded owned image generation; retain newest "
-                        f"{policy.keep_image_generations} per repository"
+                        f"{keep_generations} per repository"
                     ),
                 )
             )
@@ -116,12 +118,11 @@ def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
         if not inventory.available:
             violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
         elif isinstance(runtime, DockerRuntimePolicy):
-            actions.extend(_docker_actions(inventory, runtime))
+            actions.extend(_docker_actions(inventory, runtime, policy))
         elif isinstance(runtime, TartRuntimePolicy):
             actions.extend(_tart_actions(inventory, runtime))
-    selected = tuple(
-        sorted(actions, key=lambda item: (item.runtime_id, item.operation, item.target))
-    )
+    actions.sort(key=lambda item: (item.runtime_id, item.operation, item.target))
+    selected = tuple(actions)
     return RuntimePrunePlan(
         generated_ns=snapshot.generated_ns,
         reclaim_bytes=sum(action.logical_bytes for action in selected),
@@ -258,8 +259,7 @@ def plan_release(snapshot: RuntimeSnapshot, policy: CachePolicy, boundary: str) 
 
 def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> RuntimePrunePlan:
     """Select every inactive, explicitly owned native cache resource."""
-    actions = []
-    violations = []
+    actions, violations = [], []
     for inventory in snapshot.runtimes:
         if not inventory.available:
             violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")

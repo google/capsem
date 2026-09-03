@@ -2225,12 +2225,12 @@ async fn main() -> Result<()> {
             tokio::pin!(ctrl_c);
 
             // The service tells us exactly where the per-VM socket lives. Never
-            // recompute locally -- the service may fall back to /tmp/capsem/{hash}
-            // when run_dir is under macOS's /var/folders (long SUN path).
-            let sock_path = provisioned
-                .uds_path
-                .clone()
-                .unwrap_or_else(|| capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id));
+            // recompute locally -- the service may fall back to /tmp/capsem-<uid>/
+            // {hash} when run_dir is under macOS's /var/folders (long SUN path).
+            let sock_path = match provisioned.uds_path.clone() {
+                Some(path) => path,
+                None => capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id)?,
+            };
 
             // Poll for the per-VM socket to exist and hand us an open IPC
             // channel. Uses the shared exponential-backoff helper instead of
@@ -2245,12 +2245,13 @@ async fn main() -> Result<()> {
                             return None;
                         }
                         let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
-                        let mut std_stream = stream.into_std().ok()?;
-                        capsem_foundation::ipc_handshake::negotiate_initiator(
-                            &mut std_stream,
+                        let std_stream = stream.into_std().ok()?;
+                        let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
+                            std_stream,
                             "capsem-cli",
                             capsem_foundation::telemetry::current_parent_traceparent(),
                         )
+                        .await
                         .ok()?;
                         channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()
                     }
@@ -2432,7 +2433,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-
     Ok(())
 }
 

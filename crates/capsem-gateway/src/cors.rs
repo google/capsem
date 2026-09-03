@@ -44,14 +44,19 @@ fn is_allowed_origin_str(s: &str) -> bool {
     };
     let Some(host) = uri.host() else { return false };
 
+    match scheme {
+        "http" | "https" => is_loopback_host(host),
+        "tauri" => host.eq_ignore_ascii_case("localhost"),
+        _ => false,
+    }
+}
+
+/// True iff `host` names this machine: `localhost`, `127.0.0.1`, or `::1`,
+/// with or without IPv6 brackets. Shared by the CORS origin check and the
+/// Host header check in `auth`.
+pub fn is_loopback_host(host: &str) -> bool {
     // `http::Uri::host` may or may not strip IPv6 brackets depending on input
     // shape; normalize so `[::1]` and `::1` both compare against `::1`.
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    let host_lc = host.to_ascii_lowercase();
-
-    match scheme {
-        "http" | "https" => matches!(host_lc.as_str(), "localhost" | "127.0.0.1" | "::1"),
-        "tauri" => host_lc == "localhost",
-        _ => false,
-    }
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
 }

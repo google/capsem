@@ -777,7 +777,7 @@ name = "capsem-bench"
 version = "0.6.2"
 dependencies = [
  "anyhow",
- "capsem-core",
+ "capsem-foundation",
  "clap",
  "futures",
  "reqwest 0.12.28",
@@ -835,6 +835,7 @@ dependencies = [
  "lru",
  "metrics",
  "metrics-util",
+ "nix 0.29.0",
  "notify",
  "objc2",
  "objc2-foundation",

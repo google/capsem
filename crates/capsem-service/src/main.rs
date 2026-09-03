@@ -41,9 +41,12 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
 mod asset_background;
+mod blocking;
 mod instance_reaper;
 mod profile_status_cache;
 mod session_cleanup;
+mod session_db_handles;
+mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
 mod profile_routes;
@@ -160,7 +163,7 @@ use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_profile_session_name, validate_vm_name};
 use capsem_service::registry::{
-    new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
+    new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry, SharedRegistry,
 };
 use capsem_service::triage;
 
@@ -223,7 +226,7 @@ struct ServiceState {
     /// readers or create per-route projection caches.
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
     /// Registry of persistent (named) VMs
-    persistent_registry: Mutex<PersistentRegistry>,
+    persistent_registry: SharedRegistry,
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
@@ -868,14 +871,15 @@ impl ServiceState {
     /// Delegates to `capsem_foundation::uds::instance_socket_path`, the single
     /// source of truth for the macOS `SUN_LEN` workaround. Logs when the
     /// fallback path is used so clients can correlate.
-    fn instance_socket_path(&self, id: &str) -> PathBuf {
-        let path = capsem_foundation::uds::instance_socket_path(&self.run_dir, id);
+    fn instance_socket_path(&self, id: &str) -> Result<PathBuf> {
+        let path = capsem_foundation::uds::instance_socket_path(&self.run_dir, id)
+            .with_context(|| format!("resolve instance socket path for {id}"))?;
         if !path.starts_with(&self.run_dir) {
             let preferred = self.run_dir.join("instances").join(format!("{id}.sock"));
             tracing::info!(%id, original = %preferred.display(), short = %path.display(),
-                           "socket path too long, using /tmp/capsem/");
+                           "socket path too long, using the private fallback dir");
         }
-        path
+        Ok(path)
     }
 
     /// Path to main.db (global session index).
@@ -994,144 +998,6 @@ impl ServiceState {
         Some(diagnostics)
     }
 
-    fn register_session_db_handle(
-        &self,
-        vm_id: &str,
-        session_dir: &StdPath,
-    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
-        let db_path = session_db_path_for_session_dir(session_dir);
-        let started = std::time::Instant::now();
-        let handles = self.session_db_handles.lock().unwrap();
-        if let Some(handle) = handles.get(vm_id) {
-            if handle.path() == db_path.as_path() {
-                tracing::debug!(
-                    vm_id,
-                    db_path = %db_path.display(),
-                    operation = "register_session_db_handle",
-                    duration_ms = started.elapsed().as_millis(),
-                    "reused existing session DB handle"
-                );
-                return Ok(Arc::clone(handle));
-            }
-            warn!(
-                vm_id,
-                cached_db_path = %handle.path().display(),
-                db_path = %db_path.display(),
-                operation = "register_session_db_handle",
-                "replacing session DB handle for rebound session path"
-            );
-        }
-        drop(handles);
-        let handle = match capsem_logger::DbHandle::open_external_reader(&db_path) {
-            Ok(handle) => Arc::new(handle),
-            Err(error) => {
-                error!(
-                    vm_id,
-                    db_path = %db_path.display(),
-                    operation = "register_session_db_handle",
-                    duration_ms = started.elapsed().as_millis(),
-                    error = %error,
-                    "failed to register session DB handle"
-                );
-                return Err(anyhow!(
-                    "failed to open session DB handle for {vm_id}: {}: {error}",
-                    db_path.display()
-                ));
-            }
-        };
-        let mut handles = self.session_db_handles.lock().unwrap();
-        handles.insert(vm_id.to_string(), Arc::clone(&handle));
-        drop(handles);
-        info!(
-            vm_id,
-            db_path = %db_path.display(),
-            operation = "register_session_db_handle",
-            duration_ms = started.elapsed().as_millis(),
-            "registered session DB handle"
-        );
-        Ok(handle)
-    }
-
-    fn unregister_session_db_handle(&self, vm_id: &str) {
-        let removed = self.session_db_handles.lock().unwrap().remove(vm_id);
-        if removed.is_some() {
-            info!(
-                vm_id,
-                operation = "unregister_session_db_handle",
-                "unregistered session DB handle"
-            );
-        }
-    }
-
-    #[cfg(test)]
-    fn rename_session_db_handle(&self, old_vm_id: &str, new_vm_id: &str) {
-        let mut handles = self.session_db_handles.lock().unwrap();
-        if let Some(handle) = handles.remove(old_vm_id) {
-            handles.insert(new_vm_id.to_string(), handle);
-            drop(handles);
-            info!(
-                old_vm_id,
-                new_vm_id,
-                operation = "rename_session_db_handle",
-                "renamed session DB handle"
-            );
-        }
-    }
-
-    fn session_db_handle(&self, vm_id: &str) -> Option<Arc<capsem_logger::DbHandle>> {
-        self.session_db_handles.lock().unwrap().get(vm_id).cloned()
-    }
-
-    fn hydrate_session_db_handles(&self) {
-        let mut candidates: Vec<(String, PathBuf)> = {
-            let instances = self.instances.lock().unwrap();
-            instances
-                .values()
-                .map(|info| (info.id.clone(), info.session_dir.clone()))
-                .collect()
-        };
-        {
-            let registry = self.persistent_registry.lock().unwrap();
-            candidates.extend(
-                registry
-                    .data
-                    .vms
-                    .values()
-                    .map(|entry| (entry.name.clone(), entry.session_dir.clone())),
-            );
-        }
-
-        let mut hydrated = 0usize;
-        for (vm_id, session_dir) in candidates {
-            let db_path = session_db_path_for_session_dir(&session_dir);
-            if !db_path.exists() {
-                info!(
-                    vm_id,
-                    operation = "hydrate_session_db_handle",
-                    db_path = %db_path.display(),
-                    "session DB absent during startup handle hydration"
-                );
-                continue;
-            }
-            match self.register_session_db_handle(&vm_id, &session_dir) {
-                Ok(_) => hydrated += 1,
-                Err(error) => {
-                    warn!(
-                        vm_id,
-                        operation = "hydrate_session_db_handle",
-                        db_path = %db_path.display(),
-                        error = %error,
-                        "failed to hydrate session DB handle"
-                    );
-                }
-            }
-        }
-        info!(
-            operation = "hydrate_session_db_handles",
-            hydrated, "startup session DB handle hydration complete"
-        );
-    }
-
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
     }
@@ -1182,282 +1048,6 @@ impl ServiceState {
             info!(id, "removing stale instance record");
             self.scrub_evicted_instance(&id, &info);
         }
-    }
-
-    fn reconcile_persistent_defunct_from_logs(&self) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-            .unwrap_or_default();
-        let last_ms = self.last_defunct_reconcile_ms.load(Ordering::Acquire);
-        if now_ms.saturating_sub(last_ms) < 1_000 {
-            return;
-        }
-        if self
-            .last_defunct_reconcile_ms
-            .compare_exchange(last_ms, now_ms, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-
-        let candidates: Vec<(String, PathBuf)> = {
-            let registry = self.persistent_registry.lock().unwrap();
-            let instances = self.instances.lock().unwrap();
-            registry
-                .list()
-                .filter(|entry| !entry.defunct)
-                .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
-                .map(|entry| (entry.name.clone(), entry.session_dir.clone()))
-                .collect()
-        };
-
-        let updates: Vec<(String, String)> = candidates
-            .into_iter()
-            .filter_map(|(name, session_dir)| read_boot_failure_tail(&session_dir).map(|tail| (name, tail)))
-            .collect();
-        if updates.is_empty() {
-            return;
-        }
-
-        let mut registry = self.persistent_registry.lock().unwrap();
-        let instances = self.instances.lock().unwrap();
-        let mut changed = false;
-        for (name, tail) in updates {
-            if instances.contains_key(&name) {
-                continue;
-            }
-            if let Some(entry) = registry.get_mut(&name) {
-                if !entry.defunct {
-                    warn!(
-                        name,
-                        cause = capsem_core::session::boot_failure_summary(&tail),
-                        "marking persistent VM defunct from preserved boot logs"
-                    );
-                    entry.defunct = true;
-                    entry.last_error = Some(tail);
-                    entry.suspended = false;
-                    entry.checkpoint_path = None;
-                    changed = true;
-                }
-            }
-        }
-        drop(instances);
-        if changed {
-            if let Err(error) = registry.save() {
-                error!(error = %error, "failed to save persistent registry after defunct reconciliation");
-            }
-        }
-    }
-
-    /// Rename an ephemeral session dir to a `-failed-*` sibling so its
-    /// logs survive for post-mortem, then cull down to
-    /// `MAX_FAILED_SESSIONS`.
-    ///
-    /// Three loss paths converge here: (a) `handle_run`'s
-    /// `wait_for_vm_ready` timeout, (b) `scrub_evicted_instance` when
-    /// cleanup detects a dead capsem-process, (c) the unexpected
-    /// child-exit handler in `provision_sandbox`. All three cases are
-    /// "the process we wanted died" -- exactly when you need
-    /// `process.log`, `mcp-aggregator.stderr.log`, `serial.log`, and
-    /// `session.db` most. Call this instead of `remove_dir_all` on
-    /// every such path.
-    ///
-    /// If the rename fails (EEXIST, permission, different filesystem,
-    /// etc.) we `warn!` with the specific error and fall back to
-    /// `remove_dir_all` so disk isn't leaked when the filesystem is
-    /// already unhappy.
-    fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
-        let failed_id = format!("{}-failed-{}", id, capsem_core::session::generate_session_id(),);
-        let failed_dir = self.run_dir.join("sessions").join(&failed_id);
-        match std::fs::rename(session_dir, &failed_dir) {
-            Ok(()) => {
-                info!(
-                    id,
-                    path = %failed_dir.display(),
-                    "preserved failed session dir for post-mortem"
-                );
-                if let Err(e) = self.cull_failed_sessions() {
-                    warn!(
-                        error = %e,
-                        "failed to cull old failed session dirs -- disk may grow beyond {MAX_FAILED_SESSIONS}"
-                    );
-                }
-                Some(failed_dir)
-            }
-            Err(e) => {
-                warn!(
-                    id,
-                    from = %session_dir.display(),
-                    to = %failed_dir.display(),
-                    error = %e,
-                    "failed to preserve session dir for post-mortem -- logs lost; removing to reclaim disk"
-                );
-                if let Err(e) = std::fs::remove_dir_all(session_dir) {
-                    warn!(
-                        id,
-                        path = %session_dir.display(),
-                        error = %e,
-                        "also failed to remove session dir -- orphaned on disk"
-                    );
-                }
-                None
-            }
-        }
-    }
-
-    fn cull_failed_sessions(&self) -> Result<()> {
-        let sessions_dir = self.run_dir.join("sessions");
-        if !sessions_dir.exists() {
-            return Ok(());
-        }
-        let mut failed_dirs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
-        let entries =
-            std::fs::read_dir(&sessions_dir).with_context(|| format!("read_dir({})", sessions_dir.display()))?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            if !name.contains("-failed-") {
-                continue;
-            }
-            // If we can't stat, skip rather than fail the whole cull --
-            // we'd rather leave one undateable dir than abort the prune.
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(modified) = metadata.modified() {
-                    failed_dirs.push((path, modified));
-                }
-            }
-        }
-        failed_dirs.sort_by(|a, b| a.1.cmp(&b.1));
-        if failed_dirs.len() > MAX_FAILED_SESSIONS {
-            let to_delete = failed_dirs.len() - MAX_FAILED_SESSIONS;
-            for (path, _) in failed_dirs.iter().take(to_delete) {
-                info!(path = %path.display(), "culling old failed session dir");
-                if let Err(e) = std::fs::remove_dir_all(path) {
-                    warn!(path = %path.display(), error = %e, "cull remove_dir_all failed");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Permanently remove one service-owned session directory.
-    ///
-    /// Persistent registry data is user-writable state, so never pass its
-    /// `session_dir` directly to `remove_dir_all`. Restrict deletion to a
-    /// real, direct child of this service's sessions/ or persistent/ roots
-    /// and reject symlinks before performing the recursive removal.
-    fn delete_session_dir(&self, session_dir: &StdPath) -> Result<()> {
-        let parent = session_dir.parent().ok_or_else(|| {
-            anyhow!(
-                "refusing to delete session path without a parent: {}",
-                session_dir.display()
-            )
-        })?;
-        let allowed_parents = [self.run_dir.join("sessions"), self.run_dir.join("persistent")];
-
-        let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
-            format!(
-                "canonicalize service run directory before delete: {}",
-                self.run_dir.display()
-            )
-        })?;
-        let canonical_requested_parent = parent.canonicalize().with_context(|| {
-            format!(
-                "canonicalize requested session root before delete: {}",
-                parent.display()
-            )
-        })?;
-        let mut canonical_parent = None;
-        for allowed_parent in &allowed_parents {
-            let parent_metadata = match std::fs::symlink_metadata(allowed_parent) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "inspect service session root before delete: {}",
-                            allowed_parent.display()
-                        )
-                    });
-                }
-            };
-            if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
-                if parent == allowed_parent.as_path() {
-                    return Err(anyhow!(
-                        "refusing to delete through non-directory service session root: {}",
-                        allowed_parent.display()
-                    ));
-                }
-                continue;
-            }
-
-            let candidate = allowed_parent.canonicalize().with_context(|| {
-                format!(
-                    "canonicalize service session root before delete: {}",
-                    allowed_parent.display()
-                )
-            })?;
-            if candidate.parent() != Some(canonical_run_dir.as_path()) {
-                if canonical_requested_parent == candidate {
-                    return Err(anyhow!(
-                        "refusing to delete through session root outside canonical run directory: {}",
-                        allowed_parent.display()
-                    ));
-                }
-                continue;
-            }
-            if canonical_requested_parent == candidate {
-                canonical_parent = Some(candidate);
-                break;
-            }
-        }
-        let canonical_parent = canonical_parent.ok_or_else(|| {
-            anyhow!(
-                "refusing to delete session path outside service roots: {}",
-                session_dir.display()
-            )
-        })?;
-
-        let metadata = match std::fs::symlink_metadata(session_dir) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("inspect session path before delete: {}", session_dir.display()));
-            }
-        };
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(anyhow!(
-                "refusing to recursively delete non-directory session path: {}",
-                session_dir.display()
-            ));
-        }
-
-        let canonical_session = session_dir.canonicalize().with_context(|| {
-            format!(
-                "canonicalize service session path before delete: {}",
-                session_dir.display()
-            )
-        })?;
-        if canonical_session.parent() != Some(canonical_parent.as_path()) {
-            return Err(anyhow!(
-                "refusing to delete session path outside canonical service root: {}",
-                session_dir.display()
-            ));
-        }
-
-        // Remove the already verified canonical child, not a registry-provided
-        // alias. This keeps a legitimate macOS /var -> /private/var spelling
-        // difference working without giving a mutable alias another path
-        // resolution opportunity at the destructive operation.
-        remove_quiesced_session_dir(&canonical_session)
-            .with_context(|| format!("delete canonical session directory: {}", canonical_session.display()))
     }
 
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
@@ -1555,7 +1145,7 @@ impl ServiceState {
 
         info!(id, version, persistent, from, "provision_sandbox called");
 
-        let uds_path = self.instance_socket_path(id);
+        let uds_path = self.instance_socket_path(id)?;
 
         // Persistent VMs go in persistent/, ephemeral in sessions/
         let session_dir = if persistent {
@@ -1780,7 +1370,7 @@ impl ServiceState {
             },
         );
         drop(instances);
-        instance_reaper::spawn_provision(
+        instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),
             name.to_string(),
@@ -1823,6 +1413,11 @@ impl ServiceState {
             }
         }
 
+        // The previous process's reaper may not have moved a session that was
+        // persisted while running home yet; settle it here so this launch
+        // starts from the directory it will keep.
+        let mut entry = entry;
+        entry.session_dir = vm_lifecycle::settle_persistent_session_dir(self, &entry.name, &entry.session_dir);
         if !entry.session_dir.exists() {
             return Err(anyhow!("session directory for \"{}\" is missing", name));
         }
@@ -1840,7 +1435,7 @@ impl ServiceState {
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
-        let uds_path = self.instance_socket_path(&vm_id);
+        let uds_path = self.instance_socket_path(&vm_id)?;
         let _ = std::fs::create_dir_all(uds_path.parent().unwrap());
 
         // Clear stale UDS + ready sentinel from the prior boot. Without this,
@@ -1986,6 +1581,7 @@ impl ServiceState {
             );
         }
 
+        let session_dir = entry.session_dir.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             vm_id.clone(),
@@ -1998,7 +1594,7 @@ impl ServiceState {
                 asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path: uds_path.clone(),
-                session_dir: entry.session_dir.clone(),
+                session_dir: session_dir.clone(),
                 ram_mb,
                 cpus,
                 start_time: std::time::Instant::now(),
@@ -2009,7 +1605,7 @@ impl ServiceState {
             },
         );
         drop(instances);
-        instance_reaper::spawn_resume(child, vm_id.clone(), Arc::clone(self), uds_path);
+        instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
 
         Ok(vm_id)
     }

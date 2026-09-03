@@ -3,6 +3,72 @@
 
 use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
 use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
+use crate::net::policy::NetworkMechanics;
+
+use super::protocol::Protocol;
+
+pub(super) fn request_can_replay_empty_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
+    let no_declared_length = headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim() == "0")
+        .unwrap_or(true);
+    let no_chunked_body = !headers.contains_key(http::header::TRANSFER_ENCODING);
+    no_declared_length
+        && no_chunked_body
+        && matches!(
+            *method,
+            http::Method::GET | http::Method::HEAD | http::Method::OPTIONS | http::Method::DELETE
+        )
+}
+
+pub(super) fn is_openai_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("chatgpt-")
+}
+
+pub(super) fn is_anthropic_model_name(model: &str) -> bool {
+    model.to_ascii_lowercase().starts_with("claude-")
+}
+
+pub(super) fn is_google_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gemini-") || model.starts_with("models/gemini-")
+}
+
+pub(super) fn provider_label(provider: Option<ProviderKind>) -> &'static str {
+    provider.map(|provider| provider.as_str()).unwrap_or("none")
+}
+
+/// Whether a plain-HTTP request may reach `port` on the upstream.
+pub(super) fn http_upstream_port_allowed(policy: &NetworkMechanics, protocol: Protocol, port: u16) -> bool {
+    if protocol != Protocol::Http || policy.http_upstream_ports.is_empty() {
+        return true;
+    }
+    policy.http_upstream_ports.contains(&port)
+}
+
+pub(super) fn current_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+pub(super) fn materialize_collected_response_headers(headers: &mut http::HeaderMap, body_len: usize, is_gzip: bool) {
+    if is_gzip {
+        headers.remove(http::header::CONTENT_ENCODING);
+    }
+    headers.remove(http::header::CONTENT_LENGTH);
+    headers.remove(http::header::TRANSFER_ENCODING);
+    if let Ok(value) = http::HeaderValue::from_str(&body_len.to_string()) {
+        headers.insert(http::header::CONTENT_LENGTH, value);
+    }
+}
 
 /// Returns true only for paths that are actual LLM API endpoints
 /// (generation, embeddings, images, audio -- anything billed per token/request).
@@ -58,13 +124,16 @@ pub(super) fn parse_http_host_target(header: Option<&hyper::header::HeaderValue>
     if trimmed.starts_with('[') {
         return None;
     }
-    match trimmed.rsplit_once(':') {
-        Some((host, port_str)) if !host.is_empty() => {
-            let port: u16 = port_str.parse().ok()?;
-            Some((host.to_string(), port))
-        }
-        _ => Some((trimmed.to_string(), 80)),
-    }
+    // The host is guest-controlled and this is the plain-HTTP path's only
+    // source of upstream identity: hand back the normalized form (lowercase,
+    // no DNS-root dots) so policy, dial and telemetry agree, and refuse a
+    // value that normalizes to nothing.
+    let (host, port) = match trimmed.rsplit_once(':') {
+        Some((host, port_str)) if !host.is_empty() => (host, port_str.parse::<u16>().ok()?),
+        _ => (trimmed, 80),
+    };
+    let host = crate::net::hostname::normalize_host(host);
+    (!host.is_empty()).then_some((host, port))
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.

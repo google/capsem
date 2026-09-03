@@ -8,9 +8,14 @@ use crate::hypervisor::fuse::{self, *};
 
 impl FuseProcessor {
     pub(super) fn do_opendir(&mut self, header: &FuseInHeader) -> Vec<u8> {
-        let path = match self.inodes.get(header.nodeid) {
-            Some(p) => p.clone(),
-            None => return fuse::error_response(header.unique, -libc::ENOENT),
+        if self.inodes.get(header.nodeid).is_none() {
+            return fuse::error_response(header.unique, -libc::ENOENT);
+        }
+        // A symlink inode (or a directory since replaced by a link) is never
+        // listed through: that would enumerate whatever it points at.
+        let path = match self.inodes.contained_dir(header.nodeid) {
+            Some(p) => p,
+            None => return fuse::error_response(header.unique, -libc::EACCES),
         };
         let read_dir = match std::fs::read_dir(&path) {
             Ok(rd) => rd,
@@ -318,6 +323,9 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        if !self.inodes.is_contained_entry(&path) {
+            return fuse::error_response(header.unique, -libc::EACCES);
+        }
         match std::fs::read_link(&path) {
             Ok(t) => fuse::success_response(header.unique, t.as_os_str().as_encoded_bytes()),
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
@@ -340,6 +348,9 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        if !self.inodes.is_contained_entry(&old_path) {
+            return fuse::error_response(header.unique, -libc::EACCES);
+        }
         let new_path = match self.inodes.child_path(header.nodeid, name) {
             Some(p) => p,
             None => return fuse::error_response(header.unique, -libc::EINVAL),

@@ -5,6 +5,11 @@ use crate::auto_snapshot::AutoSnapshotScheduler;
 use std::path::PathBuf;
 use std::time::Duration;
 
+mod bounds;
+mod containment;
+mod output_format;
+mod path_truncation;
+
 fn setup() -> (tempfile::TempDir, PathBuf, AutoSnapshotScheduler) {
     let tmp = tempfile::tempdir().unwrap();
     let session = tmp.path().to_path_buf();
@@ -671,335 +676,6 @@ fn revert_file_auto_select_no_match() {
 
 // -- Pagination and text table tests (TDD: written before implementation) --
 
-/// Helper to extract the text content from a JsonRpcResponse.
-fn extract_text(resp: &JsonRpcResponse) -> String {
-    resp.result.as_ref().unwrap()["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
-#[test]
-fn changes_returns_text_table() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    std::fs::write(ws.join("hello.txt"), "world").unwrap();
-    sched.take_snapshot().unwrap();
-    std::fs::write(ws.join("new.txt"), "created").unwrap();
-
-    let args = serde_json::json!({});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // Default format is text table, not JSON.
-    assert!(
-        serde_json::from_str::<Vec<Value>>(&text).is_err(),
-        "default response should NOT be a JSON array"
-    );
-    assert!(text.contains("Changed Files"), "missing header: {text}");
-    assert!(text.contains("Path"), "missing Path column: {text}");
-    assert!(text.contains("Op"), "missing Op column: {text}");
-    assert!(text.contains("new.txt"), "missing file entry: {text}");
-    assert!(text.contains("created"), "missing op value: {text}");
-}
-
-#[test]
-fn changes_pagination_truncates_large_output() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    // Take empty snapshot, then create 300 files.
-    sched.take_snapshot().unwrap();
-    for i in 0..300 {
-        std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
-    }
-
-    let args = serde_json::json!({});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // Response should be bounded by DEFAULT_MAX_LENGTH + header overhead.
-    let max_allowed = super::super::builtin_tools::DEFAULT_MAX_LENGTH as usize + 500;
-    assert!(
-        text.len() <= max_allowed,
-        "response too large: {} chars (max {})",
-        text.len(),
-        max_allowed
-    );
-    // Should indicate pagination is available.
-    assert!(text.contains("start_index="), "missing pagination hint: {text}");
-}
-
-#[test]
-fn changes_pagination_continuation() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    sched.take_snapshot().unwrap();
-    for i in 0..300 {
-        std::fs::write(ws.join(format!("file_{i:04}.txt")), format!("content {i}")).unwrap();
-    }
-
-    // First page.
-    let args = serde_json::json!({});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let page1 = extract_text(&resp);
-
-    // Extract start_index from pagination hint.
-    let idx_str = page1
-        .split("start_index=")
-        .nth(1)
-        .unwrap()
-        .split(|c: char| !c.is_ascii_digit())
-        .next()
-        .unwrap();
-    let next_start: u64 = idx_str.parse().unwrap();
-
-    // Second page.
-    let args = serde_json::json!({"start_index": next_start});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let page2 = extract_text(&resp);
-
-    // Pages should have different content.
-    assert_ne!(page1, page2, "pages should differ");
-    // Page 2 should not re-include the header.
-    assert!(
-        !page2.starts_with("Changed Files"),
-        "page 2 should not repeat the header"
-    );
-}
-
-#[test]
-fn changes_custom_max_length() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    sched.take_snapshot().unwrap();
-    for i in 0..20 {
-        std::fs::write(ws.join(format!("f_{i}.txt")), "x").unwrap();
-    }
-
-    let args = serde_json::json!({"max_length": 200});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // Header + chunk: allow some overhead for the pagination hint itself.
-    assert!(
-        text.len() <= 500,
-        "response should be short with max_length=200, got {} chars",
-        text.len()
-    );
-    assert!(text.contains("start_index="), "should paginate at max_length=200");
-}
-
-#[test]
-fn changes_small_result_no_pagination() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    sched.take_snapshot().unwrap();
-    std::fs::write(ws.join("only.txt"), "small").unwrap();
-
-    let args = serde_json::json!({});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    assert!(
-        !text.contains("start_index="),
-        "should not paginate small results: {text}"
-    );
-    assert!(text.contains("only.txt"), "missing file entry: {text}");
-}
-
-#[test]
-fn changes_format_json_returns_raw() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    std::fs::write(ws.join("a.txt"), "original").unwrap();
-    sched.take_snapshot().unwrap();
-    std::fs::write(ws.join("b.txt"), "new").unwrap();
-
-    let args = serde_json::json!({"format": "json"});
-    let resp = handle_list_changed_files(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // format=json should return valid JSON array.
-    let changes: Vec<Value> = serde_json::from_str(&text).expect("format=json should return valid JSON array");
-    assert_eq!(changes.len(), 1);
-    assert_eq!(changes[0]["path"], "b.txt");
-    assert_eq!(changes[0]["op"], "created");
-}
-
-#[test]
-fn list_returns_text_table() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    std::fs::write(ws.join("hello.txt"), "world").unwrap();
-    sched.take_snapshot().unwrap();
-    std::fs::write(ws.join("hello.txt"), "modified world content").unwrap();
-    sched.take_snapshot().unwrap();
-
-    let args = serde_json::json!({});
-    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // Default format is text table, not JSON.
-    assert!(
-        serde_json::from_str::<Value>(&text).is_err(),
-        "default response should NOT be JSON"
-    );
-    assert!(text.contains("Snapshots"), "missing header: {text}");
-    assert!(text.contains("Checkpoint"), "missing Checkpoint column: {text}");
-    // Changes should use compact count columns.
-    assert!(text.contains("Created"), "missing Created column: {text}");
-    assert!(text.contains("Edited"), "missing Edited column: {text}");
-    assert!(text.contains("Deleted"), "missing Deleted column: {text}");
-    assert!(
-        text.contains("1       "),
-        "changes should render numeric compact counts: {text}"
-    );
-}
-
-#[test]
-fn list_pagination_works() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    // Create many snapshots with files to generate a large response.
-    for i in 0..8 {
-        for j in 0..20 {
-            std::fs::write(ws.join(format!("f_{i}_{j}.txt")), format!("{i}{j}")).unwrap();
-        }
-        sched.take_snapshot().unwrap();
-    }
-
-    let args = serde_json::json!({"max_length": 500});
-    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    assert!(
-        text.len() <= 1000,
-        "response should respect max_length, got {} chars",
-        text.len()
-    );
-    assert!(text.contains("start_index="), "should paginate: {text}");
-}
-
-#[test]
-fn list_format_json_returns_raw() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    std::fs::write(ws.join("a.txt"), "data").unwrap();
-    sched.take_snapshot().unwrap();
-
-    let args = serde_json::json!({"format": "json"});
-    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    // format=json should return valid JSON.
-    let summary: Value = serde_json::from_str(&text).expect("format=json should return valid JSON");
-    assert!(summary["snapshots"].is_array());
-}
-
-#[test]
-fn list_format_json_large_payload_is_not_prefixed_with_pagination_text() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    for i in 0..10 {
-        for j in 0..80 {
-            std::fs::write(ws.join(format!("large_{i}_{j}.txt")), format!("payload {i} {j}")).unwrap();
-        }
-        sched.take_snapshot().unwrap();
-    }
-
-    let args = serde_json::json!({"format": "json", "max_length": 200});
-    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-    let text = extract_text(&resp);
-
-    assert!(
-        !text.starts_with("Content length:"),
-        "format=json must not be prefixed with prose pagination: {text}"
-    );
-    let summary: Value = serde_json::from_str(&text).expect("format=json should return valid JSON");
-    assert!(summary["snapshots"].as_array().unwrap().len() >= 10);
-    for snap in summary["snapshots"].as_array().unwrap() {
-        assert!(
-            snap["changes"].is_null(),
-            "format=json should stay compact unless include_changes=true: {snap}"
-        );
-        assert!(
-            snap["changes_summary"].is_object(),
-            "format=json should include compact change summary: {snap}"
-        );
-    }
-}
-
-/// Contract test: verifies the exact response shape the frontend depends on.
-///
-/// The frontend (api.ts:listSnapshots) calls callMcpTool('snapshots_list', {format:'json'})
-/// and parses result.content[0].text as JSON expecting these fields. If this test
-/// breaks, the snapshot panel will break too.
-#[test]
-fn list_format_json_frontend_contract() {
-    let (_tmp, session, mut sched) = setup();
-    let ws = session.join("workspace");
-
-    std::fs::write(ws.join("hello.txt"), "world").unwrap();
-    sched.take_snapshot().unwrap();
-    std::fs::write(ws.join("hello.txt"), "changed").unwrap();
-    sched.take_snapshot().unwrap();
-
-    // Frontend always passes format: "json".
-    let args = serde_json::json!({"format": "json"});
-    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
-
-    // Response must have result.content[0].text.
-    let result = resp.result.as_ref().expect("response must have result");
-    let content = result["content"].as_array().expect("result must have content array");
-    assert!(!content.is_empty(), "content must not be empty");
-    let text = content[0]["text"].as_str().expect("content[0] must have text string");
-
-    // text must be valid JSON with the expected shape.
-    let data: Value = serde_json::from_str(text).expect("content text must be valid JSON when format=json");
-
-    // Top-level fields the frontend depends on.
-    assert!(data["snapshots"].is_array(), "must have snapshots array");
-    assert!(data["auto_max"].is_number(), "must have auto_max number");
-    assert!(data["manual_max"].is_number(), "must have manual_max number");
-    assert!(
-        data["manual_available"].is_number(),
-        "must have manual_available number"
-    );
-
-    // Each snapshot must have the fields SnapshotsTab.svelte reads.
-    let snaps = data["snapshots"].as_array().unwrap();
-    assert!(snaps.len() >= 2, "should have at least 2 snapshots");
-    for snap in snaps {
-        assert!(snap["checkpoint"].is_string(), "snapshot must have checkpoint: {snap}");
-        assert!(snap["slot"].is_number(), "snapshot must have slot: {snap}");
-        assert!(snap["origin"].is_string(), "snapshot must have origin: {snap}");
-        // name and hash can be null.
-        assert!(snap["age"].is_string(), "snapshot must have age: {snap}");
-        assert!(
-            snap["files_count"].is_number(),
-            "snapshot must have files_count: {snap}"
-        );
-        assert!(
-            snap["changes_summary"].is_object(),
-            "snapshot must have compact changes_summary object: {snap}"
-        );
-        assert!(
-            snap["changes"].is_null(),
-            "full changes must require include_changes=true: {snap}"
-        );
-    }
-}
-
 // -------------------------------------------------------------------
 // Symlink handling in collect_files
 // -------------------------------------------------------------------
@@ -1035,77 +711,66 @@ fn collect_files_does_not_follow_symlinks_for_size() {
     );
 }
 
-// -----------------------------------------------------------------------
-// AB-007: truncate_path -- char-boundary safe
-// -----------------------------------------------------------------------
+// -- no-follow write path (revert TOCTOU) --
 
+#[cfg(unix)]
 #[test]
-fn truncate_path_ascii_under_max_returns_as_is() {
-    assert_eq!(truncate_path("/a/b/c", 33), "/a/b/c");
+fn write_regular_file_no_follow_refuses_existing_symlink() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("outside.txt");
+    std::fs::write(&target, b"original").unwrap();
+    let link = dir.path().join("workspace_file");
+    symlink(&target, &link).unwrap();
+
+    // A guest raced a symlink into the workspace target between the containment
+    // check and the write. The write must refuse, never follow it.
+    let result = write_regular_file_no_follow(&link, b"attacker", 0o644);
+    assert!(result.is_err(), "must refuse to write through a pre-existing symlink");
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"original",
+        "the symlink target outside the workspace must be untouched"
+    );
 }
 
+#[cfg(unix)]
 #[test]
-fn truncate_path_ascii_over_max_keeps_last_chars_with_ellipsis() {
-    let path = "a".repeat(50);
-    let out = truncate_path(&path, 33);
-    assert_eq!(out.chars().count(), 33);
-    assert!(out.starts_with("..."));
-    assert_eq!(&out[3..], &"a".repeat(30));
+fn write_regular_file_no_follow_creates_fresh_file_with_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("restored");
+    write_regular_file_no_follow(&path, b"hi", 0o600).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"hi");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 }
 
+#[cfg(unix)]
 #[test]
-fn truncate_path_unicode_under_max_chars_is_kept_even_if_byte_len_exceeds() {
-    // 10 CJK chars = 30 bytes; max 33 chars; should pass through unchanged.
-    let path = "日".repeat(10);
-    assert_eq!(truncate_path(&path, 33), path);
+fn collect_files_does_not_collapse_distinct_non_utf8_names() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    // Two distinct invalid-UTF8 filenames. to_string_lossy maps both to the
+    // same replacement string, collapsing them in the map and corrupting change
+    // detection. They are unaddressable through the JSON tool API regardless.
+    std::fs::write(dir.path().join(OsStr::from_bytes(b"\xff")), b"a").unwrap();
+    std::fs::write(dir.path().join(OsStr::from_bytes(b"\xfe")), b"b").unwrap();
+
+    let files = collect_files(dir.path());
+    assert_eq!(
+        files.len(),
+        0,
+        "distinct non-UTF8 filenames must not collapse into a single entry: {files:?}"
+    );
 }
 
-#[test]
-fn truncate_path_unicode_does_not_panic_at_codepoint_boundary() {
-    // AB-007 regression: with the legacy byte-slice implementation this
-    // input panicked with "byte index N is not a char boundary" because
-    // the suffix started in the middle of a multibyte character.
-    //
-    // 40 CJK (`日`, 3 bytes each) + 1 ASCII = 41 chars, 121 bytes.
-    // max = 33. Legacy code computed slice start =
-    // `path.len() - (max - 3) = 121 - 30 = 91`, which lands inside the
-    // 31st `日` (bytes 90-92).
-    let path = format!("{}a", "日".repeat(40));
-    let out = truncate_path(&path, 33);
-    assert!(out.starts_with("..."));
-    assert_eq!(out.chars().count(), 33);
-    let suffix: String = out.chars().skip(3).collect();
-    assert_eq!(suffix, format!("{}a", "日".repeat(29)));
-}
+// Shared helper for this module and its submodules.
 
-#[test]
-fn truncate_path_unicode_over_max_uses_char_count_not_byte_count() {
-    // 40 CJK chars = 120 bytes; max 33 chars; want last 30 chars + "...".
-    let path = "日".repeat(40);
-    let out = truncate_path(&path, 33);
-    assert_eq!(out.chars().count(), 33);
-    assert!(out.starts_with("..."));
-    let suffix: String = out.chars().skip(3).collect();
-    assert_eq!(suffix, "日".repeat(30));
-}
-
-#[test]
-fn truncate_path_empty_string_returns_empty() {
-    assert_eq!(truncate_path("", 33), "");
-}
-
-#[test]
-fn truncate_path_max_three_returns_last_three_chars_no_ellipsis() {
-    // With max == 3 there is no room for both an ellipsis and content;
-    // returning the last `max` chars (no ellipsis) is more useful than
-    // returning just "..." -- and importantly does not panic.
-    let path = "abcdefghij";
-    assert_eq!(truncate_path(path, 3), "hij");
-}
-
-#[test]
-fn truncate_path_max_zero_does_not_panic() {
-    // Defensive: ill-typed callers must not bring down snapshot rendering.
-    let _ = truncate_path("abcdef", 0);
-    let _ = truncate_path("日本語", 0);
+/// Helper to extract the text content from a JsonRpcResponse.
+fn extract_text(resp: &JsonRpcResponse) -> String {
+    resp.result.as_ref().unwrap()["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }

@@ -1921,25 +1921,6 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     );
 }
 
-#[test]
-fn persistent_route_identity_source_guard() {
-    let source = include_str!("../main.rs");
-    for forbidden in [
-        "registry.get(&id)",
-        "registry.get(id)",
-        "registry.get_mut(&id)",
-        "registry.get_mut(id)",
-        "registry.unregister(&id)",
-        "instances.contains_key(&entry.name)",
-        "SandboxInfo::new(\n            entry.name.clone()",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "{forbidden} reintroduced the VM identity footgun: route `id` is the opaque session id; registry `name` is display/resume identity only"
-        );
-    }
-}
-
 #[tokio::test]
 async fn db_boundary_route_contract_db_handle_route_rewire() {
     let state = make_test_state();
@@ -2119,20 +2100,27 @@ async fn service_rehydrates_session_db_handles() {
     std::fs::create_dir_all(&session_dir).unwrap();
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
     writer.shutdown_blocking();
-    state.persistent_registry.lock().unwrap().data.vms.insert(
-        "startup-db-vm".to_string(),
-        test_persistent_entry("startup-db-vm", session_dir),
-    );
+    // Routes address a persistent session by its runtime id, never by its
+    // name: a handle hydrated under the name was invisible to every route.
+    let entry = test_persistent_entry("startup-db-vm", session_dir);
+    let vm_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("startup-db-vm".to_string(), entry);
 
     assert!(
-        state.session_db_handle("startup-db-vm").is_none(),
+        state.session_db_handle(&vm_id).is_none(),
         "test must prove startup hydration installs the handle"
     );
     state.hydrate_session_db_handles();
 
     let handle = state
-        .session_db_handle("startup-db-vm")
-        .expect("startup hydration must install a persistent-session DB handle");
+        .session_db_handle(&vm_id)
+        .expect("startup hydration must install a persistent-session DB handle under the runtime id");
     handle
         .ready()
         .await
@@ -2252,9 +2240,12 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .vms
         .insert("status-broken-db-vm".to_string(), entry);
     state.hydrate_session_db_handles();
+    let handle = state
+        .session_db_handle(&vm_id)
+        .expect("startup hydration installs the handle so routes surface the schema error explicitly");
     assert!(
-        state.session_db_handle(&vm_id).is_none(),
-        "startup hydration must not install a ready handle for malformed session schema"
+        handle.ready().await.is_err(),
+        "a malformed session schema must fail readiness instead of being treated as ready"
     );
 
     let (status, body) = route_request(app, axum::http::Method::GET, &format!("/vms/{vm_id}/info"), None).await;
@@ -2269,46 +2260,6 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
     assert!(
         error.contains("not ready") || error.contains("missing required column") || error.contains("no such column"),
         "broken DB status must expose the schema failure, got: {error}"
-    );
-}
-
-#[test]
-fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
-        .expect("service source must be readable");
-    let opens = source.matches("DbHandle::open(").count();
-    let external_reader_opens = source.matches("DbHandle::open_external_reader(").count();
-    assert_eq!(
-        opens, 1,
-        "DbHandle::open must live only in the service main-ledger owner. Per-session \
-         route ledgers are external readers because capsem-process owns writes. Routes and helpers \
-         resolve registered handles and call ready/query/write; they do not create a second \
-         DB lifecycle."
-    );
-    assert_eq!(
-        external_reader_opens, 1,
-        "DbHandle::open_external_reader must live only in register_session_db_handle for \
-         per-session ledgers written by capsem-process."
-    );
-    assert!(
-        source.contains("fn register_session_db_handle(") && source.contains("DbHandle::open_external_reader("),
-        "the session-state registration method must own the external DB reader lifecycle"
-    );
-    assert!(
-        source.contains("fn open_profile_mutation_db_handle("),
-        "one DbHandle::open owner must be the profile mutation main-ledger method"
-    );
-    assert!(
-        !source.contains("Arc<capsem_logger::DbWriter>"),
-        "service state must not own DbWriter directly. See AGENTS.md, skills/dev-testing/SKILL.md \
-         Logged-data DB ownership, and skills/dev-rust-patterns/SKILL.md Logger DB boundary: \
-         service owns DbHandle references; capsem-logger owns writer channels and storage mechanics."
-    );
-    assert!(
-        !source.contains("DbWriter::open("),
-        "service production code must not open DbWriter side paths. Create a DbHandle owner and \
-         call db.write(event).await so structured DB logging, future mem/disk ownership, and \
-         explicit schema failure semantics stay centralized."
     );
 }
 

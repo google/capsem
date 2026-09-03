@@ -3,11 +3,13 @@
 ARG BASE
 FROM ${BASE} AS source-cli
 ARG FRESH_CLI
+ARG TARGETARCH
 
 COPY --chown=capsem:capsem . /src
 WORKDIR /src
 USER capsem
-RUN RUSTUP_AUTO_INSTALL=0 CARGO_NET_OFFLINE=true \
+RUN --mount=type=cache,id=capsem-install-source-cargo-${TARGETARCH},target=/tmp/capsem-install-current-cli,uid=1000,gid=1000,sharing=locked \
+    RUSTUP_AUTO_INSTALL=0 CARGO_NET_OFFLINE=true \
     CARGO_TARGET_DIR=/tmp/capsem-install-current-cli \
     cargo build --locked --offline -p capsem --bin capsem \
     && test -x /tmp/capsem-install-current-cli/debug/capsem

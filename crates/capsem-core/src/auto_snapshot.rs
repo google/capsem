@@ -16,6 +16,11 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+#[cfg(target_os = "linux")]
+mod sparse_copy;
+#[cfg(target_os = "linux")]
+pub(crate) use sparse_copy::copy_file_sparse;
+
 /// Whether a snapshot was taken automatically or manually.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,7 +60,6 @@ pub struct AutoSnapshotScheduler {
     max_manual: usize,
     interval: Duration,
     next_auto_slot: usize,
-    next_manual_slot: usize,
 }
 
 impl AutoSnapshotScheduler {
@@ -66,7 +70,6 @@ impl AutoSnapshotScheduler {
             max_manual,
             interval,
             next_auto_slot: 0,
-            next_manual_slot: 0,
         }
     }
 
@@ -149,6 +152,13 @@ impl AutoSnapshotScheduler {
         self.max_auto + idx
     }
 
+    /// First manual slot with no snapshot on disk, or None if all are occupied.
+    fn first_free_manual_slot(&self) -> Option<usize> {
+        (0..self.max_manual)
+            .map(|i| self.manual_slot(i))
+            .find(|&s| !self.slot_dir(s).join("metadata.json").exists())
+    }
+
     /// Total slots (auto + manual).
     fn total_slots(&self) -> usize {
         self.max_auto + self.max_manual
@@ -170,11 +180,14 @@ impl AutoSnapshotScheduler {
             "no manual snapshot slots available (max {})",
             self.max_manual
         );
-        let slot = self.manual_slot(self.next_manual_slot);
-        // Find next free manual slot (or overwrite oldest if all full).
-        // Since we check available_manual_slots > 0, there's always a free one.
+        // Land in the first *free* manual slot, never the round-robin pointer's
+        // slot, which may hold a user's named checkpoint. A blind pointer write
+        // destroyed it -- guaranteed after a session restart, when the in-memory
+        // pointer restarts at 0 while slot 0 is still occupied on disk.
+        let slot = self
+            .first_free_manual_slot()
+            .context("no manual snapshot slots available")?;
         let result = self.snapshot_into_slot(slot, SnapshotOrigin::Manual, Some(name.to_string()))?;
-        self.next_manual_slot = (self.next_manual_slot + 1) % self.max_manual;
         info!(
             slot,
             origin = "manual",
@@ -220,6 +233,9 @@ impl AutoSnapshotScheduler {
         let sys_src = self.system_dir();
         let sys_dst = slot_dir.join("system");
         if sys_src.exists() {
+            // Same rule as clone_sandbox_state: flush rootfs.img before a
+            // metadata-only clone or the snapshot captures stale guest writes.
+            fsync_rootfs_before_clone(&sys_src)?;
             clone_directory(&sys_src, &sys_dst)?;
         }
         let clone_sys_ms = t0.elapsed().as_millis() - clone_ws_ms;
@@ -427,20 +443,23 @@ impl AutoSnapshotScheduler {
                     Err(_) => continue,
                 };
                 let dst = merged_ws.join(rel);
+                // Propagate merge errors: a swallowed create_dir_all/symlink
+                // leaves the merged checkpoint incomplete, yet the code below
+                // still hashes it and deletes the source snapshots -- a corrupt
+                // checkpoint that self-certifies while the originals are gone.
+                // remove_file stays best-effort (a missing dst is expected).
                 if entry.file_type().is_dir() {
-                    let _ = std::fs::create_dir_all(&dst);
+                    std::fs::create_dir_all(&dst).context("compact: create merged directory")?;
                 } else if entry.file_type().is_symlink() {
-                    // Preserve symlinks as symlinks.
                     if let Some(parent) = dst.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        std::fs::create_dir_all(parent).context("compact: create symlink parent")?;
                     }
                     let _ = std::fs::remove_file(&dst);
-                    if let Ok(link_target) = std::fs::read_link(entry.path()) {
-                        let _ = std::os::unix::fs::symlink(&link_target, &dst);
-                    }
+                    let link_target = std::fs::read_link(entry.path()).context("compact: read source symlink")?;
+                    std::os::unix::fs::symlink(&link_target, &dst).context("compact: recreate symlink")?;
                 } else if entry.file_type().is_file() {
                     if let Some(parent) = dst.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        std::fs::create_dir_all(parent).context("compact: create file parent")?;
                     }
                     let _ = std::fs::remove_file(&dst);
                     clone_file(entry.path(), &dst)?;
@@ -449,9 +468,8 @@ impl AutoSnapshotScheduler {
         }
 
         // Find an available manual slot.
-        let target_slot = (0..self.max_manual)
-            .map(|i| self.manual_slot(i))
-            .find(|&s| !self.slot_dir(s).join("metadata.json").exists())
+        let target_slot = self
+            .first_free_manual_slot()
             .ok_or_else(|| anyhow::anyhow!("no manual snapshot slots available"))?;
 
         // Create the new snapshot slot.
@@ -860,137 +878,6 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn copy_file_sparse(src: &Path, dst: &Path) -> std::io::Result<()> {
-    let mut input = std::fs::File::open(src)?;
-    let metadata = input.metadata()?;
-    let mut output = std::fs::File::create(dst)?;
-
-    match copy_sparse_extents(&mut input, &mut output, metadata.len()) {
-        Ok(()) => {}
-        Err(err) if seek_data_unsupported(&err) => {
-            copy_sparse_by_scanning(&mut input, &mut output)?;
-        }
-        Err(err) => return Err(err),
-    }
-
-    output.set_len(metadata.len())?;
-    output.set_permissions(metadata.permissions())?;
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn copy_sparse_extents(input: &mut std::fs::File, output: &mut std::fs::File, logical_len: u64) -> std::io::Result<()> {
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use std::os::unix::io::AsRawFd;
-
-    // Ext4 system-overlay files often contain large allocated extents with
-    // only a few non-zero filesystem blocks. Writing one whole MiB whenever
-    // any byte in it is non-zero turns tiny layout shifts into MiB-sized fork
-    // regressions. Scan allocated extents at the ordinary filesystem block
-    // granularity; SEEK_DATA/SEEK_HOLE already keeps us away from true holes.
-    const CHUNK_SIZE: usize = 4096;
-
-    let mut offset = 0_u64;
-    let mut buffer = vec![0_u8; CHUNK_SIZE];
-    let zero_buffer = vec![0_u8; CHUNK_SIZE];
-
-    while offset < logical_len {
-        let data = match lseek_extent(input.as_raw_fd(), offset, libc::SEEK_DATA) {
-            Ok(data) => data,
-            Err(err) if err.raw_os_error() == Some(libc::ENXIO) => break,
-            Err(err) => return Err(err),
-        };
-        if data >= logical_len {
-            break;
-        }
-
-        let hole = match lseek_extent(input.as_raw_fd(), data, libc::SEEK_HOLE) {
-            Ok(hole) => hole.min(logical_len),
-            Err(err) if err.raw_os_error() == Some(libc::ENXIO) => logical_len,
-            Err(err) => return Err(err),
-        };
-        if hole <= data {
-            offset = data + 1;
-            continue;
-        }
-
-        input.seek(SeekFrom::Start(data))?;
-        output.seek(SeekFrom::Start(data))?;
-        let mut remaining = hole - data;
-        while remaining > 0 {
-            let read_len = (remaining as usize).min(buffer.len());
-            let read = input.read(&mut buffer[..read_len])?;
-            if read == 0 {
-                break;
-            }
-            let chunk = &buffer[..read];
-            if chunk_is_zero(chunk, &zero_buffer) {
-                output.seek(SeekFrom::Current(read as i64))?;
-            } else {
-                output.write_all(chunk)?;
-            }
-            remaining -= read as u64;
-        }
-
-        offset = hole;
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn lseek_extent(fd: std::os::unix::io::RawFd, offset: u64, whence: libc::c_int) -> std::io::Result<u64> {
-    let result = unsafe { libc::lseek(fd, offset as libc::off_t, whence) };
-    if result < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(result as u64)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn seek_data_unsupported(err: &std::io::Error) -> bool {
-    matches!(err.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::ENOTTY))
-}
-
-#[cfg(target_os = "linux")]
-fn copy_sparse_by_scanning(input: &mut std::fs::File, output: &mut std::fs::File) -> std::io::Result<()> {
-    use std::io::{Read, Seek, SeekFrom, Write};
-
-    const CHUNK_SIZE: usize = 1024 * 1024;
-
-    input.seek(SeekFrom::Start(0))?;
-    output.set_len(0)?;
-    output.seek(SeekFrom::Start(0))?;
-
-    let mut buffer = vec![0_u8; CHUNK_SIZE];
-    let zero_buffer = vec![0_u8; CHUNK_SIZE];
-    loop {
-        let read = input.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        let chunk = &buffer[..read];
-        if chunk_is_zero(chunk, &zero_buffer) {
-            output.seek(SeekFrom::Current(read as i64))?;
-        } else {
-            output.write_all(chunk)?;
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn chunk_is_zero(chunk: &[u8], zero_buffer: &[u8]) -> bool {
-    debug_assert!(chunk.len() <= zero_buffer.len());
-    if chunk.is_empty() {
-        return true;
-    }
-    unsafe { libc::memcmp(chunk.as_ptr().cast(), zero_buffer.as_ptr().cast(), chunk.len()) == 0 }
-}
-
 /// Calculate the physical disk usage (allocated blocks) of a sandbox session directory.
 /// Correctly handles sparse files (like rootfs.img) on Unix platforms.
 pub fn sandbox_disk_usage(session_dir: &Path) -> anyhow::Result<u64> {
@@ -1025,20 +912,28 @@ pub fn sandbox_disk_usage(session_dir: &Path) -> anyhow::Result<u64> {
 /// cache, ensuring the APFS clone captures all guest writes.
 ///
 /// Returns the disk usage of the destination directory in bytes.
-pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
-    let sys_src = src_session_dir.join("system");
-    let ws_src = src_session_dir.join("workspace");
-
-    // Flush the host page cache for rootfs.img before cloning.
-    // Guest writes arrive via VirtioFS and land in the macOS page cache.
-    // Without fsync, clonefile() captures stale APFS data, missing
-    // recently written overlay changes (e.g. installed packages).
-    let rootfs_path = sys_src.join("rootfs.img");
+/// Flush rootfs.img's host page cache before a clone.
+///
+/// Guest writes arrive via VirtioFS and land in the host page cache; without
+/// this fsync a metadata-only clone (APFS clonefile) captures stale data and
+/// loses recent overlay changes (e.g. installed packages). One rule, one
+/// function -- every path that clones the system dir calls it.
+fn fsync_rootfs_before_clone(sys_dir: &Path) -> anyhow::Result<()> {
+    let rootfs_path = sys_dir.join("rootfs.img");
     if rootfs_path.exists() {
         if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&rootfs_path) {
             f.sync_all().context("failed to fsync rootfs.img before clone")?;
         }
     }
+    Ok(())
+}
+
+pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
+    let sys_src = src_session_dir.join("system");
+    let ws_src = src_session_dir.join("workspace");
+
+    fsync_rootfs_before_clone(&sys_src)?;
+    let rootfs_path = sys_src.join("rootfs.img");
 
     // Clone into guest/ subdirectories matching VirtioFS share layout.
     let guest_dir = dst_session_dir.join("guest");

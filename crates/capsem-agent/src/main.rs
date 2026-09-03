@@ -7,6 +7,11 @@
 //   - Port 5000: control messages (resize, heartbeat, boot config)
 //   - Port 5005: exec output (direct child process stdout, on demand)
 
+mod audit;
+mod control_writer;
+use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
+#[cfg(test)]
+use control_writer::{frame_or_drop, SharedCtrlReceiver};
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
@@ -16,10 +21,9 @@ use std::process;
 use std::thread;
 
 use capsem_proto::{
-    decode_host_msg, encode_audit_record, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path,
-    validate_file_path_safe, AuditRecord, BootStage, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
-    MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC,
-    VSOCK_PORT_TERMINAL,
+    decode_host_msg, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path,
+    validate_file_path_safe, BootStage, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
+    MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
 };
 use nix::libc;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
@@ -27,6 +31,7 @@ use nix::pty::openpty;
 use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
+use audit::audit_reader_loop;
 use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
 /// Boot log persisted on the host-visible workspace mount for post-boot diagnosis.
 const BOOT_LOG_PATH: &str = "/root/.capsem-agent-boot.log";
@@ -49,7 +54,7 @@ fn send_guest_msg(fd: RawFd, msg: &GuestToHost) -> io::Result<()> {
 /// its symmetric pending_responses map and replays on every fresh
 /// control conn. Mirrors `vsock.rs::ackable_response_id` on the host
 /// side; both ends must agree on the set or AckReply / replay drift.
-fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
+pub(crate) fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     match msg {
         GuestToHost::ExecDone { id, .. }
         | GuestToHost::FileOpDone { id }
@@ -182,6 +187,19 @@ fn set_boot_traceparent(tp: &str) {
 
 /// Lower 16 hex chars of the W3C trace_id (matches the `CAPSEM_TRACE_ID`
 /// convention used elsewhere). Returns "" when no traceparent has been set.
+/// The first 40 characters of an env value for the boot log.
+///
+/// Truncating by byte index panicked when a multibyte character straddled
+/// byte 40. Values come from user settings and `--env`, and
+/// `validate_env_value` only rejects NUL and oversize, so `"a" * 39 + "é"`
+/// killed the agent before BootReady and the VM never became ready.
+fn env_preview(value: &str) -> String {
+    match value.char_indices().nth(40) {
+        Some((cut, _)) => format!("{}...", &value[..cut]),
+        None => value.to_string(),
+    }
+}
+
 fn current_boot_trace_id() -> String {
     let Some(tp) = BOOT_TRACEPARENT.get() else {
         return String::new();
@@ -292,12 +310,7 @@ fn main() {
                     continue;
                 }
 
-                let preview = if value.len() > 40 {
-                    format!("{}...", &value[..40])
-                } else {
-                    value.clone()
-                };
-                blog_line(&mut blog, &format!("SetEnv {key}={preview}"));
+                blog_line(&mut blog, &format!("SetEnv {key}={}", env_preview(&value)));
                 eprintln!("[capsem-agent] SetEnv {key}");
                 boot_env.push((key, value));
             }
@@ -537,8 +550,18 @@ fn main() {
             // `HostToGuest::AckReply { id }` on receipt; control_loop
             // removes the entry. Lifted to outer scope so the map
             // survives reconnects (the writer thread is per-run_bridge).
-            let pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>> =
+            let pending_responses: PendingResponses =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+            let (ctrl_sender, ctrl_rx) = CtrlSender::new(std::sync::Arc::clone(&pending_responses));
+            // The audit tailer owns its host connection and reconnects on its
+            // own, so it is spawned once for the process, not per bridge.
+            thread::spawn(audit_reader_loop);
+            let bridge_shared = BridgeShared {
+                exec_inflight: std::sync::Arc::clone(&exec_inflight),
+                exec_done: std::sync::Arc::clone(&exec_done),
+                ctrl_sender,
+                ctrl_rx,
+            };
 
             loop {
                 if !is_first {
@@ -655,9 +678,7 @@ fn main() {
                     t_fd,
                     c_fd,
                     &boot_env_for_parent,
-                    std::sync::Arc::clone(&exec_inflight),
-                    std::sync::Arc::clone(&exec_done),
-                    std::sync::Arc::clone(&pending_responses),
+                    bridge_shared.clone(),
                 );
 
                 // Cleanup broken FDs
@@ -770,99 +791,51 @@ fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_bridge(
     master_fd: RawFd,
     child_pid: Pid,
     terminal_fd: RawFd,
     control_fd: RawFd,
     boot_env: &[(String, String)],
-    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
-    exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+    shared: BridgeShared,
 ) {
-    // Serialize all control channel writes through a single channel + writer
-    // thread. The exec background thread and control_loop both need to write
-    // to control_fd; concurrent writes would corrupt protocol framing.
-    let (ctrl_write_tx, ctrl_write_rx) = std::sync::mpsc::channel::<GuestToHost>();
-
-    // Single control channel writer thread. On write failure (host gone --
-    // typically because the VM was suspended and resumed against a fresh
-    // host process), shutdown both vsock fds so bridge_loop and control_loop
-    // wake from their polls and the outer reconnect logic re-establishes
-    // both connections against the new host.
-    //
-    // Before the normal write loop, replay every entry still in
-    // pending_responses on the fresh control_fd. These are ackable
-    // responses (ExecDone / FileOpDone / FileContent / Error) whose
-    // host-side AckReply never arrived -- typically because the
-    // previous control conn went silent (Apple VZ post-restoreState
-    // pattern: write returned success, bytes never propagated). The
-    // host's `handle_guest_msg` is idempotent for already-handled ids
-    // (it removes the job sender on first delivery), so a replayed
-    // response that actually did land twice is harmless.
-    let pending_for_writer = std::sync::Arc::clone(&pending_responses);
-    std::thread::spawn(move || {
-        let snap: Vec<GuestToHost> = pending_for_writer.lock().unwrap().values().cloned().collect();
-        if !snap.is_empty() {
-            eprintln!(
-                "[capsem-agent] control writer: replaying {} pending unacked responses",
-                snap.len()
-            );
-            for msg in &snap {
-                if send_guest_msg(control_fd, msg).is_err() {
-                    unsafe {
-                        libc::shutdown(control_fd, libc::SHUT_RDWR);
-                        libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-                    }
-                    return;
-                }
-            }
-        }
-
-        while let Ok(msg) = ctrl_write_rx.recv() {
-            // Insert ackable responses *before* writing so a
-            // write-success-but-silent-drop is recoverable via the
-            // next rekey replay. Bound the map at 4096 to match the
-            // exec_done cap above -- under transport pathology the
-            // map could otherwise grow unbounded under a pathological
-            // return-path drop.
-            if let Some(id) = ackable_response_id(&msg) {
-                let mut p = pending_for_writer.lock().unwrap();
-                if p.len() >= 4096 {
-                    p.clear();
-                }
-                p.insert(id, msg.clone());
-            }
-            if send_guest_msg(control_fd, &msg).is_err() {
-                unsafe {
-                    libc::shutdown(control_fd, libc::SHUT_RDWR);
-                    libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-                }
-                break;
-            }
-        }
-    });
+    let BridgeShared {
+        exec_inflight,
+        exec_done,
+        ctrl_sender,
+        ctrl_rx,
+    } = shared;
+    // All control channel writes go through the shared channel and this
+    // connection's writer thread. The exec background threads and
+    // control_loop both write to control_fd; concurrent writes would corrupt
+    // protocol framing. `alive` is this connection's lease on the shared
+    // receiver: cleared by the writer on a failed write and below when the
+    // bridge exits, so the next connection's writer can take over.
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let writer = {
+        let rx = std::sync::Arc::clone(&ctrl_rx);
+        let sender = ctrl_sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        thread::spawn(move || control_writer_loop(&rx, &sender, control_fd, terminal_fd, &alive))
+    };
 
     // Heartbeat. Without periodic probes the connection is invisible until
     // the next genuine traffic, which can be hours. After a suspend/resume
-    // the host process is gone; the first failed write here trips the
-    // shutdown path above and triggers reconnect within ~3s.
-    let hb_tx = ctrl_write_tx.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        if hb_tx.send(GuestToHost::Pong).is_err() {
-            break;
-        }
-    });
+    // the host process is gone; the first failed write trips the writer's
+    // shutdown path and triggers reconnect within ~3s.
+    let heartbeat = {
+        let hb = ctrl_sender.clone();
+        let alive = std::sync::Arc::clone(&alive);
+        thread::spawn(move || heartbeat_loop(&hb, &alive))
+    };
 
     // Spawn control channel handler in a background thread.
     let boot_env_owned = boot_env.to_vec();
-    let ctrl_tx = ctrl_write_tx;
+    let pending_for_ctrl = std::sync::Arc::clone(&ctrl_sender.pending);
+    let ctrl_tx = ctrl_sender;
     let inflight_for_ctrl = exec_inflight;
     let done_for_ctrl = exec_done;
-    let pending_for_ctrl = pending_responses;
-    thread::spawn(move || {
+    let control = thread::spawn(move || {
         control_loop(
             control_fd,
             master_fd,
@@ -875,13 +848,25 @@ fn run_bridge(
         );
     });
 
-    // Spawn audit log reader thread (tails auditd output, streams to host).
-    thread::spawn(move || {
-        audit_reader_loop();
-    });
-
     // Main I/O bridge: master PTY <-> vsock terminal port.
     bridge_loop(master_fd, terminal_fd);
+
+    // This connection is over. Release the shared receiver, wake the control
+    // reader out of its blocking read, and wait for every thread that holds
+    // these fd numbers before the caller closes them: the next connection
+    // gets the same numbers back, and a thread still using the old ones
+    // would read the new control stream alongside the new reader or write a
+    // frame into it between the new writer's frames.
+    alive.store(false, std::sync::atomic::Ordering::SeqCst);
+    unsafe {
+        libc::shutdown(control_fd, libc::SHUT_RDWR);
+        libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+    }
+    for (name, handle) in [("writer", writer), ("heartbeat", heartbeat), ("control", control)] {
+        if handle.join().is_err() {
+            eprintln!("[capsem-agent] {name} thread panicked");
+        }
+    }
 
     // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
     // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.
@@ -991,212 +976,6 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
     });
 }
 
-/// Tail /var/log/audit/audit.log and stream parsed execve records to host via vsock:5006.
-///
-/// Waits for the audit log file to appear (auditd may start slightly after the agent),
-/// then continuously reads new lines. Each complete audit record (correlated by audit ID)
-/// is serialized as MessagePack and sent as a length-prefixed frame.
-fn audit_reader_loop() {
-    use std::collections::HashMap;
-    use std::io::{BufRead, BufReader};
-
-    const AUDIT_LOG: &str = "/var/log/audit/audit.log";
-
-    // Wait for audit log to appear (up to 10 seconds)
-    for _ in 0..100 {
-        if std::path::Path::new(AUDIT_LOG).exists() {
-            break;
-        }
-        thread::sleep(std::time::Duration::from_millis(100));
-    }
-    if !std::path::Path::new(AUDIT_LOG).exists() {
-        eprintln!("[capsem-agent] audit: {AUDIT_LOG} not found, skipping audit streaming");
-        return;
-    }
-
-    // Connect to host audit port
-    let audit_fd = match vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_AUDIT) {
-        Ok(fd) => fd,
-        Err(e) => {
-            eprintln!("[capsem-agent] audit: vsock connect failed: {e}");
-            return;
-        }
-    };
-    eprintln!("[capsem-agent] audit: connected to host, tailing {AUDIT_LOG}");
-
-    let file = match std::fs::File::open(AUDIT_LOG) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("[capsem-agent] audit: open failed: {e}");
-            return;
-        }
-    };
-    let mut reader = BufReader::new(file);
-
-    // Accumulate multi-line audit records by audit ID.
-    // Each execve event generates SYSCALL + EXECVE + CWD + PROCTITLE lines
-    // sharing the same audit ID (e.g., "1713100000.001:42").
-    let mut pending: HashMap<String, AuditRecordBuilder> = HashMap::new();
-    let mut line = String::new();
-
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
-                // EOF -- audit log hasn't grown yet, poll
-                thread::sleep(std::time::Duration::from_millis(50));
-                continue;
-            }
-            Ok(_) => {}
-            Err(_) => break,
-        }
-
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        // Parse audit log line. Format: type=SYSCALL msg=audit(1713100000.001:42): ...
-        let Some(audit_id) = extract_audit_id(line) else {
-            continue;
-        };
-        let record_type = extract_field(line, "type=");
-
-        let builder = pending.entry(audit_id.clone()).or_default();
-
-        match record_type.as_deref() {
-            Some("SYSCALL") => {
-                builder.pid = extract_field(line, " pid=").and_then(|v| v.parse().ok());
-                builder.ppid = extract_field(line, " ppid=").and_then(|v| v.parse().ok());
-                builder.uid = extract_field(line, " uid=").and_then(|v| v.parse().ok());
-                builder.exe = extract_field(line, " exe=").map(|s| s.trim_matches('"').to_string());
-                builder.comm = extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
-                builder.tty = extract_field(line, " tty=").filter(|s| s != "(none)");
-                builder.timestamp_us = extract_audit_timestamp_us(line);
-                builder.has_syscall = true;
-            }
-            Some("EXECVE") => {
-                builder.argv = extract_execve_argv(line);
-            }
-            Some("CWD") => {
-                builder.cwd = extract_field(line, " cwd=").map(|s| s.trim_matches('"').to_string());
-            }
-            Some("PROCTITLE") => {
-                // PROCTITLE is the last record in a group -- emit when we have SYSCALL + argv
-                if builder.has_syscall {
-                    if let Some(record) = builder.build(&audit_id) {
-                        let frame = match encode_audit_record(&record) {
-                            Ok(f) => f,
-                            Err(_) => {
-                                pending.remove(&audit_id);
-                                continue;
-                            }
-                        };
-                        if write_all_fd(audit_fd, &frame).is_err() {
-                            eprintln!("[capsem-agent] audit: write failed, disconnecting");
-                            return;
-                        }
-                    }
-                }
-                pending.remove(&audit_id);
-            }
-            _ => {}
-        }
-
-        // Prevent memory leak for incomplete records
-        if pending.len() > 1000 {
-            pending.retain(|_, v| v.has_syscall);
-        }
-    }
-}
-
-/// Intermediate builder for multi-line audit records.
-#[derive(Default)]
-struct AuditRecordBuilder {
-    has_syscall: bool,
-    timestamp_us: Option<u64>,
-    pid: Option<u32>,
-    ppid: Option<u32>,
-    uid: Option<u32>,
-    exe: Option<String>,
-    comm: Option<String>,
-    argv: Option<String>,
-    cwd: Option<String>,
-    tty: Option<String>,
-}
-
-impl AuditRecordBuilder {
-    fn build(&self, audit_id: &str) -> Option<AuditRecord> {
-        Some(AuditRecord {
-            timestamp_us: self.timestamp_us?,
-            pid: self.pid?,
-            ppid: self.ppid?,
-            uid: self.uid.unwrap_or(0),
-            exe: self.exe.clone()?,
-            comm: self.comm.clone(),
-            argv: self
-                .argv
-                .clone()
-                .unwrap_or_else(|| self.exe.clone().unwrap_or_default()),
-            cwd: self.cwd.clone(),
-            tty: self.tty.clone(),
-            session_id: None,
-            parent_exe: None,
-            audit_id: audit_id.to_string(),
-        })
-    }
-}
-
-/// Extract audit ID from a log line. Format: msg=audit(1713100000.001:42):
-fn extract_audit_id(line: &str) -> Option<String> {
-    let start = line.find("msg=audit(")? + "msg=audit(".len();
-    let end = line[start..].find(')')? + start;
-    Some(line[start..end].to_string())
-}
-
-/// Extract the audit timestamp as microseconds. Format: audit(1713100000.001:42)
-fn extract_audit_timestamp_us(line: &str) -> Option<u64> {
-    let id = extract_audit_id(line)?;
-    let ts_part = id.split(':').next()?;
-    let secs_f64: f64 = ts_part.parse().ok()?;
-    Some((secs_f64 * 1_000_000.0) as u64)
-}
-
-/// Extract a field value from an audit log line. Fields are space-delimited key=value.
-fn extract_field(line: &str, key: &str) -> Option<String> {
-    let start = line.find(key)? + key.len();
-    let rest = &line[start..];
-    // Value ends at next space (or end of line), unless quoted
-    if let Some(stripped) = rest.strip_prefix('"') {
-        let end = stripped.find('"')? + 2;
-        Some(rest[..end].to_string())
-    } else {
-        let end = rest.find(' ').unwrap_or(rest.len());
-        Some(rest[..end].to_string())
-    }
-}
-
-/// Reconstruct argv from EXECVE audit record.
-/// Format: type=EXECVE msg=audit(...): argc=3 a0="python3" a1="train.py" a2="--epochs"
-fn extract_execve_argv(line: &str) -> Option<String> {
-    let mut args = Vec::new();
-    let mut i = 0;
-    loop {
-        let key = format!(" a{i}=");
-        if let Some(val) = extract_field(line, &key) {
-            args.push(val.trim_matches('"').to_string());
-            i += 1;
-        } else {
-            break;
-        }
-    }
-    if args.is_empty() {
-        None
-    } else {
-        Some(args.join(" "))
-    }
-}
-
 /// Maximum vsock_connect attempts when the host returns ECONNRESET, e.g.
 /// briefly after `restoreMachineStateFromURL` while the kernel-side
 /// accept queue is still settling. 5 attempts × ECONNRESET_BACKOFF_MS
@@ -1268,12 +1047,7 @@ impl ExecOutcome {
 /// Runs in a background thread so control_loop remains responsive to heartbeats.
 /// Output flows as raw bytes on a dedicated exec vsock connection. The exit code
 /// is sent as ExecDone via the serialized control write channel.
-fn run_exec(
-    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
-    id: u64,
-    command: &str,
-    boot_env: &[(String, String)],
-) -> ExecOutcome {
+fn run_exec(ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> ExecOutcome {
     // Connect to host exec port. Retry on ECONNRESET only -- post-restore
     // VZ transient (Bug C). Other errors bail immediately.
     let exec_fd = match vsock_connect_with_econnreset_retry(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)) {
@@ -1291,13 +1065,7 @@ fn run_exec(
 /// Inner exec implementation that takes pre-connected fds (testable without vsock).
 /// `ctrl_tx` serializes writes to the control channel (prevents frame corruption
 /// from concurrent writers). `exec_fd` is consumed: closed on all exit paths.
-fn run_exec_on_fds(
-    exec_fd: RawFd,
-    ctrl_tx: &std::sync::mpsc::Sender<GuestToHost>,
-    id: u64,
-    command: &str,
-    boot_env: &[(String, String)],
-) -> i32 {
+fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> i32 {
     // RAII guard to ensure exec_fd is closed on all paths.
     struct FdGuard(RawFd);
     impl Drop for FdGuard {
@@ -1432,16 +1200,28 @@ fn write_nofollow(path: &str, data: &[u8], mode: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// Read a file, refusing to follow symlinks on the final path component.
-/// Returns ELOOP if the target is a symlink.
-fn read_nofollow(path: &str) -> io::Result<Vec<u8>> {
+/// Read a file, refusing to follow symlinks on the final path component and
+/// refusing more than `max_bytes`. Returns ELOOP if the target is a symlink
+/// and `FileTooLarge` past the cap.
+///
+/// The cap bounds memory; whether the reply fits one control frame is decided
+/// by encoding it. A `FileContent` over `MAX_FRAME_SIZE` was never decoded by
+/// the host, so never acked, so replayed on every reconnect: one read of a
+/// 3 MiB file wedged the control channel for the life of the VM.
+fn read_nofollow(path: &str, max_bytes: usize) -> io::Result<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
+    file.take(max_bytes.saturating_add(1) as u64).read_to_end(&mut data)?;
+    if data.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            format!("file exceeds the {max_bytes}-byte control frame budget"),
+        ));
+    }
     Ok(data)
 }
 
@@ -1463,10 +1243,10 @@ fn control_loop(
     master_fd: RawFd,
     child_pid: Pid,
     boot_env: &[(String, String)],
-    ctrl_tx: std::sync::mpsc::Sender<GuestToHost>,
+    ctrl_tx: CtrlSender,
     exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
-    pending_responses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
+    pending_responses: PendingResponses,
 ) {
     loop {
         match recv_host_msg(control_fd) {
@@ -1618,8 +1398,24 @@ fn control_loop(
                         message: format!("FileRead rejected: {e}"),
                     }
                 } else {
-                    match read_nofollow(&path) {
-                        Ok(data) => GuestToHost::FileContent { id, path, data },
+                    match read_nofollow(&path, MAX_FRAME_SIZE as usize) {
+                        Ok(data) => {
+                            let reply = GuestToHost::FileContent {
+                                id,
+                                path: path.clone(),
+                                data,
+                            };
+                            if capsem_proto::guest_msg_fits_frame(&reply) {
+                                reply
+                            } else {
+                                GuestToHost::Error {
+                                    id,
+                                    message: format!(
+                                        "failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"
+                                    ),
+                                }
+                            }
+                        }
                         Err(e) => GuestToHost::Error {
                             id,
                             message: format!("failed to read {path}: {e}"),

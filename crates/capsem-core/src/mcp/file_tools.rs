@@ -17,11 +17,18 @@ use std::time::SystemTime;
 
 use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 use serde_json::Value;
-use walkdir::WalkDir;
 
-use crate::auto_snapshot::{snapshot_entry_digest, AutoSnapshotScheduler, SnapshotOrigin};
+use crate::auto_snapshot::{AutoSnapshotScheduler, SnapshotOrigin};
 
-use super::builtin_tools::{paginate, DEFAULT_MAX_LENGTH};
+use super::builtin_tools::{paginate, pagination_params};
+
+mod changes;
+mod snapshots;
+
+use changes::{age_string, collect_changes, collect_files, render_changes_table, truncate_path, FileEntry};
+pub use snapshots::{
+    handle_delete_snapshot, handle_list_snapshots, handle_snapshot, handle_snapshots_compact, handle_snapshots_history,
+};
 
 /// Tool names for file operations.
 pub const FILE_TOOL_NAMES: &[&str] = &[
@@ -33,10 +40,6 @@ pub const FILE_TOOL_NAMES: &[&str] = &[
     "snapshots_history",
     "snapshots_compact",
 ];
-
-pub fn is_file_tool(name: &str) -> bool {
-    FILE_TOOL_NAMES.contains(&name)
-}
 
 /// Return tool definitions for file tools.
 pub fn file_tool_defs() -> Vec<McpToolDef> {
@@ -353,6 +356,62 @@ fn checked_child_path(root: &Path, relative_path: &str, label: &str) -> Result<s
     Ok(root.join(rel))
 }
 
+/// Mode bits of a trusted snapshot file, defaulting to 0644 if unreadable.
+fn snapshot_file_mode(path: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .map(|m| m.permissions().mode())
+            .unwrap_or(0o644)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        0o644
+    }
+}
+
+/// Write `data` to a fresh regular file at `path` without following symlinks.
+///
+/// Uses O_CREAT|O_EXCL (`create_new`) plus O_NOFOLLOW so the write refuses if
+/// anything already exists at the path -- including a symlink a guest raced into
+/// the VirtioFS-shared workspace between the containment check and here. The
+/// mode is set at creation, so there is no follow-prone `set_permissions`
+/// afterward. This closes the revert TOCTOU that let a guest redirect a restore
+/// to an arbitrary host file.
+#[cfg(unix)]
+fn write_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(mode)
+        .open(path)
+        .map_err(|e| format!("failed to create restored file without following symlinks: {e}"))?;
+    file.write_all(data)
+        .map_err(|e| format!("failed to write restored file: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("failed to fsync restored file: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_regular_file_no_follow(path: &Path, data: &[u8], _mode: u32) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| format!("failed to create restored file: {e}"))?;
+    file.write_all(data)
+        .map_err(|e| format!("failed to write restored file: {e}"))?;
+    let _ = file.sync_all();
+    Ok(())
+}
+
 fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
     if meta.file_type().is_symlink() {
@@ -391,229 +450,9 @@ fn validate_snapshot_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-/// Entry from a directory walk: metadata and a streamed content digest.
-#[derive(Debug, Clone, Copy)]
-struct FileEntry {
-    size: u64,
-    is_symlink: bool,
-    digest: Option<blake3::Hash>,
-}
-
-impl FileEntry {
-    fn differs_from(self, other: Self) -> bool {
-        self.size != other.size
-            || self.is_symlink != other.is_symlink
-            || match (self.digest, other.digest) {
-                (Some(current), Some(snapshot)) => current != snapshot,
-                _ => true,
-            }
-    }
-}
-
-/// Entry describing a changed file.
-#[derive(Debug, serde::Serialize)]
-struct ChangedFile {
-    path: String,
-    op: &'static str,
-    size: Option<u64>,
-    is_symlink: bool,
-    checkpoint: String,
-    checkpoint_age: String,
-    checkpoint_origin: String,
-    checkpoint_name: Option<String>,
-}
-
-/// Collect file listing from a directory (relative paths + metadata).
-/// Includes both regular files and symlinks. Does not follow symlinks.
-fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
-    let mut files = HashMap::new();
-    if !root.exists() {
-        return files;
-    }
-    for entry in WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let ft = entry.file_type();
-        if !ft.is_file() && !ft.is_symlink() {
-            continue;
-        }
-        if let Ok(rel) = entry.path().strip_prefix(root) {
-            let rel_str = rel.to_string_lossy().to_string();
-            // Use symlink_metadata so we don't follow symlinks for size.
-            let size = entry.path().symlink_metadata().map(|m| m.len()).unwrap_or(0);
-            let is_symlink = ft.is_symlink();
-            files.insert(
-                rel_str,
-                FileEntry {
-                    size,
-                    is_symlink,
-                    digest: snapshot_entry_digest(entry.path(), is_symlink),
-                },
-            );
-        }
-    }
-    files
-}
-
-fn age_string(ts: SystemTime) -> String {
-    let elapsed = ts.elapsed().unwrap_or_default();
-    let mins = elapsed.as_secs() / 60;
-    if mins == 0 {
-        "just now".to_string()
-    } else if mins == 1 {
-        "1 min ago".to_string()
-    } else if mins < 60 {
-        format!("{mins} min ago")
-    } else {
-        let hours = mins / 60;
-        format!("{hours} hr ago")
-    }
-}
-
-/// Collect changes between current workspace and snapshots.
-fn collect_changes(scheduler: &AutoSnapshotScheduler, workspace_root: &Path) -> Vec<ChangedFile> {
-    let current_files = collect_files(workspace_root);
-    let snapshots = scheduler.list_snapshots();
-    let mut changes: Vec<ChangedFile> = Vec::new();
-    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Walk snapshots newest-first. For each, diff against current.
-    // Only report each path once (from the most recent checkpoint that shows the change).
-    for snap in &snapshots {
-        let snap_root = snap.workspace_path.clone();
-        let snap_files = collect_files(&snap_root);
-        let cp_id = format!("cp-{}", snap.slot);
-        let age = age_string(snap.timestamp);
-        let origin_str = match snap.origin {
-            SnapshotOrigin::Auto => "auto",
-            SnapshotOrigin::Manual => "manual",
-        };
-
-        // Created: in current but not in snapshot.
-        for (path, entry) in &current_files {
-            if !snap_files.contains_key(path) && seen_paths.insert(path.clone()) {
-                changes.push(ChangedFile {
-                    path: path.clone(),
-                    op: "created",
-                    size: Some(entry.size),
-                    is_symlink: entry.is_symlink,
-                    checkpoint: cp_id.clone(),
-                    checkpoint_age: age.clone(),
-                    checkpoint_origin: origin_str.into(),
-                    checkpoint_name: snap.name.clone(),
-                });
-            }
-        }
-
-        // Deleted: in snapshot but not in current.
-        for (path, entry) in &snap_files {
-            if !current_files.contains_key(path) && seen_paths.insert(path.clone()) {
-                changes.push(ChangedFile {
-                    path: path.clone(),
-                    op: "deleted",
-                    size: None,
-                    is_symlink: entry.is_symlink,
-                    checkpoint: cp_id.clone(),
-                    checkpoint_age: age.clone(),
-                    checkpoint_origin: origin_str.into(),
-                    checkpoint_name: snap.name.clone(),
-                });
-            }
-        }
-
-        // Modified: in both but different metadata or content.
-        for (path, cur_entry) in &current_files {
-            if let Some(snap_entry) = snap_files.get(path) {
-                if cur_entry.differs_from(*snap_entry) && seen_paths.insert(path.clone()) {
-                    changes.push(ChangedFile {
-                        path: path.clone(),
-                        op: "modified",
-                        size: Some(cur_entry.size),
-                        is_symlink: cur_entry.is_symlink,
-                        checkpoint: cp_id.clone(),
-                        checkpoint_age: age.clone(),
-                        checkpoint_origin: origin_str.into(),
-                        checkpoint_name: snap.name.clone(),
-                    });
-                }
-            }
-        }
-    }
-    changes
-}
-
-/// Format bytes as human-readable size.
-fn human_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1_048_576 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    }
-}
-
-/// Render changed files as a text table.
-fn render_changes_table(changes: &[ChangedFile]) -> String {
-    let mut out = format!("Changed Files ({} total)\n", changes.len());
-    out.push_str("Path                              Op        Size     Checkpoint\n");
-    out.push_str("---------------------------------------------------------------\n");
-    for c in changes {
-        let size_str = match c.size {
-            Some(s) => human_size(s),
-            None => "-".into(),
-        };
-        let cp_info = format!("{} ({}, {})", c.checkpoint, c.checkpoint_origin, c.checkpoint_age);
-        out.push_str(&format!(
-            "{:<34}{:<10}{:<9}{}\n",
-            truncate_path(&c.path, 33),
-            c.op,
-            size_str,
-            cp_info,
-        ));
-    }
-    out
-}
-
-/// Truncate a path string to fit a column, adding "..." if too long.
-///
-/// AB-007: counts and slices in characters, not bytes. The previous
-/// implementation used `path.len()` and `&path[byte_offset..]`, which panics
-/// with "byte index N is not a char boundary" when the suffix offset lands
-/// inside a multibyte UTF-8 sequence. Snapshot rendering walks user-supplied
-/// paths, so any non-ASCII path could take down the tool.
-fn truncate_path(path: &str, max: usize) -> String {
-    let char_count = path.chars().count();
-    if char_count <= max {
-        return path.to_string();
-    }
-    // No room for both the ellipsis and content: return the last `max`
-    // chars without prefix. Defensive against ill-typed callers; the
-    // production call sites pass max = 33 and 15.
-    if max <= 3 {
-        let skip = char_count - max;
-        let byte_offset = path.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(path.len());
-        return path[byte_offset..].to_string();
-    }
-    let to_take = max - 3;
-    let suffix_start_char = char_count - to_take;
-    let byte_offset = path
-        .char_indices()
-        .nth(suffix_start_char)
-        .map(|(i, _)| i)
-        .unwrap_or(path.len());
-    format!("...{}", &path[byte_offset..])
-}
-
 /// Extract pagination params (start_index, max_length, format) from arguments.
 fn extract_pagination_params(arguments: &Value) -> (usize, usize, &str) {
-    let start_index = arguments.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = arguments
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(arguments);
     let format = arguments.get("format").and_then(|v| v.as_str()).unwrap_or("text");
     (start_index, max_length, format)
 }
@@ -621,14 +460,14 @@ fn extract_pagination_params(arguments: &Value) -> (usize, usize, &str) {
 /// Build paginated MCP response from text content.
 fn paginated_response(text: &str, start_index: usize, max_length: usize, request_id: Option<Value>) -> JsonRpcResponse {
     let (chunk, total, has_more) = paginate(text, start_index, max_length);
+    let next_index = start_index.saturating_add(chunk.len());
     let mut output = String::new();
     if start_index > 0 || has_more {
         output.push_str(&format!(
-            "Content length: {total}\nShowing: {start_index}..{}\n",
-            start_index + chunk.len(),
+            "Content length: {total}\nShowing: {start_index}..{next_index}\n"
         ));
         if has_more {
-            output.push_str(&format!("Use start_index={} to continue.\n", start_index + chunk.len(),));
+            output.push_str(&format!("Use start_index={next_index} to continue.\n"));
         }
         output.push('\n');
     }
@@ -873,34 +712,22 @@ pub fn handle_revert_file_with_security_event(
                     );
                 }
             };
-            {
-                use std::io::Write;
-                let mut f = match std::fs::File::create(&current_file) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        return (
-                            JsonRpcResponse::err(request_id, -32603, format!("failed to create restored file: {e}")),
-                            None,
-                        );
-                    }
-                };
-                if let Err(e) = f.write_all(&snap_data) {
-                    return (
-                        JsonRpcResponse::err(request_id, -32603, format!("failed to write restored file: {e}")),
-                        None,
-                    );
-                }
-                let _ = f.sync_all();
+            // Permissions come from the trusted snapshot side (outside the guest
+            // share). Default to 0644 if unreadable.
+            let mode = snapshot_file_mode(&snap_file);
+            // Write through a no-follow, exclusive create so a guest cannot race
+            // a symlink into the just-removed target and redirect the restore.
+            if let Err(e) = write_regular_file_no_follow(&current_file, &snap_data, mode) {
+                return (
+                    JsonRpcResponse::err(request_id, -32603, format!("failed to restore file safely: {e}")),
+                    None,
+                );
             }
             // Fsync parent dir to flush dentry metadata.
             if let Some(parent) = current_file.parent() {
                 if let Ok(dir) = std::fs::File::open(parent) {
                     let _ = dir.sync_all();
                 }
-            }
-            // Restore permissions from snapshot.
-            if let Ok(snap_meta) = snap_file.metadata() {
-                let _ = std::fs::set_permissions(&current_file, snap_meta.permissions());
             }
         }
     } else {
@@ -980,365 +807,6 @@ fn change_summary_value(changes: &[Value]) -> Value {
         "deleted": deleted,
         "total": created + edited + deleted,
     })
-}
-
-/// Render snapshot list as a text table.
-fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize) -> String {
-    let mut out = format!(
-        "Snapshots ({} total, {} manual slots available)\n",
-        entries.len(),
-        manual_available,
-    );
-    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Created  Edited  Deleted\n");
-    out.push_str("----------------------------------------------------------------------------------------------\n");
-    for e in entries {
-        let cp = e["checkpoint"].as_str().unwrap_or("-");
-        let origin = e["origin"].as_str().unwrap_or("-");
-        let name = e["name"].as_str().unwrap_or("-");
-        let age = e["age"].as_str().unwrap_or("-");
-        let hash = e["hash"].as_str().map(|h| &h[..h.len().min(12)]).unwrap_or("-");
-        let files = e["files_count"].as_u64().unwrap_or(0);
-        let summary = &e["changes_summary"];
-        out.push_str(&format!(
-            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{:<9}{:<8}{}\n",
-            cp,
-            origin,
-            truncate_path(name, 15),
-            age,
-            hash,
-            files,
-            summary["created"].as_u64().unwrap_or(0),
-            summary["edited"].as_u64().unwrap_or(0),
-            summary["deleted"].as_u64().unwrap_or(0),
-        ));
-    }
-    out
-}
-
-/// Collect snapshot entries as JSON values (for both text and json rendering).
-fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler, include_changes: bool) -> Vec<serde_json::Value> {
-    let mut snapshots = scheduler.list_snapshots();
-    // list_snapshots returns newest-first; reverse to walk oldest-first.
-    snapshots.reverse();
-
-    let mut prev_files: HashMap<String, FileEntry> = HashMap::new();
-    let mut entries: Vec<serde_json::Value> = Vec::new();
-
-    for s in &snapshots {
-        let snap_files = collect_files(&s.workspace_path);
-        let origin = match s.origin {
-            SnapshotOrigin::Auto => "auto",
-            SnapshotOrigin::Manual => "manual",
-        };
-
-        let changes = compute_changes_vs_previous(&snap_files, &prev_files);
-
-        let mut entry = serde_json::json!({
-            "checkpoint": format!("cp-{}", s.slot),
-            "slot": s.slot,
-            "origin": origin,
-            "name": s.name,
-            "hash": s.hash,
-            "age": age_string(s.timestamp),
-            "files_count": snap_files.len(),
-            "changes_summary": change_summary_value(&changes),
-        });
-        if include_changes {
-            entry["changes"] = Value::Array(changes);
-        }
-        entries.push(entry);
-
-        prev_files = snap_files;
-    }
-
-    // Return newest-first.
-    entries.reverse();
-    entries
-}
-
-/// Handle `snapshots_list` tool call -- return all snapshot metadata with per-snapshot diffs.
-///
-/// Changes are computed vs the PREVIOUS snapshot (oldest-first), not vs current workspace.
-/// This shows what changed AT the time of each snapshot.
-pub fn handle_list_snapshots(
-    arguments: &Value,
-    scheduler: &AutoSnapshotScheduler,
-    _workspace_root: &Path,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
-    let include_changes = arguments
-        .get("include_changes")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let entries = collect_snapshot_entries(scheduler, include_changes);
-    let (start_index, max_length, format) = extract_pagination_params(arguments);
-
-    if format == "json" {
-        let summary = serde_json::json!({
-            "snapshots": entries,
-            "auto_max": scheduler.max_auto(),
-            "manual_max": scheduler.max_manual(),
-            "manual_available": scheduler.available_manual_slots(),
-        });
-        return tool_ok(request_id, &summary.to_string());
-    }
-
-    let text = render_snapshots_table(&entries, scheduler.available_manual_slots());
-    paginated_response(&text, start_index, max_length, request_id)
-}
-
-/// Compute changes between two snapshots: what's new/modified/deleted in `current` vs `prev`.
-fn compute_changes_vs_previous(current: &HashMap<String, FileEntry>, prev: &HashMap<String, FileEntry>) -> Vec<Value> {
-    let mut changes = Vec::new();
-
-    // New: in current but not in prev.
-    for (path, entry) in current {
-        if !prev.contains_key(path) {
-            changes.push(
-                serde_json::json!({"path": path, "op": "new", "size": entry.size, "is_symlink": entry.is_symlink}),
-            );
-        }
-    }
-
-    // Deleted: in prev but not in current.
-    for (path, entry) in prev {
-        if !current.contains_key(path) {
-            changes.push(serde_json::json!({"path": path, "op": "deleted", "is_symlink": entry.is_symlink}));
-        }
-    }
-
-    // Modified: in both but different size.
-    for (path, cur_entry) in current {
-        if let Some(prev_entry) = prev.get(path) {
-            if cur_entry.size != prev_entry.size {
-                changes.push(serde_json::json!({"path": path, "op": "modified", "size": cur_entry.size, "is_symlink": cur_entry.is_symlink}));
-            }
-        }
-    }
-
-    changes.sort_by(|a, b| {
-        let pa = a["path"].as_str().unwrap_or("");
-        let pb = b["path"].as_str().unwrap_or("");
-        pa.cmp(pb)
-    });
-    changes
-}
-
-/// Handle `snapshots_create` tool call -- create a named manual snapshot.
-pub fn handle_snapshot(
-    arguments: &Value,
-    scheduler: &mut AutoSnapshotScheduler,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
-    let name = match arguments.get("name").and_then(|v| v.as_str()) {
-        Some(n) => n,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'name' argument"),
-    };
-    if let Err(e) = validate_snapshot_name(name) {
-        return JsonRpcResponse::err(request_id, -32602, format!("invalid name: {e}"));
-    }
-
-    match scheduler.take_named_snapshot(name) {
-        Ok(slot) => {
-            let available = scheduler.available_manual_slots();
-            JsonRpcResponse::ok(
-                request_id,
-                serde_json::json!({
-                    "content": [{"type": "text", "text": serde_json::json!({
-                        "checkpoint": format!("cp-{}", slot.slot),
-                        "name": name,
-                        "hash": slot.hash,
-                        "available": available,
-                    }).to_string()}]
-                }),
-            )
-        }
-        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
-    }
-}
-
-/// Handle `snapshots_delete` tool call -- delete a manual snapshot.
-pub fn handle_delete_snapshot(
-    arguments: &Value,
-    scheduler: &AutoSnapshotScheduler,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
-    let cp_str = match arguments.get("checkpoint").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoint' argument"),
-    };
-    let slot = match parse_checkpoint(cp_str) {
-        Ok(s) => s,
-        Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
-    };
-
-    // Only allow deleting manual snapshots.
-    match scheduler.get_metadata(slot) {
-        Some(meta) if meta.origin == SnapshotOrigin::Auto => {
-            return JsonRpcResponse::err(
-                request_id,
-                -32602,
-                "cannot delete automatic snapshots (managed by scheduler)",
-            );
-        }
-        None => {
-            return JsonRpcResponse::err(request_id, -32602, format!("checkpoint {cp_str} not found"));
-        }
-        _ => {}
-    }
-
-    match scheduler.delete_snapshot(slot) {
-        Ok(()) => JsonRpcResponse::ok(
-            request_id,
-            serde_json::json!({
-                "content": [{"type": "text", "text": serde_json::json!({
-                    "deleted": true,
-                    "checkpoint": cp_str,
-                }).to_string()}]
-            }),
-        ),
-        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
-    }
-}
-
-/// Handle `snapshots_history` tool call -- show all versions of a file across snapshots.
-pub fn handle_snapshots_history(
-    arguments: &Value,
-    scheduler: &AutoSnapshotScheduler,
-    workspace_root: &Path,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
-    let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
-    };
-
-    let path_str = match normalize_path(raw_path) {
-        Ok(p) => p,
-        Err(e) => return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
-    };
-
-    let mut snapshots = scheduler.list_snapshots();
-    // Walk oldest-first to compute sequential status.
-    snapshots.reverse();
-
-    let current_file = workspace_root.join(&path_str);
-    let current_size = current_file.metadata().ok().map(|m| m.len());
-
-    let mut versions: Vec<serde_json::Value> = Vec::new();
-    let mut prev_size: Option<u64> = None; // None = file didn't exist in previous snap
-
-    for snap in &snapshots {
-        let snap_file = snap.workspace_path.join(&path_str);
-        let snap_size = snap_file.metadata().ok().map(|m| m.len());
-
-        // Compare this version to PREVIOUS snapshot version.
-        let status = match (snap_size, prev_size) {
-            (Some(ss), Some(ps)) if ss == ps => "unchanged",
-            (Some(_), Some(_)) => "modified",
-            (Some(_), None) => "new",
-            (None, Some(_)) => "deleted",
-            (None, None) => {
-                // File not in this snapshot and not in previous -- skip.
-                prev_size = snap_size;
-                continue;
-            }
-        };
-
-        let origin = match snap.origin {
-            SnapshotOrigin::Auto => "auto",
-            SnapshotOrigin::Manual => "manual",
-        };
-
-        versions.push(serde_json::json!({
-            "checkpoint": format!("cp-{}", snap.slot),
-            "origin": origin,
-            "name": snap.name,
-            "age": age_string(snap.timestamp),
-            "size": snap_size,
-            "status": status,
-        }));
-
-        prev_size = snap_size;
-    }
-
-    // Return newest-first.
-    versions.reverse();
-
-    let result = serde_json::json!({
-        "path": path_str,
-        "current_size": current_size,
-        "versions": versions,
-    });
-
-    JsonRpcResponse::ok(
-        request_id,
-        serde_json::json!({
-            "content": [{"type": "text", "text": result.to_string()}]
-        }),
-    )
-}
-
-/// Handle `snapshots_compact` tool call -- merge multiple snapshots into one.
-pub fn handle_snapshots_compact(
-    arguments: &Value,
-    scheduler: &mut AutoSnapshotScheduler,
-    request_id: Option<Value>,
-) -> JsonRpcResponse {
-    let checkpoints = match arguments.get("checkpoints").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'checkpoints' array"),
-    };
-
-    let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let name = if name.is_empty() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        format!("compacted_{now}")
-    } else {
-        if let Err(e) = validate_snapshot_name(&name) {
-            return JsonRpcResponse::err(request_id, -32602, format!("invalid name: {e}"));
-        }
-        name
-    };
-
-    // Parse checkpoint IDs.
-    let mut slots = Vec::new();
-    for cp in checkpoints {
-        let cp_str = match cp.as_str() {
-            Some(s) => s,
-            None => return JsonRpcResponse::err(request_id, -32602, "checkpoint must be a string"),
-        };
-        match parse_checkpoint(cp_str) {
-            Ok(slot) => slots.push(slot),
-            Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
-        }
-    }
-
-    let deleted_cps: Vec<String> = slots.iter().map(|s| format!("cp-{s}")).collect();
-
-    match scheduler.compact_snapshots(&slots, &name) {
-        Ok(result) => {
-            let files_count = collect_files(&result.workspace_path).len();
-            JsonRpcResponse::ok(
-                request_id,
-                serde_json::json!({
-                    "content": [{"type": "text", "text": serde_json::json!({
-                        "compacted": true,
-                        "checkpoint": format!("cp-{}", result.slot),
-                        "name": name,
-                        "hash": result.hash,
-                        "merged_count": deleted_cps.len(),
-                        "deleted_checkpoints": deleted_cps,
-                        "files_count": files_count,
-                    }).to_string()}]
-                }),
-            )
-        }
-        Err(e) => JsonRpcResponse::err(request_id, -32603, format!("{e}")),
-    }
 }
 
 #[cfg(test)]

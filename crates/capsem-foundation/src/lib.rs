@@ -8,6 +8,7 @@ pub mod ipc_handshake;
 pub mod log_layer;
 pub mod paths;
 pub mod poll;
+pub mod proctable;
 pub mod telemetry;
 pub mod time;
 pub mod uds;

@@ -299,7 +299,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path);
+    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
@@ -361,7 +361,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path);
+    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
@@ -880,7 +880,7 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
@@ -1360,12 +1360,12 @@ fn arch_detection_aarch64() {
 fn long_vm_name_falls_back_to_tmp_socket() {
     let state = make_test_state();
     // A 100-char name exceeds SUN_PATH_MAX via run_dir/instances/ path,
-    // but instance_socket_path should fall back to /tmp/capsem/.
+    // but instance_socket_path should fall back to the private per-user dir.
     let long_name = "a".repeat(100);
-    let path = state.instance_socket_path(&long_name);
+    let path = state.instance_socket_path(&long_name).expect("socket path");
     assert!(
-        path.starts_with("/tmp/capsem/"),
-        "expected /tmp/capsem/ fallback, got: {}",
+        path.starts_with(format!("/tmp/capsem-{}", capsem_foundation::uds::current_uid())),
+        "expected the private per-user fallback dir, got: {}",
         path.display()
     );
     assert!(
@@ -1378,7 +1378,7 @@ fn long_vm_name_falls_back_to_tmp_socket() {
 #[test]
 fn short_vm_name_uses_run_dir() {
     let state = make_test_state();
-    let path = state.instance_socket_path("test-vm");
+    let path = state.instance_socket_path("test-vm").expect("socket path");
     assert_eq!(path, state.run_dir.join("instances/test-vm.sock"));
 }
 

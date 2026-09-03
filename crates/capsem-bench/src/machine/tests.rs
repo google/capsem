@@ -1,5 +1,5 @@
 use super::{assess, Objection};
-use capsem_core::proctable::Process;
+use capsem_foundation::proctable::Process;
 
 fn process(pid: u32, parent_pid: u32, arguments: &str) -> Process {
     Process {

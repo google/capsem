@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::HostToGuest;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +14,9 @@ use crate::job_store::{JobResult, JobStore};
 use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
+
+mod snapshot;
+use snapshot::snapshot_status_from_scheduler;
 
 type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
@@ -38,6 +42,8 @@ const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
 /// replay layer handles forward-path losses; this covers return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
+/// The mode the bridge stamps on every guest FileWrite (see vsock.rs).
+const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
@@ -362,6 +368,38 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     }
                 });
+            }
+            ServiceToProcess::WriteFile { id, path, data }
+                if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
+                    id,
+                    path: path.clone(),
+                    data: data.clone(),
+                    mode: GUEST_FILE_WRITE_MODE,
+                }) =>
+            {
+                // The guest drops any control frame over MAX_FRAME_SIZE and
+                // never acks it, so the bridge would replay it until the
+                // watchdog gave up. Refuse here, with the reason.
+                warn!(
+                    id,
+                    path,
+                    len = data.len(),
+                    "WriteFile refused: too large for one control frame"
+                );
+                capsem_core::try_send!(
+                    "ipc_write_file_result",
+                    ipc_tx_out
+                        .send(ProcessToService::WriteFileResult {
+                            id,
+                            success: false,
+                            error: Some(format!(
+                                "file too large for the guest control channel: {} bytes do not fit one {} byte frame",
+                                data.len(),
+                                capsem_proto::MAX_FRAME_SIZE
+                            )),
+                        })
+                        .await
+                );
             }
             ServiceToProcess::WriteFile { id, path, data } => {
                 let job_store = job_store.clone();
@@ -940,48 +978,6 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::McpCallTool { .. }
         | ServiceToProcess::SnapshotStatus { .. } => IpcAction::Job,
     }
-}
-
-fn snapshot_status_from_scheduler(
-    scheduler: &capsem_core::auto_snapshot::AutoSnapshotScheduler,
-) -> capsem_proto::ipc::SnapshotStatus {
-    let snapshots = scheduler.list_snapshots();
-    let auto_count = snapshots
-        .iter()
-        .filter(|slot| slot.origin == capsem_core::auto_snapshot::SnapshotOrigin::Auto)
-        .count();
-    let manual_count = snapshots.len().saturating_sub(auto_count);
-    let snapshots = snapshots
-        .into_iter()
-        .map(|slot| capsem_proto::ipc::SnapshotSlotStatus {
-            checkpoint: format!("cp-{}", slot.slot),
-            slot: slot.slot,
-            origin: match slot.origin {
-                capsem_core::auto_snapshot::SnapshotOrigin::Auto => "auto",
-                capsem_core::auto_snapshot::SnapshotOrigin::Manual => "manual",
-            }
-            .to_string(),
-            name: slot.name,
-            timestamp: snapshot_timestamp(slot.timestamp),
-            hash: slot.hash,
-        })
-        .collect();
-
-    capsem_proto::ipc::SnapshotStatus {
-        total: auto_count + manual_count,
-        auto_count,
-        manual_count,
-        manual_available: scheduler.available_manual_slots(),
-        snapshots,
-    }
-}
-
-fn snapshot_timestamp(timestamp: std::time::SystemTime) -> String {
-    let secs = timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
-    format!("unix:{secs}")
 }
 
 #[cfg(test)]

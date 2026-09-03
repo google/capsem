@@ -8,7 +8,6 @@ that is not explicitly forwarded by the gateway is a user-visible 404.
 from __future__ import annotations
 
 import json
-import subprocess
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID
@@ -25,28 +24,8 @@ def _json_status(client: TcpHttpClient, path: str) -> tuple[int, dict]:
 
 
 def _post_json_status(client: TcpHttpClient, path: str) -> tuple[int, dict]:
-    cmd = [
-        "curl",
-        "-s",
-        "-S",
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        f"Authorization: Bearer {client.token}",
-        "-d",
-        "{}",
-        "-w",
-        "\n%{http_code}",
-        "--max-time",
-        "30",
-        f"{client.base_url}{path}",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-    assert result.returncode == 0, result.stderr
-    body, status_text = result.stdout.rsplit("\n", 1)
-    return int(status_text), json.loads(body) if body else {}
+    status, payload = client.call_json("POST", path, {}, timeout=30)
+    return status, payload or {}
 
 
 def test_profile_overview_routes_are_forwarded_through_gateway() -> None:
