@@ -888,6 +888,7 @@
    "lru",
    "metrics",
    "metrics-util",
+   "nix",
    "notify",
    "objc2",
    "objc2-foundation",
