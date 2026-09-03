@@ -159,6 +159,12 @@ def merge_tree(source: Path, target: Path) -> None:
         elif entry.is_dir():
             merge_tree(entry, destination)
         else:
+            # Cached artifact views are deliberately immutable and may be
+            # hardlinks to the object store. Replace their directory entry;
+            # opening one for truncation both fails on 0444 and would mutate
+            # every hardlink to the same object if it were writable.
+            if destination.exists():
+                remove(destination)
             # The same per-file hook `copytree` was given, so a merge of a
             # multi-gigabyte asset tree still answers Ctrl-C between files.
             _interruptible_copy(str(entry), str(destination))

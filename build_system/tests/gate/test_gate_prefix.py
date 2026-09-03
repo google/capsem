@@ -1114,6 +1114,23 @@ def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
     assert sorted(p.name for p in target.iterdir()) == ["already-here", "arriving"]
 
 
+def test_merging_replaces_an_immutable_cached_file(tmp_path: Path) -> None:
+    """An exported package may already be a read-only object-store view."""
+    from capsem_builder.gate.filesystem import merge_tree
+
+    source, target = tmp_path / "src", tmp_path / "dst"
+    source.mkdir()
+    target.mkdir()
+    (source / "package.deb").write_text("new")
+    existing = target / "package.deb"
+    existing.write_text("old")
+    existing.chmod(0o444)
+
+    merge_tree(source, target)
+
+    assert existing.read_text() == "new"
+
+
 def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     """`copy_tree` must not dereference, for the same reason `merge_tree` must not.
 

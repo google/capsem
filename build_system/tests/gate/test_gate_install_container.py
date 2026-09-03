@@ -326,20 +326,19 @@ def test_a_degraded_system_is_accepted(tmp_path: Path, monkeypatch: pytest.Monke
     assert runner.ran(r"chown -R capsem:capsem")
 
 
-def test_only_the_target_directory_entry_is_granted_not_its_contents(
+def test_every_owned_parent_entry_is_granted_not_its_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`rm -rf cache/target/install-test-*` needs write permission on the parent
-    entry, not on the entries themselves. A recursive chown here would walk
-    every cargo artifact in the checkout."""
+    """Each owned path can be replaced without walking unrelated output."""
     _on(monkeypatch, "Darwin")
     container, runner = _container()
 
     container.start(options=[])
 
-    parent = Path(CONFIG.install.layout.assets).parent
-    assert runner.ran(rf"chown capsem:capsem /src/{parent}$")
-    assert not runner.ran(rf"chown -R capsem:capsem /src/{parent}$")
+    issued = "\n".join(runner.rendered)
+    for parent in CONFIG.install.layout.owned_parent_paths(CONFIG.install.mount):
+        assert parent in issued
+    assert not runner.ran(r"chown -R capsem:capsem /src/cache/target/release/distribution$")
 
 
 def test_writes_are_handed_back_to_the_host_user(

@@ -20,7 +20,6 @@ from __future__ import annotations
 import shutil
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import config as gate_config
 from . import host, installimage
@@ -210,17 +209,13 @@ class InstallContainer:
         guest = self._settings.guest_user.name
         self._docker.exec(self.name, ["mkdir", "-p", *self._owned])
         self._docker.exec(self.name, ["chown", "-R", f"{guest}:{guest}", *self._owned])
-        # Unlinking these needs write permission on the *parent* directory
-        # entry, not on the entries themselves. On Linux /src/cache/target belongs to
-        # the host user rather than the container's capsem, so the staging
-        # step's `rm -rf` fails with "Permission denied" before it can restage.
-        # Grant the one directory entry: a recursive chown here would walk
-        # every cargo artifact in the checkout.
-        owner = self._settings.guest_user.name
-        target = Path(self._settings.layout.assets).parent
+        # Removing an owned path needs write permission on its parent, not on
+        # the path itself. Claim each config-derived parent entry without
+        # recursively walking unrelated build output beneath it.
+        parents = self._settings.layout.owned_parent_paths(self._settings.mount)
         self._docker.exec(
             self.name,
-            ["chown", f"{owner}:{owner}", f"{self._settings.mount}/{target}"],
+            ["chown", f"{guest}:{guest}", *parents],
         )
 
     def return_paths(self) -> None:

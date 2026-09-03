@@ -47,6 +47,12 @@ class InstallLayout(Strict):
             )
         )
 
+    def owned_parent_paths(self, mount: str) -> tuple[str, ...]:
+        """Directory entries the container user must be able to replace."""
+        return tuple(
+            dict.fromkeys(str(PurePosixPath(path).parent) for path in self.owned_paths(mount))
+        )
+
 
 class GuestUser(Strict):
     """The unprivileged container user, and the paths it may write to.
