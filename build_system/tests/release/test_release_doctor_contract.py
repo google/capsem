@@ -6497,7 +6497,11 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
 
 def test_fork_route_flushes_without_thaw_before_clone() -> None:
     """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
-    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs").read_text()
+    vm_files = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs"
+    parent = vm_files.read_text()
+    source = vm_files.with_name("vm_files").joinpath("fork.rs").read_text()
+    assert "mod fork;" in parent
+    assert "pub(crate) use fork::handle_fork;" in parent
     fork_block = source.split("async fn handle_fork", maxsplit=1)[1].split(
         "Ok(Json(ForkResponse", maxsplit=1
     )[0]
