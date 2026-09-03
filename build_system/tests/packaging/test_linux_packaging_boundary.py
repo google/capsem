@@ -77,6 +77,15 @@ def test_linux_package_assembly_uses_package_relative_resources() -> None:
         assert '"$(dirname "$0")/../shared/' in maintainer_script
 
 
+def test_linux_package_assembly_uses_cargos_configured_target_root() -> None:
+    build = (LINUX / "build-linux-package.sh").read_text(encoding="utf-8")
+
+    assert ': "${CARGO_HOME:?}" "${CARGO_TARGET_DIR:?}"' in build
+    assert 'RELEASE_DIR="$CARGO_TARGET_DIR/$RUST_TARGET/release"' in build
+    assert 'AGENT_DIR="$CARGO_TARGET_DIR/build/linux-agent/$TARGET_ARCH"' in build
+    assert "/cargo-cache/target" not in build
+
+
 def test_release_workflow_selects_owned_runtime_dependency_helper() -> None:
     source = (ROOT / ".github" / "workflows" / "release.yaml").read_text(
         encoding="utf-8"

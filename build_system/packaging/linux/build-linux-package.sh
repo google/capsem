@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 : "${TARGET_ARCH:?}" "${RUST_TARGET:?}" "${DPKG_ARCH:?}" "${RUST_TOOLCHAIN:?}"
-: "${CARGO_HOME:?}" "${CAPSEM_PNPM_STORE:?}"
+: "${CARGO_HOME:?}" "${CARGO_TARGET_DIR:?}" "${CAPSEM_PNPM_STORE:?}"
 : "${HOST_UID:?}" "${HOST_GID:?}" "${CAPSEM_INSTALL_MANIFEST_URL:?}"
 
 # Where this build's artifacts go. A container path by default, copied out with
@@ -30,6 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # the same event. Overridable so a caller outside the gate can still aim it at
 # the mount.
 OUT="${CAPSEM_PACKAGE_OUTPUT_DIR:-/src/dist}"
+RELEASE_DIR="$CARGO_TARGET_DIR/$RUST_TARGET/release"
+AGENT_DIR="$CARGO_TARGET_DIR/build/linux-agent/$TARGET_ARCH"
 mkdir -p "$OUT"
 
 # Only the output. `/src` is mounted read-only and the paths this build writes
@@ -55,27 +57,27 @@ bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-agent
-mkdir -p "/cargo-cache/target/build/linux-agent/$TARGET_ARCH"
-cp "/cargo-cache/target/$RUST_TARGET/release/capsem-pty-agent" \
-   "/cargo-cache/target/$RUST_TARGET/release/capsem-mcp-server" \
-   "/cargo-cache/target/$RUST_TARGET/release/capsem-net-proxy" \
-   "/cargo-cache/target/$RUST_TARGET/release/capsem-dns-proxy" \
-   "/cargo-cache/target/$RUST_TARGET/release/capsem-sysutil" \
-   "/cargo-cache/target/build/linux-agent/$TARGET_ARCH/"
+mkdir -p "$AGENT_DIR"
+cp "$RELEASE_DIR/capsem-pty-agent" \
+   "$RELEASE_DIR/capsem-mcp-server" \
+   "$RELEASE_DIR/capsem-net-proxy" \
+   "$RELEASE_DIR/capsem-dns-proxy" \
+   "$RELEASE_DIR/capsem-sysutil" \
+   "$AGENT_DIR/"
 
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
     -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
-bash build_system/scripts/build/check-build-provenance.sh "/cargo-cache/target/$RUST_TARGET/release/capsem" \
+bash build_system/scripts/build/check-build-provenance.sh "$RELEASE_DIR/capsem" \
     "${CAPSEM_BUILD_REVISION:-}"
 
 echo "--- Resolve Tauri signing key ---"
 # The authoritative release keys live in GitHub Actions secrets and are applied
 # only on publish. A local build just needs SOME key for `cargo tauri build` to
 # complete, so one throwaway dev key is generated and reused.
-DEV_KEY=/cargo-cache/target/dev-tauri-private
+DEV_KEY="$CARGO_TARGET_DIR/dev-tauri-private"
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
     if [ ! -f "$DEV_KEY" ]; then
         echo "    no host signing key; generating dev-only key (not for release distribution)"
@@ -91,14 +93,14 @@ else
 fi
 
 echo "--- Build Tauri app ---"
-rm -rf "/cargo-cache/target/$RUST_TARGET/release/bundle/deb"
+rm -rf "$RELEASE_DIR/bundle/deb"
 (cd crates/capsem-app && cargo tauri build --target "$RUST_TARGET" --bundles deb \
     -- --locked --offline)
 
 echo "--- Repack Debian package ---"
-DEB=$(ls -t "/cargo-cache/target/$RUST_TARGET/release/bundle/deb/"*.deb | head -n1)
+DEB=$(ls -t "$RELEASE_DIR/bundle/deb/"*.deb | head -n1)
 bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB" \
-    "/cargo-cache/target/$RUST_TARGET/release" "cache/target/config" "assets"
+    "$RELEASE_DIR" "cache/target/config" "assets"
 
 echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"
@@ -108,4 +110,4 @@ cp "$DEB" "$OUT/"
 # Record the exact package this run produced, so a stale cache/target/packages entry
 # from an earlier build can never be the one that gets proved and published.
 basename "$DEB" > "$OUT/.cross-compile-$TARGET_ARCH-deb"
-cp "/cargo-cache/target/build/linux-agent/$TARGET_ARCH/"* "$OUT/"
+cp "$AGENT_DIR/"* "$OUT/"
