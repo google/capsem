@@ -19,7 +19,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from . import cachelayout, installplan, platformproof
+from . import cachelayout, candidateprepare, installplan, platformproof
 from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
@@ -252,6 +252,7 @@ class InstallCommand(
         # the static preflight step; standalone install builds it once here.
         image = installplan.fragment(plan, self._config)
         selected = getattr(self._args, "selected_content_root", None)
+        prerequisites = (image,)
         if selected:
             root = Path(selected)
             root = root if root.is_absolute() else self._config.path(str(root))
@@ -260,7 +261,9 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(ProfileContent.standalone(self._config))
-        plan.add(install_step(self._config, content=content), after=(image,))
+            prepared = plan.add(candidateprepare.materialize_config_step(self._config))
+            prerequisites += (prepared,)
+        plan.add(install_step(self._config, content=content), after=prerequisites)
         return plan
 
 

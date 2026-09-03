@@ -101,7 +101,6 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
 def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
     """Build, materialize, and sign the runtime consumed by later phases."""
     phase = plan.phase("prepare")
-    settings = config.candidate
 
     assets = imagebuild.check_assets(
         plan,
@@ -110,19 +109,21 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         doctor_skips=dict(config.candidate.doctor_skips),
     )
     packed = initrd.pack(plan, config, after=assets)
-    materialised = phase.add(
-        step(
-            "materialize-config",
-            Run(["bash", settings.materialize_script]),
-            contends=(config.exclusive("workspace_binaries"),),
-            kind=Kind.COMPILE,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=(packed,),
-    )
+    materialised = phase.add(materialize_config_step(config), after=(packed,))
     built = phase.add(hostpackage.build_step(config), after=(materialised,))
     return phase.add(hostpackage.sign_step(config), after=(built,))
+
+
+def materialize_config_step(config: GateConfig) -> Step:
+    """Produce the canonical config half of locally built profile content."""
+    return step(
+        "materialize-config",
+        Run(["bash", config.candidate.materialize_script]),
+        contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.FAST,
+    )
 
 
 def _enforce_cache(config: GateConfig) -> Call:
