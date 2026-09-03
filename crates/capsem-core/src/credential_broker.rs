@@ -242,8 +242,8 @@ pub fn detect_brokered_http_references(
 }
 
 pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
-    (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
-        || (domain.ends_with("github.com") && path.contains("oauth"))
+    (host_is_or_under(domain, "googleapis.com") && (path.contains("/token") || path.contains("oauth")))
+        || (host_is_or_under(domain, "github.com") && path.contains("oauth"))
         || (is_local_oauth_fixture_domain(domain)
             && (path.contains("/token") || path.contains("oauth") || path.contains("/credential/response")))
 }
@@ -547,24 +547,37 @@ fn collect_query_brokered_references(
 }
 
 fn credential_provider_for_request(domain: &str, ai_provider: Option<ProviderKind>) -> Option<CredentialProvider> {
-    // Domains are case-insensitive; lowercase before the suffix checks so a
-    // mixed-case host does not evade provider detection (capture/brokering).
-    let domain = domain.to_ascii_lowercase();
-    let domain = domain.as_str();
     match ai_provider {
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
         Some(ProviderKind::OpenAi) => Some(CredentialProvider::OpenAi),
         Some(ProviderKind::Ollama) => Some(CredentialProvider::OpenAi),
         Some(ProviderKind::Unknown) => None,
-        None if domain.ends_with("anthropic.com") || domain.ends_with("claude.com") => {
+        None if host_is_or_under(domain, "anthropic.com") || host_is_or_under(domain, "claude.com") => {
             Some(CredentialProvider::Anthropic)
         }
-        None if domain.ends_with("googleapis.com") => Some(CredentialProvider::Google),
-        None if domain.ends_with("openai.com") => Some(CredentialProvider::OpenAi),
-        None if domain.ends_with("github.com") => Some(CredentialProvider::Github),
+        None if host_is_or_under(domain, "googleapis.com") => Some(CredentialProvider::Google),
+        None if host_is_or_under(domain, "openai.com") => Some(CredentialProvider::OpenAi),
+        None if host_is_or_under(domain, "github.com") => Some(CredentialProvider::Github),
         None => None,
     }
+}
+
+/// True when `domain` is `suffix` or a subdomain of it.
+///
+/// The match is on a label boundary: `api.openai.com` and `API.OPENAI.COM.`
+/// (one trailing dot, the FQDN form) bind, `evil-openai.com`, `xopenai.com`
+/// and `openai.com.evil.example` do not. Provider binding decides whether a
+/// brokered reference is dereferenced into the real key, so this is the one
+/// place a destination is compared against a provider domain.
+fn host_is_or_under(domain: &str, suffix: &str) -> bool {
+    let domain = domain.to_ascii_lowercase();
+    let domain = domain.strip_suffix('.').unwrap_or(&domain);
+    domain == suffix
+        || domain
+            .strip_suffix(suffix)
+            .and_then(|prefix| prefix.strip_suffix('.'))
+            .is_some_and(|prefix| !prefix.is_empty() && !prefix.ends_with('.'))
 }
 
 fn percent_decode(value: &str) -> Result<String, String> {
@@ -650,7 +663,7 @@ fn provider_for_token(domain: &str, header_name: &str, token: &str) -> Option<Cr
     {
         return Some(CredentialProvider::Github);
     }
-    if domain.ends_with("github.com")
+    if host_is_or_under(domain, "github.com")
         && (header == "authorization"
             || header == "access_token"
             || header == "refresh_token"
@@ -760,10 +773,10 @@ fn provider_for_oauth_field(domain: &str, path: &str, field_name: &str, value: &
     ) {
         return None;
     }
-    if domain.ends_with("googleapis.com") && is_http_body_credential_candidate(domain, path) {
+    if host_is_or_under(domain, "googleapis.com") && is_http_body_credential_candidate(domain, path) {
         return Some(CredentialProvider::Google);
     }
-    if domain.ends_with("github.com") && is_http_body_credential_candidate(domain, path) {
+    if host_is_or_under(domain, "github.com") && is_http_body_credential_candidate(domain, path) {
         return Some(CredentialProvider::Github);
     }
     if is_local_oauth_fixture_domain(domain) && is_http_body_credential_candidate(domain, path) {

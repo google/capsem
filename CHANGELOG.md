@@ -98,6 +98,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The credential broker binds a destination to a provider on a label
+  boundary: `evil-openai.com` and `openai.com.evil.example` are no longer
+  treated as `openai.com` (or `github.com`, `googleapis.com`, `anthropic.com`,
+  `claude.com`), so a brokered reference cannot be dereferenced into the real
+  key by a look-alike host. The on-disk credential store takes a
+  cross-process lock for each read-modify-write, so two sandboxes capturing
+  at once no longer drop each other's entries, and `capsem-mcp` log lines
+  print environment keys but never their values.
+- Built-in MCP tools clamp guest-supplied `start_index`, `max_length`,
+  `context_lines` and `max_matches` before arithmetic, so `u64::MAX` no
+  longer panics the builtin subprocess. `snapshots_history` sizes files
+  through the contained-directory walker and refuses symlinks and special
+  files like the other snapshot tools.
 - A WebSocket upgrade now goes through the same gate as every other request:
   the HTTP port allowlist and the security boundary run before the upstream
   is dialed, the decision is recorded in telemetry, and a blocked host gets

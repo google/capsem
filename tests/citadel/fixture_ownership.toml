@@ -9,6 +9,7 @@ owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
 consumers = [
   "crates/capsem-core/src/mcp/builtin_tools/tests.rs",
+  "crates/capsem-core/src/mcp/builtin_tools/tests/fixtures.rs",
   "crates/capsem-core/src/mcp/builtin_tools/tests/markdown.rs",
 ]
 symbols = [
@@ -25,7 +26,7 @@ target = "tests/fixtures/mcp/html/wiki_rust_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
-consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests/fixtures.rs"
 symbols = ["extract_wiki_rust_has_real_content"]
 
 [[fixture]]
@@ -36,6 +37,7 @@ owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
 consumers = [
   "crates/capsem-core/src/mcp/builtin_tools/tests.rs",
+  "crates/capsem-core/src/mcp/builtin_tools/tests/fixtures.rs",
   "crates/capsem-core/src/mcp/builtin_tools/tests/markdown.rs",
 ]
 symbols = [
@@ -50,7 +52,7 @@ target = "tests/fixtures/mcp/html/wiki_unicode_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
 item = "S05-004"
-consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests/fixtures.rs"
 symbols = [
   "extract_wiki_unicode_preserves_multibyte",
   "grep_wiki_unicode_finds_pattern",

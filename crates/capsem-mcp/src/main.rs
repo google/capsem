@@ -5,16 +5,18 @@ use hyper::Request;
 use hyper_util::rt::TokioIo;
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
 use rmcp::model::{Implementation, InitializeResult, ServerCapabilities};
-use rmcp::schemars::{self, JsonSchema};
 use rmcp::ServiceExt;
 use rmcp::{tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::UnixStream;
 use tracing::{error, info};
+
+mod params;
+
+use params::*;
 
 const DEFAULT_PROFILE_ID: &str = "code";
 
@@ -410,180 +412,6 @@ impl ServerHandler for CapsemHandler {
         info.server_info = Implementation::new("capsem-mcp", env!("CARGO_PKG_VERSION"));
         info
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct IdParams {
-    id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct CreateParams {
-    /// Optional requested session name. If omitted, the service assigns a profile-scoped name.
-    name: Option<String>,
-    /// Profile to use. Defaults to code when omitted.
-    profile: Option<String>,
-    #[serde(rename = "ramMb")]
-    #[schemars(rename = "ramMb")]
-    ram_mb: Option<u64>,
-    #[serde(rename = "cpuCount")]
-    #[schemars(rename = "cpuCount")]
-    cpu_count: Option<u32>,
-    version: Option<String>,
-    /// Environment variables to inject into the guest (e.g. {"API_KEY": "sk-..."})
-    env: Option<HashMap<String, String>>,
-    /// Clone state from an existing session. The new session inherits
-    /// the source's disk state (workspace, rootfs overlay, session.db).
-    from: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct ForkParams {
-    /// ID or name of the session to fork
-    id: String,
-    /// Name for the new session
-    name: String,
-    /// Optional description
-    description: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct PersistParams {
-    /// ID or name of the running session to save
-    id: String,
-    /// Name for the saved session
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct NameParams {
-    /// Session name or id
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct PurgeParams {
-    /// Set to true to purge every stopped/broken session the service considers purgeable
-    #[serde(default)]
-    all: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct RunParams {
-    /// Shell command to execute
-    command: String,
-    /// Profile to use. Defaults to code when omitted.
-    profile: Option<String>,
-    /// Timeout in seconds (default 60)
-    timeout: Option<u64>,
-    /// Environment variables to inject into the guest at boot
-    env: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct ExecParams {
-    id: String,
-    command: String,
-    /// Timeout in seconds (default 30)
-    timeout: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct FileReadParams {
-    id: String,
-    path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct FileWriteParams {
-    id: String,
-    path: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct LogsParams {
-    id: String,
-    /// Case-insensitive substring filter applied to each log line
-    grep: Option<String>,
-    /// Return only the last N lines (applied after grep)
-    tail: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct ServiceLogsParams {
-    /// Case-insensitive substring filter applied to each log line
-    grep: Option<String>,
-    /// Return only the last N lines (applied after grep)
-    tail: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct TriageMcpParams {
-    /// Lookback window. Default "30m". Accepts "5m", "1h", "24h",
-    /// "7d", "300s", or RFC3339 ("2026-05-02T17:30:00Z").
-    since: Option<String>,
-    /// Max items per category. Default 20, max 200.
-    limit: Option<u64>,
-    /// Optional session id (reserved for the future session.db
-    /// cross-reference; ignored today).
-    id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct TimelineMcpParams {
-    /// Session id.
-    id: String,
-    /// Filter to one trace_id (hex). Rows with NULL trace_id are also
-    /// returned -- they pre-date W4's trace propagation but may still
-    /// be relevant context.
-    #[serde(rename = "traceId")]
-    trace_id: Option<String>,
-    /// Lookback window. Default "10m"; accepts "5m", "1h", "24h",
-    /// "7d", "300s", or RFC3339.
-    since: Option<String>,
-    /// Max rows. Default 200, max 2000.
-    limit: Option<u64>,
-    /// Comma-separated subset of layers: "exec,tool,net,fs,model".
-    /// Default all.
-    layers: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct HostLogsMcpParams {
-    /// One of: "service", "mcp", "gateway", "tray", "app".
-    name: String,
-    /// Substring filter applied per line.
-    grep: Option<String>,
-    /// Return only the last N lines (applied after grep).
-    tail: Option<u64>,
-    /// Max bytes to read from end of file. Default 100KB, max 5MB.
-    #[serde(rename = "maxBytes")]
-    max_bytes: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpToolsParams {
-    /// Profile whose MCP configuration should be inspected
-    profile: Option<String>,
-    /// Filter tools by server name (optional)
-    server: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpCallParams {
-    /// Profile whose MCP tool should be called
-    profile: Option<String>,
-    /// Namespaced tool name (e.g. github__search_repos)
-    name: String,
-    /// JSON arguments for the tool call
-    arguments: Option<Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
-struct McpProfileParams {
-    /// Profile whose MCP configuration should be inspected
-    profile: Option<String>,
 }
 
 async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> Result<String, String> {

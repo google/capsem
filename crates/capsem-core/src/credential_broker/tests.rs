@@ -1,5 +1,7 @@
 use super::*;
 
+mod host_binding;
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 

@@ -36,6 +36,35 @@ const DEFAULT_CONTEXT_LINES: u64 = 3;
 const DEFAULT_MAX_MATCHES: u64 = 50;
 const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
 
+/// Ceilings for guest-supplied pagination and grep parameters. The values
+/// arrive as `u64` straight from the tool call; without a clamp
+/// `max_length: 18446744073709551615` overflows the slice arithmetic (a panic
+/// in debug, an out-of-range slice in release) and `context_lines: u64::MAX`
+/// does the same in the grep window.
+pub(crate) const MAX_PAGE_LENGTH: usize = MAX_FETCH_BODY_BYTES;
+pub(crate) const MAX_START_INDEX: usize = 1 << 32;
+const MAX_CONTEXT_LINES: usize = 1_000;
+const MAX_GREP_MATCHES: usize = 10_000;
+
+/// Read an unsigned integer parameter, defaulting when absent or not an
+/// unsigned integer, and clamp it to `ceiling`.
+pub(crate) fn bounded_param(args: &Value, key: &str, default: u64, ceiling: usize) -> usize {
+    args.get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(default)
+        .try_into()
+        .unwrap_or(usize::MAX)
+        .min(ceiling)
+}
+
+/// `(start_index, max_length)` for every paginated tool, clamped.
+pub(crate) fn pagination_params(args: &Value) -> (usize, usize) {
+    (
+        bounded_param(args, "start_index", 0, MAX_START_INDEX),
+        bounded_param(args, "max_length", DEFAULT_MAX_LENGTH, MAX_PAGE_LENGTH),
+    )
+}
+
 /// Ceiling on an HTTP response body read by the builtin tools. `resp.text()`
 /// buffers the whole body, so an unbounded (or hostile) response would OOM the
 /// builtin subprocess. Bodies larger than this are truncated; the tools already
@@ -334,11 +363,7 @@ async fn handle_fetch_http(
     let domain = checked.domain.clone();
 
     let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
     let start = Instant::now();
     let resp = match client.get(url).send().await {
@@ -390,14 +415,14 @@ async fn handle_fetch_http(
     };
 
     let (chunk, total, has_more) = paginate(&text, start_index, max_length);
+    let next_index = start_index.saturating_add(chunk.len());
     let mut output = format!("URL: {url}\nDomain: {domain}\nContent length: {total}\n");
     if start_index > 0 || has_more {
-        output.push_str(&format!("Showing: {start_index}..{}\n", start_index + chunk.len()));
+        output.push_str(&format!("Showing: {start_index}..{next_index}\n"));
         if has_more {
             output.push_str(&format!(
-                "Remaining: {} characters. Use start_index={} to continue.\n",
-                total - start_index - chunk.len(),
-                start_index + chunk.len()
+                "Remaining: {} characters. Use start_index={next_index} to continue.\n",
+                total.saturating_sub(next_index),
             ));
         }
     }
@@ -434,7 +459,7 @@ fn collect_grep_matches(
             continue;
         }
         let start = i.saturating_sub(context_lines);
-        let end = (i + context_lines + 1).min(lines.len());
+        let end = i.saturating_add(context_lines).saturating_add(1).min(lines.len());
         let mut block = String::new();
         for (offset, line) in lines[start..end].iter().enumerate() {
             let j = start + offset;
@@ -487,20 +512,10 @@ async fn handle_grep_http(
         }
     };
 
-    let context_lines = args
-        .get("context_lines")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_CONTEXT_LINES) as usize;
-    let max_matches = args
-        .get("max_matches")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_MATCHES) as usize;
+    let context_lines = bounded_param(args, "context_lines", DEFAULT_CONTEXT_LINES, MAX_CONTEXT_LINES);
+    let max_matches = bounded_param(args, "max_matches", DEFAULT_MAX_MATCHES, MAX_GREP_MATCHES);
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
     if pattern_str.is_empty() {
         return tool_error(id, "pattern must not be empty");
@@ -570,11 +585,9 @@ async fn handle_grep_http(
 
     let (chunk, total, has_more) = paginate(&output, start_index, max_length);
     if has_more {
-        let header = format!(
-            "Content length: {total}\nShowing: {start_index}..{}\nUse start_index={} to continue.\n\n",
-            start_index + chunk.len(),
-            start_index + chunk.len()
-        );
+        let next_index = start_index.saturating_add(chunk.len());
+        let header =
+            format!("Content length: {total}\nShowing: {start_index}..{next_index}\nUse start_index={next_index} to continue.\n\n");
         tool_ok(id, &format!("{header}{chunk}"))
     } else {
         tool_ok(id, &chunk)
@@ -623,11 +636,7 @@ async fn handle_http_headers(
             return tool_error(id, &e);
         }
     };
-    let start_index = args.get("start_index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let max_length = args
-        .get("max_length")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(DEFAULT_MAX_LENGTH) as usize;
+    let (start_index, max_length) = pagination_params(args);
 
     let start = Instant::now();
     let resp = match method {
@@ -800,7 +809,7 @@ pub fn paginate(text: &str, start: usize, max: usize) -> (String, usize, bool) {
     if safe_start >= total {
         return (String::new(), total, false);
     }
-    let safe_end = text.floor_char_boundary((safe_start + max).min(total));
+    let safe_end = text.floor_char_boundary(safe_start.saturating_add(max).min(total));
     let chunk = &text[safe_start..safe_end];
     (chunk.to_string(), total, safe_end < total)
 }
