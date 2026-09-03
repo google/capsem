@@ -98,6 +98,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A WebSocket upgrade now goes through the same gate as every other request:
+  the HTTP port allowlist and the security boundary run before the upstream
+  is dialed, the decision is recorded in telemetry, and a blocked host gets
+  a 403. Previously an `Upgrade: websocket` header on an otherwise blocked
+  request reached any host, the gateway included, and was logged as allowed.
+- Hostnames are normalized once at the proxy edge: a mixed-case or
+  trailing-dot `Host` header or SNI (`API.EVIL.COM.`) is evaluated, minted
+  and recorded as the canonical lowercase name, so `http.host` rules can no
+  longer be evaded by spelling. The MITM leaf certificate cache is bounded
+  to 1024 entries, a guest that opens a connection and stalls before its
+  first bytes, its TLS ClientHello or its request headers is timed out
+  instead of pinning a task, and an MCP notification takes the endpoint's
+  in-flight permit like a request does.
 - The guest agent's audit tailer reconnects to the host audit port instead
   of exiting on the first failed write, keeps the frame it could not send
   for the next connection, and bounds its table of partial audit records.

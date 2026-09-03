@@ -21,6 +21,10 @@ use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
+// Case modules live beside this file; the ratcheted line count stays flat.
+#[path = "mitm_integration/mod.rs"]
+mod cases;
+
 const CA_KEY: &str = include_str!("../resources/ca/capsem-ca.key");
 const CA_CERT: &str = include_str!("../resources/ca/capsem-ca.crt");
 const HERMETIC_UPSTREAM_DOMAIN: &str = "fixture.capsem.test";
@@ -521,10 +525,9 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     let (config, db) = make_proxy_config(&["elie.net"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
-    // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
-    // no \0CAPSEM_META prefix. Host is not on the allowlist (which
-    // is "elie.net" only); default-deny applies -> 403 from
-    // the security-event boundary.
+    // Plain HTTP/1.1 request directly on the TCP socket, no TLS, no
+    // \0CAPSEM_META prefix. Host is off the allowlist ("elie.net" only);
+    // default-deny applies -> 403 from the security-event boundary.
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
         .await
@@ -552,10 +555,7 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
 /// `http_upstream_ports` is refused by the host before any upstream dial. The
 /// port came from the guest's Host header, so a guest reaching the proxy
 /// directly must not be able to make the host connect to an arbitrary port;
-/// the refusal is logged against the mechanics rule that made it. (This test
-/// used to assert the opposite -- that the port list was routing mechanics and
-/// the request was forwarded -- and its upstream accept waited forever once the
-/// allowlist became a refusal.)
+/// the refusal is logged against the mechanics rule that made it.
 #[tokio::test]
 async fn mitm_proxy_plain_http_port_outside_allowlist_is_refused_before_dialing() {
     let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

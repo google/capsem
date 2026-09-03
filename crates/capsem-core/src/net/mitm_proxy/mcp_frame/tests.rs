@@ -388,3 +388,141 @@ async fn read_next_frame_times_out_when_body_stalls_after_length_prefix() {
     );
     let _ = server_writer; // keep the pipe open until here
 }
+
+// -- Notification frames share the in-flight bound --
+//
+// A notification (stream 0, no JSON-RPC id) is still dispatched to the
+// aggregator when its method is a request-type method such as `tools/call`.
+// It must take the same `inflight` permit a request takes, or a guest can
+// fire unbounded concurrent tool calls by simply omitting the id.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use capsem_proto::mcp_aggregator::{AggregatorMethod, AggregatorResponse, AggregatorResult};
+
+struct GatedDriver {
+    started: Arc<AtomicUsize>,
+    max_active: Arc<AtomicUsize>,
+    release: tokio::sync::watch::Sender<bool>,
+}
+
+/// Endpoint whose aggregator holds every `tools/call` until `release` is
+/// flipped, counting how many were started and how many ran at once.
+fn gated_endpoint(inflight: usize, hold: bool) -> (Arc<McpEndpointState>, GatedDriver) {
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(64);
+    let started = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let active = Arc::new(AtomicUsize::new(0));
+    let (release, release_rx) = tokio::sync::watch::channel(!hold);
+    let (started_h, max_h) = (Arc::clone(&started), Arc::clone(&max_active));
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            let (started, max_active, active, mut release) = (
+                Arc::clone(&started_h),
+                Arc::clone(&max_h),
+                Arc::clone(&active),
+                release_rx.clone(),
+            );
+            tokio::spawn(async move {
+                let body = match req.method {
+                    AggregatorMethod::CallTool { .. } => {
+                        started.fetch_add(1, Ordering::SeqCst);
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_active.fetch_max(now, Ordering::SeqCst);
+                        let _ = release.wait_for(|released| *released).await;
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        AggregatorResult::CallResult {
+                            result: serde_json::json!({"ok": true}),
+                        }
+                    }
+                    _ => AggregatorResult::Error {
+                        error: "unexpected method".to_string(),
+                    },
+                };
+                let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+            });
+        }
+    });
+    let endpoint = Arc::new(McpEndpointState::new(
+        aggregator,
+        Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
+        Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+        Arc::new(tokio::sync::Semaphore::new(inflight)),
+        super::super::McpTimeouts::default(),
+    ));
+    (
+        endpoint,
+        GatedDriver {
+            started,
+            max_active,
+            release,
+        },
+    )
+}
+
+fn tool_call_notification() -> Vec<u8> {
+    let payload = br#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"local__slow","arguments":{}}}"#;
+    capsem_proto::encode_mcp_frame(0, capsem_proto::MCP_FRAME_FLAG_NOTIFICATION, "codex", payload).unwrap()
+}
+
+async fn wait_for_started(driver: &GatedDriver, expected: usize) {
+    let started = Arc::clone(&driver.started);
+    capsem_foundation::poll::poll_until(
+        capsem_foundation::poll::PollOpts::new("mcp-notifications-started", Duration::from_secs(5)),
+        || {
+            let started = Arc::clone(&started);
+            async move { (started.load(Ordering::SeqCst) >= expected).then_some(()) }
+        },
+    )
+    .await
+    .unwrap_or_else(|_| panic!("expected {expected} dispatched notifications"));
+}
+
+#[tokio::test]
+async fn notification_dispatch_waits_for_an_inflight_permit() {
+    let (endpoint, driver) = gated_endpoint(1, true);
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let (mut guest, server) = tokio::io::duplex(1 << 16);
+    let serve = tokio::spawn(serve_io(Vec::new(), server, endpoint, db));
+
+    for _ in 0..3 {
+        guest.write_all(&tool_call_notification()).await.unwrap();
+    }
+    wait_for_started(&driver, 1).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        driver.started.load(Ordering::SeqCst),
+        1,
+        "with one permit the second notification must wait, not dispatch"
+    );
+
+    driver.release.send(true).unwrap();
+    wait_for_started(&driver, 3).await;
+    assert_eq!(driver.max_active.load(Ordering::SeqCst), 1);
+
+    drop(guest);
+    serve.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn notification_flood_never_exceeds_the_inflight_cap() {
+    let (endpoint, driver) = gated_endpoint(2, false);
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let (mut guest, server) = tokio::io::duplex(1 << 16);
+    let serve = tokio::spawn(serve_io(Vec::new(), server, endpoint, db));
+
+    for _ in 0..12 {
+        guest.write_all(&tool_call_notification()).await.unwrap();
+    }
+    wait_for_started(&driver, 12).await;
+    assert!(
+        driver.max_active.load(Ordering::SeqCst) <= 2,
+        "a notification flood ran {} tool calls at once past a cap of 2",
+        driver.max_active.load(Ordering::SeqCst)
+    );
+
+    drop(guest);
+    serve.await.unwrap().unwrap();
+}

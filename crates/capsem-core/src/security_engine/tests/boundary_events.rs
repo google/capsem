@@ -408,3 +408,35 @@ match = 'http.host == "api.evil.com"'
         "mixed-case Host must not evade a lowercase host block rule"
     );
 }
+
+#[test]
+fn http_host_matching_ignores_trailing_root_dot() {
+    // `api.evil.com.` is the same host as `api.evil.com`: the resolver treats
+    // the trailing dot as the DNS root and dials the same address. A rule on
+    // the canonical spelling must fire for every spelling that dials it,
+    // combined with case here because that is what an evasion would try.
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.block_evil]
+name = "block_evil"
+action = "block"
+match = 'http.host == "api.evil.com"'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+
+    for spelling in ["api.evil.com.", "API.Evil.Com.", "api.evil.com.."] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some(spelling.into()),
+            ..Default::default()
+        });
+        let boundary = evaluate_security_boundary(&rules, std::collections::BTreeMap::new(), event).unwrap();
+        assert_eq!(
+            boundary.enforcement.action,
+            SecurityEnforcementAction::Block,
+            "{spelling:?} must not evade a block rule on api.evil.com"
+        );
+    }
+}
