@@ -1637,6 +1637,7 @@ guest_crate = "capsem-agent"
 release_binary = "cache/target/cargo/debug/capsem"
 
 [frontend]
+workspace = "web/app"
 build_script = "build_system/scripts/web/check-web-surface.sh"
 build_target = "frontend-build"
 # capsem-app embeds web/app/dist at compile time, so the bundle has to exist

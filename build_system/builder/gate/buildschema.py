@@ -143,6 +143,7 @@ class SigningConfig(Strict):
 
 
 class FrontendConfig(Strict):
+    workspace: str
     build_script: str
     build_target: str
     app_crate: str

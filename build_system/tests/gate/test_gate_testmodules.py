@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.module_artifacts import ArtifactsModule
 from capsem_builder.gate.staticmodule import StaticModule
 from capsem_builder.gate.testmodules import FastModule
 from helpers.gate import RecordingRunner
@@ -112,6 +113,20 @@ def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
     rendered = "\n".join(plan.step_named(bundle).render())
     assert CONFIG.frontend.build_script in rendered
     assert CONFIG.frontend.build_target in rendered
+
+
+def test_artifacts_owns_the_frontend_bundle_before_build_chain() -> None:
+    """The focused artifact owner must build Tauri from a bare checkout."""
+    plan = _plan(ArtifactsModule)
+    node = "artifacts.toolchain.node"
+    bundle = "artifacts.web.frontend-bundle"
+    consumer = "artifacts.build-chain"
+
+    assert _wave_of(ArtifactsModule, node) < _wave_of(ArtifactsModule, bundle)
+    assert _wave_of(ArtifactsModule, bundle) < _wave_of(ArtifactsModule, consumer)
+    assert plan.after_of(consumer) >= {bundle}
+    workspace = CONFIG.path(CONFIG.frontend.workspace).name
+    assert f"(in {workspace})" in "\n".join(plan.step_named(node).render())
 
 
 @pytest.mark.parametrize(
