@@ -105,26 +105,52 @@ fn physical_vsock_port(logical_port: u32, offset: u32) -> io::Result<u32> {
 
 /// Apply send and receive timeouts to a socket fd.
 fn set_io_timeouts(fd: RawFd) {
+    let timeout = Duration::from_secs(IO_TIMEOUT_SECS as u64);
+    set_socket_timeout(fd, libc::SO_SNDTIMEO, timeout);
+    set_socket_timeout(fd, libc::SO_RCVTIMEO, timeout);
+}
+
+/// Set one of `SO_SNDTIMEO` / `SO_RCVTIMEO`; `Duration::ZERO` disables it.
+pub fn set_socket_timeout(fd: RawFd, which: libc::c_int, timeout: Duration) {
+    // The field types are `time_t` / `suseconds_t`, whose aliases are
+    // deprecated on musl (they widen in a future libc); infer them instead.
     let tv = libc::timeval {
-        tv_sec: IO_TIMEOUT_SECS,
-        tv_usec: 0,
+        tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX) as _,
+        tv_usec: i32::try_from(timeout.subsec_micros()).unwrap_or(0).into(),
     };
     unsafe {
         libc::setsockopt(
             fd,
             libc::SOL_SOCKET,
-            libc::SO_SNDTIMEO,
-            &tv as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        );
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_RCVTIMEO,
+            which,
             &tv as *const _ as *const libc::c_void,
             std::mem::size_of::<libc::timeval>() as libc::socklen_t,
         );
     }
+}
+
+/// Let reads on `fd` wait for as long as the peer stays connected.
+///
+/// The receive timeout `vsock_connect` installs is right for channels with a
+/// heartbeat: silence means the host is gone. It is wrong for a transport
+/// with no keepalive, where silence is the normal state -- a model thinking
+/// between tool calls, or a tool call that takes longer than the timeout --
+/// and where `read_exact_fd` turns the timeout into a disconnect.
+pub fn clear_recv_timeout(fd: RawFd) {
+    set_socket_timeout(fd, libc::SO_RCVTIMEO, Duration::ZERO);
+}
+
+/// Intern a retry label so `RetryOpts` can borrow it for `'static` without
+/// leaking a fresh allocation on every reconnect.
+fn static_label(label: String) -> &'static str {
+    static LABELS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut labels = LABELS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = labels.iter().find(|existing| **existing == label) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(label.into_boxed_str());
+    labels.push(leaked);
+    leaked
 }
 
 /// Connect to a vsock port with exponential backoff retry and total timeout.
@@ -134,8 +160,7 @@ fn set_io_timeouts(fd: RawFd) {
 pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
     use capsem_proto::poll::{retry_with_backoff, RetryOpts};
 
-    // Leak a &'static str for the label so RetryOpts can use it.
-    let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
+    let static_label = static_label(format!("vsock-{label}"));
 
     match retry_with_backoff(&RetryOpts::new(static_label, Duration::from_secs(30)), || {
         vsock_connect(cid, port).ok()

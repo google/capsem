@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 
-struct MockService {
-    client: UdsClient,
-    request: Option<tokio::sync::oneshot::Receiver<(String, String, Vec<u8>)>>,
+pub(super) struct MockService {
+    pub(super) client: UdsClient,
+    pub(super) request: Option<tokio::sync::oneshot::Receiver<(String, String, Vec<u8>)>>,
     task: tokio::task::JoinHandle<()>,
     path: PathBuf,
 }
@@ -20,7 +20,7 @@ impl Drop for MockService {
     }
 }
 
-async fn mock_service(status: hyper::StatusCode, body: &'static str) -> MockService {
+pub(super) async fn mock_service(status: hyper::StatusCode, body: &'static str) -> MockService {
     let path = std::env::temp_dir().join(format!(
         "capsem-mcp-test-{}-{}.sock",
         std::process::id(),

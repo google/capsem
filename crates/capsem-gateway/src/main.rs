@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(request_trace_layer())
         .with_state(state.clone());
 
     info!(
@@ -404,6 +404,26 @@ async fn handle_events_ws(
                 }
             }
         }
+    })
+}
+
+/// Request spans name the method and path, never the query string.
+///
+/// tower-http's default span records the full URI at debug, and the gateway
+/// log runs `tower_http=debug`. The browser WebSocket API cannot set headers,
+/// so `/events` and `/terminal/{id}` authenticate with `?token=`; with the
+/// default span every such request wrote the bearer token into gateway.log.
+fn request_trace_layer() -> TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    impl tower_http::trace::MakeSpan<axum::body::Body> + Clone,
+> {
+    TraceLayer::new_for_http().make_span_with(|req: &http::Request<axum::body::Body>| {
+        tracing::debug_span!(
+            "request",
+            method = %req.method(),
+            path = req.uri().path(),
+            version = ?req.version(),
+        )
     })
 }
 

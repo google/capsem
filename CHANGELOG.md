@@ -117,6 +117,208 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are owner-only before secrets are written, atomically replace the prior
   complete store, and durably sync both file and directory without following a
   predictable temporary-file symlink.
+- Saving the persistent VM registry no longer holds its lock while the file
+  is written and fsynced. Every list, info and status poll takes that lock to
+  read, so each persist, fork, suspend, exit or purge stalled them for the
+  length of an fsync (2 to 4 ms on an idle SSD, far more on a busy disk).
+  The table is serialized under the lock and written after it is released,
+  with writes still landing in the order the table changed.
+- The built-in HTTP tools now judge the addresses a host resolves to, not
+  only its name, and connect only to the addresses they judged. A name that
+  resolved to loopback, a private range or the cloud metadata address
+  reached it under a host rule that never mentioned the address, and a name
+  whose DNS answer changed between the check and the dial (DNS rebinding)
+  reached anything. An `ip.*` block rule now blocks the request whatever the
+  name said, a non-public address is reachable only through an explicit
+  allow rule, and the connection is pinned to the resolved addresses so a
+  re-resolution reaches nothing new. Profiles that let a built-in tool reach
+  `localhost` or `127.0.0.1` need an allow rule that names it.
+- Service routes no longer block the async runtime on the filesystem. The
+  list, info and status routes the UI polls hashed and stat'ed files for
+  every saved session on a tokio worker; provision, run, fork, delete,
+  purge, suspend, resume, reload and the rule-mutation routes listed
+  directories, saved the registry, re-read profile files or spawned the
+  child there; the panic and triage routes read every host log there; and
+  the asset reconciler hashed multi-gigabyte images there. Every such call
+  now goes through one blocking door, and a source contract refuses new
+  direct calls, so one slow disk no longer stalls every other request. With
+  every runtime worker busy scanning host logs, `/vms/list` went from a p50
+  of 25 ms and a p99 of 296 ms to a p50 of 1.5 ms and a p99 of 8 ms; idle
+  latency is unchanged at 0.2 ms.
+- Legacy IPv4 spellings are judged as the address they dial. The resolver
+  reads `0x7f000001`, `127.1`, `0177.0.0.1` and `2130706433` as `127.0.0.1`,
+  but host rules, the certificate cache and telemetry saw the spelling, so a
+  rule on the dotted quad was evaded by any of them. One host normalizer now
+  serves the MITM edge, the security engine and the built-in tools, and
+  canonicalizes every `inet_aton` form to the dotted quad before anything
+  judges, dials or records it.
+- Persisting a running session no longer renames its directory under the
+  live process. capsem-process holds that directory by path for the shared
+  workspace, auto-snapshots, the file tools and its session ledger, so the
+  rename left snapshots, file tools and history failing until the next
+  restart. `persist` now claims the name and registers the session where it
+  runs; the directory moves to `persistent/<id>` when the process exits, and
+  a resume settles it first if that move is still pending. A move that fails
+  leaves the entry pointing at the directory that exists.
+- The built-in HTTP tools now see an IPv6 literal the way they see an IPv4
+  one: `http://[::1]/` reaches the security rules as host `::1` with an
+  `ip.version`/`ip.value` event, so a rule that blocks loopback by address
+  can no longer be walked around by spelling it in IPv6. Tool URL hosts are
+  also lowercased and stripped of a trailing dot before evaluation.
+- When a per-VM socket path is too long for the platform limit, the short
+  fallback now lives in `/tmp/capsem-<uid>`, created mode 0700 and refused
+  unless it is a real directory owned by the current user and readable by
+  nobody else. The previous shared `/tmp/capsem` belonged to whichever user
+  created it, and any other user of the host could remove a service's socket
+  or bind their own at the path clients were handed. The VZ save/restore
+  lock file moves into the same directory.
+- `GET /vms/{id}/history/transcript` returns what the terminal showed: it
+  decodes the output entries of capsem-process's framed `pty.log` instead of
+  returning the raw frames with their headers and typed input, honours its
+  documented `tail_lines` parameter (default 500), reads the file off the
+  async runtime, and reports the bytes it actually returned. The PTY log
+  format and its parser now live in `capsem-core`, shared by the writer and
+  the route.
+- A resumed persistent VM now gets the same exit bookkeeping as a freshly
+  provisioned one: it is marked suspended when it checkpoints, defunct with
+  the process-log tail when it crashes, and its stop is recorded in the
+  session index. The resume path had its own reaper that did none of this.
+- Asset manifests reject an architecture key that is not a single path
+  component, and release staging refuses to write an asset anywhere but
+  `release_dir/<arch>-<name>`.
+- The credential broker binds a destination to a provider on a label
+  boundary: `evil-openai.com` and `openai.com.evil.example` are no longer
+  treated as `openai.com` (or `github.com`, `googleapis.com`, `anthropic.com`,
+  `claude.com`), so a brokered reference cannot be dereferenced into the real
+  key by a look-alike host. The on-disk credential store takes a
+  cross-process lock for each read-modify-write, so two sandboxes capturing
+  at once no longer drop each other's entries, and `capsem-mcp` log lines
+  print environment keys but never their values.
+- Built-in MCP tools clamp guest-supplied `start_index`, `max_length`,
+  `context_lines` and `max_matches` before arithmetic, so `u64::MAX` no
+  longer panics the builtin subprocess. `snapshots_history` sizes files
+  through the contained-directory walker and refuses symlinks and special
+  files like the other snapshot tools.
+- A WebSocket upgrade now goes through the same gate as every other request:
+  the HTTP port allowlist and the security boundary run before the upstream
+  is dialed, the decision is recorded in telemetry, and a blocked host gets
+  a 403. Previously an `Upgrade: websocket` header on an otherwise blocked
+  request reached any host, the gateway included, and was logged as allowed.
+- Hostnames are normalized once at the proxy edge: a mixed-case or
+  trailing-dot `Host` header or SNI (`API.EVIL.COM.`) is evaluated, minted
+  and recorded as the canonical lowercase name, so `http.host` rules can no
+  longer be evaded by spelling. The MITM leaf certificate cache is bounded
+  to 1024 entries, a guest that opens a connection and stalls before its
+  first bytes, its TLS ClientHello or its request headers is timed out
+  instead of pinning a task, and an MCP notification takes the endpoint's
+  in-flight permit like a request does.
+- The guest agent's audit tailer reconnects to the host audit port instead
+  of exiting on the first failed write, keeps the frame it could not send
+  for the next connection, and bounds its table of partial audit records.
+- The service refuses to start when its persistent VM registry file is
+  unreadable or corrupt instead of starting with an empty registry and
+  overwriting the file on the next persist. Startup hydration keys session
+  DB handles by runtime id, the id routes actually use, so persistent
+  sessions are served after a restart; a malformed session schema is
+  reported as not ready instead of being invisible. `persist` claims the
+  name, moves the session directory and registers it as one step under the
+  registry lock and moves the directory back if registration is refused;
+  `purge` deletes session directories only through the service's contained
+  delete path.
+- The service's cached ledger statistics can no longer be filled by a query
+  that finished after a write invalidated the cache, which had left stale
+  counts on `/stats` until the next lifecycle event. The guest agent also
+  joins its per-connection writer, heartbeat and control threads before
+  reconnecting, so a thread from the old connection can no longer read or
+  write the new connection's stream through a reused descriptor number.
+- A guest driver reset (STATUS=0) now reaches every KVM virtio device: the
+  VirtioFS worker stops and hands its state back, the virtio-blk worker is
+  joined instead of leaked beside a second one, the vhost-vsock backend is
+  detached, and the console drops its queue, so a driver unbind/rebind
+  re-activates cleanly instead of leaving workers on freed guest memory and
+  a filesystem that could never come back. Console output descriptors are
+  also capped at 64 KiB per copy.
+- The KVM VirtioFS server no longer follows guest-created symlinks on the
+  host. A hostile guest driver could use a symlink to a host directory as the
+  parent of unlink, rename, mkdir, create, mknod, symlink, link or opendir
+  requests, create or truncate through a symlink, and chmod, chown, truncate
+  or touch a symlink's host target; each of those reached files outside the
+  shared workspace with the host user's privileges. A FIFO in the workspace
+  could also park the single VirtioFS worker forever. Every parent must now
+  be a real in-share directory reached without a symlink, attribute changes
+  on a symlink apply to the link itself or are refused, and only regular
+  files are opened.
+- The guest network proxy no longer closes a vsock descriptor twice when it
+  fails to register it with the runtime, which could sever an unrelated
+  connection that had just been handed the same descriptor number.
+- An MCP tool call to a server that never answers is now cancelled upstream
+  when the sandbox stops waiting for it. Each such call used to leave a task
+  and a pending request behind in the MCP aggregator for the life of the VM.
+- The service, the CLI, and the per-VM process no longer block an async
+  worker on a synchronous IPC handshake or on joining a terminal reader
+  thread. A slow handshake stalled every request scheduled on that worker,
+  and a half-open terminal socket after a resume could park a worker
+  indefinitely and leave the new terminal connection unused.
+- Asset downloads stop as soon as the origin sends more bytes than the manifest
+  declares, and a local asset copy hashes the bytes it actually installs. An
+  endless or oversized response used to be written to disk in full before the
+  hash check ran, and a local source that changed between hashing and copying
+  was installed under a hash-named file it did not match.
+- Waiting for the session ledger to flush now reports failure when the disk
+  flush did not happen, instead of returning success, and producers waiting
+  for a full ledger queue back off instead of spinning a CPU core while the
+  writer flushes.
+- A user settings or profile file can no longer mark its own rules
+  `corp_locked`. The flag unlocked the corp priority band and the corp-owned
+  marker, so a user `allow` at priority -1000 outranked a corp `block`; only
+  corp config may set it now, and such a file is refused at load.
+- A profile whose security rules fail to compile now refuses to start or
+  reload instead of running with no rules. The merged rule set was replaced
+  by an empty one behind a log warning, and the engine allows any event no
+  rule matches, so one broken rule silently disabled every other one.
+- Process audit events now use the security rules in force when each record
+  arrives. The guest opens its audit stream once at boot, and the host had
+  frozen the rule set at that moment, so a profile edit that reloaded every
+  other rail left process rules at their boot-time version until the VM
+  restarted.
+- A sandbox command that finishes while the guest is reconnecting to the host
+  (for example right after a suspend and resume) now reports its exit code.
+  The exit message used to go to the previous connection's writer, which had
+  already exited, and the host waited for it indefinitely.
+- MCP tool calls from inside the sandbox no longer fail with a spurious
+  "connection closed" error when a tool takes longer than 30 seconds or when
+  the relay sits idle for 30 seconds between calls. The guest relay inherited
+  the control channel's receive timeout although its transport has no
+  keepalive, so every long call or quiet stretch tore the connection down.
+- A sandbox environment variable whose value has a multibyte character at the
+  40-character mark no longer crashes the guest agent during boot, which left
+  the VM never becoming ready.
+- Reading a guest file larger than one control frame (2 MiB) no longer wedges
+  the sandbox control channel. The guest replied with a frame the host could
+  never decode, so it was never acknowledged and was replayed on every
+  reconnect for the life of the VM, taking exec, file operations and snapshots
+  with it. The guest now answers with an error, the host discards an
+  oversized frame and keeps the connection, and an oversized host-to-guest
+  file write is refused immediately with the reason.
+- The gateway refuses any request whose `Host` header is not `localhost`,
+  `127.0.0.1`, or `::1`. Before, a web page whose DNS answer flipped to the
+  loopback address (DNS rebinding) could fetch `/token` as a same-origin
+  loopback caller and hold full authority over the gateway. Request spans also
+  no longer record the query string, which carried the WebSocket `?token=`
+  into `gateway.log`, and token comparison no longer short-circuits on the
+  first differing byte.
+- Security rule string literals now decode their escape sequences. A rule whose
+  value held a quote, a backslash, or a newline -- every Sigma-derived selection
+  and every managed MCP tool permission is emitted JSON-escaped -- compiled and
+  silently never matched; a corp regex written as `\\.` reached the engine as a
+  literal backslash. `\\ \" \' \/ \n \t \r \xHH \uHHHH` are decoded; other
+  backslash sequences such as `\.` and `\d` still reach `matches()` verbatim.
+- The sandbox files API (list, download, upload) no longer follows symlinks
+  the guest plants in the shared workspace. Every path component is opened
+  with `O_NOFOLLOW` relative to the workspace root, so an upload to a dangling
+  link or below a symlinked directory is refused instead of writing to the
+  host filesystem, and a linked host file or directory is neither served nor
+  listed.
 - KVM VirtioFS and console devices now validate the complete guest-controlled
   descriptor range before reading or writing host memory, and zero-sized
   virtqueues are rejected without a host-process panic.

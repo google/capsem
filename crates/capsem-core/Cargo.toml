@@ -27,6 +27,7 @@ capsem-credentials = { path = "../capsem-credentials" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
 libc = "0.2"
+nix = { version = "0.29", features = ["dir", "fs"] }
 blake3 = "1"
 toml = { workspace = true }
 rusqlite = { workspace = true }
@@ -86,6 +87,9 @@ workspace = true
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
+# test-util enables tokio's deterministic paused clock (start_paused / time::advance)
+# for timing tests that must not depend on wall-clock. Dev-only; no prod impact.
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
 dotenvy = "0.15"
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -57,3 +57,40 @@ fn negotiate_fails_on_schema_mismatch() {
     let msg = err.to_string();
     assert!(msg.contains("capsem-process-stale"), "msg: {msg}");
 }
+
+// The service ran the initiator inline on its runtime. On a single worker
+// that is the whole service stalled for the length of the exchange; a
+// ticker that must keep counting while a slow peer answers shows whether
+// the handshake left the worker free.
+#[tokio::test(flavor = "current_thread")]
+async fn off_worker_initiator_leaves_the_runtime_responsive() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let responder = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        negotiate_responder(&mut b, "capsem-process-test", "")
+    });
+
+    let ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ticker = {
+        let ticks = std::sync::Arc::clone(&ticks);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    };
+
+    let (_stream, hello) = negotiate_initiator_off_worker(a, "capsem-service-test", "")
+        .await
+        .expect("handshake completes");
+    ticker.abort();
+    responder.join().unwrap().unwrap();
+
+    assert_eq!(hello.peer, "capsem-process-test");
+    let ticks = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        ticks >= 10,
+        "the worker must keep running other tasks during the handshake; saw {ticks} ticks over ~300ms"
+    );
+}

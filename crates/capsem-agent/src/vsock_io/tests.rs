@@ -189,3 +189,45 @@ fn constants_match_spec() {
     assert_eq!(VSOCK_HOST_CID, 2);
     assert_eq!(AF_VSOCK, 40);
 }
+
+// A transport without a keepalive must be allowed to sit idle. The MCP relay
+// inherited the 30s receive timeout from vsock_connect, and read_exact_fd
+// reports that timeout as a disconnect: any tool call slower than 30s, or any
+// idle gap longer than 30s while a model thought, produced a spurious
+// "connection closed" error for every pending request and a reconnect.
+
+#[test]
+fn a_receive_timeout_turns_idle_into_a_disconnect_and_clearing_it_waits() {
+    let (client, server) = UnixStream::pair().unwrap();
+    let client_fd = client.into_raw_fd();
+    let server_fd = server.into_raw_fd();
+
+    set_socket_timeout(server_fd, nix::libc::SO_RCVTIMEO, Duration::from_millis(50));
+    let mut buf = [0u8; 4];
+    let err = read_exact_fd(server_fd, &mut buf).expect_err("an idle peer trips the receive timeout");
+    assert_eq!(err.kind(), io::ErrorKind::TimedOut, "{err}");
+
+    clear_recv_timeout(server_fd);
+    let writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(150));
+        write_all_fd(client_fd, b"late").unwrap();
+        unsafe {
+            nix::libc::close(client_fd);
+        }
+    });
+    read_exact_fd(server_fd, &mut buf).expect("without a receive timeout the read waits for the peer");
+    assert_eq!(&buf, b"late");
+    writer.join().unwrap();
+    unsafe {
+        nix::libc::close(server_fd);
+    }
+}
+
+#[test]
+fn retry_labels_are_interned_rather_than_leaked_per_call() {
+    let first = static_label("vsock-test-label".to_string());
+    let second = static_label("vsock-test-label".to_string());
+    assert!(std::ptr::eq(first, second), "the same label must reuse one allocation");
+    assert_eq!(first, "vsock-test-label");
+    assert_ne!(static_label("vsock-other".to_string()), first);
+}

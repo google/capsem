@@ -505,3 +505,62 @@ fn success_and_malformed_bodies_are_not_treated_as_errors() {
         );
     }
 }
+
+// A tools/call had no upstream deadline. The endpoint stopped waiting after
+// its own timeout, but the aggregator's handler stayed parked on the rmcp
+// request and the server never learned the client had gone: one task and one
+// pending request leaked per timed-out call, for as long as the VM lived.
+
+#[tokio::test]
+async fn a_hanging_tool_call_times_out_and_cancels_upstream() {
+    let harness = crate::test_support::spawn_hanging_mcp_server().await.unwrap();
+    let def = local_http_mcp_def(harness.url.clone(), None);
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+    mgr.connect_and_initialize(&def)
+        .await
+        .expect("hanging server initializes");
+
+    let started = std::time::Instant::now();
+    let err = mgr
+        .call_tool_with_timeout("localtest__hang", serde_json::json!({}), Duration::from_millis(300))
+        .await
+        .expect_err("a tool that never answers must fail at the deadline");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+    let chain = format!("{err:#}").to_lowercase();
+    assert!(chain.contains("timeout"), "{chain}");
+
+    // The server must have been told, so it can stop the work too.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let calls = harness.state.tool_calls();
+        if calls.iter().any(|call| call.tool == "hang:cancelled") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "server never saw the cancellation: {calls:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_tool_call_without_a_deadline_still_completes() {
+    let harness = crate::test_support::spawn_recording_mcp_server().await.unwrap();
+    let def = local_http_mcp_def(harness.url.clone(), None);
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+    mgr.connect_and_initialize(&def).await.unwrap();
+    let result = mgr
+        .call_tool_with_timeout(
+            "localtest__echo",
+            serde_json::json!({ "message": "prompt" }),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("a prompt answer is not affected by the deadline");
+    assert!(serde_json::to_string(&result).unwrap().contains("echo:prompt"));
+}

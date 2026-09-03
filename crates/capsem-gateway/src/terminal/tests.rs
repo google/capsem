@@ -157,14 +157,14 @@ fn relay_batch_flushes_when_frame_type_changes() {
 #[test]
 fn uds_path_derives_from_service_socket() {
     let service = Path::new("/home/user/.capsem/run/service.sock");
-    let path = terminal_uds_path(service, "vm-123");
+    let path = terminal_uds_path(service, "vm-123").expect("terminal socket path");
     assert_eq!(path, PathBuf::from("/home/user/.capsem/run/instances/vm-123-ws.sock"));
 }
 
 #[test]
 fn uds_path_with_underscore_id() {
     let service = Path::new("/tmp/run/service.sock");
-    let path = terminal_uds_path(service, "my_dev");
+    let path = terminal_uds_path(service, "my_dev").expect("terminal socket path");
     assert_eq!(path, PathBuf::from("/tmp/run/instances/my_dev-ws.sock"));
 }
 
@@ -172,7 +172,7 @@ fn uds_path_with_underscore_id() {
 fn uds_path_falls_back_to_tmp() {
     // A bare filename has no parent directory
     let service = Path::new("service.sock");
-    let path = terminal_uds_path(service, "vm-1");
+    let path = terminal_uds_path(service, "vm-1").expect("terminal socket path");
     // Parent of bare filename is "" which is_empty, but Path::parent returns Some("")
     // which is NOT /tmp. The unwrap_or only triggers for None.
     // Actually, "service.sock".parent() returns Some(""), so we get ""/instances/...
@@ -244,7 +244,7 @@ async fn websocket_relay_echoes_text() {
     // meant the mock bound one path while the gateway dialled another as soon
     // as the temp directory was long enough to trip the fallback -- which is
     // the very failure the helper exists to prevent.
-    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "test-vm");
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "test-vm").expect("terminal socket path");
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = tokio::spawn(async move {
@@ -325,7 +325,7 @@ async fn websocket_relay_handles_process_disconnect() {
     let dir = tempfile::tempdir().unwrap();
     let instances_dir = dir.path().join("instances");
     std::fs::create_dir_all(&instances_dir).unwrap();
-    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "dc-vm");
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "dc-vm").expect("terminal socket path");
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = tokio::spawn(async move {
@@ -393,7 +393,7 @@ async fn ws_test_setup(
     let dir = tempfile::tempdir().unwrap();
     let instances_dir = dir.path().join("instances");
     std::fs::create_dir_all(&instances_dir).unwrap();
-    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), vm_id);
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), vm_id).expect("terminal socket path");
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = mock_fn(uds);
@@ -869,7 +869,7 @@ async fn websocket_relay_process_sends_close_with_frame() {
 fn uds_path_bare_filename_falls_back_to_tmp() {
     // "service.sock" has parent Some("") which should trigger the fallback
     let service = Path::new("service.sock");
-    let path = terminal_uds_path(service, "vm-1");
+    let path = terminal_uds_path(service, "vm-1").expect("terminal socket path");
     assert_eq!(
         path,
         PathBuf::from("/tmp/instances/vm-1-ws.sock"),
@@ -880,7 +880,7 @@ fn uds_path_bare_filename_falls_back_to_tmp() {
 #[test]
 fn uds_path_absolute_does_not_fall_back() {
     let service = Path::new("/home/user/.capsem/run/service.sock");
-    let path = terminal_uds_path(service, "vm-1");
+    let path = terminal_uds_path(service, "vm-1").expect("terminal socket path");
     assert_eq!(path, PathBuf::from("/home/user/.capsem/run/instances/vm-1-ws.sock"));
 }
 

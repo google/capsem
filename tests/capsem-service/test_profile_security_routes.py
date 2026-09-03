@@ -9,7 +9,6 @@ approval, and plugin-man surfaces must stay burned.
 from __future__ import annotations
 
 import json
-import subprocess
 from typing import Any
 
 PROFILE = "code"
@@ -17,29 +16,7 @@ SERVER = "local"
 
 
 def _status(client: Any, method: str, path: str, body: dict | None = None) -> tuple[int, Any]:
-    cmd = [
-        "curl",
-        "-s",
-        "-S",
-        "--unix-socket",
-        client.socket_path,
-        "-X",
-        method,
-        "-H",
-        "Content-Type: application/json",
-        "-w",
-        "\n%{http_code}",
-        "--max-time",
-        "30",
-        f"http://localhost{path}",
-    ]
-    if body is not None:
-        cmd.extend(["-d", json.dumps(body)])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-    assert result.returncode == 0, (path, result.stderr)
-    raw_body, _, status_text = result.stdout.rpartition("\n")
-    payload = json.loads(raw_body) if raw_body.strip() else None
-    return int(status_text), payload
+    return client.call_json(method, path, body, timeout=30)
 
 
 def _seed_mcp_tool_cache(service_env: Any) -> None:

@@ -1,5 +1,7 @@
 //! Append-only PTY transcript recording.
 //!
+//! capsem-process writes it and the service's transcript route reads it, so
+//! the format lives here, in the shared library, with its one parser.
 //! Records all terminal I/O (both input and output) with timestamps and
 //! direction tags. Format:
 //!
@@ -17,14 +19,14 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 /// Direction tag for PTY log entries.
-const DIR_INPUT: u8 = 0x00;
-const DIR_OUTPUT: u8 = 0x01;
+pub const DIR_INPUT: u8 = 0x00;
+pub const DIR_OUTPUT: u8 = 0x01;
 
 /// Default max size before rotation (20 MB).
 const DEFAULT_MAX_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Thread-safe PTY transcript writer with rotation support.
-pub(crate) struct PtyLog {
+pub struct PtyLog {
     inner: Mutex<PtyLogInner>,
 }
 
@@ -37,12 +39,12 @@ struct PtyLogInner {
 
 impl PtyLog {
     /// Open (or create) a PTY log file at the given path.
-    pub(crate) fn open(path: &Path) -> std::io::Result<Self> {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
         Self::open_with_max(path, DEFAULT_MAX_BYTES)
     }
 
     /// Open with a custom max size before rotation.
-    pub(crate) fn open_with_max(path: &Path, max_bytes: u64) -> std::io::Result<Self> {
+    pub fn open_with_max(path: &Path, max_bytes: u64) -> std::io::Result<Self> {
         let existing_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let file = open_append(path)?;
         Ok(Self {
@@ -56,12 +58,12 @@ impl PtyLog {
     }
 
     /// Record terminal output (guest -> host).
-    pub(crate) fn record_output(&self, data: &[u8]) {
+    pub fn record_output(&self, data: &[u8]) {
         self.record(DIR_OUTPUT, data);
     }
 
     /// Record terminal input (host -> guest).
-    pub(crate) fn record_input(&self, data: &[u8]) {
+    pub fn record_input(&self, data: &[u8]) {
         self.record(DIR_INPUT, data);
     }
 
@@ -109,7 +111,7 @@ impl PtyLog {
 
     /// Current byte count written to the active log file.
     #[cfg(test)]
-    pub(crate) fn bytes_written(&self) -> u64 {
+    pub fn bytes_written(&self) -> u64 {
         self.inner.lock().map(|g| g.bytes_written).unwrap_or(0)
     }
 }
@@ -127,8 +129,7 @@ fn open_append(path: &Path) -> std::io::Result<File> {
 
 /// Read and iterate over PTY log entries from a file.
 /// Returns entries as (direction, timestamp_us, data).
-#[allow(dead_code)] // used by pty_replay and tests
-pub(crate) fn read_pty_log(path: &Path) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
+pub fn read_pty_log(path: &Path) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
     use std::io::Read;
     let mut file = File::open(path)?;
     let mut all = Vec::new();
@@ -137,8 +138,7 @@ pub(crate) fn read_pty_log(path: &Path) -> std::io::Result<Vec<(u8, u64, Vec<u8>
 }
 
 /// Parse PTY log bytes into entries.
-#[allow(dead_code)] // used by read_pty_log and tests
-fn parse_pty_log(data: &[u8]) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
+pub fn parse_pty_log(data: &[u8]) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
     let mut entries = Vec::new();
     let mut pos = 0;
     while pos + 13 <= data.len() {
@@ -155,10 +155,10 @@ fn parse_pty_log(data: &[u8]) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
     Ok(entries)
 }
 
-/// Extract only output-direction data from a PTY log file.
-/// Returns concatenated output bytes suitable for VTE replay.
-#[allow(dead_code)] // used by pty_replay
-pub(crate) fn read_output_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+/// Extract only output-direction data from a PTY log file: what the terminal
+/// showed, without the keystrokes that produced it. This is what the
+/// service's transcript route returns.
+pub fn read_output_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
     let entries = read_pty_log(path)?;
     let mut output = Vec::new();
     for (dir, _, data) in entries {

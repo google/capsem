@@ -180,37 +180,38 @@ pub struct MergedPolicies {
 
 impl MergedPolicies {
     /// Pure merge function. No I/O, fully testable.
-    pub fn from_files(user: &SettingsFile, corp: &SettingsFile) -> Self {
+    ///
+    /// Fails when the security rules or the model endpoint registry do not
+    /// compile. The engine allows any event no rule matches, so an empty rule
+    /// set is allow-everything; it used to be substituted for a broken one
+    /// behind a warning, and every VM on that profile ran without policy.
+    pub fn from_files(user: &SettingsFile, corp: &SettingsFile) -> Result<Self, String> {
         let resolved = resolve_settings(user, corp);
-        let security_rules = match compile_merged_security_rules(user, corp) {
-            Ok(rules) => rules,
-            Err(error) => {
-                tracing::warn!(error = %error, "security rules ignored");
-                SecurityRuleSet::new(Vec::new())
-            }
-        };
-        let model_endpoints = match compile_model_endpoint_registry(user, corp) {
-            Ok(registry) => registry,
-            Err(error) => {
-                tracing::warn!(error = %error, "model endpoint registry ignored");
-                ModelEndpointRegistry::default()
-            }
-        };
+        let security_rules = compile_merged_security_rules(user, corp)?;
+        let model_endpoints = compile_model_endpoint_registry(user, corp)?;
         let plugins = merge_plugin_policy(user, corp);
-        Self {
+        Ok(Self {
             network: build_network_policy(&resolved),
             security_rules,
             plugins,
             model_endpoints,
             guest: settings_to_guest_config(&resolved),
             vm: settings_to_vm_settings(&resolved),
-        }
+        })
     }
 
-    /// Load from disk then merge. Falls back to defaults on any I/O error.
+    /// Load from disk then merge. Falls back to built-in defaults when the
+    /// files cannot be read or their rules do not compile. The callers here
+    /// read network, guest, and VM settings only, never the rule set, so the
+    /// fallback cannot widen policy; the rule set reaches a VM only through
+    /// `ActiveProfileFile::compile_security_rule_set`, which fails closed.
     pub fn from_disk() -> Self {
         let (user, corp) = load_settings_and_corp_files();
-        Self::from_files(&user, &corp)
+        Self::from_files(&user, &corp).unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "settings do not compile; using built-in defaults for runtime settings");
+            Self::from_files(&SettingsFile::default(), &SettingsFile::default())
+                .expect("built-in default settings compile")
+        })
     }
 }
 

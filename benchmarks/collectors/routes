@@ -12,6 +12,12 @@ to be measured, explicitly recorded as measurement debt, or identified as a
 reasoned internal service-only control route. Moving a route from debt to
 measured is what adding coverage looks like.
 
+Requests go straight over the socket, one fresh connection each, the way the
+gateway itself reaches the service. The test helpers' `client()` spawns a
+`curl` process per call, and that cost about 14 ms here against a service
+that answers `/vms/list` in 0.6 ms: every recorded route latency was the
+fork/exec of curl, and the proxy hop was invisible inside it.
+
 Prints raw per-request milliseconds and the process CPU delta; `capsem-bench`
 computes every statistic.
 """
@@ -19,7 +25,9 @@ computes every statistic.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import socket
 import sys
 import time
 import tomllib
@@ -49,15 +57,43 @@ def cpu_seconds(process: psutil.Process) -> float:
     return float(times.user + times.system)
 
 
-def sample_route(client, path: str, process, samples: int) -> tuple[list[float], float]:
+class UdsConnection(http.client.HTTPConnection):
+    """HTTP/1.1 over a Unix socket."""
+
+    def __init__(self, socket_path: str):
+        super().__init__("localhost")
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.socket_path)
+
+
+def request(target, path: str) -> None:
+    """One GET on a fresh connection; the body is read and discarded."""
+    kind, *rest = target
+    if kind == "uds":
+        conn = UdsConnection(rest[0])
+        headers = {}
+    else:
+        conn = http.client.HTTPConnection("127.0.0.1", rest[0])
+        headers = {"Authorization": f"Bearer {rest[1]}"}
+    try:
+        conn.request("GET", path, headers=headers)
+        conn.getresponse().read()
+    finally:
+        conn.close()
+
+
+def sample_route(target, path: str, process, samples: int) -> tuple[list[float], float]:
     """Raw per-request milliseconds, and the CPU the server spent on them."""
     for _ in range(WARMUP):
-        client.get(path)
+        request(target, path)
     before = cpu_seconds(process)
     latencies = []
     for _ in range(samples):
         started = time.perf_counter()
-        client.get(path)
+        request(target, path)
         latencies.append((time.perf_counter() - started) * 1000.0)
     return latencies, cpu_seconds(process) - before
 
@@ -88,12 +124,12 @@ def main() -> int:
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         for path in routes:
-            for label, client, process in (
-                ("service", service.client(), service_proc),
-                ("gateway", gateway.client(), gateway_proc),
+            for label, target, process in (
+                ("service", ("uds", str(service.uds_path)), service_proc),
+                ("gateway", ("tcp", gateway.port, gateway.token), gateway_proc),
             ):
                 print(f"{label} {path}", file=sys.stderr)
-                latencies, cpu = sample_route(client, path, process, samples)
+                latencies, cpu = sample_route(target, path, process, samples)
                 metrics[f"{label}.{path}.latency_ms"] = {
                     "unit": "milliseconds",
                     "samples": latencies,

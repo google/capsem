@@ -53,6 +53,9 @@ impl VirtioDevice for DummyDevice {
     fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
         self.activated.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+    fn reset(&mut self) {
+        self.activated.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
     fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> anyhow::Result<()> {
         self.activate(mem, queues);
         Ok(())
@@ -217,6 +220,32 @@ fn status_reset() {
     write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
     write_u32(&t, STATUS, 0); // reset
     assert_eq!(read_u32(&t, STATUS), 0);
+}
+
+// A driver unbind/rebind writes STATUS=0 and re-runs the init sequence with
+// new ring addresses. The transport used to clear only its own state, so the
+// device kept its worker on the old rings and its second activation failed.
+#[test]
+fn status_reset_reaches_the_device_and_allows_reactivation() {
+    let (t, activated, _) = make_transport();
+    let driver_ok = STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK;
+    write_u32(&t, STATUS, driver_ok);
+    assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
+
+    write_u32(&t, STATUS, 0);
+    assert!(
+        !activated.load(std::sync::atomic::Ordering::SeqCst),
+        "reset must reach the device"
+    );
+
+    write_u32(&t, STATUS, driver_ok);
+    assert!(
+        activated.load(std::sync::atomic::Ordering::SeqCst),
+        "the device must activate again after a reset"
+    );
+    // Without a reset a second DRIVER_OK is ignored: no double activation.
+    write_u32(&t, STATUS, driver_ok);
+    assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -761,4 +790,51 @@ fn write_to_read_only_register_ignored() {
     let (t, _, _) = make_transport();
     write_u32(&t, MAGIC_VALUE, 0xDEAD); // magic is read-only
     assert_eq!(read_u32(&t, MAGIC_VALUE), VIRTIO_MMIO_MAGIC); // unchanged
+}
+
+#[test]
+fn cold_activation_rejects_oversized_queue() {
+    use std::sync::atomic::Ordering;
+    let (t, activated, _) = make_transport();
+    // Guest declares a queue larger than the device maximum (256) on the cold
+    // DRIVER_OK path. The device must refuse to activate rather than hand the
+    // unclamped size to the ring accessors.
+    write_u32(&t, QUEUE_SEL, 0);
+    write_u32(&t, QUEUE_NUM, 512);
+    write_u32(&t, QUEUE_READY, 1);
+    write_u32(
+        &t,
+        STATUS,
+        STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+    );
+    assert!(
+        !activated.load(Ordering::SeqCst),
+        "device must not activate with a guest queue size exceeding the maximum"
+    );
+}
+
+#[test]
+fn cold_activation_accepts_a_valid_ready_queue() {
+    use std::sync::atomic::Ordering;
+    let (t, activated, _) = make_transport();
+    // A well-formed queue (power-of-two size within max, rings inside RAM) must
+    // still activate -- the validation must not break real guest boots.
+    write_u32(&t, QUEUE_SEL, 0);
+    write_u32(&t, QUEUE_NUM, 8);
+    write_u32(&t, QUEUE_DESC_LOW, (RAM_BASE) as u32);
+    write_u32(&t, QUEUE_DESC_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_DRIVER_LOW, (RAM_BASE + 256) as u32);
+    write_u32(&t, QUEUE_DRIVER_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_DEVICE_LOW, (RAM_BASE + 512) as u32);
+    write_u32(&t, QUEUE_DEVICE_HIGH, (RAM_BASE >> 32) as u32);
+    write_u32(&t, QUEUE_READY, 1);
+    write_u32(
+        &t,
+        STATUS,
+        STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+    );
+    assert!(
+        activated.load(Ordering::SeqCst),
+        "a valid ready queue must still activate the device"
+    );
 }

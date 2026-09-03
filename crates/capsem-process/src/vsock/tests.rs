@@ -1,4 +1,7 @@
+use super::dns::emit_dns_security_write_and_rules;
 use super::*;
+
+mod ack;
 
 struct InterruptedThenData {
     interrupted: bool,
@@ -694,143 +697,6 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
     assert_eq!(row[3].as_str(), Some("informational"));
 }
 
-// ── Ack-eligible message sets ──────────────────────────────────────
-//
-// ackable_id and ackable_response_id decide which messages join the retry /
-// replay path: the sender keeps them pending and replays them on every fresh
-// control connection until an AckReply arrives. Getting the set wrong is
-// silent both ways -- a missing variant is a message that can be lost across
-// a reconnect, an extra one is a message replayed forever. Neither had a test.
-
-#[test]
-fn every_host_to_guest_side_effect_is_ack_eligible() {
-    let cases: Vec<(HostToGuest, u64)> = vec![
-        (
-            HostToGuest::Exec {
-                id: 1,
-                command: "ls".into(),
-            },
-            1,
-        ),
-        (
-            HostToGuest::FileWrite {
-                id: 2,
-                path: "/w/a".into(),
-                data: vec![1, 2, 3],
-                mode: 0o644,
-            },
-            2,
-        ),
-        (
-            HostToGuest::FileRead {
-                id: 3,
-                path: "/w/b".into(),
-            },
-            3,
-        ),
-        (
-            HostToGuest::FileDelete {
-                id: 4,
-                path: "/w/c".into(),
-            },
-            4,
-        ),
-    ];
-
-    for (msg, want) in cases {
-        assert_eq!(
-            ackable_id(&msg),
-            Some(want),
-            "{msg:?} performs guest-side work and must survive a reconnect"
-        );
-    }
-}
-
-#[test]
-fn control_chatter_is_not_ack_eligible() {
-    // Replaying these would be noise at best; Shutdown replayed after a
-    // reconnect would be actively wrong.
-    for msg in [
-        HostToGuest::Ping { epoch_secs: 0 },
-        HostToGuest::Shutdown,
-        HostToGuest::AckReply { id: 9 },
-    ] {
-        assert_eq!(ackable_id(&msg), None, "{msg:?} must not be replayed");
-    }
-}
-
-#[test]
-fn every_guest_to_host_completion_is_ack_eligible() {
-    let cases: Vec<(GuestToHost, u64)> = vec![
-        (GuestToHost::ExecDone { id: 10, exit_code: 0 }, 10),
-        (GuestToHost::FileOpDone { id: 11 }, 11),
-        (
-            GuestToHost::FileContent {
-                id: 12,
-                path: "/w/b".into(),
-                data: vec![0xde, 0xad],
-            },
-            12,
-        ),
-        (
-            GuestToHost::Error {
-                id: 13,
-                message: "denied".into(),
-            },
-            13,
-        ),
-    ];
-
-    for (msg, want) in cases {
-        assert_eq!(
-            ackable_response_id(&msg),
-            Some(want),
-            "{msg:?} is a completion the host must not lose"
-        );
-    }
-}
-
-#[test]
-fn guest_liveness_messages_are_not_ack_eligible() {
-    for msg in [GuestToHost::Pong, GuestToHost::Ready { version: "1.0".into() }] {
-        assert_eq!(
-            ackable_response_id(&msg),
-            None,
-            "{msg:?} carries no correlation id to ack"
-        );
-    }
-}
-
-#[test]
-fn only_periodic_pong_is_expected_post_handshake_liveness() {
-    assert!(is_guest_liveness_message(&GuestToHost::Pong));
-    assert!(!is_guest_liveness_message(&GuestToHost::Ready {
-        version: "1.0".into(),
-    }));
-    assert!(!is_guest_liveness_message(&GuestToHost::Error {
-        id: 9,
-        message: "broken".into(),
-    }));
-}
-
-#[test]
-fn the_two_directions_agree_on_which_ids_they_carry() {
-    // A request that is ack-eligible must have a completion that is too,
-    // otherwise one half of the pair survives a reconnect and the other does
-    // not, and the caller waits forever on a reply that was dropped.
-    let request = HostToGuest::FileRead {
-        id: 77,
-        path: "/w/x".into(),
-    };
-    let completion = GuestToHost::FileContent {
-        id: 77,
-        path: "/w/x".into(),
-        data: vec![],
-    };
-
-    assert_eq!(ackable_id(&request), ackable_response_id(&completion));
-}
-
 // ── Exec output cap ────────────────────────────────────────────────
 //
 // The Exec vsock port is a raw stream, so the MAX_FRAME_SIZE bound that
@@ -1021,5 +887,111 @@ fn exec_boundary_refuses_when_it_cannot_decide() {
         failed.as_deref(),
         Some("capsem: command refused, security evaluation failed: rule set is broken"),
         "an unevaluated boundary must not dispatch"
+    );
+}
+
+// -----------------------------------------------------------------------
+// Audit port: rules are read per record, not snapshotted per connection
+// -----------------------------------------------------------------------
+
+fn audit_rules(rule_key: &str, exe: &str) -> capsem_core::net::policy_config::SecurityRuleSet {
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&format!(
+        r#"
+[profiles.rules.{rule_key}]
+name = "{rule_key}"
+action = "allow"
+detection_level = "informational"
+match = 'process.exec.path == "{exe}"'
+"#
+    ))
+    .expect("rules parse");
+    capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("rules compile")
+}
+
+fn audit_payload(exe: &str) -> Vec<u8> {
+    let frame = capsem_proto::encode_audit_record(&capsem_proto::AuditRecord {
+        timestamp_us: 1_700_000_000_000_000,
+        pid: 4242,
+        ppid: 1,
+        uid: 0,
+        exe: exe.to_string(),
+        comm: Some("cmd".to_string()),
+        argv: exe.to_string(),
+        cwd: Some("/root".to_string()),
+        tty: None,
+        session_id: None,
+        parent_exe: Some("/bin/bash".to_string()),
+        audit_id: format!("audit-{}", exe.trim_start_matches('/').replace('/', "-")),
+    })
+    .expect("audit record encodes");
+    frame[4..].to_vec()
+}
+
+fn matched_rule_ids(db_path: &std::path::Path) -> Vec<String> {
+    let reader = capsem_logger::DbReader::open(db_path).unwrap();
+    let rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw("SELECT rule_id FROM security_rule_events ORDER BY rule_id")
+            .expect("rule events readable"),
+    )
+    .unwrap();
+    rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[0].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn audit_records_are_evaluated_against_the_rules_current_at_arrival() {
+    use std::sync::{Arc, RwLock};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let handle = RwLock::new(Arc::new(audit_rules("boot_rules", "/bin/first")));
+
+    handle_audit_frame(&audit_payload("/bin/first"), &db, &handle);
+    // A profile edit reloads the rules while the audit connection stays up.
+    *handle.write().unwrap() = Arc::new(audit_rules("reloaded_rules", "/bin/second"));
+    handle_audit_frame(&audit_payload("/bin/second"), &db, &handle);
+    db.shutdown_blocking();
+
+    assert_eq!(
+        matched_rule_ids(&db_path),
+        vec![
+            "profiles.rules.boot_rules".to_string(),
+            "profiles.rules.reloaded_rules".to_string()
+        ],
+        "the second record must be judged by the reloaded rules"
+    );
+}
+
+#[test]
+fn serve_audit_records_handles_every_frame_on_the_stream() {
+    use std::sync::{Arc, RwLock};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let handle = RwLock::new(Arc::new(audit_rules("seen", "/bin/first")));
+
+    let mut stream = Vec::new();
+    for exe in ["/bin/first", "/bin/other", "/bin/first"] {
+        let payload = audit_payload(exe);
+        stream.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        stream.extend_from_slice(&payload);
+    }
+    serve_audit_records(&mut std::io::Cursor::new(stream), &db, &handle);
+    db.shutdown_blocking();
+
+    assert_eq!(
+        matched_rule_ids(&db_path),
+        vec!["profiles.rules.seen".to_string(), "profiles.rules.seen".to_string()]
     );
 }

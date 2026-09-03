@@ -253,15 +253,20 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
             }
         }
 
-        AggregatorMethod::CallTool { name, arguments } => {
+        AggregatorMethod::CallTool {
+            name,
+            arguments,
+            timeout_ms,
+        } => {
             // Resolve the dispatch under a sync read guard, then drop the
             // guard before awaiting the rmcp RPC. Concurrent CallTool
             // handlers proceed in parallel; the read lock never crosses an
             // `.await`.
-            let dispatch = manager
-                .read()
-                .expect("manager rwlock poisoned")
-                .dispatch_call_tool(&name, arguments);
+            let dispatch = manager.read().expect("manager rwlock poisoned").dispatch_call_tool(
+                &name,
+                arguments,
+                timeout_ms.map(std::time::Duration::from_millis),
+            );
             match dispatch {
                 Ok(fut) => match fut.await {
                     Ok(resp) => AggregatorResponse {
@@ -282,11 +287,11 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
             }
         }
 
-        AggregatorMethod::ReadResource { uri } => {
+        AggregatorMethod::ReadResource { uri, timeout_ms } => {
             let dispatch = manager
                 .read()
                 .expect("manager rwlock poisoned")
-                .dispatch_read_resource(&uri);
+                .dispatch_read_resource(&uri, timeout_ms.map(std::time::Duration::from_millis));
             match dispatch {
                 Ok(fut) => match fut.await {
                     Ok(resp) => AggregatorResponse {
@@ -307,11 +312,16 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
             }
         }
 
-        AggregatorMethod::GetPrompt { name, arguments } => {
-            let dispatch = manager
-                .read()
-                .expect("manager rwlock poisoned")
-                .dispatch_get_prompt(&name, arguments);
+        AggregatorMethod::GetPrompt {
+            name,
+            arguments,
+            timeout_ms,
+        } => {
+            let dispatch = manager.read().expect("manager rwlock poisoned").dispatch_get_prompt(
+                &name,
+                arguments,
+                timeout_ms.map(std::time::Duration::from_millis),
+            );
             match dispatch {
                 Ok(fut) => match fut.await {
                     Ok(resp) => AggregatorResponse {

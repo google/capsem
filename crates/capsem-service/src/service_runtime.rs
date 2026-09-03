@@ -166,7 +166,7 @@ pub(super) async fn run_service() -> Result<()> {
     });
 
     let registry_path = run_dir.join("persistent_registry.json");
-    let persistent_registry = PersistentRegistry::load(registry_path);
+    let persistent_registry = PersistentRegistry::load(registry_path)?;
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"
@@ -240,7 +240,7 @@ pub(super) async fn run_service() -> Result<()> {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(persistent_registry),
+        persistent_registry: SharedRegistry::new(persistent_registry),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),

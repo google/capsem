@@ -9,16 +9,18 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use futures::{stream::BoxStream, StreamExt};
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{
-    CallToolRequestParams, ClientJsonRpcMessage, GetPromptRequestParams, JsonRpcMessage, ReadResourceRequestParams,
-    ServerJsonRpcMessage,
+    CallToolRequest, CallToolRequestParams, ClientJsonRpcMessage, ClientRequest, GetPromptRequest,
+    GetPromptRequestParams, JsonRpcMessage, ReadResourceRequest, ReadResourceRequestParams, ServerJsonRpcMessage,
+    ServerResult,
 };
-use rmcp::service::{Peer, RunningService};
+use rmcp::service::{Peer, PeerRequestOptions, RunningService, ServiceError};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
     AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient, StreamableHttpClientTransport,
@@ -314,6 +316,20 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             }
         }
     }
+}
+
+/// Send one request to a peer, cancelling it upstream when `timeout` elapses.
+async fn request_with_timeout(
+    peer: Peer<RoleClient>,
+    request: ClientRequest,
+    timeout: Option<Duration>,
+) -> Result<ServerResult, ServiceError> {
+    let mut options = PeerRequestOptions::no_options();
+    options.timeout = timeout;
+    peer.send_request_with_option(request, options)
+        .await?
+        .await_response()
+        .await
 }
 
 /// Manages host-side MCP server connections and provides a unified tool catalog.
@@ -671,17 +687,28 @@ impl McpServerManager {
 
     /// Route a tools/call: parse namespace, strip prefix, forward to server.
     pub async fn call_tool(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
-        self.dispatch_call_tool(namespaced_name, arguments)?.await
+        self.dispatch_call_tool(namespaced_name, arguments, None)?.await
+    }
+
+    /// `call_tool` with an upstream deadline; see `dispatch_call_tool`.
+    pub async fn call_tool_with_timeout(
+        &self,
+        namespaced_name: &str,
+        arguments: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<JsonRpcResponse> {
+        self.dispatch_call_tool(namespaced_name, arguments, Some(timeout))?
+            .await
     }
 
     /// Route a resources/read: parse namespaced URI, forward to server.
     pub async fn read_resource(&self, namespaced_uri: &str) -> Result<JsonRpcResponse> {
-        self.dispatch_read_resource(namespaced_uri)?.await
+        self.dispatch_read_resource(namespaced_uri, None)?.await
     }
 
     /// Route a prompts/get: parse namespace, forward to server.
     pub async fn get_prompt(&self, namespaced_name: &str, arguments: serde_json::Value) -> Result<JsonRpcResponse> {
-        self.dispatch_get_prompt(namespaced_name, arguments)?.await
+        self.dispatch_get_prompt(namespaced_name, arguments, None)?.await
     }
 
     /// Resolve a tools/call to an owned future. The lookup runs synchronously
@@ -689,10 +716,16 @@ impl McpServerManager {
     /// cloned `Peer`. Lets callers drop a sync RwLock guard before awaiting
     /// the (potentially slow) RPC, so concurrent dispatches don't serialize
     /// on the manager.
+    ///
+    /// `timeout` bounds the wait on the upstream server. When it elapses rmcp
+    /// sends the server a `notifications/cancelled` and the future fails, so a
+    /// server that never answers cannot pin a task and a pending request here
+    /// for every call the endpoint has already given up on.
     pub fn dispatch_call_tool(
         &self,
         namespaced_name: &str,
         arguments: serde_json::Value,
+        timeout: Option<Duration>,
     ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
         let (peer, original_name) = self.lookup_tool_peer(namespaced_name)?;
         let args: Option<serde_json::Map<String, serde_json::Value>> = match arguments {
@@ -703,11 +736,18 @@ impl McpServerManager {
         if let Some(args) = args {
             params = params.with_arguments(args);
         }
+        let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
         Ok(async move {
-            let result = peer
-                .call_tool(params)
+            let result = match request_with_timeout(peer, request, timeout)
                 .await
-                .with_context(|| format!("tool call '{}' failed", original_name))?;
+                .with_context(|| format!("tool call '{}' failed", original_name))?
+            {
+                ServerResult::CallToolResult(result) => result,
+                other => bail!(
+                    "tool call '{}' returned an unexpected response: {other:?}",
+                    original_name
+                ),
+            };
             let result_json = serde_json::to_value(&result).context("failed to serialize tool result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })
@@ -717,14 +757,23 @@ impl McpServerManager {
     pub fn dispatch_read_resource(
         &self,
         namespaced_uri: &str,
+        timeout: Option<Duration>,
     ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
         let (peer, original_uri) = self.lookup_resource_peer(namespaced_uri)?;
-        let params = ReadResourceRequestParams::new(original_uri.clone());
+        let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(ReadResourceRequestParams::new(
+            original_uri.clone(),
+        )));
         Ok(async move {
-            let result = peer
-                .read_resource(params)
+            let result = match request_with_timeout(peer, request, timeout)
                 .await
-                .with_context(|| format!("resource read '{}' failed", original_uri))?;
+                .with_context(|| format!("resource read '{}' failed", original_uri))?
+            {
+                ServerResult::ReadResourceResult(result) => result,
+                other => bail!(
+                    "resource read '{}' returned an unexpected response: {other:?}",
+                    original_uri
+                ),
+            };
             let result_json = serde_json::to_value(&result).context("failed to serialize resource result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })
@@ -735,6 +784,7 @@ impl McpServerManager {
         &self,
         namespaced_name: &str,
         arguments: serde_json::Value,
+        timeout: Option<Duration>,
     ) -> Result<impl Future<Output = Result<JsonRpcResponse>> + Send + 'static> {
         let (peer, original_name) = self.lookup_prompt_peer(namespaced_name)?;
         let mut params = GetPromptRequestParams::new(original_name.clone());
@@ -743,11 +793,18 @@ impl McpServerManager {
                 params = params.with_arguments(map);
             }
         }
+        let request = ClientRequest::GetPromptRequest(GetPromptRequest::new(params));
         Ok(async move {
-            let result = peer
-                .get_prompt(params)
+            let result = match request_with_timeout(peer, request, timeout)
                 .await
-                .with_context(|| format!("prompt get '{}' failed", original_name))?;
+                .with_context(|| format!("prompt get '{}' failed", original_name))?
+            {
+                ServerResult::GetPromptResult(result) => result,
+                other => bail!(
+                    "prompt get '{}' returned an unexpected response: {other:?}",
+                    original_name
+                ),
+            };
             let result_json = serde_json::to_value(&result).context("failed to serialize prompt result")?;
             Ok(JsonRpcResponse::ok(None, result_json))
         })

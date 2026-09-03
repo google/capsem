@@ -8,7 +8,6 @@ import os
 import re
 import shlex
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.uds_client import UdsHttpClient
 from log_streams import log_stream_files
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -156,37 +156,10 @@ def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> Non
 def _post_bytes_with_status(
     socket_path: Path, path: str, data: bytes, timeout: int = 60
 ) -> tuple[int, bytes]:
-    result = subprocess.run(
-        [
-            "curl",
-            "-s",
-            "-S",
-            "-o",
-            "-",
-            "-w",
-            "\n__STATUS__%{http_code}",
-            "--unix-socket",
-            str(socket_path),
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type: application/octet-stream",
-            "--max-time",
-            str(timeout),
-            "--data-binary",
-            "@-",
-            f"http://localhost{path}",
-        ],
-        input=data,
-        capture_output=True,
-        timeout=timeout + 5,
+    status, _, body = UdsHttpClient(socket_path).call(
+        "POST", path, body=data, headers={"Content-Type": "application/octet-stream"}, timeout=timeout
     )
-    if result.returncode != 0:
-        raise ConnectionError(f"curl failed: {result.stderr.decode(errors='replace')}")
-    sep = b"\n__STATUS__"
-    idx = result.stdout.rfind(sep)
-    assert idx != -1, result.stdout
-    return int(result.stdout[idx + len(sep) :].decode(errors="replace")), result.stdout[:idx]
+    return status, body
 
 
 def _doctor_failure_diagnostics(service: ServiceInstance) -> str:

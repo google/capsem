@@ -14,6 +14,9 @@ use crate::events::{
 };
 use crate::schema;
 
+mod model_rows;
+use model_rows::insert_model_call;
+
 /// Maximum bytes stored for any preview/content field (256 KB).
 /// Callers should truncate before constructing events, but the logger
 /// enforces this defensively to prevent unbounded storage.
@@ -139,10 +142,15 @@ pub enum WriteOp {
     ProfileMutationEvent(ProfileMutationEvent),
 }
 
+/// What a flush barrier reports back: `Err` when the disk flush the barrier
+/// forced did not happen, so a caller relying on cross-process visibility
+/// (an external reader syncing from disk) is not told the rows are there.
+type FlushOutcome = Result<(), String>;
+
 #[derive(Debug)]
 struct WriterMessage {
     write: Option<WriteOp>,
-    flush_reply: Option<tokio::sync::oneshot::Sender<()>>,
+    flush_reply: Option<tokio::sync::oneshot::Sender<FlushOutcome>>,
 }
 
 impl WriterMessage {
@@ -153,14 +161,14 @@ impl WriterMessage {
         }
     }
 
-    fn flush(reply: tokio::sync::oneshot::Sender<()>) -> Self {
+    fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self {
             write: None,
             flush_reply: Some(reply),
         }
     }
 
-    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<()>> {
+    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<FlushOutcome>> {
         match (self.write, self.flush_reply) {
             (Some(op), None) => Ok(op),
             (None, Some(reply)) => Err(reply),
@@ -448,16 +456,25 @@ impl DbWriter {
     /// before this barrier. This is non-destructive: unlike shutdown, it keeps
     /// the writer alive for future events.
     pub async fn flush(&self) {
-        if let Some(tx) = self.clone_sender() {
-            let (reply, rx) = tokio::sync::oneshot::channel();
-            if let Err(e) = send_with_backpressure(&tx, WriterMessage::flush(reply)).await {
-                warn!(error = %e, "db writer channel closed, dropping flush barrier");
-                return;
-            }
-            if let Err(e) = rx.await {
-                warn!(error = %e, "db writer flush barrier dropped before ack");
-            }
+        if let Err(error) = self.flush_checked().await {
+            warn!(error = %error, "db flush barrier did not complete");
         }
+    }
+
+    /// `flush`, reporting whether the disk flush the barrier forced happened.
+    /// Same-process readers see the rows either way (they live in the shared
+    /// memory schema); an `Err` means an external reader syncing from disk
+    /// will not, and the caller must not claim otherwise.
+    pub async fn flush_checked(&self) -> Result<(), String> {
+        let Some(tx) = self.clone_sender() else {
+            return Ok(());
+        };
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        send_with_backpressure(&tx, WriterMessage::flush(reply))
+            .await
+            .map_err(|e| format!("db writer channel closed, dropping flush barrier: {e}"))?;
+        rx.await
+            .map_err(|e| format!("db writer flush barrier dropped before ack: {e}"))?
     }
 
     /// Wait for short-lived producers to enqueue their final rows, then flush
@@ -514,13 +531,31 @@ fn is_sqlite_busy(error: &rusqlite::Error) -> bool {
     )
 }
 
+/// Longest pause between attempts to queue a message while the writer is full.
+const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
+
+/// Queue a message, waiting for room.
+///
+/// The channel is a std `sync_channel` drained by the writer thread, so there
+/// is nothing async to await for space. Yield once, then sleep with doubling
+/// backoff. Retrying immediately after `yield_now` pinned every producer task
+/// at full CPU for as long as the writer thread was inside a disk flush, which
+/// can be seconds with a large dirty set or a busy-timeout on the file.
 async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -> Result<(), String> {
+    let mut wait = Duration::from_micros(50);
+    let mut attempts = 0u32;
     loop {
         match tx.try_send(message) {
             Ok(()) => return Ok(()),
             Err(mpsc::TrySendError::Full(returned)) => {
                 message = returned;
-                tokio::task::yield_now().await;
+                if attempts == 0 {
+                    tokio::task::yield_now().await;
+                } else {
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(BACKPRESSURE_MAX_WAIT);
+                }
+                attempts += 1;
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 return Err("db writer channel closed".to_string());
@@ -624,18 +659,21 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || !flush_barriers.is_empty();
+        let mut barrier_outcome: FlushOutcome = Ok(());
         if disk_flush_due {
-            if let Err(error) =
-                flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref())
-            {
-                warn!(error = %error, "db dirty table flush failed");
-            } else {
-                dirty_ops = 0;
-                last_disk_flush = Instant::now();
+            match flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref()) {
+                Ok(()) => {
+                    dirty_ops = 0;
+                    last_disk_flush = Instant::now();
+                }
+                Err(error) => {
+                    warn!(error = %error, "db dirty table flush failed");
+                    barrier_outcome = Err(format!("db dirty table flush failed: {error}"));
+                }
             }
         }
         for reply in flush_barriers {
-            let _ = reply.send(());
+            let _ = reply.send(barrier_outcome.clone());
         }
     }
 
@@ -991,256 +1029,6 @@ fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) ->
         },
     )?;
     Ok(())
-}
-
-fn insert_model_call(conn: &Connection, call: &ModelCall, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(call.timestamp);
-    let req_body = cap_field(&call.request_body_preview);
-    let text_content = cap_field(&call.text_content);
-    let thinking_content = cap_field(&call.thinking_content);
-    let sys_prompt = cap_field(&call.system_prompt_preview);
-    let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
-    conn.execute(
-        &format!("INSERT INTO {} (
-            event_id, timestamp, provider, protocol, model, process_name, pid,
-            method, path, stream,
-            system_prompt_preview, messages_count, tools_count,
-            request_bytes, request_body_preview,
-            message_id, status_code, text_content, thinking_content,
-            stop_reason, input_tokens, output_tokens,
-            duration_ms, response_bytes, estimated_cost_usd, trace_id,
-            usage_details, credential_ref, turn_id
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)", target.table("model_calls")),
-        params![
-            event_id,
-            timestamp,
-            call.provider,
-            call.protocol,
-            call.model,
-            call.process_name,
-            call.pid.map(i64::from),
-            call.method,
-            call.path,
-            i64::from(call.stream),
-            sys_prompt,
-            call.messages_count as i64,
-            call.tools_count as i64,
-            call.request_bytes as i64,
-            req_body,
-            call.message_id,
-            call.status_code.map(i64::from),
-            text_content,
-            thinking_content,
-            call.stop_reason,
-            call.input_tokens.map(|t| t as i64),
-            call.output_tokens.map(|t| t as i64),
-            call.duration_ms as i64,
-            call.response_bytes as i64,
-            call.estimated_cost_usd,
-            call.trace_id,
-            if call.usage_details.is_empty() { None } else { Some(serde_json::to_string(&call.usage_details).unwrap_or_default()) },
-            call.credential_ref,
-            call.trace_id,
-        ],
-    )?;
-    let model_call_id = conn.last_insert_rowid();
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "model.call",
-            source_table: "model_calls",
-            direction: "request",
-            content_type: Some("application/json"),
-            body: call
-                .request_body_full
-                .as_deref()
-                .or(call.request_body_preview.as_deref()),
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        },
-    )?;
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "model.call",
-            source_table: "model_calls",
-            direction: "response",
-            content_type: None,
-            body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        },
-    )?;
-    insert_model_items(conn, model_call_id, call, &timestamp, target)?;
-
-    for tc in &call.tool_calls {
-        // W6: tool_calls.trace_id falls back to the parent model_call's
-        // trace_id (they belong to the same agent turn).
-        let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
-        conn.execute(
-            &format!(
-                "INSERT INTO {} (
-                event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-                tool_name, arguments, origin, transport, server_name, decision, duration_ms,
-                trace_id, turn_id, credential_ref
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-                target.table("tool_calls")
-            ),
-            params![
-                new_event_id(),
-                timestamp,
-                model_call_id,
-                call.provider,
-                "observed",
-                i64::from(tc.call_index),
-                tc.call_id,
-                tc.tool_name,
-                tc.arguments,
-                tc.origin,
-                model_tool_transport(call),
-                "model",
-                "allowed",
-                call.duration_ms as i64,
-                tc_trace,
-                call.trace_id,
-                call.credential_ref,
-            ],
-        )?;
-    }
-
-    for tr in &call.tool_responses {
-        let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
-        let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
-        conn.execute(
-            &format!(
-                "INSERT INTO {} (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                target.table("tool_responses")
-            ),
-            params![
-                model_call_id,
-                tr.call_id,
-                tr.content_preview,
-                i64::from(tr.is_error),
-                tr_trace,
-                call.trace_id,
-                tr_credential_ref,
-            ],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn insert_model_items(
-    conn: &Connection,
-    model_call_id: i64,
-    call: &ModelCall,
-    timestamp: &str,
-    target: WriteTarget,
-) -> rusqlite::Result<()> {
-    let table = target.table("model_items");
-    let mut item_index = 0_i64;
-    let mut insert_item = |kind: &str,
-                           call_id: Option<&str>,
-                           tool_name: Option<&str>,
-                           arguments: Option<&str>,
-                           content: Option<String>|
-     -> rusqlite::Result<()> {
-        item_index += 1;
-        let call_id = call_id.unwrap_or_default();
-        let content = cap_field(&content);
-        let hash_material = serde_json::json!({
-            "kind": kind,
-            "call_id": call_id,
-            "tool_name": tool_name,
-            "arguments": arguments,
-            "content": content,
-        })
-        .to_string();
-        let content_hash = blake3_ref(&hash_material);
-        conn.execute(
-            &format!(
-                "INSERT OR IGNORE INTO {table} (
-                event_id, model_call_id, timestamp, provider, model, path, trace_id,
-                kind, item_index, call_id, tool_name, arguments, content,
-                content_hash, credential_ref, turn_id
-             )
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
-             WHERE NOT EXISTS (
-                SELECT 1 FROM {table}
-                WHERE trace_id IS ?7
-                  AND kind = ?8
-                  AND content_hash = ?14
-                  AND call_id = ?10
-             )"
-            ),
-            params![
-                new_event_id(),
-                model_call_id,
-                timestamp,
-                call.provider,
-                call.model,
-                call.path,
-                call.trace_id,
-                kind,
-                item_index,
-                call_id,
-                tool_name,
-                arguments,
-                content,
-                content_hash,
-                call.credential_ref,
-                call.trace_id,
-            ],
-        )?;
-        Ok(())
-    };
-
-    // A tool-result continuation request is represented by tool_response rows;
-    // do not also log it as another user request for the same trace.
-    if call.tool_responses.is_empty() {
-        if let Some(content) = &call.request_body_preview {
-            insert_item("request", None, None, None, Some(content.clone()))?;
-        }
-    }
-    if let Some(content) = &call.thinking_content {
-        insert_item("reasoning", None, None, None, Some(content.clone()))?;
-    }
-    if let Some(content) = &call.text_content {
-        insert_item("response", None, None, None, Some(content.clone()))?;
-    }
-    for tool_call in &call.tool_calls {
-        insert_item(
-            "tool_call",
-            Some(&tool_call.call_id),
-            Some(&tool_call.tool_name),
-            tool_call.arguments.as_deref(),
-            tool_call.arguments.clone(),
-        )?;
-    }
-    for tool_response in &call.tool_responses {
-        insert_item(
-            "tool_response",
-            Some(&tool_response.call_id),
-            None,
-            None,
-            tool_response.content_preview.clone(),
-        )?;
-    }
-    Ok(())
-}
-
-fn model_tool_transport(call: &ModelCall) -> &'static str {
-    if call.stream {
-        "sse"
-    } else {
-        "http"
-    }
 }
 
 fn insert_file_event(conn: &Connection, event: &FileEvent, target: WriteTarget) -> rusqlite::Result<()> {

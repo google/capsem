@@ -21,6 +21,10 @@ use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
+// Case modules live beside this file; the ratcheted line count stays flat.
+#[path = "mitm_integration/mod.rs"]
+mod cases;
+
 const CA_KEY: &str = include_str!("../resources/ca/capsem-ca.key");
 const CA_CERT: &str = include_str!("../resources/ca/capsem-ca.crt");
 const HERMETIC_UPSTREAM_DOMAIN: &str = "fixture.capsem.test";
@@ -521,10 +525,9 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     let (config, db) = make_proxy_config(&["elie.net"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
-    // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
-    // no \0CAPSEM_META prefix. Host is not on the allowlist (which
-    // is "elie.net" only); default-deny applies -> 403 from
-    // the security-event boundary.
+    // Plain HTTP/1.1 request directly on the TCP socket, no TLS, no
+    // \0CAPSEM_META prefix. Host is off the allowlist ("elie.net" only);
+    // default-deny applies -> 403 from the security-event boundary.
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
         .await
@@ -549,16 +552,26 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
 }
 
 /// A plain-HTTP request whose Host carries a port outside
-/// `http_upstream_ports` is rejected before the proxy dials upstream and is
-/// logged with the host-side port boundary that denied it.
+/// `http_upstream_ports` is refused by the host before any upstream dial. The
+/// port came from the guest's Host header, so a guest reaching the proxy
+/// directly must not be able to make the host connect to an arbitrary port;
+/// the refusal is logged against the mechanics rule that made it.
 #[tokio::test]
-async fn mitm_proxy_plain_http_port_gate_denies_outside_allowlist() {
-    const DENIED_PORT: u16 = 22;
+async fn mitm_proxy_plain_http_port_outside_allowlist_is_refused_before_dialing() {
+    let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = upstream_listener.local_addr().unwrap().port();
+    // Reports whether the proxy ever dialed the upstream.
+    let upstream_task = tokio::spawn(async move {
+        tokio::time::timeout(std::time::Duration::from_secs(2), upstream_listener.accept())
+            .await
+            .is_ok()
+    });
+
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80]);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{DENIED_PORT}\r\nConnection: close\r\n\r\n");
+    let request = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     tcp.write_all(request.as_bytes()).await.unwrap();
 
     let mut buf = Vec::new();
@@ -568,29 +581,31 @@ async fn mitm_proxy_plain_http_port_gate_denies_outside_allowlist() {
         .unwrap();
     drop(tcp);
 
+    let dialed = upstream_task.await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), proxy_task)
         .await
         .expect("plain HTTP proxy task must stop after the client closes")
         .unwrap();
     db.flush().await;
 
+    assert!(!dialed, "the host must not dial a port outside the allowlist");
     let response = String::from_utf8_lossy(&buf);
     assert!(
-        response.contains("HTTP/1.1 403 Forbidden"),
-        "expected port denial, got:\n{response}"
+        response.contains("HTTP/1.1 403"),
+        "expected a refusal, got:\n{response}"
     );
     assert!(
         response.contains("blocked by security.web.http_upstream_ports"),
-        "expected port boundary in response, got:\n{response}"
+        "the refusal names the rule, got:\n{response}"
     );
 
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert!(!events.is_empty(), "denied path must record a NetEvent");
+    assert!(!events.is_empty(), "refused path must record a NetEvent");
     assert_eq!(events[0].decision, Decision::Denied);
     assert_eq!(events[0].status_code, Some(403));
     assert_eq!(events[0].domain, "127.0.0.1");
-    assert_eq!(events[0].port, DENIED_PORT);
+    assert_eq!(events[0].port, upstream_port);
     assert_eq!(
         events[0].matched_rule.as_deref(),
         Some("security.web.http_upstream_ports")

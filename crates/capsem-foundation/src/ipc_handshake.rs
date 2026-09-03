@@ -45,6 +45,30 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// On error the stream's pending writes/reads have already been observed,
 /// so the caller should drop the stream rather than reuse it.
+/// [`negotiate_initiator`] for callers on a Tokio runtime.
+///
+/// The handshake is synchronous socket I/O with a per-read timeout of
+/// several seconds and must not run on a worker thread. Service routes
+/// called it inline and parked a worker for the whole exchange, up to the
+/// timeout when the process side was slow to answer, stalling every other
+/// request scheduled on that worker. Runs it on the blocking pool and hands
+/// the verified socket back for the typed async transport.
+pub async fn negotiate_initiator_off_worker(
+    stream: UnixStream,
+    peer_id: impl Into<String>,
+    traceparent: impl Into<String>,
+) -> Result<(UnixStream, Hello), HandshakeError> {
+    let peer_id = peer_id.into();
+    let traceparent = traceparent.into();
+    tokio::task::spawn_blocking(move || {
+        let mut stream = stream;
+        let hello = negotiate_initiator(&mut stream, peer_id, traceparent)?;
+        Ok((stream, hello))
+    })
+    .await
+    .map_err(|join| HandshakeError::Io(std::io::Error::other(format!("handshake task failed: {join}"))))?
+}
+
 pub fn negotiate_initiator(
     stream: &mut UnixStream,
     peer_id: impl Into<String>,

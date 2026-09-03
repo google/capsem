@@ -191,3 +191,23 @@ async fn async_vsock_large_transfer() {
     assert_eq!(received.len(), 65536);
     assert_eq!(received, data);
 }
+
+// AsyncFd::new closes the fd it was handed when registration fails, and the
+// caller closed it again. On a runtime with other connections in flight the
+// number can already belong to someone else, so the second close severed a
+// stranger's socket. A regular file cannot be registered with epoll, which
+// makes the failure path reproducible.
+#[tokio::test]
+async fn async_vsock_new_owns_the_fd_on_failure() {
+    use std::os::unix::io::IntoRawFd;
+    let path = std::env::temp_dir().join(format!("capsem-test-async-vsock-{}", std::process::id()));
+    std::fs::write(&path, b"x").unwrap();
+    let fd = std::fs::File::open(&path).unwrap().into_raw_fd();
+    std::fs::remove_file(&path).ok();
+
+    let err = AsyncVsock::new(fd).err().expect("a regular file cannot be registered");
+    assert_eq!(err.raw_os_error(), Some(libc::EPERM), "{err}");
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert_eq!(flags, -1, "the failed constructor must have closed the fd exactly once");
+    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+}

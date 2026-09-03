@@ -124,13 +124,16 @@ pub(super) fn parse_http_host_target(header: Option<&hyper::header::HeaderValue>
     if trimmed.starts_with('[') {
         return None;
     }
-    match trimmed.rsplit_once(':') {
-        Some((host, port_str)) if !host.is_empty() => {
-            let port: u16 = port_str.parse().ok()?;
-            Some((host.to_string(), port))
-        }
-        _ => Some((trimmed.to_string(), 80)),
-    }
+    // The host is guest-controlled and this is the plain-HTTP path's only
+    // source of upstream identity: hand back the normalized form (lowercase,
+    // no DNS-root dots) so policy, dial and telemetry agree, and refuse a
+    // value that normalizes to nothing.
+    let (host, port) = match trimmed.rsplit_once(':') {
+        Some((host, port_str)) if !host.is_empty() => (host, port_str.parse::<u16>().ok()?),
+        _ => (trimmed, 80),
+    };
+    let host = crate::net::hostname::normalize_host(host);
+    (!host.is_empty()).then_some((host, port))
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.

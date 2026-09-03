@@ -1,4 +1,5 @@
 use super::*;
+use crate::security_engine::forensics::SecurityRuleTraceLabels;
 
 #[tokio::test]
 async fn emit_security_rule_match_writes_forensic_ledger_row() {

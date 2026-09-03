@@ -12,6 +12,9 @@ use tracing::{error, info, trace, warn};
 use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
+mod dns;
+use dns::serve_dns_session;
+
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
 
@@ -63,7 +66,7 @@ pub(crate) struct VsockOptions {
     pub(crate) vm_ready: Arc<AtomicBool>,
     pub(crate) uds_path: PathBuf,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
-    pub(crate) pty_log: Option<Arc<crate::pty_log::PtyLog>>,
+    pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
 
@@ -249,7 +252,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
             }
-            let _ = read_handle.join();
+            // The reader thread is parked in read() on a dup of this socket.
+            // Closing our fd does not wake it and a half-open post-restore
+            // socket never EOFs, so joining here parked a runtime worker for
+            // good and the new connection was never activated. Shut the
+            // socket down so the read returns, then join off the runtime.
+            let _ = nix::sys::socket::shutdown(conn.fd, nix::sys::socket::Shutdown::Both);
+            let _ = tokio::task::spawn_blocking(move || read_handle.join()).await;
         }
         drop(serial_log_tx);
         let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
@@ -324,9 +333,20 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
             let (msg_tx, mut msg_rx) = mpsc::channel::<Result<GuestToHost>>(32);
 
-            // Reader thread
+            // Reader thread. An oversized guest frame is discarded and the
+            // stream realigned by read_control_msg; dropping the connection
+            // for it made the guest replay the same frame on every reconnect.
             std::thread::spawn(move || loop {
                 let res = read_control_msg(&mut reader_fd);
+                if let Err(too_large) = res
+                    .as_ref()
+                    .map_err(|e| e.downcast_ref::<capsem_core::ControlFrameTooLarge>())
+                {
+                    if let Some(too_large) = too_large {
+                        error!(%too_large, "control bridge: oversized guest frame discarded");
+                        continue;
+                    }
+                }
                 let is_err = res.is_err();
                 if msg_tx.blocking_send(res).is_err() || is_err {
                     break;
@@ -339,10 +359,20 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // *before* writing so a write-fail/silent-drop is
                     // recoverable via the next rekey replay.
                     Some(msg) = ctrl_out_rx.recv() => {
+                        // Frame first: a message the guest would drop must
+                        // not be parked for replay or mistaken for a
+                        // transport failure.
+                        let frame = match proto::encode_host_msg(&msg) {
+                            Ok(frame) => frame,
+                            Err(e) => {
+                                error!(error = %e, "control bridge: unframeable message dropped");
+                                continue;
+                            }
+                        };
                         if let Some(id) = ackable_id(&msg) {
                             pending.pending_acks.lock().unwrap().insert(id, msg.clone());
                         }
-                        if let Err(e) = write_control_msg(&mut writer_fd, &msg) {
+                        if let Err(e) = writer_fd.write_all(&frame) {
                             error!(error = %e, "control bridge: write failed");
                             break;
                         }
@@ -837,6 +867,58 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     Ok(())
 }
 
+/// Serve one guest audit connection: decode records until the stream ends.
+fn serve_audit_records(
+    file: &mut impl std::io::Read,
+    db: &capsem_logger::DbWriter,
+    security_rules: &std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>,
+) {
+    while let Ok(Some(payload)) = read_bounded_frame(file) {
+        handle_audit_frame(&payload, db, security_rules);
+    }
+}
+
+/// Write one audit record and evaluate it against the rules current now.
+///
+/// The rule set is read through the reload handle per record. The guest opens
+/// the audit port exactly once at boot and streams for the life of the VM, so
+/// a snapshot taken at connect time froze process-audit policy: a profile
+/// edit reloaded every other rail while audit rows kept matching the rules
+/// from boot until the VM restarted.
+fn handle_audit_frame(
+    payload: &[u8],
+    db: &capsem_logger::DbWriter,
+    security_rules: &std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>,
+) {
+    let Ok(record) = capsem_proto::decode_audit_record(payload) else {
+        return;
+    };
+    let rules = Arc::clone(&security_rules.read().unwrap_or_else(|e| e.into_inner()));
+    let timestamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(record.timestamp_us);
+    capsem_core::security_engine::emit_process_audit_security_write_and_rules_blocking(
+        db,
+        &rules,
+        capsem_logger::AuditEvent {
+            event_id: None,
+            timestamp,
+            pid: record.pid,
+            ppid: record.ppid,
+            uid: record.uid,
+            exe: record.exe,
+            comm: record.comm,
+            argv: record.argv,
+            cwd: record.cwd,
+            tty: record.tty,
+            session_id: record.session_id,
+            audit_id: Some(record.audit_id),
+            exec_event_id: None,
+            parent_exe: record.parent_exe,
+            trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
+            credential_ref: None,
+        },
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_aux_connection(
     conn: VsockConnection,
@@ -910,7 +992,7 @@ fn dispatch_aux_connection(
         }
         Some(HostVsockService::Audit) => {
             let db_clone = Arc::clone(db);
-            let security_rules = security_rules.read().unwrap().clone();
+            let security_rules = Arc::clone(security_rules);
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
@@ -920,34 +1002,7 @@ fn dispatch_aux_connection(
                     }
                 };
                 info!("audit port: connected, reading audit records");
-                while let Ok(Some(payload)) = read_bounded_frame(&mut file) {
-                    if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
-                        let timestamp =
-                            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(record.timestamp_us);
-                        capsem_core::security_engine::emit_process_audit_security_write_and_rules_blocking(
-                            &db_clone,
-                            &security_rules,
-                            capsem_logger::AuditEvent {
-                                event_id: None,
-                                timestamp,
-                                pid: record.pid,
-                                ppid: record.ppid,
-                                uid: record.uid,
-                                exe: record.exe,
-                                comm: record.comm,
-                                argv: record.argv,
-                                cwd: record.cwd,
-                                tty: record.tty,
-                                session_id: record.session_id,
-                                audit_id: Some(record.audit_id),
-                                exec_event_id: None,
-                                parent_exe: record.parent_exe,
-                                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-                                credential_ref: None,
-                            },
-                        );
-                    }
-                }
+                serve_audit_records(&mut file, &db_clone, &security_rules);
                 drop(conn);
             });
         }
@@ -1101,140 +1156,6 @@ fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload)?;
     Ok(Some(payload))
-}
-
-/// Persistent DNS query handler over the vsock DNS port (T3.2).
-///
-/// Wire shape:
-///   guest -> host: `[u32 BE length][rmp DnsRequest]`
-///   host -> guest: `[u32 BE length][rmp DnsResponse]`
-///
-/// Each connection carries many serialized request/response frames.
-/// The guest-side worker pool owns concurrency: one in-flight DNS query
-/// per persistent vsock fd. This removes per-query connection churn
-/// without introducing response multiplexing ambiguity.
-async fn serve_dns_session(
-    conn: VsockConnection,
-    handler: Arc<capsem_core::net::dns::DnsHandler>,
-    db: Arc<capsem_logger::DbWriter>,
-    security_rules: Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-) {
-    use std::io::Write as _;
-
-    let conn_fd = conn.fd;
-    loop {
-        // Move the fd in/out via spawn_blocking so we don't run sync I/O on
-        // the tokio runtime. The DNS handler itself is async (UDP forwarder
-        // returns Future), so we read one request, run the handler, then
-        // write one response.
-        let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
-            let mut file = clone_fd(conn_fd)?;
-            read_bounded_frame(&mut file).context("DNS port: failed to read frame")
-        })
-        .await;
-
-        let payload = match read_res {
-            Ok(Ok(Some(p))) => p,
-            Ok(Ok(None)) => break,
-            Ok(Err(e)) => {
-                warn!(error = %e, "DNS port: read failed");
-                break;
-            }
-            Err(e) => {
-                warn!(error = %e, "DNS port: read task panicked");
-                break;
-            }
-        };
-
-        let req = match capsem_proto::decode_dns_request(&payload) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "DNS port: decode_dns_request failed");
-                break;
-            }
-        };
-
-        let result = handler.handle(&req.raw).await;
-
-        // T3.3 -- record one `dns_events` row per query. trace_id ties it
-        // back to the agent action; source_proto distinguishes UDP from
-        // TCP DNS at the source side. Await the security emitter so DNS audit
-        // rows are accepted by the single security/logging rail before the
-        // DNS response is returned.
-        let event = capsem_core::net::dns::build_dns_event(
-            &result,
-            Some(req.proto.as_str()),
-            req.process_name.clone(),
-            capsem_foundation::telemetry::ambient_capsem_trace_id(),
-        );
-        emit_dns_security_write_and_rules(&db, &security_rules, event).await;
-
-        let response = capsem_proto::DnsResponse {
-            raw: result.answer_bytes,
-            decision: result.decision.as_str().to_string(),
-            rcode: result.rcode,
-        };
-
-        let frame = match capsem_proto::encode_dns_response(&response) {
-            Ok(f) => f,
-            Err(e) => {
-                warn!(error = %e, "DNS port: encode_dns_response failed");
-                break;
-            }
-        };
-
-        let write_res = tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut file = clone_fd(conn_fd)?;
-            file.write_all(&frame)
-                .context("DNS port: failed to write response frame")?;
-            Ok(())
-        })
-        .await;
-        match write_res {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                warn!(error = %e, "DNS port: write failed");
-                break;
-            }
-            Err(e) => {
-                warn!(error = %e, "DNS port: write task panicked");
-                break;
-            }
-        }
-    }
-
-    drop(conn);
-}
-
-async fn emit_dns_security_write_and_rules(
-    db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    event: capsem_logger::DnsEvent,
-) -> Option<capsem_core::security_engine::SecurityEventId> {
-    let security_event = capsem_core::net::dns::security_event_from_dns_event(&event);
-    let event_id =
-        capsem_core::security_engine::emit_security_write(db, capsem_logger::WriteOp::DnsEvent(event)).await?;
-    let rules = security_rules.read().unwrap().clone();
-    if let Err(error) = capsem_core::security_engine::emit_matching_security_rules(
-        db,
-        event_id.clone(),
-        capsem_core::security_engine::RuntimeSecurityEventType::DnsQuery,
-        &rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await
-    {
-        warn!(error = %error, "failed to emit DNS security rule ledger rows");
-    }
-    Some(event_id)
-}
-
-fn current_unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
 }
 
 /// Returns `Some(id)` for HostToGuest variants whose delivery the host

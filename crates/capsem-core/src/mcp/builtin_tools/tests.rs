@@ -1,17 +1,20 @@
 use super::*;
 
+mod bounds;
+mod fixtures;
+mod ip_literals;
+mod markdown;
+mod upstream_binding;
+
 fn test_db() -> Arc<DbWriter> {
     Arc::new(DbWriter::open_in_memory(64).unwrap())
 }
 
 /// Create a reqwest Client with proper User-Agent (matches production config).
 /// Sites like Wikipedia return 403 without one.
-fn test_client() -> Client {
-    Client::builder()
-        .user_agent("capsem-mcp/0.8")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .expect("reqwest client")
+fn test_client() -> BuiltinHttpClient {
+    BuiltinHttpClient::new(std::time::Duration::from_secs(30), std::time::Duration::from_secs(10))
+        .with_user_agent("capsem-mcp/0.8")
 }
 
 async fn spawn_builtin_http_fixture() -> crate::test_support::http::LocalHttpRecorder {
@@ -81,9 +84,18 @@ fn about_fixture_html() -> String {
     )
 }
 
+/// One blocked name, and an explicit allow for the loopback fixtures: a
+/// non-public address is reachable only through an allow rule, so every
+/// test that talks to a local fixture carries one.
 fn default_dev_security_rules() -> SecurityRuleSet {
     crate::net::policy_config::SecurityRuleProfile::parse_toml(
         r#"
+            [profiles.rules.allow_local_fixture]
+            name = "allow_local_fixture"
+            action = "allow"
+            reason = "local test fixture"
+            match = 'http.host == "127.0.0.1"'
+
             [profiles.rules.block_evil_unknown_domain]
             name = "block_evil_unknown_domain"
             action = "block"
@@ -884,107 +896,72 @@ async fn http_headers_method_case_sensitive() {
     assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
 }
 
-// -----------------------------------------------------------------------
-// Realistic HTML extraction tests
-// -----------------------------------------------------------------------
-
 #[test]
-fn extract_text_full_html_document() {
-    // Realistic full HTML page like a real website would serve
-    let html = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>Elie Bursztein - Security Research</title>
-    <script>window.analytics = {};</script>
-    <style>body { font-family: sans-serif; }</style>
-</head>
-<body>
-    <nav><a href="/">Home</a> <a href="/about">About</a></nav>
-    <main>
-        <h1>Elie Bursztein</h1>
-        <p>Google &amp; DeepMind AI Cybersecurity technical and research lead.</p>
-        <div class="bio">
-            <h2>About</h2>
-            <p>Elie works on AI security and has published over 100 papers.</p>
-        </div>
-        <section>
-            <h2>Recent Publications</h2>
-            <ul>
-                <li>Paper on cryptographic compliance testing</li>
-                <li>AI safety research findings</li>
-            </ul>
-        </section>
-    </main>
-    <footer><p>Copyright 2024</p></footer>
-</body>
-</html>"#;
-    let text = extract_text_from_html(html);
-    // Must contain key content from the page
-    assert!(
-        text.contains("Elie Bursztein"),
-        "extracted text must contain 'Elie Bursztein', got: {text:?}"
-    );
-    assert!(
-        text.contains("About"),
-        "extracted text must contain 'About', got: {text:?}"
-    );
-    assert!(
-        text.contains("Google"),
-        "extracted text must contain 'Google', got: {text:?}"
-    );
-    assert!(
-        text.contains("AI security"),
-        "extracted text must contain 'AI security', got: {text:?}"
-    );
-    assert!(
-        text.contains("cryptographic"),
-        "extracted text must contain 'cryptographic', got: {text:?}"
-    );
-    // Must NOT contain script/style content
-    assert!(
-        !text.contains("analytics"),
-        "extracted text must not contain script content"
-    );
-    assert!(
-        !text.contains("font-family"),
-        "extracted text must not contain style content"
-    );
+fn collect_grep_matches_reports_true_total_and_caps_shown_blocks() {
+    let re = regex::Regex::new("hit").unwrap();
+    let lines = ["hit", "x", "hit", "hit", "y", "hit", "hit"]; // 5 matches
+    let refs: Vec<&str> = lines.to_vec();
+
+    let (blocks, total) = collect_grep_matches(&refs, &re, 0, 2);
+
+    // The count must be the true number of matches (5), not max_matches+1 (3),
+    // which is what the old early-break left in the counter.
+    assert_eq!(total, 5, "reported total must count all matches, not stop at the cap");
+    assert_eq!(blocks.len(), 2, "only the first max_matches blocks are built");
+    assert!(blocks[0].contains(">>> 1: hit"));
+    assert!(blocks[1].contains(">>> 3: hit"));
 }
 
 #[test]
-fn extract_text_handles_nested_elements() {
-    let html = r#"<html><body>
-<div class="card">
-    <span class="name">Alice</span>
-    <span class="role">Engineer</span>
-</div>
-<div class="card">
-    <span class="name">Bob</span>
-    <span class="role">Designer</span>
-</div>
-</body></html>"#;
-    let text = extract_text_from_html(html);
-    assert!(text.contains("Alice"), "must contain Alice, got: {text:?}");
-    assert!(text.contains("Bob"), "must contain Bob, got: {text:?}");
-    assert!(text.contains("Engineer"), "must contain Engineer, got: {text:?}");
+fn collect_grep_matches_below_cap_returns_all() {
+    let re = regex::Regex::new("hit").unwrap();
+    let refs = vec!["hit", "no", "hit"];
+    let (blocks, total) = collect_grep_matches(&refs, &re, 0, 10);
+    assert_eq!(total, 2);
+    assert_eq!(blocks.len(), 2);
 }
 
-#[test]
-fn extract_text_handles_links_and_attrs() {
-    let html = r#"<html><body>
-<a href="/about">About page</a>
-<a href="https://example.com" class="external">Visit Example</a>
-<img src="photo.jpg" alt="Photo of labs">
-</body></html>"#;
-    let text = extract_text_from_html(html);
-    assert!(text.contains("About page"), "must contain link text, got: {text:?}");
-    assert!(text.contains("Visit Example"), "must contain link text, got: {text:?}");
+// -- capped HTTP body reads --
+
+#[tokio::test]
+async fn read_body_capped_truncates_oversized_body() {
+    let recorder = crate::test_support::http::spawn_static_http_recorder(vec![(
+        "/",
+        crate::test_support::http::RecordedHttpResponse::text("a".repeat(5000)),
+    )])
+    .await
+    .unwrap();
+    let resp = reqwest::Client::new()
+        .get(format!("{}/", recorder.base_url))
+        .send()
+        .await
+        .unwrap();
+    let body = read_body_capped(resp, 1000).await.unwrap();
+    assert_eq!(
+        body.len(),
+        1000,
+        "an oversized response body must be truncated at the cap"
+    );
 }
 
-// -----------------------------------------------------------------------
-// Integration tests -- use local HTTP fixtures only
-// -----------------------------------------------------------------------
+#[tokio::test]
+async fn read_body_capped_returns_full_body_under_cap() {
+    let recorder = crate::test_support::http::spawn_static_http_recorder(vec![(
+        "/",
+        crate::test_support::http::RecordedHttpResponse::text("hello world"),
+    )])
+    .await
+    .unwrap();
+    let resp = reqwest::Client::new()
+        .get(format!("{}/", recorder.base_url))
+        .send()
+        .await
+        .unwrap();
+    let body = read_body_capped(resp, 1_000_000).await.unwrap();
+    assert_eq!(body, "hello world");
+}
+
+// Shared fixture helpers for this module and its submodules.
 
 /// Helper to extract the text content from a tool response.
 fn extract_tool_text(resp: &JsonRpcResponse) -> &str {
@@ -995,725 +972,10 @@ fn is_tool_error(resp: &JsonRpcResponse) -> bool {
     resp.result.as_ref().map(|r| r["isError"] == true).unwrap_or(false)
 }
 
-#[tokio::test]
-async fn integration_fetch_http_local_fixture() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let url = format!("{}/", fixture.base_url);
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": url}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains(&fixture.base_url), "response must reference the domain");
-    // The extracted content must contain real text from the page
-    assert!(
-        text.to_lowercase().contains("elie"),
-        "page content must contain 'elie': {text}"
-    );
-}
-
-#[tokio::test]
-async fn integration_grep_http_local_fixture_finds_matches() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "grep_http",
-        &serde_json::json!({"url": format!("{}/", fixture.base_url), "pattern": "elie"}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "grep should succeed");
-    let text = extract_tool_text(&resp);
-    // Must NOT say "Matches found: 0"
-    assert!(
-        !text.contains("Matches found: 0"),
-        "grep_http must find 'elie' on the local fixture but got 0 matches: {text}"
-    );
-    assert!(
-        text.contains("Match 1"),
-        "grep_http must have at least one match block: {text}"
-    );
-}
-
-#[tokio::test]
-async fn integration_grep_http_blocked_domain() {
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "grep_http",
-        &serde_json::json!({
-            "url": "https://evil-unknown-domain.xyz",
-            "pattern": "test"
-        }),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(is_tool_error(&resp), "blocked domain must return isError");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.to_lowercase().contains("blocked"),
-        "error must mention 'blocked': {text}"
-    );
-}
-
-#[tokio::test]
-async fn integration_http_headers_local_fixture() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "http_headers",
-        &serde_json::json!({"url": format!("{}/", fixture.base_url)}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "http_headers should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains("Status: 200"), "must return a valid HTTP status: {text}");
-    assert!(
-        text.to_lowercase().contains("content-type"),
-        "must include content-type header: {text}"
-    );
-    assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
-}
-
-#[tokio::test]
-async fn integration_fetch_http_blocked_domain() {
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": "https://evil-unknown-domain.xyz"}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(is_tool_error(&resp), "blocked domain must return isError");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.to_lowercase().contains("blocked"),
-        "error must mention 'blocked': {text}"
-    );
-}
-
-#[tokio::test]
-async fn integration_http_headers_blocked_domain() {
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "http_headers",
-        &serde_json::json!({"url": "https://evil-unknown-domain.xyz"}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(is_tool_error(&resp), "blocked domain must return isError");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.to_lowercase().contains("blocked"),
-        "error must mention 'blocked': {text}"
-    );
-}
-
-// -----------------------------------------------------------------------
-// Fixture-based HTML extraction tests
-// -----------------------------------------------------------------------
-
 fn load_fixture(name: &str) -> String {
     let path = format!(
         "{}/tests/fixtures/mcp/html/{name}",
         env!("CARGO_MANIFEST_DIR").replace("/crates/capsem-core", "")
     );
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to load fixture {path}: {e}"))
-}
-
-#[test]
-fn extract_elie_about_has_real_content() {
-    let html = load_fixture("elie_about.html");
-    let text = extract_text_from_html(&html);
-    assert!(
-        text.contains("Bursztein"),
-        "must contain 'Bursztein': {}",
-        &text[..200.min(text.len())]
-    );
-    assert!(text.contains("Google"), "must contain 'Google'");
-    assert!(text.to_lowercase().contains("security"), "must contain 'security'");
-    assert!(text.contains("Stanford"), "must contain 'Stanford'");
-    assert!(text.len() > 3000, "extracted text too short: {} chars", text.len());
-    assert!(!text.contains("<script"), "must not contain script tags");
-    assert!(!text.contains("<style"), "must not contain style tags");
-    assert!(!text.contains("function()"), "must not contain JS code");
-}
-
-#[test]
-fn extract_wiki_turing_has_real_content() {
-    let html = load_fixture("wiki_turing_excerpt.html");
-    let text = extract_text_from_html(&html);
-    assert!(
-        text.contains("Turing"),
-        "must contain 'Turing': {}",
-        &text[..200.min(text.len())]
-    );
-    assert!(!text.contains("<script"), "no script leakage");
-    assert!(!text.contains("<style"), "no style leakage");
-}
-
-#[test]
-fn extract_wiki_rust_has_real_content() {
-    let html = load_fixture("wiki_rust_excerpt.html");
-    let text = extract_text_from_html(&html);
-    assert!(
-        text.contains("Rust"),
-        "must contain 'Rust': {}",
-        &text[..200.min(text.len())]
-    );
-    assert!(!text.contains("<script"), "no script leakage");
-}
-
-#[test]
-fn extract_wiki_unicode_preserves_multibyte() {
-    let html = load_fixture("wiki_unicode_excerpt.html");
-    let text = extract_text_from_html(&html);
-    // Fixture is from the middle of the article, may or may not have "Unicode"
-    // but must have valid UTF-8 with multi-byte chars
-    assert!(text.is_char_boundary(0), "valid UTF-8 start");
-    assert!(text.is_char_boundary(text.len()), "valid UTF-8 end");
-    let multibyte_count = text.chars().filter(|c| c.len_utf8() > 1).count();
-    assert!(multibyte_count > 0, "must contain multi-byte chars, got 0");
-    assert!(!text.contains("<script"), "no script leakage");
-}
-
-// -----------------------------------------------------------------------
-// Fixture-based paginate tests (UTF-8 edge cases)
-// -----------------------------------------------------------------------
-
-#[test]
-fn paginate_multibyte_emoji_boundary() {
-    // Emoji are 4-byte UTF-8
-    let text = "Hello \u{1F600} World"; // "Hello [grinning face] World"
-                                        // emoji starts at byte 6 ("Hello " = 6 bytes)
-                                        // Set max to land mid-emoji (byte 7 or 8)
-    let (chunk, _total, has_more) = paginate(text, 0, 7);
-    assert!(has_more, "should have more content");
-    // chunk must end at a valid char boundary
-    assert!(chunk.is_char_boundary(chunk.len()), "chunk must end at char boundary");
-    // Should include "Hello " but not the emoji (can't fit 4 bytes after byte 6)
-    assert_eq!(chunk, "Hello ", "should stop before emoji: {chunk:?}");
-}
-
-#[test]
-fn paginate_multibyte_cyrillic() {
-    // Cyrillic chars are 2-byte UTF-8
-    let text = "\u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}"; // "Privet" in Cyrillic
-    assert_eq!(text.len(), 12); // 6 chars * 2 bytes each
-                                // Start at byte 1 (mid-char) -- should align to byte 0
-    let (chunk, _total, _) = paginate(text, 1, 100);
-    assert!(!chunk.is_empty(), "should produce content");
-    // Start at byte 3 (mid-char) -- should align to byte 2
-    let (chunk, _, _) = paginate(text, 3, 4);
-    assert!(chunk.is_char_boundary(0), "chunk start must be char boundary");
-    assert!(chunk.is_char_boundary(chunk.len()), "chunk end must be char boundary");
-}
-
-#[test]
-fn paginate_start_index_mid_char() {
-    // 3-byte UTF-8 char: euro sign
-    let text = "A\u{20AC}B"; // "A[euro]B" = 1 + 3 + 1 = 5 bytes
-                             // start_index=2 is mid-euro-sign
-    let (chunk, _, _) = paginate(text, 2, 100);
-    // Should align to byte 1 (start of euro) or byte 4 (after euro)
-    // floor_char_boundary(2) on "A\u{20AC}B" -> byte 1 (start of euro sign)
-    assert!(
-        chunk.contains('\u{20AC}') || chunk.contains('B'),
-        "mid-char start should align to valid boundary: {chunk:?}"
-    );
-}
-
-#[test]
-fn paginate_real_wiki_unicode_content() {
-    let html = load_fixture("wiki_unicode_excerpt.html");
-    let text = extract_text_from_html(&html);
-    // Paginate in small chunks to guarantee multi-byte boundary hits
-    let mut collected = String::new();
-    let mut offset = 0;
-    let chunk_size = 100;
-    loop {
-        let (chunk, _total, has_more) = paginate(&text, offset, chunk_size);
-        collected.push_str(&chunk);
-        if !has_more {
-            break;
-        }
-        offset += chunk.len();
-    }
-    assert_eq!(collected, text, "round-trip pagination must reconstruct original text");
-}
-
-#[test]
-fn paginate_continuation_round_trip() {
-    // Mixed ASCII + multi-byte text
-    let text = "Hello \u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} World \u{1F600} end";
-    let mut collected = String::new();
-    let mut offset = 0;
-    let chunk_size = 5; // very small to hit many boundaries
-    loop {
-        let (chunk, _total, has_more) = paginate(text, offset, chunk_size);
-        collected.push_str(&chunk);
-        if !has_more {
-            break;
-        }
-        offset += chunk.len();
-    }
-    assert_eq!(collected, text, "round-trip must match: {collected:?} vs {text:?}");
-}
-
-// -----------------------------------------------------------------------
-// Fixture-based grep tests
-// -----------------------------------------------------------------------
-
-#[test]
-fn grep_elie_about_finds_bursztein() {
-    let html = load_fixture("elie_about.html");
-    let text = extract_text_from_html(&html);
-    let count = text.matches("Bursztein").count();
-    assert!(count > 0, "must find 'Bursztein' in extracted text");
-    // Cross-check with regex (same as grep_http uses)
-    let re = regex::Regex::new("(?i)Bursztein").unwrap();
-    let lines: Vec<&str> = text.lines().collect();
-    let line_matches = lines.iter().filter(|l| re.is_match(l)).count();
-    assert!(line_matches > 0, "regex must find matches too");
-}
-
-#[test]
-fn grep_wiki_turing_finds_turing() {
-    let html = load_fixture("wiki_turing_excerpt.html");
-    let text = extract_text_from_html(&html);
-    let count = text.matches("Turing").count();
-    assert!(count > 0, "must find 'Turing' in extracted text, got 0");
-}
-
-#[test]
-fn grep_wiki_unicode_finds_pattern() {
-    let html = load_fixture("wiki_unicode_excerpt.html");
-    let text = extract_text_from_html(&html);
-    // The fixture is from the middle, so look for any content
-    assert!(!text.is_empty(), "extracted text must not be empty");
-    // Test regex mode on the extracted text
-    let re = regex::Regex::new(r"\w+").unwrap();
-    let match_count = text.lines().filter(|l| re.is_match(l)).count();
-    assert!(match_count > 0, "must find word-char matches");
-}
-
-// -----------------------------------------------------------------------
-// Fixture-based raw mode tests
-// -----------------------------------------------------------------------
-
-#[test]
-fn raw_vs_content_mode_differ() {
-    let html = load_fixture("elie_about.html");
-    let content_mode = extract_text_from_html(&html);
-    let raw_mode = &html; // raw returns the HTML as-is
-                          // Raw is longer (has all HTML tags)
-    assert!(
-        raw_mode.len() > content_mode.len(),
-        "raw ({}) should be longer than content ({})",
-        raw_mode.len(),
-        content_mode.len()
-    );
-    // Content mode has no HTML tags
-    assert!(!content_mode.contains("<script"), "content mode must strip scripts");
-    assert!(!content_mode.contains("<div"), "content mode must strip div tags");
-    // Raw mode has HTML tags
-    assert!(
-        raw_mode.contains("<script") || raw_mode.contains("<div"),
-        "raw mode should preserve HTML tags"
-    );
-}
-
-#[test]
-fn raw_mode_paginate_works_on_html() {
-    let html = load_fixture("elie_about.html");
-    let (chunk, total, has_more) = paginate(&html, 0, 5000);
-    assert!(has_more, "190KB HTML should need pagination at 5KB");
-    assert_eq!(total, html.len());
-    assert!(chunk.len() <= 5000, "chunk must respect max_length");
-    // Round-trip
-    let mut collected = String::new();
-    let mut offset = 0;
-    loop {
-        let (c, _, more) = paginate(&html, offset, 10000);
-        collected.push_str(&c);
-        if !more {
-            break;
-        }
-        offset += c.len();
-    }
-    assert_eq!(collected, html, "raw HTML pagination round-trip must match");
-}
-
-// -----------------------------------------------------------------------
-// Fixture-based markdown extraction tests
-// -----------------------------------------------------------------------
-
-#[test]
-fn markdown_elie_about_has_structure() {
-    let html = load_fixture("elie_about.html");
-    let md = extract_markdown_from_html(&html);
-    // Must contain key content
-    assert!(md.contains("Bursztein"), "must contain 'Bursztein'");
-    assert!(md.contains("Google"), "must contain 'Google'");
-    // Must have markdown headings
-    assert!(md.contains("# ") || md.contains("## "), "must have markdown headings");
-    // Must have markdown links
-    assert!(md.contains("]("), "must have markdown links [text](url)");
-    // Must NOT contain script/style content
-    assert!(!md.contains("<script"), "must not contain script tags");
-    assert!(!md.contains("<style"), "must not contain style tags");
-}
-
-#[test]
-fn markdown_preserves_headings() {
-    let html = "<h1>Title</h1><h2>Subtitle</h2><p>Body text</p>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("# Title"), "h1 -> '# Title', got: {md:?}");
-    assert!(md.contains("## Subtitle"), "h2 -> '## Subtitle', got: {md:?}");
-    assert!(md.contains("Body text"), "body preserved");
-}
-
-#[test]
-fn markdown_preserves_links() {
-    let html = r#"<a href="https://example.com">Example</a>"#;
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("[Example](https://example.com)"), "link preserved: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_bold_italic() {
-    let html = "<strong>Bold</strong> and <em>Italic</em>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("**Bold**"), "bold preserved: {md:?}");
-    assert!(md.contains("_Italic_"), "italic preserved: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_lists() {
-    let html = "<ul><li>One</li><li>Two</li></ul>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("- One"), "unordered list: {md:?}");
-    assert!(md.contains("- Two"), "unordered list: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_ordered_lists() {
-    let html = "<ol><li>First</li><li>Second</li></ol>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("1. First"), "ordered list: {md:?}");
-    assert!(md.contains("2. Second"), "ordered list: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_code() {
-    let html = "<code>let x = 1;</code>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("`let x = 1;`"), "inline code: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_code_blocks() {
-    let html = "<pre><code>fn main() {}</code></pre>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("```"), "code block fencing: {md:?}");
-    assert!(md.contains("fn main()"), "code block content: {md:?}");
-}
-
-#[test]
-fn markdown_preserves_blockquotes() {
-    let html = "<blockquote>A wise quote</blockquote>";
-    let md = extract_markdown_from_html(html);
-    assert!(md.contains("> A wise quote"), "blockquote: {md:?}");
-}
-
-#[test]
-fn markdown_vs_content_mode() {
-    let html = r#"<h1>Title</h1><p>Text with <a href="/link">link</a> and <strong>bold</strong>.</p>"#;
-    let md = extract_markdown_from_html(html);
-    let text = extract_text_from_html(html);
-    // Markdown has structure markers
-    assert!(md.contains("# Title"), "markdown has heading marker");
-    assert!(md.contains("](/link)"), "markdown has link");
-    assert!(md.contains("**bold**"), "markdown has bold");
-    // Plain text has no markers
-    assert!(!text.contains("# "), "text has no heading markers");
-    assert!(!text.contains("]("), "text has no link markers");
-    assert!(!text.contains("**"), "text has no bold markers");
-    // Both have the actual content
-    assert!(text.contains("Title"), "text has title");
-    assert!(text.contains("bold"), "text has bold word");
-}
-
-#[test]
-fn markdown_wiki_turing_has_structure() {
-    let html = load_fixture("wiki_turing_excerpt.html");
-    let md = extract_markdown_from_html(&html);
-    assert!(md.contains("Turing"), "must contain 'Turing'");
-    assert!(!md.contains("<script"), "no script leakage");
-    // Wikipedia articles have links
-    assert!(md.contains("]("), "must have markdown links");
-}
-
-// -----------------------------------------------------------------------
-// Integration tests -- local /about fixture
-// -----------------------------------------------------------------------
-
-#[tokio::test]
-async fn integration_fetch_http_local_about() {
-    // Default format is markdown
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("Bursztein"),
-        "must contain 'Bursztein': {}",
-        &text[..300.min(text.len())]
-    );
-    assert!(text.contains("Google"), "must contain 'Google'");
-    // Default is markdown -- should have structure markers
-    assert!(
-        text.contains("](") || text.contains("# "),
-        "default mode should return markdown with links or headings"
-    );
-    // Verify substantial content (not just 93 bytes)
-    let content_line = text.lines().find(|l| l.starts_with("Content length:"));
-    if let Some(cl) = content_line {
-        let len: usize = cl.trim_start_matches("Content length: ").parse().unwrap_or(0);
-        assert!(len > 3000, "content length must be substantial, got {len}");
-    }
-}
-
-#[tokio::test]
-async fn integration_fetch_http_local_about_content_mode() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "content"}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch content should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
-    // Content mode: no markdown markers
-    assert!(!text.contains("]("), "content mode must not have markdown links");
-    assert!(!text.contains("**"), "content mode must not have bold markers");
-}
-
-#[tokio::test]
-async fn integration_fetch_http_local_about_raw() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "raw", "max_length": 50000}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch raw should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("<div") || text.contains("<p"),
-        "raw mode must preserve HTML tags"
-    );
-    assert!(text.contains("Bursztein"), "must contain 'Bursztein'");
-}
-
-#[tokio::test]
-async fn integration_grep_http_local_about() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "grep_http",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url), "pattern": "Bursztein"}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "grep should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(!text.contains("Matches found: 0"), "must find matches: {text}");
-    assert!(text.contains("Match 1"), "must have at least one match block");
-}
-
-#[tokio::test]
-async fn integration_fetch_http_local_about_pagination() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url), "max_length": 500}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(
-        text.contains("start_index="),
-        "must have pagination hint for large page"
-    );
-}
-
-#[tokio::test]
-async fn integration_http_headers_local_about() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "http_headers",
-        &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "http_headers should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains("Status: 200"), "must return 200: {text}");
-    assert!(
-        text.to_lowercase().contains("content-type"),
-        "must include content-type"
-    );
-    assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
-}
-
-// -----------------------------------------------------------------------
-// Integration tests -- local wiki-shaped fixtures
-// -----------------------------------------------------------------------
-
-#[tokio::test]
-async fn integration_fetch_http_local_wiki_turing() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({
-            "url": format!("{}/wiki/Alan_Turing", fixture.base_url),
-            "max_length": 5000
-        }),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains("Turing"), "must contain 'Turing'");
-}
-
-#[tokio::test]
-async fn integration_grep_http_local_wiki_rust_finds_mozilla() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "grep_http",
-        &serde_json::json!({
-            "url": format!("{}/wiki/Rust_(programming_language)", fixture.base_url),
-            "pattern": "Mozilla"
-        }),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "grep should succeed");
-    let text = extract_tool_text(&resp);
-    assert!(!text.contains("Matches found: 0"), "must find Mozilla matches");
-}
-
-#[tokio::test]
-async fn integration_fetch_http_local_wiki_unicode_multibyte() {
-    let fixture = spawn_builtin_http_fixture().await;
-    let client = test_client();
-    let rules = default_dev_security_rules();
-    let resp = call_builtin_tool(
-        "fetch_http",
-        &serde_json::json!({
-            "url": format!("{}/wiki/Unicode", fixture.base_url),
-            "max_length": 5000
-        }),
-        &client,
-        &rules,
-        &BTreeMap::new(),
-        Some(serde_json::json!(1)),
-        &test_db(),
-    )
-    .await;
-    assert!(!is_tool_error(&resp), "fetch should succeed (no panic from multi-byte)");
-    let text = extract_tool_text(&resp);
-    assert!(text.contains("Unicode"), "must contain 'Unicode'");
 }

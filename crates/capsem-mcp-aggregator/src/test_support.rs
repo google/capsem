@@ -145,6 +145,84 @@ impl ServerHandler for DuplicateToolMcpHandler {
     }
 }
 
+/// A server whose only tool never answers until the client cancels it, then
+/// records that it saw the cancellation.
+#[derive(Debug, Clone)]
+struct HangingMcpHandler {
+    state: RecordingMcpState,
+}
+
+impl ServerHandler for HangingMcpHandler {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + MaybeSendFuture + '_ {
+        std::future::ready(Ok(ListToolsResult {
+            tools: vec![Tool::new("hang", "never answers", Arc::new(Default::default()))],
+            ..Default::default()
+        }))
+    }
+
+    fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::CallToolResult, rmcp::ErrorData>> + MaybeSendFuture + '_ {
+        let state = self.state.clone();
+        async move {
+            context.ct.cancelled().await;
+            state
+                .tool_calls
+                .lock()
+                .expect("MCP tool recorder poisoned")
+                .push(RecordedMcpToolCall {
+                    tool: format!("{}:cancelled", request.name),
+                    arguments: serde_json::Value::Null,
+                });
+            Err(rmcp::ErrorData::internal_error("cancelled", None))
+        }
+    }
+}
+
+pub(crate) async fn spawn_hanging_mcp_server() -> anyhow::Result<LocalMcpServer> {
+    let state = RecordingMcpState::default();
+    let handler_state = state.clone();
+    let shutdown = CancellationToken::new();
+    let service: StreamableHttpService<HangingMcpHandler, LocalSessionManager> = StreamableHttpService::new(
+        move || {
+            Ok(HangingMcpHandler {
+                state: handler_state.clone(),
+            })
+        },
+        Default::default(),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+    let router = Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let handle = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+    Ok(LocalMcpServer {
+        url: format!("http://{addr}/mcp"),
+        state,
+        shutdown,
+        handle,
+    })
+}
+
 pub(crate) async fn spawn_recording_mcp_server() -> anyhow::Result<LocalMcpServer> {
     let state = RecordingMcpState::default();
     let handler_state = state.clone();

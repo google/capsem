@@ -1,6 +1,6 @@
 //! Metadata FUSE operations: INIT, LOOKUP, GETATTR, SETATTR, STATFS, FORGET.
 
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -114,14 +114,32 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        // Attributes are set on the inode itself, never on what a guest
+        // symlink points at: the parent path must be contained and every
+        // syscall below is the no-follow variant. chmod has none on Linux, so
+        // a mode change on a symlink is refused rather than applied elsewhere.
+        if !self.inodes.is_contained_entry(&path) {
+            return fuse::error_response(header.unique, -libc::EACCES);
+        }
+        let is_symlink = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink());
 
         if attr_in.valid & FATTR_MODE != 0 {
+            if is_symlink {
+                return fuse::error_response(header.unique, -libc::EPERM);
+            }
             if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode)) {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }
         if attr_in.valid & FATTR_SIZE != 0 {
-            let file = match std::fs::OpenOptions::new().write(true).open(&path) {
+            if let Err(errno) = super::ops_file::require_regular_file(&path) {
+                return fuse::error_response(header.unique, -errno);
+            }
+            let file = match std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(super::ops_file::NO_FOLLOW_FLAGS)
+                .open(&path)
+            {
                 Ok(f) => f,
                 Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
             };
@@ -144,7 +162,7 @@ impl FuseProcessor {
                 Ok(c) => c,
                 Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
             };
-            if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
+            if unsafe { libc::lchown(c_path.as_ptr(), uid, gid) } != 0 {
                 return fuse::error_response(header.unique, -fuse::errno());
             }
         }
@@ -179,7 +197,15 @@ impl FuseProcessor {
                     },
                 },
             ];
-            if unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) } != 0 {
+            if unsafe {
+                libc::utimensat(
+                    libc::AT_FDCWD,
+                    c_path.as_ptr(),
+                    times.as_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } != 0
+            {
                 return fuse::error_response(header.unique, -fuse::errno());
             }
         }

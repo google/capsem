@@ -3,10 +3,8 @@
 Tests startup, shutdown, and restart behavior of the gateway binary.
 """
 
-import json
 import os
 import signal
-import subprocess
 import time
 
 import pytest
@@ -99,12 +97,7 @@ class TestGatewayLifecycle:
 
             # Now point won't help since the UDS path is baked in,
             # but we verify the gateway is still responsive
-            result = subprocess.run(
-                ["curl", "-s", "--max-time", "5",
-                 f"http://127.0.0.1:{gw.port}/"],
-                capture_output=True, text=True, timeout=10,
-            )
-            data = json.loads(result.stdout)
+            _, data = TcpHttpClient(gw.base_url, gw.token).call_json("GET", "/", use_auth=False)
             assert data["ok"] is True, "gateway should still be healthy even if service is down"
         finally:
             gw.stop()

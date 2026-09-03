@@ -19,12 +19,14 @@ pub mod hooks;
 pub mod interpreter_hook;
 mod mcp_endpoint;
 mod mcp_frame;
+mod mcp_observe;
 pub mod metrics;
 pub mod pipeline;
 pub mod protocol;
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
+mod upgrade;
 mod util;
 
 use std::mem::ManuallyDrop;
@@ -44,8 +46,7 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
 
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write, McpSecurityEvent,
-    RuntimeSecurityEventType,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, RuntimeSecurityEventType,
 };
 
 trait TokioReadWrite: AsyncRead + AsyncWrite {}
@@ -58,6 +59,7 @@ use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKi
 use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
+use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
 use util::{
@@ -279,135 +281,6 @@ fn should_sniff_unknown_model_body(
     len <= AI_BODY_CAPTURE_LIMIT
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ObservedMcpHttpRequest {
-    method: String,
-    server_name: String,
-    tool_name: Option<String>,
-    request_id: Option<String>,
-    request_preview: Option<String>,
-    bytes_sent: u64,
-}
-
-impl ObservedMcpHttpRequest {
-    fn event_type(&self) -> RuntimeSecurityEventType {
-        runtime_mcp_event_type(&self.method)
-    }
-
-    fn security_event(&self, tool_list: Option<String>, response_preview: Option<&str>) -> SecurityEvent {
-        let event = SecurityEvent::new(self.event_type()).with_mcp(
-            McpSecurityEvent {
-                method: Some(self.method.clone()),
-                server_name: Some(self.server_name.clone()),
-                tool_call_name: self.tool_name.clone(),
-                tool_list,
-                ..Default::default()
-            }
-            .with_request_preview(self.request_preview.as_deref())
-            .with_response_preview(response_preview),
-        );
-        match capsem_foundation::telemetry::ambient_capsem_trace_id() {
-            Some(trace_id) => event.with_trace_id(trace_id),
-            None => event,
-        }
-    }
-}
-
-fn should_sniff_mcp_http_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
-    if !matches!(*method, http::Method::POST | http::Method::PUT | http::Method::PATCH) {
-        return false;
-    }
-    let is_json = headers
-        .get(http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_ascii_lowercase().contains("json"))
-        .unwrap_or(false);
-    if !is_json {
-        return false;
-    }
-    let Some(len) = headers
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok())
-    else {
-        return false;
-    };
-    len <= MCP_BODY_CAPTURE_LIMIT
-}
-
-fn observed_mcp_http_request_for_body(
-    body: &[u8],
-    domain: &str,
-    upstream_port: u16,
-    path: &str,
-) -> Option<ObservedMcpHttpRequest> {
-    if body.len() > MCP_BODY_CAPTURE_LIMIT {
-        return None;
-    }
-    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let obj = json.as_object()?;
-    if obj.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
-        return None;
-    }
-    let method = obj.get("method").and_then(|value| value.as_str())?;
-    if !is_mcp_json_rpc_method(method) {
-        return None;
-    }
-    let request_id = obj.get("id").and_then(json_rpc_id_to_log_string);
-    let params = obj.get("params").and_then(|value| value.as_object());
-    let tool_name = if method == "tools/call" {
-        params
-            .and_then(|params| params.get("name"))
-            .and_then(|value| value.as_str())
-            .map(str::to_string)
-    } else {
-        None
-    };
-    Some(ObservedMcpHttpRequest {
-        method: method.to_string(),
-        server_name: observed_mcp_server_name(domain, upstream_port, path),
-        tool_name,
-        request_id,
-        request_preview: Some(String::from_utf8_lossy(body).to_string()),
-        bytes_sent: body.len() as u64,
-    })
-}
-
-fn is_mcp_json_rpc_method(method: &str) -> bool {
-    matches!(
-        method,
-        "initialize"
-            | "notifications/initialized"
-            | "tools/list"
-            | "tools/call"
-            | "resources/list"
-            | "resources/read"
-            | "prompts/list"
-            | "prompts/get"
-    )
-}
-
-fn runtime_mcp_event_type(method: &str) -> RuntimeSecurityEventType {
-    match method {
-        "tools/call" => RuntimeSecurityEventType::McpToolCall,
-        "tools/list" => RuntimeSecurityEventType::McpToolList,
-        _ => RuntimeSecurityEventType::McpEvent,
-    }
-}
-
-fn observed_mcp_server_name(domain: &str, upstream_port: u16, path: &str) -> String {
-    format!("observed:{domain}:{upstream_port}{path}")
-}
-
-fn json_rpc_id_to_log_string(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(id) => Some(id.clone()),
-        serde_json::Value::Number(id) => Some(id.to_string()),
-        serde_json::Value::Null => Some("null".to_string()),
-        _ => serde_json::to_string(value).ok(),
-    }
-}
-
 fn body_capture_limit(
     ai_provider: Option<ProviderKind>,
     domain: &str,
@@ -574,6 +447,27 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
 
 /// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
 /// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
+/// Deadline for each pre-classification read from a freshly-accepted guest
+/// connection. The guest is the adversary here: one that connects and then
+/// stalls without sending a ClientHello must not pin the handler task and its
+/// ACTIVE_CONNECTIONS slot indefinitely (slowloris).
+const CLASSIFY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Read from a guest stream with a deadline, mapping a timeout to a TimedOut
+/// io error so the caller tears the connection down instead of blocking.
+async fn classify_read<S>(stream: &mut S, buf: &mut [u8], timeout: std::time::Duration) -> std::io::Result<usize>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
+    match tokio::time::timeout(timeout, tokio::io::AsyncReadExt::read(stream, buf)).await {
+        Ok(result) => result,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "guest did not send classification bytes before the deadline",
+        )),
+    }
+}
+
 async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     // Wrap vsock fd in a non-owning async stream.
     let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
@@ -594,7 +488,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
 
     // 1. Read initial bytes (TLS ClientHello + potential metadata).
     let mut initial_buf = vec![0u8; MAX_HELLO_SIZE];
-    let n = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut initial_buf)
+    let n = classify_read(&mut vsock_stream, &mut initial_buf, CLASSIFY_READ_TIMEOUT)
         .instrument(classify_span.clone())
         .await
         .map_err(|e| {
@@ -625,7 +519,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
                 return Err((String::new(), Decision::Error, "metadata exceeded 4KB limit".into()));
             }
             let mut more = vec![0u8; 1024];
-            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut more)
+            let n2 = classify_read(&mut vsock_stream, &mut more, CLASSIFY_READ_TIMEOUT)
                 .instrument(classify_span.clone())
                 .await
                 .map_err(|e| {
@@ -643,7 +537,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
         // the wire payload (TLS ClientHello or HTTP request line).
         if initial_buf.is_empty() {
             let mut hello_buf = vec![0u8; MAX_HELLO_SIZE];
-            let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut hello_buf)
+            let n2 = classify_read(&mut vsock_stream, &mut hello_buf, CLASSIFY_READ_TIMEOUT)
                 .instrument(classify_span.clone())
                 .await
                 .map_err(|e| {
@@ -664,7 +558,7 @@ async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<
     // hypervisor boundary, pull just enough bytes for the classifier.
     while initial_buf.first() == Some(&0) && initial_buf.len() < 6 {
         let mut more = vec![0u8; 6 - initial_buf.len()];
-        let n2 = tokio::io::AsyncReadExt::read(&mut vsock_stream, &mut more)
+        let n2 = classify_read(&mut vsock_stream, &mut more, CLASSIFY_READ_TIMEOUT)
             .instrument(classify_span.clone())
             .await
             .map_err(|e| {
@@ -753,10 +647,17 @@ async fn serve_tls(
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let tls_stream = acceptor
-        .accept(replay)
+    // The handshake reads the rest of the ClientHello from the guest; a guest
+    // that sends one record byte and stalls must not hold the slot forever.
+    let tls_stream = tokio::time::timeout(CLASSIFY_READ_TIMEOUT, acceptor.accept(replay))
         .instrument(tls_span.clone())
         .await
+        .unwrap_or_else(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "guest TLS handshake stalled",
+            ))
+        })
         .map_err(|e| {
             tls_span.record("status", "error");
             tls_span.record("error_kind", "guest_tls_handshake");
@@ -861,7 +762,11 @@ async fn serve_pipeline<IO>(
         }
     });
 
+    // hyper's header read timeout only exists when the builder has a timer;
+    // without one a guest sending `G` and stalling pinned the task forever.
     if let Err(e) = hyper::server::conn::http1::Builder::new()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(CLASSIFY_READ_TIMEOUT)
         .serve_connection(io, svc)
         .with_upgrades()
         .await
@@ -1022,7 +927,6 @@ async fn handle_request(
     let req_hdrs = formatted_req_headers.formatted;
     let credential_observations = formatted_req_headers.observations;
     let credential_ref = formatted_req_headers.credential_ref;
-    let mut credential_injections = Vec::new();
     let mut request_security_decision = SecurityBoundaryDecisionFields::default();
     let matched_rule = "security.http.default".to_string();
 
@@ -1060,211 +964,34 @@ async fn handle_request(
     };
 
     if is_upgrade {
-        let original_headers = parts.headers.clone();
-        let original_method = parts.method.clone();
-        let client_upgrade = client_upgrade.expect("websocket upgrade captured before split");
-
-        let ws_span = tracing::debug_span!(
-            target: "capsem.mitm",
-            spans::MITM_WEBSOCKET,
-            protocol = protocol.label(),
-            provider = provider_label(ai_provider),
-            decision = tracing::field::Empty,
-            status = tracing::field::Empty,
-            error_kind = tracing::field::Empty,
-        );
-        let make_ws_error = |error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
-            let body_text = format!("Capsem: websocket upstream error ({error})\n");
-            let req_ctx = TelemetryRequestContext {
-                domain: domain.to_string(),
-                process_name: process_name.clone(),
+        // Boxed: the tunnel branch is large and rarely taken, and it must not
+        // widen the future of every plain request on the connection task.
+        return Box::pin(upgrade::handle_upgrade(
+            upgrade::UpgradeRequest {
+                parts: &parts,
+                client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
+                domain,
+                protocol,
+                upstream_port,
+                upstream_tls,
+                config,
+                process_name,
+                policy: &policy,
                 ai_provider,
                 ai_protocol,
-                model_traffic: false,
                 method: method.clone(),
                 path: path.clone(),
                 query: query.clone(),
-                status_code: Some(502),
-                decision: Decision::Denied,
-                matched_rule: Some(matched_rule.clone()),
-                request_headers: Some(req_hdrs.clone()),
-                response_headers: None,
+                req_hdrs: req_hdrs.clone(),
+                matched_rule: matched_rule.clone(),
                 start_time,
-                request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-                max_response_body_capture: 0,
-                port: upstream_port,
                 conn_type,
-                policy_mode: request_security_decision.policy_mode.clone(),
-                policy_action: request_security_decision.policy_action.clone(),
-                policy_rule: request_security_decision.policy_rule.clone(),
-                policy_reason: request_security_decision.policy_reason.clone(),
                 credential_ref: credential_ref.clone(),
                 credential_observations: credential_observations.clone(),
-                credential_injections: Vec::new(),
-            };
-            let body = Full::new(Bytes::from(body_text))
-                .map_err(|never| match never {})
-                .boxed();
-            hyper::Response::builder()
-                .status(http::StatusCode::BAD_GATEWAY)
-                .body(seal_with_telemetry(body, req_ctx, ai_provider, ai_protocol))
-                .unwrap()
-        };
-
-        let dial_target = format!("{domain}:{upstream_port}");
-        let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
-            .instrument(ws_span.clone())
-            .await
-        {
-            Ok(stream) => stream,
-            Err(error) => {
-                ws_span.record("decision", "error");
-                ws_span.record("status", "error");
-                ws_span.record("error_kind", "upstream_tcp_connect");
-                return Ok(make_ws_error(&error));
-            }
-        };
-
-        let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match protocol {
-            Protocol::Tls => {
-                let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
-                let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
-                    Ok(sn) => sn,
-                    Err(error) => {
-                        ws_span.record("decision", "error");
-                        ws_span.record("status", "error");
-                        ws_span.record("error_kind", "upstream_server_name");
-                        return Ok(make_ws_error(&error));
-                    }
-                };
-                match connector.connect(server_name, upstream_tcp).await {
-                    Ok(tls) => TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>),
-                    Err(error) => {
-                        ws_span.record("decision", "error");
-                        ws_span.record("status", "error");
-                        ws_span.record("error_kind", "upstream_tls_handshake");
-                        return Ok(make_ws_error(&error));
-                    }
-                }
-            }
-            Protocol::Http => TokioIo::new(Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>),
-            Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP upstream dial"),
-            Protocol::Unknown => unreachable!("handle_inner gates Unknown earlier"),
-        };
-
-        let (mut sender, conn) = match hyper::client::conn::http1::handshake(upstream_io)
-            .instrument(ws_span.clone())
-            .await
-        {
-            Ok(pair) => pair,
-            Err(error) => {
-                ws_span.record("decision", "error");
-                ws_span.record("status", "error");
-                ws_span.record("error_kind", "upstream_http_handshake");
-                return Ok(make_ws_error(&error));
-            }
-        };
-        tokio::spawn(async move {
-            let _ = conn.with_upgrades().await;
-        });
-
-        let full_path = match &query {
-            Some(q) => format!("{path}?{q}"),
-            None => path.clone(),
-        };
-        let mut builder = hyper::Request::builder().method(original_method).uri(&full_path);
-        for (name, value) in original_headers.iter() {
-            let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
-            if drop_host {
-                continue;
-            }
-            builder = builder.header(name.clone(), value.clone());
-        }
-        if matches!(protocol, Protocol::Tls) {
-            builder = builder.header("host", domain);
-        }
-        let upstream_req = builder.body(
-            http_body_util::Empty::<Bytes>::new()
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )?;
-
-        let mut upstream_resp = match sender.send_request(upstream_req).instrument(ws_span.clone()).await {
-            Ok(response) => response,
-            Err(error) => {
-                ws_span.record("decision", "error");
-                ws_span.record("status", "error");
-                ws_span.record("error_kind", "upstream_send_request");
-                return Ok(make_ws_error(&error));
-            }
-        };
-        let status_code = upstream_resp.status().as_u16();
-        let upstream_upgrade = if upstream_resp.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-            Some(hyper::upgrade::on(&mut upstream_resp))
-        } else {
-            None
-        };
-        let (resp_parts, _resp_body) = upstream_resp.into_parts();
-        if let Some(upstream_upgrade) = upstream_upgrade {
-            let tunnel_span = ws_span.clone();
-            tokio::spawn(async move {
-                let result = async move {
-                    let mut client = TokioIo::new(client_upgrade.await?);
-                    let mut upstream = TokioIo::new(upstream_upgrade.await?);
-                    tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
-                    Ok::<(), anyhow::Error>(())
-                }
-                .instrument(tunnel_span.clone())
-                .await;
-                match result {
-                    Ok(()) => {
-                        tunnel_span.record("decision", "allow");
-                        tunnel_span.record("status", "ok");
-                    }
-                    Err(error) => {
-                        tunnel_span.record("decision", "error");
-                        tunnel_span.record("status", "error");
-                        tunnel_span.record("error_kind", "websocket_tunnel");
-                        warn!(error = %error, "websocket tunnel ended with error");
-                    }
-                }
-            });
-        }
-
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            ai_protocol,
-            model_traffic: false,
-            method: method.clone(),
-            path: path.clone(),
-            query: query.clone(),
-            status_code: Some(status_code),
-            decision: Decision::Allowed,
-            matched_rule: Some(matched_rule.clone()),
-            request_headers: Some(req_hdrs),
-            response_headers: Some(format_headers(&resp_parts.headers)),
-            start_time,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_body_capture: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: request_security_decision.policy_mode.clone(),
-            policy_action: request_security_decision.policy_action.clone(),
-            policy_rule: request_security_decision.policy_rule.clone(),
-            policy_reason: request_security_decision.policy_reason.clone(),
-            credential_ref: credential_ref.clone(),
-            credential_observations: credential_observations.clone(),
-            credential_injections: credential_injections.clone(),
-        };
-
-        let empty_body = Full::new(Bytes::new()).map_err(|never| match never {}).boxed();
-
-        return Ok(hyper::Response::from_parts(
-            resp_parts,
-            seal_with_telemetry(empty_body, req_ctx, ai_provider, ai_protocol),
-        ));
+            },
+            &seal_with_telemetry,
+        ))
+        .await;
     }
 
     // Save original request headers.
@@ -1484,7 +1211,7 @@ async fn handle_request(
         observations.extend(http_evaluation.event.credential_observations.clone());
         observations
     };
-    credential_injections = http_evaluation.event.credential_injections.clone();
+    let credential_injections = http_evaluation.event.credential_injections.clone();
     request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
     if !http_evaluation.enforcement.is_allowed() {
         actions_span.record("decision", http_evaluation.enforcement.action.as_str());

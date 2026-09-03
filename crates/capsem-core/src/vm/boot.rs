@@ -281,13 +281,24 @@ fn effective_kernel_cmdline_with_erofs_mode(
     cmdline
 }
 
+/// A guest control frame longer than `MAX_FRAME_SIZE`.
+///
+/// The payload has been drained, so the stream is aligned on the next frame
+/// and the reader may continue. Dropping the connection instead was a wedge:
+/// the guest never got an ack for the frame, replayed it on the fresh
+/// connection, and the host dropped that one too, for the life of the VM.
+#[derive(Debug, thiserror::Error)]
+#[error("control frame too large ({0} bytes > {MAX_FRAME_SIZE}); frame discarded")]
+pub struct ControlFrameTooLarge(pub usize);
+
 /// Read one guest-to-host control message from an fd (blocking).
 pub fn read_control_msg(file: &mut std::fs::File) -> Result<GuestToHost> {
     let mut len_buf = [0u8; 4];
     file.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_FRAME_SIZE as usize {
-        anyhow::bail!("control frame too large ({len} bytes)");
+        std::io::copy(&mut Read::by_ref(file).take(len as u64), &mut std::io::sink())?;
+        return Err(ControlFrameTooLarge(len).into());
     }
     let mut payload = vec![0u8; len];
     file.read_exact(&mut payload)?;

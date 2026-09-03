@@ -123,3 +123,23 @@ fn transmit_queue_writes_guest_output_to_console_pipe() {
     mem.read_at(used - RAM_BASE + 2, &mut used_idx).unwrap();
     assert_eq!(u16::from_le_bytes(used_idx), 1);
 }
+
+#[test]
+fn console_reset_forgets_the_transmit_queue() {
+    let (mut dev, _console) = VirtioConsoleDevice::new().unwrap();
+    let mem = crate::hypervisor::kvm::memory::GuestMemory::new(1024 * 1024).unwrap();
+    let base = crate::hypervisor::kvm::memory::RAM_BASE;
+    let queue = || QueueConfig {
+        desc_addr: base,
+        driver_addr: base + 0x100,
+        device_addr: base + 0x200,
+        size: 8,
+        warm_restore: false,
+        event_idx: false,
+    };
+    dev.activate(mem.clone_ref(base), &[queue(), queue()]);
+    assert!(dev.transmitq.is_some() && dev.mem.is_some());
+    dev.reset();
+    assert!(dev.transmitq.is_none() && dev.mem.is_none());
+    assert!(!dev.queue_notify(1), "a notify after reset has no queue to serve");
+}

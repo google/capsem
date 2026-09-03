@@ -171,39 +171,33 @@ pub(super) async fn handle_security_info(
 }
 
 pub(super) fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
-    let mut sessions = BTreeMap::new();
-    {
-        let instances = state.instances.lock().unwrap();
-        for (id, info) in instances.iter() {
-            sessions.insert(id.clone(), info.session_dir.clone());
-        }
-    }
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        for (id, entry) in registry.data.vms.iter() {
-            sessions.entry(id.clone()).or_insert_with(|| entry.session_dir.clone());
-        }
-    }
-    sessions.into_iter().collect()
+    session_dirs_for_profile(state, None)
 }
 
 pub(super) fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, PathBuf)> {
+    session_dirs_for_profile(state, Some(profile_id))
+}
+
+/// Every session the service knows, keyed by session id.
+///
+/// Registry maps are keyed by display name; a running persistent VM is also
+/// in `instances` under its session id, and only that id lets the two sources
+/// collapse into one row.
+fn session_dirs_for_profile(state: &ServiceState, profile_id: Option<&str>) -> Vec<(String, PathBuf)> {
+    let wanted = |candidate: &str| profile_id.is_none_or(|profile_id| profile_id == candidate);
     let mut sessions = BTreeMap::new();
     {
         let instances = state.instances.lock().unwrap();
-        for (id, info) in instances.iter().filter(|(_, info)| info.profile_id == profile_id) {
+        for (id, info) in instances.iter().filter(|(_, info)| wanted(&info.profile_id)) {
             sessions.insert(id.clone(), info.session_dir.clone());
         }
     }
     {
         let registry = state.persistent_registry.lock().unwrap();
-        for (id, entry) in registry
-            .data
-            .vms
-            .iter()
-            .filter(|(_, entry)| entry.profile_id == profile_id)
-        {
-            sessions.entry(id.clone()).or_insert_with(|| entry.session_dir.clone());
+        for entry in registry.list().filter(|entry| wanted(&entry.profile_id)) {
+            sessions
+                .entry(persistent_entry_vm_id(entry))
+                .or_insert_with(|| entry.session_dir.clone());
         }
     }
     sessions.into_iter().collect()

@@ -108,6 +108,13 @@ pub(super) trait VirtioDevice: Send {
     /// for devices that use the MMIO interrupt path. Devices that own their
     /// interrupt delivery can return false.
     fn queue_notify(&mut self, queue_index: u32) -> bool;
+    /// Called when the driver writes STATUS=0. The device must stop any
+    /// worker, release the guest rings it holds, and return to the state
+    /// before `activate`, so the next DRIVER_OK activates against the rings
+    /// the driver programs then. Without this a driver unbind/rebind (or a
+    /// hostile reset) left workers pointing at freed guest memory and the
+    /// device unable to activate again.
+    fn reset(&mut self) {}
     /// Called while vCPUs are paused before checkpointing device/guest state.
     fn quiesce(&mut self) -> Result<()> {
         Ok(())
@@ -384,29 +391,7 @@ impl VirtioMmioTransport {
             bail!("virtio-mmio queue selector is out of range: {}", snapshot.queue_sel);
         }
         let max_sizes = state.device.queue_max_sizes();
-        let mut ranges = Vec::new();
-        for (index, queue) in snapshot.queues.iter().enumerate() {
-            if queue.num > max_sizes[index] {
-                bail!(
-                    "virtio-mmio queue {index} size exceeds device maximum: {} > {}",
-                    queue.num,
-                    max_sizes[index]
-                );
-            }
-            if snapshot.activated && !queue.ready {
-                bail!("activated virtio-mmio queue {index} is not ready");
-            }
-            if queue.ready {
-                if queue.num == 0 {
-                    bail!("ready virtio-mmio queue {index} has zero size");
-                }
-                if !queue.num.is_power_of_two() {
-                    bail!("ready virtio-mmio queue {index} size is not a power of two");
-                }
-                ranges.extend(validate_queue_memory(&state.mem, index, queue)?);
-            }
-        }
-        validate_queue_nonoverlap(&mut ranges)?;
+        validate_queue_geometry(&state.mem, max_sizes, &snapshot.queues, snapshot.activated)?;
 
         // A device backend must be fully reconstructed before activation can
         // observe the restored virtqueue addresses.
@@ -538,6 +523,45 @@ pub(super) struct QueueMemoryRange {
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Validate guest-declared virtqueue geometry before the rings are trusted.
+///
+/// Shared by the warm-restore path and the cold DRIVER_OK path so both enforce
+/// the same rules: a size within the device maximum, a power-of-two non-zero
+/// size for every ready queue, all three rings backed by RAM, and no two rings
+/// overlapping. Without this on the cold path a guest could hand an oversized,
+/// non-power-of-two, or out-of-bounds queue to the ring accessors.
+fn validate_queue_geometry(
+    mem: &GuestMemoryRef,
+    max_sizes: &[u16],
+    queues: &[QueueSnapshot],
+    require_ready: bool,
+) -> Result<()> {
+    let mut ranges = Vec::new();
+    for (index, queue) in queues.iter().enumerate() {
+        if queue.num > max_sizes[index] {
+            bail!(
+                "virtio-mmio queue {index} size exceeds device maximum: {} > {}",
+                queue.num,
+                max_sizes[index]
+            );
+        }
+        if require_ready && !queue.ready {
+            bail!("activated virtio-mmio queue {index} is not ready");
+        }
+        if queue.ready {
+            if queue.num == 0 {
+                bail!("ready virtio-mmio queue {index} has zero size");
+            }
+            if !queue.num.is_power_of_two() {
+                bail!("ready virtio-mmio queue {index} size is not a power of two");
+            }
+            ranges.extend(validate_queue_memory(mem, index, queue)?);
+        }
+    }
+    validate_queue_nonoverlap(&mut ranges)?;
+    Ok(())
+}
+
 fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapshot) -> Result<[QueueMemoryRange; 3]> {
     let addresses = [
         (queue.desc_addr(), 16, "descriptor"),
@@ -779,7 +803,9 @@ impl MmioDevice for VirtioMmioTransport {
             }
             STATUS => {
                 if val == 0 {
-                    // Reset
+                    // Reset: the device first, so its workers stop touching
+                    // rings the transport is about to forget.
+                    state.device.reset();
                     state.status = 0;
                     state.activated = false;
                     for q in &mut state.queues {
@@ -801,27 +827,45 @@ impl MmioDevice for VirtioMmioTransport {
                 );
                 // Check if DRIVER_OK was just set
                 if val & STATUS_DRIVER_OK != 0 && !state.activated {
-                    state.activated = true;
+                    // Validate the guest-declared queue geometry before trusting
+                    // it, the same as the warm-restore path. A guest can write
+                    // an oversized / non-power-of-two / out-of-bounds queue here;
+                    // activating with it would feed those straight to the ring
+                    // accessors. On failure, mark the device FAILED and do not
+                    // activate.
+                    let snaps: Vec<QueueSnapshot> = state.queues.iter().map(QueueState::snapshot).collect();
+                    let max_sizes: Vec<u16> = state.device.queue_max_sizes().to_vec();
                     let mem = state.mem.clone();
-                    let queue_configs: Vec<QueueConfig> = state
-                        .queues
-                        .iter()
-                        .map(|q| QueueConfig {
-                            desc_addr: q.desc_addr(),
-                            driver_addr: q.driver_addr(),
-                            device_addr: q.device_addr(),
-                            size: q.num,
-                            warm_restore: false,
-                            event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
-                        })
-                        .collect();
-                    state.device.activate(mem, &queue_configs);
-                    tracing::info!(
-                        event_name = "virtio.mmio.activate",
-                        device_type,
-                        queues = queue_configs.len(),
-                        "virtio-mmio device activated"
-                    );
+                    if let Err(error) = validate_queue_geometry(&mem, &max_sizes, &snaps, false) {
+                        tracing::warn!(
+                            event_name = "virtio.mmio.activate_rejected",
+                            device_type,
+                            error = %error,
+                            "refusing to activate device with invalid guest virtqueue geometry"
+                        );
+                        state.status |= STATUS_FAILED;
+                    } else {
+                        state.activated = true;
+                        let queue_configs: Vec<QueueConfig> = state
+                            .queues
+                            .iter()
+                            .map(|q| QueueConfig {
+                                desc_addr: q.desc_addr(),
+                                driver_addr: q.driver_addr(),
+                                device_addr: q.device_addr(),
+                                size: q.num,
+                                warm_restore: false,
+                                event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
+                            })
+                            .collect();
+                        state.device.activate(mem, &queue_configs);
+                        tracing::info!(
+                            event_name = "virtio.mmio.activate",
+                            device_type,
+                            queues = queue_configs.len(),
+                            "virtio-mmio device activated"
+                        );
+                    }
                 }
             }
             QUEUE_DESC_LOW => {

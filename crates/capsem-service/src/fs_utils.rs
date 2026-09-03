@@ -2,9 +2,8 @@
 //!
 //! `sanitize_file_path` is the allowlist-based input gate; the Magika helpers
 //! adapt the `magika` crate's API for use in `spawn_blocking` contexts.
-//! `resolve_workspace_path` stays in `main.rs` because it borrows
-//! `&ServiceState` and moving it now would force `ServiceState` out of
-//! `main.rs` too -- that's the next sprint's job.
+//! `resolve_workspace_target` lives in `vm_files.rs` because it borrows
+//! `&ServiceState`.
 
 use std::io::Read;
 use std::sync::Mutex;
@@ -58,32 +57,73 @@ pub fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bo
     )
 }
 
-/// Identify a file using Magika. Runs synchronously under the session mutex --
-/// callers wrap in `spawn_blocking` because `Session::identify_file_sync` takes
-/// `&mut self`. Returns the `unknown`/`application/octet-stream` tuple on any
-/// error so handlers don't have to plumb errors through for best-effort typing.
-pub fn identify_file_sync(magika: &Mutex<magika::Session>, path: &std::path::Path) -> (String, String, String, bool) {
+/// The tuple for a file that could not be typed. Typing is best-effort, so
+/// handlers never plumb its errors.
+pub fn unknown_file_type() -> (String, String, String, bool) {
+    (
+        "unknown".into(),
+        "application/octet-stream".into(),
+        "unknown".into(),
+        false,
+    )
+}
+
+/// Identify an already-open regular file with Magika. Taking the handle rather
+/// than a path means the bytes classified are the bytes the caller opened --
+/// with `O_NOFOLLOW` -- and not whatever a guest has since put at that name.
+/// Runs synchronously under the session mutex; callers wrap in `spawn_blocking`.
+pub fn identify_file_sync(
+    magika: &Mutex<magika::Session>,
+    name: &std::path::Path,
+    file: &mut std::fs::File,
+) -> (String, String, String, bool) {
+    let mut head = Vec::with_capacity(UTF8_PROBE_BYTES);
+    if file
+        .by_ref()
+        .take(UTF8_PROBE_BYTES as u64)
+        .read_to_end(&mut head)
+        .is_err()
+    {
+        return unknown_file_type();
+    }
     let mut session = magika.lock().unwrap();
-    match session.identify_file_sync(path) {
-        Ok(ft) => normalize_file_type(path, extract_magika_info(&ft)),
-        Err(_) => (
-            "unknown".into(),
-            "application/octet-stream".into(),
-            "unknown".into(),
-            false,
-        ),
+    match session.identify_content_sync(&mut *file) {
+        Ok(ft) => normalize_file_type(name, &head, extract_magika_info(&ft)),
+        Err(_) => unknown_file_type(),
     }
 }
 
+/// Identify bytes already read into memory. See `identify_file_sync`.
+pub fn identify_bytes_sync(
+    magika: &Mutex<magika::Session>,
+    name: &std::path::Path,
+    data: &[u8],
+) -> (String, String, String, bool) {
+    let mut session = magika.lock().unwrap();
+    match session.identify_content_sync(data) {
+        Ok(ft) => normalize_file_type(
+            name,
+            &data[..data.len().min(UTF8_PROBE_BYTES)],
+            extract_magika_info(&ft),
+        ),
+        Err(_) => unknown_file_type(),
+    }
+}
+
+const UTF8_PROBE_BYTES: usize = 8192;
+
+/// Rescue a file Magika gave up on: a plain-text extension plus a UTF-8 head
+/// is text.
 fn normalize_file_type(
-    path: &std::path::Path,
+    name: &std::path::Path,
+    head: &[u8],
     detected: (String, String, String, bool),
 ) -> (String, String, String, bool) {
     let (label, mime, group, is_text) = detected;
     if is_text || mime != "application/octet-stream" {
         return (label, mime, group, is_text);
     }
-    if has_plain_text_extension(path) && file_looks_utf8(path) {
+    if has_plain_text_extension(name) && std::str::from_utf8(head).is_ok() {
         return ("text".into(), "text/plain".into(), "text".into(), true);
     }
     (label, mime, group, is_text)
@@ -114,18 +154,6 @@ fn has_plain_text_extension(path: &std::path::Path) -> bool {
             )
         })
         .unwrap_or(false)
-}
-
-fn file_looks_utf8(path: &std::path::Path) -> bool {
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let mut buf = Vec::with_capacity(8192);
-    match file.by_ref().take(8192).read_to_end(&mut buf) {
-        Ok(_) => std::str::from_utf8(&buf).is_ok(),
-        Err(_) => false,
-    }
 }
 
 #[cfg(test)]

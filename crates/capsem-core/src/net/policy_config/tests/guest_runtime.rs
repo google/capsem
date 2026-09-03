@@ -473,7 +473,7 @@ fn web_search_bing_duckduckgo_blocked_by_default() {
 
 #[test]
 fn default_http_allow_is_security_rule_not_network_policy() {
-    let m = MergedPolicies::from_files(&empty_file(), &empty_file());
+    let m = MergedPolicies::from_files(&empty_file(), &empty_file()).expect("policies merge");
     assert!(
         has_security_rule(&m, "profiles.rules.default_http"),
         "default HTTP behavior must be a visible security rule"
@@ -482,7 +482,7 @@ fn default_http_allow_is_security_rule_not_network_policy() {
 
 #[test]
 fn default_http_upstream_ports_in_network_policy() {
-    let m = MergedPolicies::from_files(&empty_file(), &empty_file());
+    let m = MergedPolicies::from_files(&empty_file(), &empty_file()).expect("policies merge");
     assert_eq!(m.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
 }
 
@@ -492,7 +492,7 @@ fn user_http_upstream_ports_override_network_policy() {
         "security.web.http_upstream_ports",
         SettingValue::IntList(vec![80, 50233]),
     )]);
-    let m = MergedPolicies::from_files(&user, &empty_file());
+    let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert_eq!(m.network.http_upstream_ports, vec![80, 50233]);
 }
 
@@ -506,7 +506,7 @@ fn corp_http_upstream_ports_override_user_network_policy() {
         "security.web.http_upstream_ports",
         SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434]),
     )]);
-    let m = MergedPolicies::from_files(&user, &corp);
+    let m = MergedPolicies::from_files(&user, &corp).expect("policies merge");
     assert_eq!(m.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
 }
 

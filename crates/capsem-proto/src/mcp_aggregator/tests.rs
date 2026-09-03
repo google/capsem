@@ -25,11 +25,12 @@ fn request_call_tool_roundtrip() {
         method: AggregatorMethod::CallTool {
             name: "github__search_repos".into(),
             arguments: serde_json::json!({"query": "rust"}),
+            timeout_ms: None,
         },
     };
     let decoded = msgpack_roundtrip(&req);
     assert_eq!(decoded.id, 42);
-    if let AggregatorMethod::CallTool { name, arguments } = decoded.method {
+    if let AggregatorMethod::CallTool { name, arguments, .. } = decoded.method {
         assert_eq!(name, "github__search_repos");
         assert_eq!(arguments["query"], "rust");
     } else {
@@ -193,6 +194,7 @@ async fn async_frame_roundtrip_uses_the_real_wire_codec() {
         method: AggregatorMethod::CallTool {
             name: "local__echo".into(),
             arguments: serde_json::json!({"message": "hello"}),
+            timeout_ms: None,
         },
     };
     let (mut writer, mut reader) = tokio::io::duplex(4096);
@@ -202,7 +204,7 @@ async fn async_frame_roundtrip_uses_the_real_wire_codec() {
 
     assert_eq!(decoded.id, 77);
     match decoded.method {
-        AggregatorMethod::CallTool { name, arguments } => {
+        AggregatorMethod::CallTool { name, arguments, .. } => {
             assert_eq!(name, "local__echo");
             assert_eq!(arguments["message"], "hello");
         }

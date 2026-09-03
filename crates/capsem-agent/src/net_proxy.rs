@@ -62,6 +62,11 @@ struct AsyncVsock {
 }
 
 impl AsyncVsock {
+    /// Take ownership of `fd`. On every path, including an error, the fd
+    /// belongs to this function afterwards: `from_raw_fd` owns it and
+    /// `AsyncFd::new` drops (closes) the stream when registration fails.
+    /// The caller must not close it again; a second close on a multi-threaded
+    /// runtime can hit a number another connection has just been handed.
     fn new(fd: RawFd) -> io::Result<Self> {
         unsafe {
             let flags = libc::fcntl(fd, libc::F_GETFL, 0);
@@ -256,13 +261,11 @@ async fn handle_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAtt
         }
     };
 
+    // AsyncVsock::new owns the fd on every path; a failure has already closed it.
     let mut vsock_stream = match AsyncVsock::new(vsock_raw) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("[capsem-net-proxy] failed to create AsyncVsock: {e}");
-            unsafe {
-                libc::close(vsock_raw);
-            }
             return;
         }
     };

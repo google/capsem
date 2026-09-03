@@ -78,8 +78,12 @@ async fn endpoint_dispatches_every_supported_method_family() {
                     timeout_secs: Some(30),
                 }],
             },
-            AggregatorMethod::CallTool { name, arguments } => AggregatorResult::CallResult {
-                result: serde_json::json!({"name": name, "arguments": arguments}),
+            AggregatorMethod::CallTool {
+                name,
+                arguments,
+                timeout_ms,
+            } => AggregatorResult::CallResult {
+                result: serde_json::json!({"name": name, "arguments": arguments, "timeout_ms": timeout_ms}),
             },
             AggregatorMethod::ListResources => AggregatorResult::Resources {
                 resources: vec![McpResourceDef {
@@ -91,8 +95,8 @@ async fn endpoint_dispatches_every_supported_method_family() {
                     server_name: "local".to_string(),
                 }],
             },
-            AggregatorMethod::ReadResource { uri } => AggregatorResult::CallResult {
-                result: serde_json::json!({"uri": uri, "contents": []}),
+            AggregatorMethod::ReadResource { uri, timeout_ms } => AggregatorResult::CallResult {
+                result: serde_json::json!({"uri": uri, "contents": [], "timeout_ms": timeout_ms}),
             },
             AggregatorMethod::ListPrompts => AggregatorResult::Prompts {
                 prompts: vec![McpPromptDef {
@@ -103,8 +107,12 @@ async fn endpoint_dispatches_every_supported_method_family() {
                     server_name: "local".to_string(),
                 }],
             },
-            AggregatorMethod::GetPrompt { name, arguments } => AggregatorResult::CallResult {
-                result: serde_json::json!({"name": name, "arguments": arguments}),
+            AggregatorMethod::GetPrompt {
+                name,
+                arguments,
+                timeout_ms,
+            } => AggregatorResult::CallResult {
+                result: serde_json::json!({"name": name, "arguments": arguments, "timeout_ms": timeout_ms}),
             },
             _ => AggregatorResult::Error {
                 error: "unexpected method".to_string(),
@@ -135,6 +143,9 @@ async fn endpoint_dispatches_every_supported_method_family() {
         .await
         .unwrap();
     assert_eq!(call.result.as_ref().unwrap()["name"], "local__echo");
+    // The catalog gave this tool a 30s budget; the aggregator must be told so
+    // it cancels upstream when the endpoint stops waiting.
+    assert_eq!(call.result.as_ref().unwrap()["timeout_ms"], 30_000);
 
     let resources = endpoint
         .handle_request(&json_request("resources/list", serde_json::json!({})))
@@ -153,6 +164,10 @@ async fn endpoint_dispatches_every_supported_method_family() {
         .await
         .unwrap();
     assert_eq!(resource.result.as_ref().unwrap()["uri"], "capsem://local/readme");
+    assert!(
+        resource.result.as_ref().unwrap()["timeout_ms"].is_number(),
+        "every upstream request carries the endpoint's deadline"
+    );
 
     let prompts = endpoint
         .handle_request(&json_request("prompts/list", serde_json::json!({})))

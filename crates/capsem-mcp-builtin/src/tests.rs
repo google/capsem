@@ -1,9 +1,27 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// A non-public address is reachable only through an explicit allow rule,
+/// so a test that talks to a loopback fixture carries one.
+fn loopback_allowed_rules() -> SecurityRuleSet {
+    capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"
+        [profiles.rules.allow_local_fixture]
+        name = "allow_local_fixture"
+        action = "allow"
+        reason = "local test fixture"
+        match = 'http.host == "127.0.0.1"'
+        "#,
+    )
+    .and_then(|profile| {
+        SecurityRuleSet::compile_profile(&profile, capsem_core::net::policy_config::SecurityRuleSource::User)
+    })
+    .expect("test security rules compile")
+}
+
 fn handler_without_snapshots() -> BuiltinHandler {
     BuiltinHandler {
-        http_client: reqwest::Client::new(),
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db: Arc::new(DbWriter::open_in_memory(8).expect("in-memory DB")),
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
         plugin_policy: Arc::new(BTreeMap::new()),
@@ -217,10 +235,11 @@ async fn spawn_stalled_body_http_server() -> String {
 
 #[tokio::test]
 async fn builtin_http_client_times_out_while_reading_a_stalled_body() {
-    let client = build_http_client(
+    let client = BuiltinHttpClient::new(
         std::time::Duration::from_millis(50),
         std::time::Duration::from_millis(50),
     )
+    .pinned("127.0.0.1", &[])
     .expect("build test client");
     let url = spawn_stalled_body_http_server().await;
 
@@ -242,9 +261,9 @@ async fn http_builtin_flushes_net_event_before_tool_response_returns() {
     let db_path = tmp.path().join("session.db");
     let db = Arc::new(DbWriter::open(&db_path, 16).expect("open test db"));
     let handler = BuiltinHandler {
-        http_client: reqwest::Client::new(),
+        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         db: Arc::clone(&db),
-        security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
+        security_rules: Arc::new(loopback_allowed_rules()),
         plugin_policy: Arc::new(BTreeMap::new()),
         scheduler: None,
         workspace_dir: None,
@@ -408,4 +427,47 @@ fn a_non_boolean_is_error_does_not_signal_failure() {
             "only a JSON boolean true is a refusal"
         );
     }
+}
+
+async fn spawn_redirecting_http_server() -> String {
+    // Responds 302 to an unrelated host. If the client follows redirects it
+    // would leave the originally-checked domain (SSRF); a safe client returns
+    // the 302 to the caller instead.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind redirect fixture");
+    let addr = listener.local_addr().expect("fixture local addr");
+    tokio::spawn(async move {
+        while let Ok((mut socket, _peer)) = listener.accept().await {
+            let mut buf = [0_u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = concat!(
+                "HTTP/1.1 302 Found\r\n",
+                "location: http://blocked.invalid/secret\r\n",
+                "content-length: 0\r\n",
+                "\r\n"
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    format!("http://{addr}/")
+}
+
+#[tokio::test]
+async fn builtin_http_client_does_not_follow_redirects() {
+    let client = BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT)
+        .pinned("127.0.0.1", &[])
+        .expect("build client");
+    let url = spawn_redirecting_http_server().await;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .expect("request completes without following redirect");
+    assert_eq!(
+        resp.status().as_u16(),
+        302,
+        "redirects must not be followed -- a 3xx to another host would bypass the domain policy check"
+    );
 }

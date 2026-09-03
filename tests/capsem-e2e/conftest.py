@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT, PROFILES_DIR
+from helpers.http_transport import Transport
 from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 from log_streams import read_log_stream
@@ -41,7 +42,7 @@ def _vm_name(prefix="e2e"):
 class RealService:
     """Starts capsem-service the way just run-service does.
 
-    Readiness check: socket file exists AND curl to /vms/list succeeds.
+    Readiness check: socket file exists AND a GET /vms/list succeeds.
     This is intentionally the same logic as the justfile run-service
     recipe. If they diverge, tests pass but the product breaks.
     """
@@ -94,16 +95,14 @@ class RealService:
         start = time.time()
         while time.time() - start < 15:
             if self.uds_path.exists():
+                probe = Transport(socket_path=str(self.uds_path))
                 try:
-                    result = subprocess.run(
-                        ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/vms/list"],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if result.returncode == 0:
-                        return
+                    probe.request("GET", "/vms/list", timeout=2)
+                    return
                 except Exception:
                     pass
+                finally:
+                    probe.close()
             time.sleep(0.5)
 
         self._dump_logs()

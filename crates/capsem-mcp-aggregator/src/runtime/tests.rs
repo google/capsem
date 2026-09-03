@@ -78,13 +78,16 @@ async fn every_method_echoes_the_request_id() {
         AggregatorMethod::CallTool {
             name: "github__search".to_string(),
             arguments: serde_json::json!({}),
+            timeout_ms: None,
         },
         AggregatorMethod::ReadResource {
             uri: "github__file:///x".to_string(),
+            timeout_ms: None,
         },
         AggregatorMethod::GetPrompt {
             name: "github__review".to_string(),
             arguments: serde_json::json!({}),
+            timeout_ms: None,
         },
         AggregatorMethod::Shutdown,
     ];
@@ -184,6 +187,7 @@ async fn unresolvable_tool_call_returns_an_error_result() {
         AggregatorMethod::CallTool {
             name: "nosuch__tool".to_string(),
             arguments: serde_json::json!({"q": 1}),
+            timeout_ms: None,
         },
     )
     .await;
@@ -198,6 +202,7 @@ async fn unresolvable_resource_read_returns_an_error_result() {
         7,
         AggregatorMethod::ReadResource {
             uri: "nosuch__file:///etc/passwd".to_string(),
+            timeout_ms: None,
         },
     )
     .await;
@@ -213,6 +218,7 @@ async fn unresolvable_prompt_get_returns_an_error_result() {
         AggregatorMethod::GetPrompt {
             name: "nosuch__prompt".to_string(),
             arguments: serde_json::json!({}),
+            timeout_ms: None,
         },
     )
     .await;
@@ -229,6 +235,7 @@ async fn malformed_namespaced_names_are_rejected_without_panicking() {
             AggregatorMethod::CallTool {
                 name: name.to_string(),
                 arguments: serde_json::Value::Null,
+                timeout_ms: None,
             },
         )
         .await;

@@ -145,14 +145,7 @@ class TestGatewayE2E:
     def test_health_while_vm_running(self, e2e_env):
         """Health endpoint works even with VMs running."""
         gw, _ = e2e_env
-        import json
-        import subprocess
-        result = subprocess.run(
-            ["curl", "-s", "--max-time", "5",
-             f"http://127.0.0.1:{gw.port}/"],
-            capture_output=True, text=True, timeout=10,
-        )
-        data = json.loads(result.stdout)
+        _, data = TcpHttpClient(gw.base_url, gw.token).call_json("GET", "/", use_auth=False)
         assert data["ok"] is True
 
 

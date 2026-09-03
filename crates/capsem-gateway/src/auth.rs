@@ -141,12 +141,63 @@ pub fn generate_token() -> String {
         .collect()
 }
 
-/// Axum middleware: require Bearer token on all routes except `GET /health` and `GET /token`.
+/// Compare a presented token with the real one in time independent of where
+/// they first differ. The token length is public (64), so a length mismatch
+/// may return early.
+pub fn token_matches(candidate: &str, token: &str) -> bool {
+    if candidate.len() != token.len() {
+        return false;
+    }
+    candidate
+        .bytes()
+        .zip(token.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+/// True unless the request names a host that is not this machine.
+///
+/// The gateway binds 127.0.0.1 and `/token` trusts a loopback peer, but a page
+/// at `http://evil.example:19222` whose DNS answer flips to 127.0.0.1 (DNS
+/// rebinding) is a loopback peer making a same-origin request: CORS never
+/// enters into it. The Host header is the one thing such a page cannot forge,
+/// so a foreign host is refused on every route. An absent header passes:
+/// browsers always send Host, so it cannot be a rebinding page, only raw
+/// HTTP/1.0 tooling.
+pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
+    let Some(authority) = req.headers().get(http::header::HOST) else {
+        return true;
+    };
+    let Ok(value) = authority.to_str() else {
+        return false;
+    };
+    // A Host header is `uri-host [":" port]`; userinfo is not part of the
+    // grammar, and the authority parser would otherwise accept
+    // `evil@localhost` and report the host as localhost.
+    if value.contains('@') || value != value.trim() {
+        return false;
+    }
+    value
+        .parse::<http::uri::Authority>()
+        .is_ok_and(|authority| crate::cors::is_loopback_host(authority.host()))
+}
+
+/// Axum middleware: refuse foreign hosts, then require a Bearer token on all
+/// routes except `GET /health` and `GET /token`.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    if !request_names_loopback_host(&req) {
+        warn!(method = %req.method(), path = req.uri().path(), "request for a foreign host refused (403)");
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error": "forbidden host"})),
+        )
+            .into_response();
+    }
+
     // Health check and token endpoint are unauthenticated (token has its own IP check)
     let path = req.uri().path();
     if req.method() == http::Method::GET && (path == "/" || path == "/health" || path == "/token") {
@@ -158,7 +209,7 @@ pub async fn auth_middleware(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| t == state.token);
+        .is_some_and(|t| token_matches(t, &state.token));
 
     // For WebSocket paths: allow ?token= query param as fallback
     // (browser WebSocket API cannot set custom headers).
@@ -169,7 +220,7 @@ pub async fn auth_middleware(
             .uri()
             .query()
             .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")))
-            .is_some_and(|t| t == state.token);
+            .is_some_and(|t| token_matches(t, &state.token));
 
     if header_valid || query_valid {
         next.run(req).await
