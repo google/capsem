@@ -106,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- KVM pause now clears prior vCPU snapshots before publishing the pausing
+  lifecycle state, so a freshly parked vCPU snapshot cannot be erased by the
+  requesting thread under contention.
 - Plaintext credential-store updates now use collision-safe sibling files that
   are owner-only before secrets are written, atomically replace the prior
   complete store, and durably sync both file and directory without following a

@@ -87,10 +87,22 @@ impl VcpuControl {
     }
 
     pub fn request_pause(&self, timeout: Duration) -> Result<()> {
-        match self
-            .lifecycle
-            .compare_exchange(VCPU_RUNNING, VCPU_PAUSING, Ordering::SeqCst, Ordering::SeqCst)
-        {
+        #[cfg(target_arch = "x86_64")]
+        let transition = {
+            let mut snapshots = self.snapshots.lock().expect("snapshot mutex poisoned");
+            let transition =
+                self.lifecycle
+                    .compare_exchange(VCPU_RUNNING, VCPU_PAUSING, Ordering::SeqCst, Ordering::SeqCst);
+            if transition.is_ok() {
+                snapshots.fill(None);
+            }
+            transition
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let transition =
+            self.lifecycle
+                .compare_exchange(VCPU_RUNNING, VCPU_PAUSING, Ordering::SeqCst, Ordering::SeqCst);
+        match transition {
             Ok(_) => {}
             Err(VCPU_PAUSED) => return Ok(()),
             Err(VCPU_PAUSING) => {}
@@ -98,10 +110,6 @@ impl VcpuControl {
             Err(other) => bail!("cannot pause KVM VM from lifecycle state {other}"),
         }
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            self.snapshots.lock().expect("snapshot mutex poisoned").fill(None);
-        }
         self.pause_cv.notify_all();
         self.kick_vcpus();
         let deadline = Instant::now() + timeout;
