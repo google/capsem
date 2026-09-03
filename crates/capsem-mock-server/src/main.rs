@@ -30,6 +30,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls::TlsAcceptor;
 
+mod limits;
+use limits::{generated_size_refusal, parse_generated_size, read_ws_frame, write_ws_frame};
+
 const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
 const EXPECTED_POEM: &str = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw";
 const OLLAMA_OPENAI_TOOL_CALL_ID: &str = "call_fm3e3d2f";
@@ -402,7 +405,7 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             let size = path.trim_start_matches("/bytes/");
             match deterministic_bytes(size) {
                 Some(bytes) => response(StatusCode::OK, bytes, "application/octet-stream"),
-                None => response(StatusCode::NOT_FOUND, Bytes::new(), "text/plain"),
+                None => response(generated_size_refusal(size), Bytes::new(), "text/plain"),
             }
         }
         (&Method::GET, _) if path.starts_with("/gzip/") => {
@@ -415,7 +418,7 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
                     CONTENT_ENCODING.as_str(),
                     "gzip",
                 ),
-                None => response(StatusCode::NOT_FOUND, Bytes::new(), "text/plain"),
+                None => response(generated_size_refusal(size), Bytes::new(), "text/plain"),
             }
         }
         (&Method::POST, "/v1/chat/completions") => {
@@ -659,7 +662,7 @@ fn deterministic_bytes(size: &str) -> Option<Bytes> {
         "10kb" => Some(TEN_KB.get_or_init(|| build_bytes(10 * 1024)).clone()),
         "1mb" => Some(ONE_MB.get_or_init(|| build_bytes(1024 * 1024)).clone()),
         "10mb" => Some(TEN_MB.get_or_init(|| build_bytes(10 * 1024 * 1024)).clone()),
-        _ => size.parse::<usize>().ok().map(build_bytes),
+        _ => parse_generated_size(size).map(build_bytes),
     }
 }
 
@@ -675,7 +678,7 @@ fn deterministic_gzip(size: &str) -> Option<Bytes> {
                 .get_or_init(|| gzip_bytes(&build_bytes(10 * 1024 * 1024)))
                 .clone(),
         ),
-        _ => size.parse::<usize>().ok().map(|len| gzip_bytes(&build_bytes(len))),
+        _ => parse_generated_size(size).map(|len| gzip_bytes(&build_bytes(len))),
     }
 }
 
@@ -1427,55 +1430,6 @@ async fn handle_ws_stream(mut io: TokioIo<Upgraded>, path: String) {
             _ => {}
         }
     }
-}
-
-async fn read_ws_frame(io: &mut TokioIo<Upgraded>) -> Result<Option<(u8, Vec<u8>)>> {
-    let mut header = [0_u8; 2];
-    if io.read_exact(&mut header).await.is_err() {
-        return Ok(None);
-    }
-    let opcode = header[0] & 0x0f;
-    let masked = header[1] & 0x80 != 0;
-    let mut len = u64::from(header[1] & 0x7f);
-    if len == 126 {
-        let mut bytes = [0_u8; 2];
-        io.read_exact(&mut bytes).await?;
-        len = u64::from(u16::from_be_bytes(bytes));
-    } else if len == 127 {
-        let mut bytes = [0_u8; 8];
-        io.read_exact(&mut bytes).await?;
-        len = u64::from_be_bytes(bytes);
-    }
-    let mut mask = [0_u8; 4];
-    if masked {
-        io.read_exact(&mut mask).await?;
-    }
-    let mut payload = vec![0_u8; usize::try_from(len).context("websocket frame too large")?];
-    io.read_exact(&mut payload).await?;
-    if masked {
-        for (idx, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask[idx % 4];
-        }
-    }
-    Ok(Some((opcode, payload)))
-}
-
-async fn write_ws_frame(io: &mut TokioIo<Upgraded>, opcode: u8, payload: &[u8]) -> Result<()> {
-    let mut header = Vec::with_capacity(10);
-    header.push(0x80 | opcode);
-    if payload.len() < 126 {
-        header.push(u8::try_from(payload.len()).expect("len < 126"));
-    } else if u16::try_from(payload.len()).is_ok() {
-        header.push(126);
-        header.extend_from_slice(&u16::try_from(payload.len()).expect("fits").to_be_bytes());
-    } else {
-        header.push(127);
-        header.extend_from_slice(&u64::try_from(payload.len()).expect("fits").to_be_bytes());
-    }
-    io.write_all(&header).await?;
-    io.write_all(payload).await?;
-    io.flush().await?;
-    Ok(())
 }
 
 async fn serve_dns_udp(socket: UdpSocket, state: State) {
