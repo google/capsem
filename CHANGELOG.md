@@ -116,7 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   child there; the panic and triage routes read every host log there; and
   the asset reconciler hashed multi-gigabyte images there. Every such call
   now goes through one blocking door, and a source contract refuses new
-  direct calls, so one slow disk no longer stalls every other request.
+  direct calls, so one slow disk no longer stalls every other request. With
+  every runtime worker busy scanning host logs, `/vms/list` went from a p50
+  of 25 ms and a p99 of 296 ms to a p50 of 1.5 ms and a p99 of 8 ms; idle
+  latency is unchanged at 0.2 ms.
 - Legacy IPv4 spellings are judged as the address they dial. The resolver
   reads `0x7f000001`, `127.1`, `0177.0.0.1` and `2130706433` as `127.0.0.1`,
   but host rules, the certificate cache and telemetry saw the spelling, so a
