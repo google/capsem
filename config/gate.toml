@@ -2197,7 +2197,7 @@ rust_coverage_crate_minimum = 40.0
 # absorbs host-specific cfg variation; once added tests improve coverage past
 # it, the same patch must raise the floor instead of leaving stale headroom.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 40.0, capsem-app = 41.0, capsem-assets = 86.0, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 75.52, capsem-credentials = 89.83, capsem-foundation = 77.0, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 40.0, capsem-mcp-aggregator = 61.0, capsem-mcp-builtin = 47.98, capsem-mock-server = 46.56, capsem-process = 40.0, capsem-proto = 90.36, capsem-service = 67.0, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.26, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 77.71, capsem-credentials = 89.83, capsem-foundation = 77.0, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.44, capsem-tray = 54.0, capsem-tui = 70.0 }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
