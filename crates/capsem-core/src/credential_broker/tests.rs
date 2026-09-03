@@ -101,10 +101,15 @@ fn default_credential_store_writes_capsem_home_disk_file() {
         0o600,
         "the public broker path must persist plaintext credentials owner-only"
     );
+    let mut siblings: Vec<String> = std::fs::read_dir(store_path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    siblings.sort();
     assert_eq!(
-        std::fs::read_dir(store_path.parent().unwrap()).unwrap().count(),
-        1,
-        "the public broker path must not leave a temporary sibling"
+        siblings,
+        [".credential-store.json.lock", "credential-store.json"],
+        "the public broker path must retain its cross-process lock but no temporary siblings"
     );
 
     CredentialStore::global().clear_for_test();
