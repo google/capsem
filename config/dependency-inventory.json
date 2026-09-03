@@ -1121,7 +1121,6 @@
    "clap",
    "core-foundation-sys",
    "futures",
-   "nix",
    "reqwest",
    "serde",
    "serde_json",

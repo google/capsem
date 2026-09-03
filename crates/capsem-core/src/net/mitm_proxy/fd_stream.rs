@@ -6,24 +6,11 @@
 //! the TLS acceptor without reading the underlying socket twice.
 
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::fd::AsFd;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-
-/// Set a file descriptor to non-blocking mode.
-pub(super) fn set_nonblocking(fd: RawFd) -> io::Result<()> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
-    if rc < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
 
 /// Async wrapper around a `std::fs::File` via `AsyncFd`.
 ///
@@ -93,13 +80,14 @@ impl AsyncWrite for AsyncFdStream {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let fd = self.0.as_raw_fd();
-        let rc = unsafe { libc::shutdown(fd, libc::SHUT_WR) };
-        if rc < 0 {
-            let err = io::Error::last_os_error();
+        let result = capsem_foundation::unix::fd::shutdown(
+            self.0.get_ref().as_fd(),
+            capsem_foundation::unix::fd::SocketShutdown::Write,
+        );
+        if let Err(error) = result {
             // ENOTCONN is fine -- already disconnected.
-            if err.kind() != io::ErrorKind::NotConnected {
-                return Poll::Ready(Err(err));
+            if error.kind() != io::ErrorKind::NotConnected {
+                return Poll::Ready(Err(error));
             }
         }
         Poll::Ready(Ok(()))

@@ -2,8 +2,6 @@ use super::*;
 
 mod diagnostics;
 mod storage;
-#[cfg(test)]
-pub(crate) use storage::statvfs_bytes;
 pub(crate) use storage::storage_diagnostics;
 mod fork;
 #[cfg(test)]

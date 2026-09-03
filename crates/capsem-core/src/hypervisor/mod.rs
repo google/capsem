@@ -96,7 +96,7 @@ pub trait SerialConsole: Send + Sync {
 /// The internal lifetime anchor keeps platform-specific resources alive
 /// so the fd remains valid until this struct is dropped.
 pub struct VsockConnection {
-    pub fd: RawFd,
+    fd: RawFd,
     pub port: u32,
     _lifetime_anchor: Box<dyn Send>,
 }
@@ -109,6 +109,47 @@ impl VsockConnection {
             port,
             _lifetime_anchor: anchor,
         }
+    }
+
+    /// Duplicate the connection into an independently owned descriptor.
+    ///
+    /// The platform anchor retains the original; callers only receive an
+    /// atomic-CLOEXEC duplicate and can never accidentally close that source.
+    pub fn try_clone_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
+        if self.fd < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid vsock file descriptor {}", self.fd),
+            ));
+        }
+        // SAFETY: the platform lifetime anchor keeps this descriptor valid
+        // for at least the duration of the borrow and duplicate syscall.
+        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.fd) };
+        capsem_foundation::unix::fd::duplicate(borrowed)
+    }
+
+    /// Duplicate the connection as a standard file for synchronous adapters.
+    pub fn try_clone_file(&self) -> std::io::Result<std::fs::File> {
+        self.try_clone_fd().map(std::fs::File::from)
+    }
+
+    /// Wake every reader and writer sharing this socket description.
+    pub fn shutdown_both(&self) -> std::io::Result<()> {
+        if self.fd < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid vsock file descriptor {}", self.fd),
+            ));
+        }
+        // SAFETY: the platform lifetime anchor keeps this descriptor valid
+        // for the duration of the shutdown syscall.
+        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.fd) };
+        capsem_foundation::unix::fd::shutdown(borrowed, capsem_foundation::unix::fd::SocketShutdown::Both)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn raw_fd(&self) -> RawFd {
+        self.fd
     }
 }
 

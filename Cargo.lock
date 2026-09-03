@@ -1079,7 +1079,6 @@ dependencies = [
  "clap",
  "core-foundation-sys",
  "futures",
- "nix 0.29.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

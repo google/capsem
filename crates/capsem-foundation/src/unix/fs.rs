@@ -11,6 +11,25 @@ const PRIVATE_DIR_MODE: u32 = 0o700;
 const PRIVATE_FILE_MODE: u32 = 0o600;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// Capacity figures for the filesystem containing a path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FilesystemSpace {
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+    pub available_bytes: u64,
+}
+
+/// Read filesystem capacity without exposing platform `statvfs` types.
+pub fn filesystem_space(path: &Path) -> io::Result<FilesystemSpace> {
+    let stat = nix::sys::statvfs::statvfs(path).map_err(super::errno::io)?;
+    let block_size = stat.block_size();
+    Ok(FilesystemSpace {
+        total_bytes: stat.blocks().saturating_mul(block_size),
+        free_bytes: stat.blocks_free().saturating_mul(block_size),
+        available_bytes: stat.blocks_available().saturating_mul(block_size),
+    })
+}
+
 /// Create `path` as an owner-only directory, or verify an existing one.
 ///
 /// Symlinks, non-directories, foreign owners, and group/other permissions are

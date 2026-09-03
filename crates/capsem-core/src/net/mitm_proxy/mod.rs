@@ -29,9 +29,8 @@ pub mod telemetry_hook;
 mod upgrade;
 mod util;
 
-use std::mem::ManuallyDrop;
 use std::net::IpAddr;
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
@@ -58,7 +57,7 @@ use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
-use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
+use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
@@ -386,8 +385,8 @@ pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
 /// ChunkHook) when each HTTP response body completes. This function
 /// only emits connection-level error events (TLS failures, no SNI,
 /// etc.).
-#[tracing::instrument(skip_all, name = "capsem.mitm.connection", target = "capsem.mitm", fields(vsock_fd))]
-pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
+#[tracing::instrument(skip_all, name = "capsem.mitm.connection", target = "capsem.mitm", fields(vsock_fd = vsock_fd.as_raw_fd()))]
+pub async fn handle_connection(vsock_fd: OwnedFd, config: Arc<MitmProxyConfig>) {
     // The `protocol="…"` partition for `mitm.connections_total` is
     // incremented inside `handle_inner` once the first-byte sniff has
     // classified the wire payload (T2.1). Errors before classification
@@ -468,13 +467,10 @@ where
     }
 }
 
-async fn handle_inner(vsock_fd: RawFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
-    // Wrap vsock fd in a non-owning async stream.
-    let vsock_file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(vsock_fd) });
-    let std_fd = vsock_file
-        .try_clone()
-        .map_err(|e| (String::new(), Decision::Error, format!("dup vsock fd: {e}")))?;
-    set_nonblocking(vsock_fd).map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
+async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
+    let std_fd = std::fs::File::from(vsock_fd);
+    capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true)
+        .map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
     let async_fd = tokio::io::unix::AsyncFd::new(std_fd)
         .map_err(|e| (String::new(), Decision::Error, format!("async fd: {e}")))?;
     let mut vsock_stream = AsyncFdStream(async_fd);

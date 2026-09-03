@@ -1,7 +1,16 @@
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::{Arc, Barrier};
 
-use super::{atomic_write_private, ensure_private_dir};
+use super::{atomic_write_private, ensure_private_dir, filesystem_space};
+
+#[test]
+fn filesystem_capacity_is_internally_consistent() {
+    let root = tempfile::tempdir().unwrap();
+    let space = filesystem_space(root.path()).unwrap();
+    assert!(space.total_bytes > 0);
+    assert!(space.free_bytes <= space.total_bytes);
+    assert!(space.available_bytes <= space.free_bytes);
+}
 
 #[test]
 fn private_directory_is_created_owner_only() {

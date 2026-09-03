@@ -50,7 +50,6 @@ DOMAIN_ABI_FILES = {
     Path("crates/capsem-core/src/auto_snapshot.rs"),
     Path("crates/capsem-core/src/auto_snapshot/sparse_copy.rs"),
     Path("crates/capsem-core/src/hypervisor/apple_vz/machine.rs"),
-    Path("crates/capsem-core/src/hypervisor/apple_vz/serial.rs"),
     Path("crates/capsem-core/src/hypervisor/fuse/file_handles.rs"),
     Path("crates/capsem-core/src/hypervisor/fuse/inode_table.rs"),
     Path("crates/capsem-core/src/hypervisor/fuse/mod.rs"),

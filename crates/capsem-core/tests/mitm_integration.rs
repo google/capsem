@@ -7,7 +7,6 @@
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 use std::collections::BTreeMap;
-use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
@@ -237,11 +236,8 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<(
     let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let std_stream = stream.into_std().unwrap();
-        let fd = std_stream.into_raw_fd();
+        let fd = std_stream.into();
         mitm_proxy::handle_connection(fd, config).await;
-        // fd ownership: ManuallyDrop inside handle_connection prevents double-close.
-        // We own the original fd, close it here.
-        unsafe { libc::close(fd) };
     });
 
     (handle, addr)
