@@ -854,6 +854,18 @@ fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
 }
 
 #[test]
+fn doctor_mock_server_lock_is_exclusive_and_reacquirable() {
+    let dir = tempfile::tempdir().unwrap();
+    let addr = dir.path().file_name().unwrap().to_string_lossy();
+    let path = DoctorMockServerLock::path_for_addr(&addr);
+    let first = DoctorMockServerLock::acquire(&addr, Duration::ZERO).unwrap();
+    assert!(DoctorMockServerLock::acquire(&addr, Duration::ZERO).is_err());
+    drop(first);
+    drop(DoctorMockServerLock::acquire(&addr, Duration::ZERO).unwrap());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn doctor_mock_server_is_bound_to_the_cli_parent() {
     let command = doctor_mock_server_command(Path::new("/tmp/capsem-mock-server"));
     let args: Vec<_> = command

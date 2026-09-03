@@ -19,9 +19,7 @@ pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
 use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
-use nix::fcntl::{Flock, FlockArg};
 use std::{
-    fs::OpenOptions,
     io::BufRead,
     path::{Path, PathBuf},
     process::{Child, Command as StdCommand, Stdio},
@@ -59,7 +57,7 @@ impl DoctorSessionCleanup {
 }
 
 struct DoctorMockServerLock {
-    _flock: Flock<std::fs::File>,
+    _lock: capsem_foundation::unix::lock::FileLock,
 }
 
 impl DoctorMockServerLock {
@@ -72,23 +70,15 @@ impl DoctorMockServerLock {
         let path = Self::path_for_addr(addr);
         let deadline = Instant::now() + timeout;
         loop {
-            let file = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(&path)
-                .with_context(|| format!("open mock-server lock {}", path.display()))?;
-            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
-                Ok(flock) => return Ok(Self { _flock: flock }),
-                Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
+            match capsem_foundation::unix::lock::try_acquire(&path, capsem_foundation::unix::lock::LockMode::Exclusive)
+                .with_context(|| format!("acquire mock-server lock {}", path.display()))?
+            {
+                capsem_foundation::unix::lock::LockAttempt::Acquired(lock) => return Ok(Self { _lock: lock }),
+                capsem_foundation::unix::lock::LockAttempt::Contended => {
                     if Instant::now() >= deadline {
                         anyhow::bail!("timed out waiting for mock-server lock {}", path.display());
                     }
                     std::thread::sleep(Duration::from_millis(100));
-                }
-                Err((_file, err)) => {
-                    anyhow::bail!("flock failed on {}: {err}", path.display());
                 }
             }
         }

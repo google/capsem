@@ -683,7 +683,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "inquire",
- "nix 0.29.0",
  "regex",
  "reqwest 0.12.28",
  "self-replace",
@@ -936,7 +935,6 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "capsem-foundation",
- "libc",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",

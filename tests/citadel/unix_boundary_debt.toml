@@ -8,18 +8,13 @@
 "crates/capsem-core/src/mcp/file_tools.rs" = "aecd540c5f4d3bb3f368fbf1a19a19e43bf4191a4d46e0c833a51847fe527050"
 "crates/capsem-core/src/mcp/file_tools/snapshots.rs" = "a3b53171c631938869489663a76f629e0458bab166c96ae64b5e3a84cd392ac7"
 "crates/capsem-core/src/net/mitm_proxy/fd_stream.rs" = "a518423c24fd04b1a973c759dace7de9313330ebc9b5c209c93965841fa4dc8b"
-"crates/capsem-guard/src/lib.rs" = "d3e65a6dd6187e1e777c53f1a5347b317881ebd239dba96a13c112e051963344"
 "crates/capsem-process/src/vsock.rs" = "e44da17ea77569d84dc54f416ce07d13b9a41a153f67a8a96c449e3e4d2cf70e"
-"crates/capsem-service/src/startup.rs" = "12be50744061703dd141762bd13f36f51c9cf86326b142ae0ae6092a888a3405"
 "crates/capsem-service/src/vm_files.rs" = "19fc021779c50f2729eb218f39e1aab3f30a7b6ab9e708da95a5a34ecf5a4e06"
 "crates/capsem-service/src/vm_files/storage.rs" = "311a009b1f5b3efee065354bc65ddfbbb911b8f91609abcc8de77f26e2be2b6c"
-"crates/capsem/src/main.rs" = "4787bd06eb713fd64e9769b1272752bfc1ebd236d80de0348313b822c4127470"
 
 [migration.manifest]
-"crates/capsem-guard/Cargo.toml" = "10be0a395e328e0f2127fde79434c6f5861eb4209714a2a13f5f518a42408100"
 "crates/capsem-process/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
 "crates/capsem-service/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
-"crates/capsem/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
 
 [domain_abi.rust]
 "crates/capsem-agent/src/audit.rs" = "2ff815c166e12c8323e75f8d5259072f9f3247877d0cdab6238eaf192fe078ab"

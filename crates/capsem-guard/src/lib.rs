@@ -18,8 +18,6 @@
 //! Together these turn tray + gateway into bind-to-parent children: the only
 //! legitimate spawn path is via the service, and they cannot outlive it.
 
-use std::fs::File;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -166,31 +164,12 @@ where
     Ok(())
 }
 
-/// Process-wide registry of in-flight Singleton paths. Covers the window
-/// between lock request and flock release where other kernel-level state
-/// (fork-inherited fds) could otherwise keep the lock alive.
-fn held_locks() -> &'static std::sync::Mutex<std::collections::HashSet<PathBuf>> {
-    use std::sync::OnceLock;
-    static HELD: OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
-    HELD.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-}
-
 /// System-wide singleton guard backed by `flock(2)` plus an in-process
 /// registry. Holds the lock for the lifetime of the struct; dropping it (or
 /// process exit) releases it.
 pub struct Singleton {
-    // Kept alive for its Drop: closing the fd releases the flock.
-    _file: File,
+    _lock: capsem_foundation::unix::lock::FileLock,
     path: PathBuf,
-    registry_key: PathBuf,
-}
-
-impl Drop for Singleton {
-    fn drop(&mut self) {
-        if let Ok(mut held) = held_locks().lock() {
-            held.remove(&self.registry_key);
-        }
-    }
 }
 
 impl Singleton {
@@ -201,18 +180,6 @@ impl Singleton {
     /// * `Err(_)` -- a real IO error (permissions, missing parent dir we could
     ///   not create, etc.). The caller should fail loudly.
     pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, GuardError> {
-        Self::try_acquire_after_open(lock_path, || {})
-    }
-
-    fn try_acquire_after_open<F>(lock_path: &Path, after_open: F) -> Result<Option<Self>, GuardError>
-    where
-        F: FnOnce(),
-    {
-        let registry_key = std::path::absolute(lock_path).map_err(|e| GuardError::Io {
-            path: lock_path.to_path_buf(),
-            source: e,
-        })?;
-
         if let Some(parent) = lock_path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| GuardError::Io {
@@ -221,83 +188,27 @@ impl Singleton {
                 })?;
             }
         }
-
-        // Open with O_CLOEXEC set ATOMICALLY at open() time. Setting CLOEXEC
-        // post-hoc via fcntl has a race window where a concurrent fork/exec
-        // in another thread leaks the fd into the child; a child that
-        // inherits this fd keeps the flock alive in the kernel even after we
-        // close our own copy (flock(2) locks are file-scoped on BSD/macOS
-        // and shared across dup'd fds from fork).
-        // SAFETY: libc::open with a valid CString path and standard flags.
-        use std::ffi::CString;
-        use std::os::fd::FromRawFd;
-        let c_path = CString::new(lock_path.as_os_str().as_encoded_bytes()).map_err(|_| GuardError::Io {
-            path: lock_path.to_path_buf(),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "lock path contains a NUL byte"),
-        })?;
-        let raw_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC, 0o644) };
-        if raw_fd < 0 {
-            return Err(GuardError::Io {
+        let attempt =
+            capsem_foundation::unix::lock::try_acquire(lock_path, capsem_foundation::unix::lock::LockMode::Exclusive)
+                .map_err(|source| GuardError::Io {
                 path: lock_path.to_path_buf(),
-                source: std::io::Error::last_os_error(),
-            });
-        }
-        // SAFETY: we just opened this fd successfully.
-        let file: File = unsafe { File::from_raw_fd(raw_fd) };
-        // The hook makes lockfile replacement between open and reservation
-        // deterministic in the regression test; production supplies a no-op.
-        after_open();
-
-        // In-process exclusion: if another thread in this process already
-        // holds a Singleton for this path, refuse without touching
-        // the file lock. flock alone is not sufficient for same-process
-        // mutual exclusion: a subprocess spawn in another thread can cause
-        // our fd to briefly leak through the fork-to-exec window and keep
-        // the kernel lock alive after we close our copy, causing spurious
-        // reacquire failures.
-        {
-            let mut held = held_locks().lock().expect("held-locks mutex poisoned");
-            if held.contains(&registry_key) {
-                return Ok(None);
-            }
-            // Reserve the slot before the syscall so racing threads in this
-            // process see "taken" even before flock returns.
-            held.insert(registry_key.clone());
-        }
-
-        // Kernel-level cross-process exclusion via flock(2). CLOEXEC above
-        // keeps the fd from leaking into exec'd children; any brief fork-to-
-        // exec window is covered by the in-process registry we just updated.
-        // SAFETY: flock signature; LOCK_EX|LOCK_NB are valid flag bits.
-        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if rc != 0 {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            // Give the reservation back so a future retry can succeed.
-            held_locks()
-                .lock()
-                .expect("held-locks mutex poisoned")
-                .remove(&registry_key);
-            if errno == libc::EWOULDBLOCK {
-                return Ok(None);
-            }
-            return Err(GuardError::Io {
-                path: lock_path.to_path_buf(),
-                source: std::io::Error::from_raw_os_error(errno),
-            });
-        }
+                source,
+            })?;
+        let capsem_foundation::unix::lock::LockAttempt::Acquired(lock) = attempt else {
+            return Ok(None);
+        };
 
         // Best-effort pid stamp for debuggability. The lock, not the file
         // contents, is the source of truth.
         use std::io::{Seek, SeekFrom, Write};
-        let _ = (&file).seek(SeekFrom::Start(0));
+        let _ = (&*lock).seek(SeekFrom::Start(0));
         let payload = format!("{}\n", std::process::id());
-        let _ = (&file).write_all(payload.as_bytes());
-        let _ = file.set_len(payload.len() as u64);
+        let _ = (&*lock).write_all(payload.as_bytes());
+        let _ = lock.set_len(payload.len() as u64);
 
         Ok(Some(Self {
-            _file: file,
+            _lock: lock,
             path: lock_path.to_path_buf(),
-            registry_key,
         }))
     }
 
