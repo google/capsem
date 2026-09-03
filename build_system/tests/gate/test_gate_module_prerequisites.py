@@ -11,9 +11,9 @@ phase. Inside the complete gate that phase happened to run first; on its own,
 and on any machine where the retained tag was absent, the build failed with
 `pull access denied`.
 
-It also validated the canonical assets/config pair without producing the
-config half. A wider gate incidentally materialized it, so focused install
-testing failed whenever that leftover was absent.
+It also validated the canonical asset-and-configuration pair without producing
+the configuration half. A wider gate incidentally materialized it, so focused
+install testing failed whenever that leftover was absent.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def test_standalone_install_materializes_the_content_it_validates() -> None:
     labels = _labels("install")
 
     assert "materialize-config" in labels, (
-        "the standalone install lane validates the canonical assets/config pair, "
+        "the standalone install lane validates the canonical profile-content pair, "
         "so it must materialize that pair instead of inheriting another run's output"
     )
     assert labels.index("materialize-config") < labels.index("install")

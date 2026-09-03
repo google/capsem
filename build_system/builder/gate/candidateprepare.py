@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import bench, host, hostpackage, imagebuild, initrd, packagepreflight
 from .actions import Call, Run, Script
 from .cachecontrol import CacheControl
@@ -12,7 +14,15 @@ from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
 
-def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
+@dataclass(frozen=True)
+class Preparation:
+    """Canonical runtime and the profile content it materialized."""
+
+    ready: Step
+    profile_content: Step
+
+
+def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Preparation:
     """Establish everything the expensive candidate phases assume.
 
     The benchmark recordings are cleared exactly once, here, before any module
@@ -98,7 +108,7 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
     return _runtime(plan, config, after=(dependencies,))
 
 
-def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
+def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Preparation:
     """Build, materialize, and sign the runtime consumed by later phases."""
     phase = plan.phase("prepare")
 
@@ -111,7 +121,8 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     packed = initrd.pack(plan, config, after=assets)
     materialised = phase.add(materialize_config_step(config), after=(packed,))
     built = phase.add(hostpackage.build_step(config), after=(materialised,))
-    return phase.add(hostpackage.sign_step(config), after=(built,))
+    ready = phase.add(hostpackage.sign_step(config), after=(built,))
+    return Preparation(ready=ready, profile_content=materialised)
 
 
 def materialize_config_step(config: GateConfig) -> Step:

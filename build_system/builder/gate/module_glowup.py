@@ -58,13 +58,14 @@ def glowup(
     qualification: Qualification,
     after: tuple[Step, ...] = (),
     staged: ProfileContent | None = None,
+    materialized: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
     if qualification.pulled:
         content = staged or ProfileContent.standalone(config)
         return pulled_package(phase, config, qualification, after, content)
-    return _build_and_prove(plan, phase, config, after)
+    return _build_and_prove(plan, phase, config, after, materialized=materialized)
 
 
 # -- the release lane ------------------------------------------------------
@@ -209,10 +210,17 @@ def _glowup_step(
 # -- the local lane --------------------------------------------------------
 
 
-def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Step:
+def _build_and_prove(
+    plan: Plan,
+    phase,
+    config: GateConfig,
+    after: tuple,
+    *,
+    materialized: Step | None,
+) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
-    materialized = plan.shared(candidateprepare.materialize_config_step(config))
+    materialized = materialized or plan.shared(candidateprepare.materialize_config_step(config))
     previous: tuple = (materialized, *after)
     content = ProfileContent.standalone(config)
     for arch in config.architectures:
