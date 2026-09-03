@@ -54,6 +54,8 @@ class Transport:
             if self._socket_path is not None:
                 self._conn = UdsConnection(self._socket_path, timeout)
             else:
+                if self._host is None or self._port is None:
+                    raise ValueError("a TCP transport needs both host and port")
                 self._conn = http.client.HTTPConnection(self._host, self._port, timeout=timeout)
         self._conn.timeout = timeout
         if self._conn.sock is not None:

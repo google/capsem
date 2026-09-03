@@ -846,7 +846,7 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 91
+invalid-argument-type = 74
 invalid-assignment = 6
 invalid-method-override = 1
 invalid-return-type = 4
@@ -1077,8 +1077,8 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/security_engine/mod.rs" = 2784
 "crates/capsem-core/tests/mitm_integration.rs" = 2159
 "crates/capsem-logger/src/db/handle_tests.rs" = 1410
-"crates/capsem-logger/src/reader.rs" = 1838
-"crates/capsem-logger/src/schema.rs" = 1665
+"crates/capsem-logger/src/reader.rs" = 1780
+"crates/capsem-logger/src/schema.rs" = 1506
 "crates/capsem-logger/src/schema/tests.rs" = 1099
 "crates/capsem-logger/src/session_index.rs" = 1270
 "crates/capsem-logger/src/session_index/tests.rs" = 1205
