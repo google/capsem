@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from . import bench, host, hostpackage, imagebuild, initrd, packagepreflight
+from . import bench, host, packagepreflight, runtimeprepare
 from .actions import Call, Run, Script
 from .cachecontrol import CacheControl
 from .config import GateConfig
@@ -14,15 +12,9 @@ from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
 
-@dataclass(frozen=True)
-class Preparation:
-    """Canonical runtime and the profile content it materialized."""
-
-    ready: Step
-    profile_content: Step
-
-
-def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Preparation:
+def prepare(
+    plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
+) -> runtimeprepare.Preparation:
     """Establish everything the expensive candidate phases assume.
 
     The benchmark recordings are cleared exactly once, here, before any module
@@ -105,36 +97,7 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Prepa
     built_harness = phase.add(harness, after=(checked,))
     fit = phase.add(fitness, after=(built_harness,))
     dependencies = packagepreflight.fragment(plan, config, after=(fit,))
-    return _runtime(plan, config, after=(dependencies,))
-
-
-def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Preparation:
-    """Build, materialize, and sign the runtime consumed by later phases."""
-    phase = plan.phase("prepare")
-
-    assets = imagebuild.check_assets(
-        plan,
-        config,
-        after=after,
-        doctor_skips=dict(config.candidate.doctor_skips),
-    )
-    packed = initrd.pack(plan, config, after=assets)
-    materialised = phase.add(materialize_config_step(config), after=(packed,))
-    built = phase.add(hostpackage.build_step(config), after=(materialised,))
-    ready = phase.add(hostpackage.sign_step(config), after=(built,))
-    return Preparation(ready=ready, profile_content=materialised)
-
-
-def materialize_config_step(config: GateConfig) -> Step:
-    """Produce the canonical config half of locally built profile content."""
-    return step(
-        "materialize-config",
-        Run(["bash", config.candidate.materialize_script]),
-        contends=(config.exclusive("workspace_binaries"),),
-        kind=Kind.COMPILE,
-        needs=frozenset({Needs.DISK}),
-        speed=Speed.FAST,
-    )
+    return runtimeprepare.prepare(plan, config, after=(dependencies,))
 
 
 def _enforce_cache(config: GateConfig) -> Call:

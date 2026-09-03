@@ -37,11 +37,12 @@ def build_step(config: GateConfig, *, label: str = "build-binaries"):
     """
     settings = config.signing
     selected = [flag for name in settings.built for flag in ("--bin", name)]
+    binary_dir = config.path(settings.binaries[0]).parent
     return step(
         label,
         Run(["cargo", "build", *selected]),
         contends=(config.exclusive("workspace_binaries"),),
-        produces=tuple(config.path(binary) for binary in settings.binaries),
+        produces=tuple(binary_dir / name for name in settings.built),
         kind=Kind.PACKAGE,
         needs=frozenset({Needs.DISK, Needs.SIGNING}),
         speed=Speed.SLOW,

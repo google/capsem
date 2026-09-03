@@ -312,7 +312,7 @@ install:
 # Capsem had no such entry point: nine Criterion targets existed and nothing
 # ran them, and a release once failed on a gateway CPU figure that no run had
 # ever recorded.
-bench *dimensions: _prepared-runtime
+bench *dimensions:
     @uv run --project build_system --frozen capsem-gate bench {{ quote(dimensions) }}
 
 # The dev loop: only the dimensions that need no guest, bounded so it stays a

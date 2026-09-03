@@ -7,13 +7,13 @@ the local lane builds one per architecture and proves that.
 from __future__ import annotations
 
 from . import (
-    candidateprepare,
     crosscompile,
     host,
     hostpackage,
     install,
     installplan,
     platformproof,
+    runtimeprepare,
 )
 from .actions import Call, Script
 from .command import GateCommand
@@ -220,7 +220,7 @@ def _build_and_prove(
 ) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
-    materialized = materialized or plan.shared(candidateprepare.materialize_config_step(config))
+    materialized = materialized or plan.shared(runtimeprepare.materialize_config_step(config))
     previous: tuple = (materialized, *after)
     content = ProfileContent.standalone(config)
     for arch in config.architectures:

@@ -19,7 +19,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from . import cachelayout, candidateprepare, installplan, platformproof
+from . import cachelayout, installplan, platformproof, runtimeprepare
 from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
@@ -260,7 +260,7 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(ProfileContent.standalone(self._config))
-            prepared = plan.add(candidateprepare.materialize_config_step(self._config))
+            prepared = plan.add(runtimeprepare.materialize_config_step(self._config))
             prerequisites += (prepared,)
         plan.add(install_step(self._config, content=content), after=prerequisites)
         return plan

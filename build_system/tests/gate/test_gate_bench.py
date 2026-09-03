@@ -65,11 +65,35 @@ def test_the_harness_is_built_before_it_is_invoked() -> None:
     """
     plan = _plan(bench.BenchCommand)
     labels = [step.label for step in plan.steps]
-    assert labels.index("bench.build") < labels.index("bench.run")
+    assert labels.index("prepare.bench.build") < labels.index("bench.run")
 
-    produced = {str(path) for path in _step(plan, "bench.build").produces}
+    produced = {str(path) for path in _step(plan, "prepare.bench.build").produces}
     assert str(CONFIG.path(SETTINGS.binary)) in produced
     assert _argv(plan, "bench.run")[0] == str(CONFIG.path(SETTINGS.binary))
+
+
+def test_benchmark_owner_prepares_every_collector_input() -> None:
+    """Focus and direct benchmark runs must not inherit a warm checkout."""
+    plan = _plan(bench.BenchCommand)
+    labels = [step.label for step in plan.steps]
+
+    for label in (
+        "prepare.materialize-config",
+        "prepare.bench.build",
+        "prepare.bench.sign",
+    ):
+        assert labels.index(label) < labels.index("bench.run")
+    assert any(label.startswith("initrd.") for label in labels)
+
+
+def test_quick_benchmark_prepares_host_inputs_without_guest_work() -> None:
+    """The quick lane needs profiles and binaries but keeps its no-guest promise."""
+    labels = [step.label for step in _plan(bench.BenchCommand, quick=True).steps]
+
+    assert "prepare.materialize-config" in labels
+    assert "prepare.bench.build" in labels
+    assert "prepare.bench.sign" in labels
+    assert not any(label.startswith(("assets.", "initrd.")) for label in labels)
 
 
 def test_complete_gate_fitness_uses_the_owned_harness() -> None:
