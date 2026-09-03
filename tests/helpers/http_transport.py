@@ -54,7 +54,10 @@ class Transport:
             if self._socket_path is not None:
                 self._conn = UdsConnection(self._socket_path, timeout)
             else:
-                self._conn = http.client.HTTPConnection(self._host, self._port, timeout=timeout)
+                host = self._host
+                if host is None:
+                    raise ValueError("TCP transport requires a host")
+                self._conn = http.client.HTTPConnection(host, self._port, timeout=timeout)
         self._conn.timeout = timeout
         if self._conn.sock is not None:
             self._conn.sock.settimeout(timeout)
@@ -122,7 +125,10 @@ class Transport:
             target = self._socket_path
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target = (self._host, self._port)
+            host = self._host
+            if host is None:
+                raise ValueError("TCP transport requires a host")
+            target = (host, self._port)
         sock.settimeout(timeout)
         try:
             sock.connect(target)

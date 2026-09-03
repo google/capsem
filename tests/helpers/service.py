@@ -6,12 +6,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
 from log_streams import read_log_stream
 
 from .constants import (

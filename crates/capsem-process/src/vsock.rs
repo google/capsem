@@ -39,7 +39,6 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
-
 use capsem_foundation::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {

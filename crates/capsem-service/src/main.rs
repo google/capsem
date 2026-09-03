@@ -60,19 +60,17 @@ mod update_command;
 mod update_status;
 mod vm_files;
 mod vm_lifecycle;
-
 use ledger_routes::*;
 use profile_routes::*;
+use profile_status_cache::*;
 use router_runtime::*;
 use service_runtime::*;
-use vm_files::*;
-use vm_lifecycle::*;
-
-use profile_status_cache::*;
 use shutdown_policy::*;
 use suspend_confirmation::{observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation};
 use update_command::{update_command_plan, UpdateCommandKind};
 use update_status::update_status_response_from_paths;
+use vm_files::*;
+use vm_lifecycle::*;
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
 /// console output written through `CappedLogWriter`, so its size is the guest's

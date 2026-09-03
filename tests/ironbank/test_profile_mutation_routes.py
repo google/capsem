@@ -8,12 +8,12 @@ hash pins, and record the exact mutation in ``main.db``.
 from __future__ import annotations
 
 import sqlite3
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import blake3
 import pytest
-import tomllib
 from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance
 
