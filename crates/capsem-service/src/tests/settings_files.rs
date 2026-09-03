@@ -177,7 +177,7 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path).expect("registry loads")),
+        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: run_dir.join("assets"),
         run_dir: run_dir.clone(),

@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Saving the persistent VM registry no longer holds its lock while the file
+  is written and fsynced. Every list, info and status poll takes that lock to
+  read, so each persist, fork, suspend, exit or purge stalled them for the
+  length of an fsync (2 to 4 ms on an idle SSD, far more on a busy disk).
+  The table is serialized under the lock and written after it is released,
+  with writes still landing in the order the table changed.
 - The built-in HTTP tools now judge the addresses a host resolves to, not
   only its name, and connect only to the addresses they judged. A name that
   resolved to loopback, a private range or the cloud metadata address

@@ -292,3 +292,90 @@ fn persistent_registry_missing_file_is_an_empty_registry() {
     assert!(registry.data.vms.is_empty());
     assert!(!path.exists(), "loading must not create the file");
 }
+
+#[test]
+fn shared_registry_commit_writes_after_releasing_the_table_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("persistent_registry.json");
+    let shared = SharedRegistry::new(PersistentRegistry::load(path.clone()).unwrap());
+
+    shared
+        .lock()
+        .unwrap()
+        .register(make_entry("one", dir.path().join("one")))
+        .unwrap();
+    // The table lock is free again and the file carries the entry.
+    assert!(shared.lock().unwrap().contains("one"));
+    let reloaded = PersistentRegistry::load(path.clone()).unwrap();
+    assert!(reloaded.contains("one"));
+
+    // In-memory edits through the guard persist on save.
+    let saved = {
+        let mut guard = shared.lock().unwrap();
+        if let Some(entry) = guard.get_mut("one") {
+            entry.suspended = true;
+        }
+        guard.save()
+    };
+    saved.unwrap();
+    assert!(
+        PersistentRegistry::load(path.clone())
+            .unwrap()
+            .get("one")
+            .unwrap()
+            .suspended
+    );
+
+    shared.lock().unwrap().unregister("one").unwrap();
+    assert!(!PersistentRegistry::load(path).unwrap().contains("one"));
+}
+
+#[cfg(unix)]
+#[test]
+fn shared_registry_write_failure_leaves_the_table_usable() {
+    // The table is updated in memory and the lock released before the write;
+    // a failed write reports the error without poisoning or holding anything.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("persistent_registry.json");
+    let shared = SharedRegistry::new(PersistentRegistry::load(path).unwrap());
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = shared
+        .lock()
+        .unwrap()
+        .register(make_entry("two", dir.path().join("two")));
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err(), "an unwritable directory fails the commit");
+    assert!(
+        shared.lock().unwrap().contains("two"),
+        "the table keeps the entry and the lock is free"
+    );
+}
+
+#[test]
+fn shared_registry_writes_land_in_table_order() {
+    // Two guards commit back to back; the later table state is what the
+    // file holds, so a slower earlier write cannot overwrite a newer one.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("persistent_registry.json");
+    let shared = std::sync::Arc::new(SharedRegistry::new(PersistentRegistry::load(path.clone()).unwrap()));
+    let handles: Vec<_> = (0..8)
+        .map(|n| {
+            let shared = std::sync::Arc::clone(&shared);
+            let dir = dir.path().to_path_buf();
+            std::thread::spawn(move || {
+                shared
+                    .lock()
+                    .unwrap()
+                    .register(make_entry(&format!("vm-{n}"), dir.join(format!("vm-{n}"))))
+                    .unwrap();
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    let reloaded = PersistentRegistry::load(path).unwrap();
+    assert_eq!(reloaded.list().count(), 8, "every committed entry is in the file");
+}

@@ -575,14 +575,12 @@ pub(super) async fn handle_delete(
     if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
         state
             .off_worker(move |state| {
-                let mut registry = state.persistent_registry.lock().unwrap();
-                let result = if registry.contains(&key) {
+                let registry = state.persistent_registry.lock().unwrap();
+                if registry.contains(&key) {
                     registry.unregister(&key)
                 } else {
                     Ok(())
-                };
-                drop(registry);
-                result
+                }
             })
             .await?
             .map_err(|error| {

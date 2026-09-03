@@ -13,7 +13,7 @@ use super::*;
 ///
 /// Blocking (the registry saves to disk): call from `spawn_blocking`.
 pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEntry) -> Result<(), AppError> {
-    let mut registry = state.persistent_registry.lock().unwrap();
+    let registry = state.persistent_registry.lock().unwrap();
     if registry.contains(&entry.name) {
         return Err(AppError(
             StatusCode::CONFLICT,
@@ -38,33 +38,34 @@ pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEnt
 ///
 /// Blocking: call from `spawn_blocking` on the async side.
 pub(crate) fn settle_persistent_session_dir(state: &ServiceState, name: &str, exited_dir: &StdPath) -> PathBuf {
-    let mut registry = state.persistent_registry.lock().unwrap();
     let persistent_root = state.run_dir.join("persistent");
-    let (from, vm_id) = match registry.get(name) {
-        Some(entry) if entry.session_dir.parent() == Some(persistent_root.as_path()) => {
-            return entry.session_dir.clone();
+    let (saved, from, to, vm_id) = {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        let (from, vm_id) = match registry.get(name) {
+            Some(entry) if entry.session_dir.parent() == Some(persistent_root.as_path()) => {
+                return entry.session_dir.clone();
+            }
+            Some(entry) => (entry.session_dir.clone(), entry.id.clone()),
+            None => return exited_dir.to_path_buf(),
+        };
+        let to = persistent_root.join(&vm_id);
+        let moved = std::fs::create_dir_all(&persistent_root).and_then(|()| std::fs::rename(&from, &to));
+        if let Err(error) = moved {
+            error!(
+                vm_id,
+                name,
+                from = %from.display(),
+                to = %to.display(),
+                error = %error,
+                "persisted session dir could not be moved under persistent/; it stays where it ran"
+            );
+            return from;
         }
-        Some(entry) => (entry.session_dir.clone(), entry.id.clone()),
-        None => return exited_dir.to_path_buf(),
+        if let Some(entry) = registry.get_mut(name) {
+            entry.session_dir = to.clone();
+        }
+        (registry.save(), from, to, vm_id)
     };
-    let to = persistent_root.join(&vm_id);
-    let moved = std::fs::create_dir_all(&persistent_root).and_then(|()| std::fs::rename(&from, &to));
-    if let Err(error) = moved {
-        error!(
-            vm_id,
-            name,
-            from = %from.display(),
-            to = %to.display(),
-            error = %error,
-            "persisted session dir could not be moved under persistent/; it stays where it ran"
-        );
-        return from;
-    }
-    if let Some(entry) = registry.data.vms.get_mut(name) {
-        entry.session_dir = to.clone();
-    }
-    let saved = registry.save();
-    drop(registry);
     if let Err(error) = saved {
         error!(vm_id, name, error = %error, "failed to save persistent registry after settling session dir");
     }

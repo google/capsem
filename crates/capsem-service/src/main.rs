@@ -163,7 +163,7 @@ use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_profile_session_name, validate_vm_name};
 use capsem_service::registry::{
-    new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
+    new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry, SharedRegistry,
 };
 use capsem_service::triage;
 
@@ -226,7 +226,7 @@ struct ServiceState {
     /// readers or create per-route projection caches.
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
     /// Registry of persistent (named) VMs
-    persistent_registry: Mutex<PersistentRegistry>,
+    persistent_registry: SharedRegistry,
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
