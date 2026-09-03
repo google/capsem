@@ -217,6 +217,9 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     assert environments == [
         {
             config.environment.source_checkout: str(config.root),
+            # The child must resolve every repository-owned path against its
+            # immutable source snapshot, never the mutable invoking checkout.
+            config.environment.repository_root: str(tmp_path / str(commit)),
             cachelayout.cache_paths(config).policy.authority_environment: str(config.root),
             config.environment.source_commit: str(commit),
             # Named here rather than merely tolerated: the child compiles into

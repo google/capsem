@@ -413,13 +413,12 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
 
     assert "_generate-settings" in functional.splitlines()[0]
 
-    # Signing moved into the module, where it is conditional on the same
-    # release-input variable and ordered by an edge rather than by position.
+    # Runtime preparation owns the local binary build and signing boundary;
+    # the functional module must consume that prepared result before booting.
     labels = _planned_labels("test-functional")
-    # Composed rather than dispatched: one platform-shaped signing step stays
-    # in the graph before the broad suite. Linux keeps the edge with no action;
-    # the synthetic macOS contract separately proves the codesign actions.
-    assert labels.index("functional.sign") < labels.index(
+    # Linux keeps the platform-shaped signing edge with no action; the
+    # synthetic macOS contract separately proves the codesign actions.
+    assert labels.index("prepare.sign") < labels.index(
         "functional.pytest.broad.code"
     )
     for forbidden in (

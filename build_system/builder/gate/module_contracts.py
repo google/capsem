@@ -41,6 +41,7 @@ class ReleaseContractsModule(
     """
 
     sandboxed = sandbox.ENFORCE
+    outside_egress = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

@@ -144,7 +144,13 @@ def compose_modules(
         node=node,
     )
     signed = next(step for step in static if step.label == "static.sign")
-    artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
+    artifacts = vmmodules.artifacts(
+        plan,
+        config,
+        qualification=qualification,
+        after=static,
+        node=node,
+    )
     functional = vmmodules.functional(
         plan,
         config,

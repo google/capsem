@@ -110,6 +110,7 @@ class ToolchainConfig(Strict):
     compiler_cache_command: SafeToken
     compiler_cache_socket_name: SafeToken
     node_workspaces: tuple[str, ...]
+    node_fetch: tuple[str, ...]
     node_install: tuple[str, ...]
     node_env: dict[str, str]
     rust_targets: tuple[str, ...]

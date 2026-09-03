@@ -1209,7 +1209,8 @@ node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
-node_install = ["pnpm", "install", "--frozen-lockfile"]
+node_fetch = ["pnpm", "fetch", "--frozen-lockfile"]
+node_install = ["pnpm", "install", "--offline", "--frozen-lockfile"]
 node_env = { CI = "true" }
 
 # Every non-native Rust target the gate compiles. The GNU pair exercises both
