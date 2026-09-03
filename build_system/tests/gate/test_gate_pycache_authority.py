@@ -121,6 +121,32 @@ def test_private_source_generation_uses_outer_cache_authority(
     assert generation.parent == authority / "cache/tools/python/pycache"
 
 
+def test_linked_source_generation_defaults_to_common_cache_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from capsem_builder import gatelaunch as launcher
+
+    common = tmp_path / "common"
+    source = tmp_path / "linked"
+    git_dir = common / ".git/worktrees/linked"
+    git_dir.mkdir(parents=True)
+    _source(source, "linked")
+    (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+    (source / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    config = source / "config"
+    config.mkdir()
+    config.joinpath("cache.toml").write_text(
+        'root = "cache"\nauthority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"\n'
+        '[stages.python-pycache]\npath = "tools/python/pycache"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CAPSEM_TEST_CACHE_AUTHORITY", raising=False)
+
+    generation = Path(launcher.isolated_environment(source)[launcher.PYCACHE])
+
+    assert generation.parent == common / "cache/tools/python/pycache"
+
+
 def test_live_gate_generation_holds_a_prune_lease(tmp_path: Path) -> None:
     import capsem_builder.gatelaunch as launcher
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from .api import CacheOperation, CacheRequest
-from .config import load_policy
+from .config import load_paths, load_policy
 from .inventory import scan_inventory
 from .paths import CachePaths
 from .registry import CacheRegistry
@@ -50,8 +50,8 @@ def _mutation_output(results, *, as_json: bool) -> None:
 @click.option(
     "--repository",
     type=click.Path(path_type=Path, file_okay=False),
-    default=Path.cwd,
-    show_default="current directory",
+    default=None,
+    help="Explicit cache-storage checkout; defaults to the shared cache authority.",
 )
 @click.option(
     "--policy-repository",
@@ -60,11 +60,15 @@ def _mutation_output(results, *, as_json: bool) -> None:
     help="Read cache policy from this source tree while controlling --repository storage.",
 )
 @click.pass_context
-def main(context: click.Context, repository: Path, policy_repository: Path | None) -> None:
+def main(context: click.Context, repository: Path | None, policy_repository: Path | None) -> None:
     """Inspect and control Capsem's repository cache."""
     context.ensure_object(dict)
-    context.obj["repository"] = repository.resolve()
-    context.obj["policy_repository"] = (policy_repository or repository).resolve()
+    policy_root = (policy_repository or repository or Path.cwd()).resolve()
+    storage_root = (
+        repository.resolve() if repository is not None else load_paths(policy_root).repository_root
+    )
+    context.obj["repository"] = storage_root
+    context.obj["policy_repository"] = policy_root
 
 
 @main.command("stats")
@@ -164,7 +168,13 @@ def dispatch(context: click.Context, arguments: tuple[str, ...]) -> None:
     if selected[0] == "dispatch":
         raise click.UsageError("nested cache dispatch is not allowed")
     main.main(
-        args=["--repository", str(context.obj["repository"]), *selected],
+        args=[
+            "--repository",
+            str(context.obj["repository"]),
+            "--policy-repository",
+            str(context.obj["policy_repository"]),
+            *selected,
+        ],
         prog_name="capsem-cache",
         standalone_mode=False,
     )

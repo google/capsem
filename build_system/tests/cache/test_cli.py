@@ -78,6 +78,23 @@ def test_policy_source_is_independent_from_cache_storage(tmp_path: Path) -> None
     assert json.loads(result.output)["caches"][0]["current_size_bytes"] == len(b"shared")
 
 
+def test_default_storage_honors_the_policy_cache_authority(tmp_path: Path) -> None:
+    policy_root = repository(tmp_path / "source")
+    storage_root = tmp_path / "storage"
+    entry = storage_root / "cache/target/objects/one"
+    entry.mkdir(parents=True)
+    (entry / "payload").write_bytes(b"shared")
+
+    result = CliRunner().invoke(
+        main,
+        ["--policy-repository", str(policy_root), "stats", "--offline", "--json"],
+        env={"CAPSEM_TEST_CACHE_AUTHORITY": str(storage_root)},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["caches"][0]["current_size_bytes"] == len(b"shared")
+
+
 def test_prune_previews_then_applies_only_with_flag(tmp_path: Path) -> None:
     root = repository(tmp_path)
     entry = root / "cache/target/objects/one"

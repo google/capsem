@@ -49,6 +49,13 @@ so every producer sees the outer shared cache even when its output path crosses
 a prefix symlink. Producers never read or interpret the environment variable
 themselves.
 
+With no explicit authority, `load_paths()` resolves a linked Git worktree to
+the checkout that owns the common `.git` directory. All branches of one local
+repository therefore share one cache inventory. Do not create a cache beside
+each worktree or pass a worktree path as implicit storage. Administrative
+cleanup of a retired location uses the typed CLI's explicit `--repository`
+with `--policy-repository`; ordinary operators stay on `just cache`.
+
 All models are strict, frozen Pydantic models with `extra="forbid"`. Keep every
 module at or below 300 lines and put tests in the matching test module.
 

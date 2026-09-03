@@ -72,6 +72,27 @@ def checkout() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _git_common_checkout(root: Path) -> Path:
+    """Resolve linked worktrees before importing the typed cache package."""
+    marker = root / ".git"
+    if marker.is_dir() or not marker.is_file():
+        return root
+    try:
+        label, raw_git_dir = marker.read_text(encoding="utf-8").strip().split(":", 1)
+        if label != "gitdir":
+            return root
+        git_dir = Path(raw_git_dir.strip()).expanduser()
+        if not git_dir.is_absolute():
+            git_dir = root / git_dir
+        common_file = git_dir / "commondir"
+        if not common_file.is_file():
+            return root
+        common_git_dir = (git_dir / common_file.read_text(encoding="utf-8").strip()).resolve()
+    except (OSError, ValueError):
+        return root
+    return common_git_dir.parent if common_git_dir.name == ".git" else root
+
+
 def _cache_authority(root: Path) -> Path:
     """Keep private-checkout bytecode in the outer repository cache."""
     policy = root / CACHE_POLICY
@@ -80,7 +101,7 @@ def _cache_authority(root: Path) -> Path:
     raw = tomllib.loads(policy.read_text(encoding="utf-8"))
     variable = raw.get("authority_environment")
     selected = os.environ.get(variable, "") if isinstance(variable, str) else ""
-    return Path(selected).resolve() if selected else root
+    return Path(selected).resolve() if selected else _git_common_checkout(root)
 
 
 def _stage(root: Path, authority: Path | None = None) -> Path:

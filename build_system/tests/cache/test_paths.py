@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_paths
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 from pydantic import ValidationError
@@ -27,11 +28,62 @@ def policy() -> CachePolicy:
     )
 
 
+def _write_policy(root: Path) -> None:
+    config = root / "config"
+    config.mkdir(parents=True)
+    config.joinpath("cache.toml").write_text(
+        """
+version = 1
+root = "cache"
+authority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"
+[stages.objects]
+description = "immutable test objects"
+scope = "disk"
+path = "target/objects"
+warm_size_bytes = 2
+max_size_bytes = 3
+prune_strategy = "lru"
+maximum_age_hours = 72
+""".strip(),
+        encoding="utf-8",
+    )
+
+
 def test_paths_resolve_from_the_repository_root(tmp_path: Path) -> None:
     paths = CachePaths(repository_root=tmp_path, policy=policy())
 
     assert paths.root == tmp_path / "cache"
     assert paths.stage("cargo-debug") == tmp_path / "cache/target/cargo/debug"
+
+
+def test_linked_worktree_defaults_to_the_git_common_checkout(tmp_path: Path) -> None:
+    common = tmp_path / "common"
+    linked = tmp_path / "linked"
+    git_dir = common / ".git/worktrees/linked"
+    git_dir.mkdir(parents=True)
+    linked.mkdir()
+    (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+    (linked / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    _write_policy(linked)
+
+    paths = load_paths(linked, environment={})
+
+    assert paths.repository_root == common
+
+
+def test_explicit_authority_overrides_the_git_common_checkout(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    authority = tmp_path / "authority"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    _write_policy(repository)
+
+    paths = load_paths(
+        repository,
+        environment={"CAPSEM_TEST_CACHE_AUTHORITY": str(authority)},
+    )
+
+    assert paths.repository_root == authority
 
 
 def test_unknown_stage_fails_by_name(tmp_path: Path) -> None:
