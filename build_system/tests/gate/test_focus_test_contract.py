@@ -77,6 +77,30 @@ def test_rust_focus_uses_the_configured_affected_selector() -> None:
     assert "capsem-gate" not in rendered
 
 
+def test_install_focus_materializes_the_standalone_content_pair(monkeypatch) -> None:
+    """A focused glow-up must not inherit a prior Ironbank workspace."""
+    from capsem_builder.gate.content import ProfileContent
+
+    selected: list[Path] = []
+    original = ProfileContent.standalone.__func__
+
+    def observed(cls, config):
+        content = original(cls, config)
+        selected.append(content.root)
+        return content
+
+    monkeypatch.setattr(ProfileContent, "standalone", classmethod(observed))
+    plan = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("install"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    ).plan()
+
+    assert selected == [ROOT]
+    assert "materialize-config" in plan.labels
+    assert plan.labels.index("materialize-config") < plan.labels.index("package.arm64.content")
+
+
 def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> None:
     command = focus.FocusTestCommand(
         RecordingRunner(ROOT),

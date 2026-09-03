@@ -7,6 +7,7 @@ the local lane builds one per architecture and proves that.
 from __future__ import annotations
 
 from . import (
+    candidateprepare,
     crosscompile,
     host,
     hostpackage,
@@ -211,11 +212,9 @@ def _glowup_step(
 def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
-    previous: tuple = after
-    content = ProfileContent.isolated(
-        config,
-        config.path(config.assets.test_root) / config.suites.pytest.base_profile,
-    )
+    materialized = plan.shared(candidateprepare.materialize_config_step(config))
+    previous: tuple = (materialized, *after)
+    content = ProfileContent.standalone(config)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader
