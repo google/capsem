@@ -48,7 +48,8 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     compiler = cachetooling.compiler_environment(CONFIG)
     assert compiler[CONFIG.environment.rustc_wrapper] == "sccache"
     assert compiler[CONFIG.environment.sccache_dir] == str(ROOT / "cache/tools/rust/sccache")
-    assert compiler[CONFIG.environment.sccache_cache_size] == "200G"
+    sccache_max_gib = CACHE_POLICY.stages["rust-sccache"].max_size_bytes // 1024**3
+    assert compiler[CONFIG.environment.sccache_cache_size] == f"{sccache_max_gib}G"
     assert compiler[CONFIG.environment.sccache_base_dir] == str(ROOT)
     assert compiler[CONFIG.environment.sccache_server_uds] == str(
         ROOT / "cache/tools/rust/sccache/sccache.sock"

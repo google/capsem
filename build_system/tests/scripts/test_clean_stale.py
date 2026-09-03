@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.image.tools.build import clean_stale, cleanup_tmp
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -429,10 +430,13 @@ def test_main_persists_cleanup_ledger(tmp_path: Path):
     assert all(stage["name"] != "cargo" for stage in payload["stages"])
 
 
-def test_main_places_default_ledger_in_policy_owned_state(tmp_path: Path):
+def test_main_places_default_ledger_in_policy_owned_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     config = tmp_path / "config"
     config.mkdir()
     shutil.copy2(REPO_ROOT / "config/cache.toml", config / "cache.toml")
+    monkeypatch.delenv(load_policy(tmp_path).authority_environment, raising=False)
 
     rc = clean_stale.main(
         [
