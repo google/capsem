@@ -785,6 +785,9 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {reused}"
 
         def run(self, *args, **kwargs) -> int:
+            environment = kwargs["env"]
+            assert environment[config.environment.repository_root] == str(reused)
+            assert environment[config.environment.source_checkout] == str(config.root)
             return 0
 
     from capsem_builder.gate import buildcache

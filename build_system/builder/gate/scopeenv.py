@@ -28,6 +28,7 @@ def command_environment(
     scoped = {
         **inherited,
         **cachetooling.compiler_environment(config),
+        config.environment.repository_root: str(config.root),
         config.environment.command_sandbox_mode: mode.value,
     }
     if source_commit is not None:

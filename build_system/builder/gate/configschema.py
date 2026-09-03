@@ -165,6 +165,7 @@ class EnvironmentConfig(Strict):
     benchmark_root: str
     coverage_file: str
     source_checkout: str
+    repository_root: str
     cargo_target: str
     rustc_wrapper: str
     sccache_dir: str

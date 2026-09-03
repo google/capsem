@@ -541,6 +541,7 @@ def test_the_recorded_environment_is_the_delta_not_the_machines(journal, monkeyp
         "CAPSEM_MARK": "1",
         CONFIG.environment.command_sandbox_mode: "off",
         CONFIG.environment.qualified_source_commit: qualified_commit(PROJECT_ROOT, None),
+        CONFIG.environment.repository_root: str(PROJECT_ROOT),
     }
 
 

@@ -412,6 +412,10 @@ coverage_file = "COVERAGE_FILE"
 # the *source* checkout's path, because a run in a prefix still has to be able
 # to name the tree it is qualifying.
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
+# The source tree a checked-in tool must read. This deliberately follows a
+# private prefix, unlike the cache authority above, which remains the shared
+# checkout so reusable bytes survive across exact-source runs.
+repository_root = "CAPSEM_REPOSITORY_ROOT"
 # Where cargo compiles, shared by every run; see `[prefix] cargo_target`.
 cargo_target = "CARGO_TARGET_DIR"
 rustc_wrapper = "RUSTC_WRAPPER"
