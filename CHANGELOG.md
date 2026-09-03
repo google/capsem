@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The service refuses to start when its persistent VM registry file is
+  unreadable or corrupt instead of starting with an empty registry and
+  overwriting the file on the next persist. Startup hydration keys session
+  DB handles by runtime id, the id routes actually use, so persistent
+  sessions are served after a restart; a malformed session schema is
+  reported as not ready instead of being invisible. `persist` claims the
+  name, moves the session directory and registers it as one step under the
+  registry lock and moves the directory back if registration is refused;
+  `purge` deletes session directories only through the service's contained
+  delete path.
 - The service's cached ledger statistics can no longer be filled by a query
   that finished after a write invalidated the cache, which had left stale
   counts on `/stats` until the next lifecycle event. The guest agent also

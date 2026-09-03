@@ -166,7 +166,7 @@ pub(super) async fn run_service() -> Result<()> {
     });
 
     let registry_path = run_dir.join("persistent_registry.json");
-    let persistent_registry = PersistentRegistry::load(registry_path);
+    let persistent_registry = PersistentRegistry::load(registry_path)?;
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"

@@ -46,7 +46,7 @@ fn persistent_registry_roundtrip() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test_registry.json");
 
-    let mut registry = PersistentRegistry::load(path.clone());
+    let mut registry = PersistentRegistry::load(path.clone()).expect("registry loads");
     assert_eq!(registry.data.vms.len(), 0);
 
     let mut entry = make_entry("mydev", dir.path().join("mydev"));
@@ -58,7 +58,7 @@ fn persistent_registry_roundtrip() {
     assert_eq!(registry.get("mydev").unwrap().ram_mb, 4096);
 
     // Reload from disk
-    let registry2 = PersistentRegistry::load(path);
+    let registry2 = PersistentRegistry::load(path).expect("registry loads");
     assert!(registry2.contains("mydev"));
     assert_eq!(registry2.get("mydev").unwrap().cpus, 4);
 }
@@ -92,11 +92,11 @@ fn persistent_registry_backfills_missing_ids() {
     )
     .unwrap();
 
-    let registry = PersistentRegistry::load(path.clone());
+    let registry = PersistentRegistry::load(path.clone()).expect("registry loads");
     let id = &registry.get("legacy").unwrap().id;
     assert!(!id.is_empty(), "legacy registry entries must get durable ids");
 
-    let reloaded = PersistentRegistry::load(path);
+    let reloaded = PersistentRegistry::load(path).expect("registry loads");
     assert_eq!(
         reloaded.get("legacy").unwrap().id,
         *id,
@@ -109,7 +109,7 @@ fn persistent_registry_rejects_duplicate() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test_registry.json");
 
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     let entry = make_entry("dup", dir.path().join("dup"));
     registry.register(entry.clone()).unwrap();
     let err = registry.register(entry).unwrap_err();
@@ -121,7 +121,7 @@ fn persistent_registry_unregister() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test_registry.json");
 
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     registry.register(make_entry("tmp", dir.path().join("tmp"))).unwrap();
     assert!(registry.contains("tmp"));
     registry.unregister("tmp").unwrap();
@@ -133,7 +133,7 @@ fn persistent_registry_get_mut() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test_registry.json");
 
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     registry
         .register(make_entry("mutvm", dir.path().join("mutvm")))
         .unwrap();
@@ -149,7 +149,7 @@ fn resume_clears_suspended_flag_in_registry() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test_registry.json");
 
-    let mut registry = PersistentRegistry::load(path.clone());
+    let mut registry = PersistentRegistry::load(path.clone()).expect("registry loads");
     let mut entry = make_entry("resumevm", dir.path().join("resumevm"));
     entry.suspended = true;
     entry.checkpoint_path = Some("checkpoint.vzsave".into());
@@ -171,7 +171,7 @@ fn resume_clears_suspended_flag_in_registry() {
     assert!(registry.get("resumevm").unwrap().checkpoint_path.is_none());
 
     // Verify persists to disk
-    let registry2 = PersistentRegistry::load(path);
+    let registry2 = PersistentRegistry::load(path).expect("registry loads");
     assert!(!registry2.get("resumevm").unwrap().suspended);
 }
 
@@ -202,21 +202,11 @@ fn persistent_vm_entry_rejects_missing_profile_contract_fields() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn load_returns_empty_on_corrupt_json() {
-    let dir = TempDir::new().unwrap();
-    let path = dir.path().join("corrupt.json");
-    std::fs::write(&path, "not json").unwrap();
-
-    let registry = PersistentRegistry::load(path);
-    assert_eq!(registry.list().count(), 0);
-}
-
-#[test]
 fn load_returns_empty_on_missing_file() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("does-not-exist.json");
 
-    let registry = PersistentRegistry::load(path);
+    let registry = PersistentRegistry::load(path).expect("registry loads");
     assert_eq!(registry.list().count(), 0);
 }
 
@@ -224,7 +214,7 @@ fn load_returns_empty_on_missing_file() {
 fn get_returns_none_for_missing() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("reg.json");
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     registry
         .register(make_entry("present", dir.path().join("present")))
         .unwrap();
@@ -235,7 +225,7 @@ fn get_returns_none_for_missing() {
 fn get_mut_returns_none_for_missing() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("reg.json");
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     registry
         .register(make_entry("present", dir.path().join("present")))
         .unwrap();
@@ -246,7 +236,7 @@ fn get_mut_returns_none_for_missing() {
 fn contains_false_for_missing() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("reg.json");
-    let registry = PersistentRegistry::load(path);
+    let registry = PersistentRegistry::load(path).expect("registry loads");
     assert!(!registry.contains("never-registered"));
 }
 
@@ -254,7 +244,7 @@ fn contains_false_for_missing() {
 fn list_iterates_all_registered() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("reg.json");
-    let mut registry = PersistentRegistry::load(path);
+    let mut registry = PersistentRegistry::load(path).expect("registry loads");
     registry.register(make_entry("a", dir.path().join("a"))).unwrap();
     registry.register(make_entry("b", dir.path().join("b"))).unwrap();
 
@@ -270,10 +260,35 @@ fn save_writes_atomically_via_temp_rename() {
     let path = dir.path().join("atomic.json");
     let tmp_path = path.with_extension("json.tmp");
 
-    let mut registry = PersistentRegistry::load(path.clone());
+    let mut registry = PersistentRegistry::load(path.clone()).expect("registry loads");
     registry.register(make_entry("one", dir.path().join("one"))).unwrap();
 
     // Final file present, temp sibling gone (rename completed).
     assert!(path.exists(), "registry json should exist after save");
     assert!(!tmp_path.exists(), "temp file should be renamed, not left behind");
+}
+
+// A registry file that exists but cannot be parsed used to load as an empty
+// registry; the next register() then saved the empty one over it and every
+// persistent VM was forgotten, its directory orphaned under persistent/.
+#[test]
+fn persistent_registry_refuses_to_load_a_corrupt_file_and_leaves_it_alone() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("persistent_registry.json");
+    std::fs::write(&path, b"{ \"vms\": { \"dev\": { \"name\": ").unwrap();
+
+    let error = PersistentRegistry::load(path.clone())
+        .err()
+        .expect("corrupt registry must not load");
+    assert!(error.to_string().contains("refusing to overwrite"), "{error:#}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"{ \"vms\": { \"dev\": { \"name\": ");
+}
+
+#[test]
+fn persistent_registry_missing_file_is_an_empty_registry() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("persistent_registry.json");
+    let registry = PersistentRegistry::load(path.clone()).expect("missing file is empty");
+    assert!(registry.data.vms.is_empty());
+    assert!(!path.exists(), "loading must not create the file");
 }

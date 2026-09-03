@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,16 +78,30 @@ pub struct PersistentRegistry {
 }
 
 impl PersistentRegistry {
-    pub fn load(path: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+    /// Load the registry. A missing file is an empty registry; a file that
+    /// exists but cannot be read or parsed is an error, never an empty
+    /// registry: the next `register` would have saved the empty one over it
+    /// and silently forgotten every persistent VM (their directories left
+    /// orphaned under `persistent/`), which is what a schema change without a
+    /// serde default used to do on upgrade.
+    pub fn load(path: PathBuf) -> Result<Self> {
+        let data = match std::fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).with_context(|| {
+                format!(
+                    "persistent VM registry {} is unreadable; refusing to overwrite it",
+                    path.display()
+                )
+            })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => PersistentRegistryData::default(),
+            Err(error) => {
+                return Err(error).with_context(|| format!("read persistent VM registry {}", path.display()));
+            }
+        };
         let mut registry = Self { path, data };
         if registry.ensure_entry_ids() {
-            let _ = registry.save();
+            registry.save()?;
         }
-        registry
+        Ok(registry)
     }
 
     fn ensure_entry_ids(&mut self) -> bool {

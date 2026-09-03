@@ -299,7 +299,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path);
+    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
@@ -361,7 +361,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
     let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path);
+    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
@@ -880,7 +880,7 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path).expect("registry loads")),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),

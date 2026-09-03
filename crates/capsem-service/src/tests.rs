@@ -53,7 +53,7 @@ fn make_test_state() -> Arc<ServiceState> {
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path).expect("registry loads")),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
@@ -130,7 +130,9 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(assets_dir.join("persistent_registry.json"))),
+        persistent_registry: Mutex::new(
+            PersistentRegistry::load(assets_dir.join("persistent_registry.json")).expect("registry loads"),
+        ),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir,
         run_dir: run_dir.clone(),
@@ -528,7 +530,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path).expect("registry loads")),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: dir.path().join("assets"),
         run_dir: run_dir.clone(),
@@ -572,8 +574,10 @@ mod assets_registry;
 mod files_api;
 mod ledger_routes;
 mod lifecycle;
+mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
+mod session_identity;
 mod settings_files;
 mod system_contracts;
 mod update_routes;

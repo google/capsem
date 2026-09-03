@@ -1097,7 +1097,7 @@ impl ServiceState {
                     .data
                     .vms
                     .values()
-                    .map(|entry| (entry.name.clone(), entry.session_dir.clone())),
+                    .map(|entry| (persistent_entry_vm_id(entry), entry.session_dir.clone())),
             );
         }
 

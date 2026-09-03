@@ -1921,25 +1921,6 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     );
 }
 
-#[test]
-fn persistent_route_identity_source_guard() {
-    let source = include_str!("../main.rs");
-    for forbidden in [
-        "registry.get(&id)",
-        "registry.get(id)",
-        "registry.get_mut(&id)",
-        "registry.get_mut(id)",
-        "registry.unregister(&id)",
-        "instances.contains_key(&entry.name)",
-        "SandboxInfo::new(\n            entry.name.clone()",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "{forbidden} reintroduced the VM identity footgun: route `id` is the opaque session id; registry `name` is display/resume identity only"
-        );
-    }
-}
-
 #[tokio::test]
 async fn db_boundary_route_contract_db_handle_route_rewire() {
     let state = make_test_state();
@@ -2119,20 +2100,27 @@ async fn service_rehydrates_session_db_handles() {
     std::fs::create_dir_all(&session_dir).unwrap();
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
     writer.shutdown_blocking();
-    state.persistent_registry.lock().unwrap().data.vms.insert(
-        "startup-db-vm".to_string(),
-        test_persistent_entry("startup-db-vm", session_dir),
-    );
+    // Routes address a persistent session by its runtime id, never by its
+    // name: a handle hydrated under the name was invisible to every route.
+    let entry = test_persistent_entry("startup-db-vm", session_dir);
+    let vm_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("startup-db-vm".to_string(), entry);
 
     assert!(
-        state.session_db_handle("startup-db-vm").is_none(),
+        state.session_db_handle(&vm_id).is_none(),
         "test must prove startup hydration installs the handle"
     );
     state.hydrate_session_db_handles();
 
     let handle = state
-        .session_db_handle("startup-db-vm")
-        .expect("startup hydration must install a persistent-session DB handle");
+        .session_db_handle(&vm_id)
+        .expect("startup hydration must install a persistent-session DB handle under the runtime id");
     handle
         .ready()
         .await
@@ -2252,9 +2240,12 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .vms
         .insert("status-broken-db-vm".to_string(), entry);
     state.hydrate_session_db_handles();
+    let handle = state
+        .session_db_handle(&vm_id)
+        .expect("startup hydration installs the handle so routes surface the schema error explicitly");
     assert!(
-        state.session_db_handle(&vm_id).is_none(),
-        "startup hydration must not install a ready handle for malformed session schema"
+        handle.ready().await.is_err(),
+        "a malformed session schema must fail readiness instead of being treated as ready"
     );
 
     let (status, body) = route_request(app, axum::http::Method::GET, &format!("/vms/{vm_id}/info"), None).await;

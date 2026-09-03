@@ -1,5 +1,8 @@
 use super::*;
 
+mod session_dirs;
+use session_dirs::{claim_persistent_session, remove_purged_session_dir};
+
 // History endpoints
 
 /// Helper: resolve session_dir from instance ID (running or persistent).
@@ -735,17 +738,6 @@ pub(super) async fn handle_persist(
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    // Check name is not taken
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        if registry.contains(name) {
-            return Err(AppError(
-                StatusCode::CONFLICT,
-                format!("persistent VM \"{}\" already exists", name),
-            ));
-        }
-    }
-
     // Find the running ephemeral instance
     let (
         old_session_dir,
@@ -791,49 +783,39 @@ pub(super) async fn handle_persist(
         .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
-    // Move session dir to persistent location without changing the runtime id.
+    // Move the session dir under persistent/ without changing the runtime id,
+    // and register it, as one step under the registry lock.
     let new_session_dir = state.run_dir.join("persistent").join(&id);
-    let _ = std::fs::create_dir_all(state.run_dir.join("persistent"));
-    std::fs::rename(&old_session_dir, &new_session_dir).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to move session dir: {e}"),
-        )
-    })?;
-
-    // Register in persistent registry
-    {
-        let mut registry = state.persistent_registry.lock().unwrap();
-        registry
-            .register(PersistentVmEntry {
-                id: id.clone(),
-                name: name.clone(),
-                profile_id: profile_id.clone(),
-                profile_revision: profile_revision.clone(),
-                profile_payload_hash: profile_payload_hash.clone(),
-                asset_pins: asset_pins.clone(),
-                ram_mb,
-                cpus,
-                base_version,
-                created_at: format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-                session_dir: new_session_dir.clone(),
-                forked_from: forked_from.clone(),
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env,
-            })
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        drop(registry);
-    }
+    let entry = PersistentVmEntry {
+        id: id.clone(),
+        name: name.clone(),
+        profile_id: profile_id.clone(),
+        profile_revision: profile_revision.clone(),
+        profile_payload_hash: profile_payload_hash.clone(),
+        asset_pins: asset_pins.clone(),
+        ram_mb,
+        cpus,
+        base_version,
+        created_at: format!(
+            "{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ),
+        session_dir: new_session_dir.clone(),
+        forked_from: forked_from.clone(),
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env,
+    };
+    let claim_state = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || claim_persistent_session(&claim_state, entry, &old_session_dir))
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("persist task failed: {e}")))??;
 
     // Update instance info in-place
     {
@@ -908,16 +890,15 @@ pub(super) async fn handle_purge(
         let Some((id, session_dir, persistent)) = result? else {
             continue;
         };
+        if !remove_purged_session_dir(&state, &id, session_dir).await {
+            continue;
+        }
         if persistent {
             if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
                 let mut registry = state.persistent_registry.lock().unwrap();
                 let _ = registry.unregister(&key);
             }
         }
-        let dir = session_dir;
-        tokio::task::spawn_blocking(move || {
-            let _ = std::fs::remove_dir_all(&dir);
-        });
         if persistent {
             persistent_purged += 1;
         } else {
@@ -938,12 +919,17 @@ pub(super) async fn handle_purge(
             .collect()
     };
     for name in &stopped_names {
-        let session_dir = {
+        let entry = {
             let registry = state.persistent_registry.lock().unwrap();
-            registry.get(name).map(|e| e.session_dir.clone())
+            registry
+                .get(name)
+                .map(|e| (persistent_entry_vm_id(e), e.session_dir.clone()))
         };
-        if let Some(dir) = session_dir {
-            let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir)).await;
+        let Some((vm_id, session_dir)) = entry else {
+            continue;
+        };
+        if !remove_purged_session_dir(&state, &vm_id, session_dir).await {
+            continue;
         }
         let mut registry = state.persistent_registry.lock().unwrap();
         let _ = registry.unregister(name);
