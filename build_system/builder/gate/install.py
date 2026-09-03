@@ -19,8 +19,8 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from . import cachelayout, installplan, platformproof
 from . import config as gate_config
-from . import installplan, platformproof
 from .actions import Call
 from .cachecontrol import CacheControl
 from .command import GateCommand
@@ -175,7 +175,8 @@ class InstallGate:
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
         # its non-root build can write there. Hand the host-owned storage ledger
         # back before invoking the host controller; cleanup restores the rest.
-        self._container.hand_back(f"{self._settings.mount}/{self._settings.storage_ledger}")
+        state = cachelayout.stage_relative_path(self._config, "state")
+        self._container.hand_back(f"{self._settings.mount}/{state}")
         # Package and image assembly can consume the reserve measured at start.
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside

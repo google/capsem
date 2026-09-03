@@ -261,7 +261,6 @@ sbom_name = "capsem-sbom.spdx.json"
 candidate_prefix = "v"
 file_url_scheme = "file://"
 release_site_dir = "build_system/release_site"
-storage_ledger = "cache/target/storage"
 test_output_root = "/tmp/capsem-test-output"
 
 # Where the postinst records which channel it hydrated from. Read back after

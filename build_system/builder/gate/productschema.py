@@ -146,7 +146,6 @@ class InstallConfig(Strict):
     candidate_prefix: str
     file_url_scheme: str
     release_site_dir: str
-    storage_ledger: str
     test_output_root: str
     install_log_glob: str
     preinstall_root: str

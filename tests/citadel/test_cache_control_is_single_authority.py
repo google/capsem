@@ -40,6 +40,18 @@ def test_every_cache_owner_has_the_common_contract() -> None:
         assert 0 < owner["warm_size_bytes"] <= owner["max_size_bytes"]
 
 
+def test_cache_budgets_are_sized_for_their_owners() -> None:
+    budgets = {
+        (owner["warm_size_bytes"], owner["max_size_bytes"])
+        for owner in _owners()
+    }
+
+    assert len(budgets) >= 8, (
+        "cache budgets regressed to a blanket placeholder; size each owner from "
+        "its measured retained work and generation needs"
+    )
+
+
 def test_policy_and_registry_load_every_owner_without_backend_input() -> None:
     policy = load_policy(ROOT)
     registry = CacheRegistry.__new__(CacheRegistry)
@@ -71,6 +83,9 @@ def test_legacy_cache_modules_and_commands_cannot_return() -> None:
         "minimum" + "_free_bytes",
         "cargo_target" + "_warning_gb",
         "vm_image" + "_cache",
+        "clean_" + "cargo_artifacts",
+        "skip-" + "cargo-prune",
+        "CARGO_KIND_" + "BUDGETS_GB",
     )
     surfaces = (
         ROOT / "build_system/builder",

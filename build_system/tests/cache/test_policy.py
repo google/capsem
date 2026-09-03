@@ -74,7 +74,8 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
     assert policy.control is not None
-    assert policy.runtimes["docker"].max_size_bytes == 200 * 1024**3
+    assert policy.runtimes["docker"].warm_size_bytes == 72 * 1024**3
+    assert policy.runtimes["docker"].max_size_bytes == 96 * 1024**3
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())

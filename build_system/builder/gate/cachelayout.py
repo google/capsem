@@ -37,6 +37,15 @@ def stage_path(config: GateConfig, stage_id: str) -> Path:
         raise GateError(str(error)) from error
 
 
+def stage_relative_path(config: GateConfig, stage_id: str) -> Path:
+    """Return one policy stage as a repository-relative container path."""
+    policy = load_policy(config.root)
+    try:
+        return policy.root / policy.stages[stage_id].path
+    except KeyError as error:
+        raise GateError(f"cache policy has no disk owner {stage_id!r}") from error
+
+
 def stage_policy(config: GateConfig, stage_id: str) -> StagePolicy:
     """Return one disk cache contract from the sole cache authority."""
     try:

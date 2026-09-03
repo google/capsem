@@ -343,7 +343,7 @@ logs target="":
     uv run --project build_system --frozen capsem-gate logs {{quote(target)}}
 
 
-# Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
+# Remove stale rootfs copies, orphan UDS sockets, and transient test output.
 # See build_system/scripts/build/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
     @uv run --project build_system --frozen python3 build_system/scripts/build/clean_stale.py

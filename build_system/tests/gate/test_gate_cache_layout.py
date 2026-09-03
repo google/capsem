@@ -54,3 +54,7 @@ def test_uv_uses_its_content_addressed_shared_stage(
     monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
 
     assert cachelayout.stage_path(CONFIG, "python-uv") == PROJECT_ROOT / "cache/tools/python/uv"
+
+
+def test_container_cache_paths_come_from_the_same_stage_contract() -> None:
+    assert cachelayout.stage_relative_path(CONFIG, "state") == Path("cache/state")
