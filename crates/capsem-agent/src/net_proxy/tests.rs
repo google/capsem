@@ -197,6 +197,11 @@ async fn async_vsock_large_transfer() {
 // number can already belong to someone else, so the second close severed a
 // stranger's socket. A regular file cannot be registered with epoll, which
 // makes the failure path reproducible.
+//
+// The check reads what the number refers to rather than whether it is open:
+// the other tests in this binary open files and sockets on parallel threads,
+// and one of them reusing the number right after the close made an
+// `fcntl(F_GETFD) == -1` assertion fail about one run in three.
 #[tokio::test]
 async fn async_vsock_new_owns_the_fd_on_failure() {
     use std::os::unix::io::IntoRawFd;
@@ -204,10 +209,14 @@ async fn async_vsock_new_owns_the_fd_on_failure() {
     std::fs::write(&path, b"x").unwrap();
     let fd = std::fs::File::open(&path).unwrap().into_raw_fd();
     std::fs::remove_file(&path).ok();
+    let ours = std::fs::read_link(format!("/proc/self/fd/{fd}")).expect("the fd is open before the call");
 
     let err = AsyncVsock::new(fd).err().expect("a regular file cannot be registered");
     assert_eq!(err.raw_os_error(), Some(libc::EPERM), "{err}");
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    assert_eq!(flags, -1, "the failed constructor must have closed the fd exactly once");
-    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+    let after = std::fs::read_link(format!("/proc/self/fd/{fd}")).ok();
+    assert_ne!(
+        after.as_ref(),
+        Some(&ours),
+        "the failed constructor must have closed the fd it was handed"
+    );
 }

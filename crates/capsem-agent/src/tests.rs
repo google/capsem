@@ -7,17 +7,13 @@ use super::audit::{extract_audit_id, extract_audit_timestamp_us, extract_execve_
 
 mod control_loop;
 
+/// CLOEXEC is set atomically by `pipe2`: with `pipe` followed by `fcntl`,
+/// a child another test thread forks in between (`sleep`, `sh`) inherits
+/// both ends, the read end outlives the test's `drop`, and a writer that
+/// must see EPIPE writes into the child's copy forever instead.
 fn make_pipe() -> (RawFd, RawFd) {
     let mut fds = [0 as RawFd; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-    // Set CLOEXEC so child processes (e.g., sleep in control_loop tests)
-    // don't inherit these fds and prevent EOF detection.
-    for &fd in &fds {
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFD);
-            libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-        }
-    }
+    assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
     (fds[0], fds[1])
 }
 
@@ -1684,7 +1680,11 @@ fn a_message_the_dying_writer_consumed_is_delivered_by_the_next_one() {
     let (sender, rx) = test_ctrl_channel();
 
     let first = spawn_writer_conn(&sender, &rx);
-    // The host dies without anyone telling the writer.
+    // The host dies without anyone telling the writer. Shut the socket down
+    // rather than only dropping it: a child another test is spawning at this
+    // instant briefly holds a copy of this end, and a plain close would let
+    // the writer's next write land in that copy's buffer and succeed.
+    first.host.shutdown(std::net::Shutdown::Both).unwrap();
     drop(first.host);
     // The writer consumes this, fails to write it, and must hand it on.
     sender.send(GuestToHost::ExecDone { id: 9, exit_code: 0 }).unwrap();
