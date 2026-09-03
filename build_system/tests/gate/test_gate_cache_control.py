@@ -55,7 +55,7 @@ def test_receipt_policy_comes_from_validated_cache_policy() -> None:
     assert policy.maximum_count == 3
     assert policy.maximum_age_seconds == 336 * 3600
     assert policy.warm_size_bytes == 6 * 1024**3
-    assert policy.max_size_bytes == 12 * 1024**3
+    assert policy.max_size_bytes == 200 * 1024**3
 
 
 def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_path: Path) -> None:
