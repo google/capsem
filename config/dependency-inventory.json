@@ -942,6 +942,7 @@
    "blake3",
    "capsem-proto",
    "libc",
+   "nix",
    "rmp-serde",
    "serde",
    "serde_json",

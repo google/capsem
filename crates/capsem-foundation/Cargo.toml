@@ -13,6 +13,7 @@ authors.workspace = true
 blake3 = "1"
 capsem-proto = { path = "../capsem-proto" }
 libc = "0.2"
+nix = { version = "0.29", features = ["fs", "process", "signal", "user"] }
 rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
