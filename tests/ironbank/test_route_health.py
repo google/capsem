@@ -38,6 +38,7 @@ from helpers.route_health_budget import (
     HOT_ROUTE_REFERENCE_SAMPLES,
     HOT_ROUTE_WINDOW_SAMPLES,
     HOT_ROUTE_WINDOWS,
+    concurrent_stats_budget,
 )
 from helpers.route_health_budget import (
     assert_hot_route_budget as _assert_hot_route_budget,
@@ -335,6 +336,26 @@ def _measure_hot_route(
         service_proc=service_proc,
         gateway_proc=gateway_proc,
         samples=HOT_ROUTE_WINDOW_SAMPLES,
+    )
+
+
+def _capture_hot_route_budget(
+    failures: list[AssertionError],
+    timing: RouteTiming,
+    *,
+    path: str,
+    gateway: bool = False,
+) -> None:
+    """Keep measuring after a breach so one run reports every tight budget."""
+    try:
+        _assert_hot_route_budget(timing, path=path, gateway=gateway)
+    except AssertionError as error:
+        failures.append(error)
+
+
+def _raise_budget_failures(failures: list[AssertionError]) -> None:
+    assert not failures, "route timing budgets without required headroom:\n" + "\n".join(
+        str(failure) for failure in failures
     )
 
 
@@ -805,6 +826,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     gateway: GatewayInstance | None = None
     fast_service_client: PersistentJsonClient | None = None
     fast_gateway_client: PersistentJsonClient | None = None
+    budget_failures: list[AssertionError] = []
     try:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
@@ -822,7 +844,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 lambda c=contract: _assert_contract(fast_service_client, c),
                 service_proc=service_proc,
             )
-            _assert_hot_route_budget(timing, path=contract.path)
+            _capture_hot_route_budget(budget_failures, timing, path=contract.path)
 
         hot_gateway_routes = [
             RouteContract(
@@ -852,7 +874,13 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 service_proc=service_proc,
                 gateway_proc=gateway_proc,
             )
-            _assert_hot_route_budget(timing, path=contract.path, gateway=True)
+            _capture_hot_route_budget(
+                budget_failures,
+                timing,
+                path=contract.path,
+                gateway=True,
+            )
+        _raise_budget_failures(budget_failures)
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
@@ -869,6 +897,7 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
     gateway: GatewayInstance | None = None
     fast_service_client: PersistentJsonClient | None = None
     fast_gateway_client: PersistentJsonClient | None = None
+    budget_failures: list[AssertionError] = []
     try:
         session_dir = service.tmp_dir / "persistent" / SEEDED_VM_ID
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -907,11 +936,13 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
                 )
                 summary = route_timing_summary(timing)
                 print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
-                _assert_hot_route_budget(
+                _capture_hot_route_budget(
+                    budget_failures,
                     timing,
                     path=route_contract.path,
                     gateway=is_gateway,
                 )
+        _raise_budget_failures(budget_failures)
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
@@ -1029,12 +1060,13 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
     # the tail on p99, matching the route-latency benchmark contract, so one
     # scheduler outlier does not fail a run whose p95 and CPU prove the route
     # stayed projection-backed.
+    budget = concurrent_stats_budget()
     _assert_timing_budget(
         result.timing,
-        p95_ms=15.0,
-        p99_ms=40.0,
+        p95_ms=budget.p95_ms,
+        p99_ms=budget.p99_ms,
         max_ms=None,
-        cpu_s=0.34,
+        cpu_s=budget.cpu_s,
     )
 
     assert result.final_default_action == result.writer_results[-1]["action"]

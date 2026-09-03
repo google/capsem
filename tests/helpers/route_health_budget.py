@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from capsem_builder.gate.benchmarkschema import RouteBudgetPairConfig
+from capsem_builder.gate.benchmarkschema import (
+    RouteBudgetConfig,
+    RouteBudgetPairConfig,
+)
 from capsem_builder.gate.config import for_root
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -137,14 +140,22 @@ def _is_vm_scalar_state_route(path: str) -> bool:
     return suffix.count("/") == 1 and suffix.endswith(("/status", "/info"))
 
 
-def _budget(name: BudgetName, *, gateway: bool) -> RouteBudget:
-    pair = cast(RouteBudgetPairConfig, getattr(SETTINGS.budgets, name))
-    configured = pair.gateway if gateway else pair.service
+def _from_config(configured: RouteBudgetConfig) -> RouteBudget:
     return RouteBudget(
         p95_ms=float(configured.p95_ms),
         p99_ms=float(configured.p99_ms),
         cpu_s=float(configured.cpu_s),
     )
+
+
+def concurrent_stats_budget() -> RouteBudget:
+    """Return the shared budget for reads overlapping public writes."""
+    return _from_config(SETTINGS.concurrent_stats)
+
+
+def _budget(name: BudgetName, *, gateway: bool) -> RouteBudget:
+    pair = cast(RouteBudgetPairConfig, getattr(SETTINGS.budgets, name))
+    return _from_config(pair.gateway if gateway else pair.service)
 
 
 def hot_route_budget(path: str, *, gateway: bool = False) -> RouteBudget:

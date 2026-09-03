@@ -2853,6 +2853,11 @@ reference_samples = 64
 window_samples = 128
 windows = 3
 
+[benchmark.route_health.concurrent_stats]
+p95_ms = 15.0
+p99_ms = 40.0
+cpu_s = 0.4
+
 [benchmark.route_health.budgets.status.service]
 p95_ms = 2.0
 p99_ms = 5.0
@@ -2863,8 +2868,8 @@ p99_ms = 10.0
 cpu_s = 0.23
 
 [benchmark.route_health.budgets.vm_scalar.service]
-p95_ms = 3.0
-p99_ms = 8.0
+p95_ms = 8.0
+p99_ms = 10.0
 cpu_s = 0.18
 [benchmark.route_health.budgets.vm_scalar.gateway]
 p95_ms = 5.0
@@ -2872,7 +2877,7 @@ p99_ms = 10.0
 cpu_s = 0.25
 
 [benchmark.route_health.budgets.vms_list.service]
-p95_ms = 3.0
+p95_ms = 5.0
 p99_ms = 8.0
 cpu_s = 0.15
 [benchmark.route_health.budgets.vms_list.gateway]

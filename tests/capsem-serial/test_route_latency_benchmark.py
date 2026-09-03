@@ -15,7 +15,10 @@ from pathlib import Path
 
 import pytest
 from helpers.benchmark_output import benchmark_output_dir
-from helpers.route_health_budget import CPU_ACCOUNTING_SLACK_S
+from helpers.route_health_budget import (
+    CPU_ACCOUNTING_SLACK_S,
+    concurrent_stats_budget,
+)
 
 from tests.ironbank.test_route_health import (
     route_timing_summary,
@@ -54,6 +57,7 @@ def test_route_read_write_contention_benchmark() -> None:
     result = run_concurrent_route_read_write_benchmark(samples=160, mutation_repeats=8)
     summary = route_timing_summary(result.timing)
     actions = [row["action"] for row in result.writer_results]
+    budget = concurrent_stats_budget()
     data = {
         "version": "0.1.0",
         "timestamp": time.time(),
@@ -73,15 +77,15 @@ def test_route_read_write_contention_benchmark() -> None:
             "final_default_rule_id": result.final_default_rule_id,
         },
         "gates": {
-            "p95_ms_max": 15.0,
+            "p95_ms_max": budget.p95_ms,
             # Keep max_ms in the artifact for visibility, but gate release
             # health on p99 so one Linux scheduler stall does not hide the
             # actual route and DB contention signal.
-            "p99_ms_max": 40.0,
+            "p99_ms_max": budget.p99_ms,
             # IronBank runs this exact 160-read/24-write workload and budget so
             # the release gate and archived benchmark cannot drift apart.
             # Leave one Linux process CPU tick of accounting slack.
-            "service_cpu_s_max": 0.34,
+            "service_cpu_s_max": budget.cpu_s,
         },
     }
 

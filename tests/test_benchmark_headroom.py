@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from helpers.benchmark_ratchet import HeadroomGuard, assert_has_headroom
-from helpers.route_health_budget import scaled_hot_route_budget
+from helpers.route_health_budget import concurrent_stats_budget, scaled_hot_route_budget
 from pydantic import ValidationError
 
 
@@ -34,6 +34,22 @@ def test_accounting_tick_is_part_of_the_cpu_ceiling() -> None:
         label="service /vms/list CPU",
         measured=0.132,
         ceiling=0.15,
+        minimum_factor=1.2,
+        accounting_slack=0.011,
+        unit="s",
+    )
+
+
+def test_concurrent_stats_budget_has_measured_twenty_percent_headroom() -> None:
+    budget = concurrent_stats_budget()
+
+    assert budget.p95_ms == 15.0
+    assert budget.p99_ms == 40.0
+    assert budget.cpu_s == 0.4
+    assert_has_headroom(
+        label="service /stats during profile-mutation writes CPU",
+        measured=0.300,
+        ceiling=budget.cpu_s,
         minimum_factor=1.2,
         accounting_slack=0.011,
         unit="s",

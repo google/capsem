@@ -71,6 +71,7 @@ class RouteHealthConfig(Strict):
     reference_samples: PositiveInt
     window_samples: PositiveInt
     windows: PositiveInt
+    concurrent_stats: RouteBudgetConfig
     budgets: RouteBudgetsConfig
 
 
