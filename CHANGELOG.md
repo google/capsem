@@ -98,6 +98,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The DNS forwarder accepts only the answer to the question it asked. It
+  used to return the first datagram that arrived on its socket, so a forged
+  reply that guessed the ephemeral port could answer for any name (the
+  transaction id is the guest's to choose) and be cached for five minutes.
+  Every datagram is now checked for the query's id, the response bit and
+  the same question; anything else is discarded and the forwarder keeps
+  waiting for the real answer.
+- The gateway answers 413 for an oversized body whether or not the client
+  declared its length. A chunked upload past 10 MiB used to fail on the
+  connection to the service and come back as 502 "service unavailable".
+  Reading a buffered JSON response from the service is now bounded by the
+  same request timeout as sending the request.
 - Reading a session ledger from the service no longer copies every hot
   table from disk on every request. The external reader syncs only when
   SQLite reports that another connection committed, and then pulls only the

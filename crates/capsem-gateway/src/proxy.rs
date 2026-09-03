@@ -156,10 +156,24 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (parts, body) = req.into_parts();
 
-    // Wrap body in length limit for chunked requests
+    // The body limit is enforced here, before anything reaches the service:
+    // a chunked upload past MAX_BODY_SIZE used to fail mid-stream on the
+    // upstream connection and surface as a 502 "service unavailable", so
+    // the client never learned the body was the problem.
     use http_body_util::Limited;
-    let limited_body = axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE));
-    let upstream_req = hyper::Request::from_parts(parts, limited_body);
+    let body = match tokio::time::timeout(REQUEST_TIMEOUT, Limited::new(body, MAX_BODY_SIZE).collect()).await {
+        Ok(Ok(collected)) => collected.to_bytes(),
+        Ok(Err(error)) if error.is::<http_body_util::LengthLimitError>() => {
+            return Ok((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                axum::Json(serde_json::json!({"error": "request body too large"})),
+            )
+                .into_response());
+        }
+        Ok(Err(error)) => return Err(anyhow::anyhow!("request body read failed: {error}")),
+        Err(_) => return Err(anyhow::anyhow!("request body read timed out")),
+    };
+    let upstream_req = hyper::Request::from_parts(parts, axum::body::Body::from(body));
 
     // Send with timeout
     let res = tokio::time::timeout(REQUEST_TIMEOUT, sender.send_request(upstream_req))
@@ -168,7 +182,10 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (mut parts, body) = res.into_parts();
     if should_buffer_json_response(&method, &path, &parts.headers) {
-        let body = body.collect().await?.to_bytes();
+        let body = tokio::time::timeout(REQUEST_TIMEOUT, body.collect())
+            .await
+            .map_err(|_| anyhow::anyhow!("response body read timed out"))??
+            .to_bytes();
         parts.headers.remove(TRANSFER_ENCODING);
         parts
             .headers
