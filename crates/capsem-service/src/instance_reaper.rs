@@ -9,7 +9,12 @@ pub(super) fn kill_and_reap(mut child: tokio::process::Child) {
     });
 }
 
-pub(super) fn spawn_provision(
+/// The one child reaper: every `capsem-process` exit, from a fresh provision
+/// or a resume, passes through here. The resume path used to have its own
+/// that removed the instance and nothing else, so a resumed persistent VM
+/// that suspended again was never marked suspended and one that crashed was
+/// never marked defunct.
+pub(super) fn spawn_exit_reaper(
     mut child: tokio::process::Child,
     id: String,
     name: String,
@@ -92,27 +97,6 @@ pub(super) fn spawn_provision(
         } else {
             tracing::debug!(id, "child exited after explicit service-side shutdown");
         }
-        let _ = std::fs::remove_file(&uds_path);
-        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-    });
-}
-
-pub(super) fn spawn_resume(
-    mut child: tokio::process::Child,
-    vm_id: String,
-    state: Arc<ServiceState>,
-    uds_path: PathBuf,
-) {
-    tokio::spawn(async move {
-        let exit_status = child.wait().await;
-        info!(vm_id, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
-        tracing::warn!(
-            vm_id,
-            exit_status = ?exit_status,
-            "resume_sandbox child exit handler removing instance"
-        );
-        state.instances.lock().unwrap().remove(&vm_id);
-        state.unregister_session_db_handle(&vm_id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     });

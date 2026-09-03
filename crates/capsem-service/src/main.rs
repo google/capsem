@@ -1778,9 +1778,10 @@ impl ServiceState {
                 env,
                 forked_from: from,
             },
+        let session_dir = entry.session_dir.clone();
         );
         drop(instances);
-        instance_reaper::spawn_provision(
+        instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),
             name.to_string(),
@@ -1998,7 +1999,7 @@ impl ServiceState {
                 asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path: uds_path.clone(),
-                session_dir: entry.session_dir.clone(),
+                session_dir: session_dir.clone(),
                 ram_mb,
                 cpus,
                 start_time: std::time::Instant::now(),
@@ -2009,7 +2010,7 @@ impl ServiceState {
             },
         );
         drop(instances);
-        instance_reaper::spawn_resume(child, vm_id.clone(), Arc::clone(self), uds_path);
+        instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
 
         Ok(vm_id)
     }

@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A resumed persistent VM now gets the same exit bookkeeping as a freshly
+  provisioned one: it is marked suspended when it checkpoints, defunct with
+  the process-log tail when it crashes, and its stop is recorded in the
+  session index. The resume path had its own reaper that did none of this.
 - Asset manifests reject an architecture key that is not a single path
   component, and release staging refuses to write an asset anywhere but
   `release_dir/<arch>-<name>`.
