@@ -1,5 +1,6 @@
 mod auth;
 mod cors;
+mod listener;
 mod proxy;
 mod service_client;
 mod status;
@@ -173,14 +174,17 @@ async fn main() -> Result<()> {
 
     // Graceful shutdown on SIGTERM/SIGINT
     let shutdown_auth = auth_state.clone();
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            info!("shutting down");
-            shutdown_auth.cleanup();
-        })
-        .await
-        .context("server error")?;
+    axum::serve(
+        listener::low_latency(listener),
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        info!("shutting down");
+        shutdown_auth.cleanup();
+    })
+    .await
+    .context("server error")?;
 
     // Belt-and-suspenders cleanup (signal handler may not run on all exit paths)
     auth_state.cleanup();

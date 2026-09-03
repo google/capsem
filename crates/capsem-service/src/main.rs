@@ -39,9 +39,9 @@ use tokio::process::Command;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
-
 mod asset_background;
 mod instance_reaper;
+mod profile_mutation_cache;
 mod profile_status_cache;
 mod session_cleanup;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
@@ -277,8 +277,8 @@ struct ServiceState {
     /// filesystem on every request.
     last_defunct_reconcile_ms: AtomicU64,
     /// Final `/stats` HTTP response bytes derived from the logger-owned
-    /// `main.db` query. The epoch ties this cache to the DB handle's own
-    /// invalidation generation so writes cannot leave stale route bytes behind.
+    /// `main.db` query. The typed session-summary epoch invalidates it for
+    /// session/usage writes without coupling it to profile-mutation ledger rows.
     stats_response_cache: Mutex<Option<CachedStatsResponse>>,
     /// Final stats/detail bytes for inactive sessions. Running sessions keep
     /// reading live DB state; stopped/seeded sessions can reuse bytes until

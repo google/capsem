@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The TCP gateway now pools its HTTP-over-UDS service connections and streams
   already-sized JSON responses without copying them into a second buffer,
-  reducing hot control-route CPU while retaining request limits and headers.
+  disables Nagle buffering on accepted control-plane connections, and reduces
+  hot-route CPU and tail latency while retaining request limits and headers.
+- Profile mutations now publish the already-validated profile into only the
+  affected typed route caches. Orthogonal mutation-ledger writes no longer
+  evict session-stat responses, while session and usage writes still do.
 - Repository-generated and reusable state now has one hard cache root:
   `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
   journals, private gate worktrees, and retained prefix products no longer
