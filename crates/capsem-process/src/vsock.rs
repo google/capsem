@@ -14,6 +14,8 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 mod dns;
 use dns::serve_dns_session;
+mod guest_report;
+use guest_report::is_guest_liveness_message;
 mod shutdown;
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
@@ -1177,16 +1179,6 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     }
 }
 
-/// Replies produced by the periodic control-channel liveness probe.
-///
-/// These messages carry no job result and need no replay acknowledgement. A
-/// healthy VM sends one every few seconds, so treating them as an unknown wire
-/// variant turns normal uptime into warning spam and hides the first useful
-/// fault in a preserved process log.
-fn is_guest_liveness_message(msg: &GuestToHost) -> bool {
-    matches!(msg, GuestToHost::Pong)
-}
-
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 struct FileSecurityBoundary {
@@ -1332,6 +1324,7 @@ async fn handle_guest_msg(
 ) {
     match msg {
         GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
+        GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
         GuestToHost::ExecDone { id, exit_code } => {
             // The guest closes the EXEC socket before sending ExecDone, and
             // the host's EXEC-port reader thread may still be finishing its
