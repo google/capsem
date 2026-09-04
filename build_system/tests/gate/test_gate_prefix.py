@@ -653,8 +653,8 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/packages",
         "cache/target/tests/evidence",
     } <= exports
-    assert any(export.startswith("cache/target/gate-runs") for export in exports), (
-        "the run log is the evidence a failure is argued from, and it is written inside the prefix"
+    assert not any(export.startswith("cache/target/gate-runs") for export in exports), (
+        "runtransfer owns journals and aggregate history must not be merged as build output"
     )
 
 
@@ -1025,23 +1025,29 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
 
     private = tmp_path / "prefix"
     (private / runs / "run-new").mkdir(parents=True)
-    (private / runs / "run-new" / "run.jsonl").write_text("the run that just finished\n")
+    (private / runs / "run-new" / "run.jsonl").write_text(
+        '{"event":"run.end"}\n', encoding="utf-8"
+    )
+    (private / runs / "run-new" / config.runlog.active_marker).touch()
     (private / runs / "latest").symlink_to("run-new")
 
     host = tmp_path / "host"
     (host / runs / "run-old").mkdir(parents=True)
-    (host / runs / "run-old" / "run.jsonl").write_text("an older, unrelated run\n")
+    (host / runs / "run-old" / "run.jsonl").write_text(
+        '{"event":"run.end"}\n', encoding="utf-8"
+    )
     (host / runs / "latest").symlink_to("run-old")
 
     from capsem_builder.gate import buildcache
 
     buildcache.export(private, host, config)
 
-    assert (host / runs / "run-old" / "run.jsonl").read_text() == "an older, unrelated run\n", (
+    assert (host / runs / "run-old" / "run.jsonl").read_text() == '{"event":"run.end"}\n', (
         "the export wrote through the destination `latest` symlink and "
         "destroyed the unrelated run it pointed at"
     )
-    assert (host / runs / "run-new" / "run.jsonl").read_text() == "the run that just finished\n"
+    assert (host / runs / "run-new" / "run.jsonl").read_text() == '{"event":"run.end"}\n'
+    assert not (host / runs / "run-new" / config.runlog.active_marker).exists()
     # Replaced as a link, not materialized into a directory of copied files.
     assert (host / runs / "latest").is_symlink()
     assert os.readlink(host / runs / "latest") == "run-new"

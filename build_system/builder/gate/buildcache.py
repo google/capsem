@@ -51,7 +51,7 @@ import errno
 import shutil
 from pathlib import Path
 
-from . import cachelayout, cargotarget
+from . import cachelayout, cargotarget, runtransfer
 from .config import GateConfig
 from .errors import GateError
 from .filesystem import copy_tree, merge_tree, remove
@@ -65,6 +65,11 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
     a release publishes is built inside the run, so omitting it is a gate that
     passes with nothing to ship.
     """
+    # Run history is a host-owned collection, not an ordinary output tree.
+    # Import its immutable run directories and reconcile the ledger before
+    # merging the remaining products. Copying the private ledger wholesale
+    # reorders history and also exports the child's stale `.active` marker.
+    runtransfer.export(prefix, destination, config)
     exact_trees = {config.functional.assets_dir, config.functional.config_root}
     for relative in config.prefix.exports:
         origin = prefix / relative

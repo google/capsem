@@ -130,7 +130,12 @@ def one_event(events: list[dict], model: type[Model]) -> Model | None:
     if len(matches) != 1:
         return None
     payload = {key: matches[0][key] for key in model.model_fields if key in matches[0]}
-    return model.model_validate(payload)
+    try:
+        return model.model_validate(payload)
+    except ValueError:
+        # A killed writer can leave a syntactically valid but incomplete
+        # terminal event. It is no more ledger evidence than a missing one.
+        return None
 
 
 def distill(events: list[dict], settings: LedgerConfig) -> LedgerRow | None:
@@ -198,7 +203,11 @@ def rows(config: GateConfig) -> list[LedgerRow]:
             continue
         if row.row_schema == config.runlog.ledger.row_schema:
             kept.append(row)
-    return list(reversed(kept))
+    # Run ids begin with a sortable UTC timestamp. Do not trust file order:
+    # older prefix exports once copied their private ledger over this one and
+    # could leave the newest row at the front. Every consumer wants newest
+    # first regardless of how legacy bytes happened to be arranged.
+    return sorted(kept, key=lambda row: row.run_id, reverse=True)
 
 
 def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> LedgerRow | None:
@@ -225,10 +234,10 @@ def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> Ledge
         if _already_recorded(target, row.run_id, settings.ledger.row_schema):
             return None
         existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
-        kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id][
-            -(settings.ledger.keep_rows - 1) :
-        ]
+        kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id]
         kept.append(row.model_dump_json())
+        kept.sort(key=lambda line: _raw_run_id(line) or "")
+        kept = kept[-settings.ledger.keep_rows :]
         write_text(target, "\n".join(kept) + "\n")
     return row
 
