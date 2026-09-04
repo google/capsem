@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from capsem_builder.gate import vmmodules
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import vmmodules
 from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.content import ProfileContent
 from helpers.gate import RecordingRunner
