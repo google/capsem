@@ -12,8 +12,8 @@ ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
 BUILD_LOG="$ROOT_DIR/cache/containers/logs/build.log"
 SIGN_LOCK_DIR="$ROOT_DIR/cache/target/.run_signed_codesign.lock"
 
-# Ensure cache/target/ exists (cargo creates it, but just in case)
-mkdir -p "$ROOT_DIR/target"
+# The runner owns these two cache leaves and must work in a fresh checkout.
+mkdir -p "$(dirname "$BUILD_LOG")" "$(dirname "$SIGN_LOCK_DIR")"
 
 log() {
     echo "[runner] $(date +%H:%M:%S) $*" >> "$BUILD_LOG"
