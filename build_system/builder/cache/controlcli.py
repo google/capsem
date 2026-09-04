@@ -6,6 +6,7 @@ import json
 
 import click
 
+from . import dockeradapter
 from .api import CacheOperation, CacheRequest
 from .config import load_policy
 from .dockerimages import plan_repository_reclaim
@@ -13,6 +14,7 @@ from .failureartifacts import capture_failure as capture_failure_bundle
 from .paths import CachePaths
 from .registry import CacheRegistry
 from .runtimeinventory import scan_runtimes
+from .runtimemodels import DockerRuntimePolicy
 from .runtimeoperations import apply_runtime_prune
 
 
@@ -60,7 +62,24 @@ def reclaim_image(context, resource_id, keep, protect, apply, reason) -> None:
     try:
         plan = plan_repository_reclaim(snapshot, policy, resource_id, keep=keep, protect=protect)
     except ValueError as error:
-        raise click.ClickException(str(error)) from error
+        control = policy.control
+        if control is None:
+            raise click.ClickException(str(error)) from error
+        runtime = policy.runtimes[control.docker.runtime_id]
+        if not isinstance(runtime, DockerRuntimePolicy):
+            raise click.ClickException(str(error)) from error
+        anchor = dockeradapter.inspect_image(runtime, keep)
+        try:
+            plan = plan_repository_reclaim(
+                snapshot,
+                policy,
+                resource_id,
+                keep=keep,
+                protect=protect,
+                anchor=anchor,
+            )
+        except ValueError as verified_error:
+            raise click.ClickException(str(verified_error)) from verified_error
     _apply(paths, policy, plan, apply=apply, reason=reason)
 
 

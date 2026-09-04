@@ -103,6 +103,12 @@ broad `docker system prune`, direct Tart deletion, `rm` over cache roots, or
 backend-specific cache CLI commands. Foreign Docker/Tart resources are visible
 only as native totals and are never deleted by Capsem.
 
+Repository-generation reclaim is anchored by an exact current tag. Docker's
+bulk image listing can briefly lag a completed BuildKit import, so the Docker
+adapter verifies that exact tag directly and supplies a protected typed
+resource to the planner. Never turn this into an unanchored retry or allow a
+missing exact inspection to prune older generations.
+
 ## Test efficiency
 
 Start with the cheapest evidence that owns the change:

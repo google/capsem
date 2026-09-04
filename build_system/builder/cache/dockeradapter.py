@@ -119,6 +119,49 @@ def _owned_images(
     return tuple(sorted(resources, key=lambda row: row.identity))
 
 
+def inspect_image(
+    policy: DockerRuntimePolicy,
+    reference: str,
+    *,
+    runner: CommandRunner = execute,
+) -> RuntimeResource | None:
+    """Return exact typed evidence for one image tag, or ``None`` if absent."""
+    result = runner(
+        (
+            policy.command,
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}\\t{{.Created}}\\t{{.Size}}\\t{{json .RepoTags}}",
+            reference,
+        ),
+        policy.timeout_seconds,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        identity, created, size, encoded_names = result.stdout.strip().split("\\t", 3)
+        names = tuple(sorted(json.loads(encoded_names) or ()))
+        if reference not in names or not any(
+            reference.startswith(prefix) for prefix in policy.image_prefixes
+        ):
+            return None
+        created_at = timestamp(created)
+        return RuntimeResource(
+            kind=ResourceKind.IMAGE,
+            identity=identity,
+            names=names,
+            logical_bytes=int(size),
+            created_ns=created_at,
+            last_used_ns=created_at,
+            active=False,
+            owned=True,
+            protected=True,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def _containers(
     policy: DockerRuntimePolicy, runner: CommandRunner
 ) -> tuple[tuple[RuntimeResource, ...], set[str]]:

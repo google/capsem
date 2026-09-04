@@ -205,6 +205,7 @@ def plan_repository_reclaim(
     *,
     keep: str,
     protect: tuple[str, ...] = (),
+    anchor: RuntimeResource | None = None,
 ) -> RuntimePrunePlan:
     """Retire superseded tags around an exact caller-owned anchor."""
     if policy.control is None or resource_id not in policy.control.docker.images:
@@ -223,7 +224,15 @@ def plan_repository_reclaim(
         reverse=True,
     )
     names = {name for item in resources for name in item.names}
-    if keep not in names:
+    anchor_names = () if anchor is None else anchor.names
+    verified_anchor = (
+        anchor is not None
+        and anchor.kind is ResourceKind.IMAGE
+        and anchor.owned
+        and anchor.protected
+        and keep in anchor_names
+    )
+    if keep not in names and not verified_anchor:
         raise ValueError(f"anchor image {keep!r} is absent; refusing unanchored reclaim")
     pinned = {keep, *protect}
     actions, previous = [], 0
