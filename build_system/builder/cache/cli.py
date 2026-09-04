@@ -100,8 +100,11 @@ def verify(context: click.Context, as_json: bool) -> None:
     """Validate policy, path containment, and inventory accounting."""
     policy, paths = _policy_paths(context)
     report = scan_inventory(paths, policy)
-    for stage_id in policy.stages:
-        paths.stage(stage_id).relative_to(paths.root)
+    symlinked = [stage_id for stage_id in policy.stages if paths.stage(stage_id).is_symlink()]
+    if symlinked:
+        raise click.ClickException(
+            "cache stage roots must not be symlinks: " + ", ".join(symlinked)
+        )
     if report.unclassified:
         names = ", ".join(entry.relative_path.as_posix() for entry in report.unclassified)
         raise click.ClickException(f"unclassified cache paths: {names}")
@@ -112,7 +115,7 @@ def verify(context: click.Context, as_json: bool) -> None:
             )
         )
     else:
-        click.echo(f"OK: {len(report.stages)} cache stages are contained and accounted")
+        click.echo(f"OK: {len(report.stages)} cache stages are configured and accounted")
 
 
 @main.command()

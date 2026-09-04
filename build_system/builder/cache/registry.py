@@ -65,7 +65,7 @@ class DiskBackend:
             else plan_prune(inventory, self._policy)
         )
         if request.apply and plan.actions:
-            apply_prune(self._paths.root, plan, reason=request.reason)
+            apply_prune(self._paths, plan, reason=request.reason)
         after = (
             select_inventory(
                 scan_inventory(self._paths, self._policy), request.cache_id

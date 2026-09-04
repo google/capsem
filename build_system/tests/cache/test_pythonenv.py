@@ -28,6 +28,7 @@ def _paths(root: Path) -> CachePaths:
         stages={
             "python-pycache": stage("tools/python/pycache"),
             "python-pytest": stage("tools/python/pytest"),
+            "test-temp": stage("target/tests/tmp"),
         },
     )
     return CachePaths(repository_root=root, policy=policy)
@@ -42,14 +43,19 @@ def test_selection_replaces_every_inherited_pytest_cache_override(tmp_path: Path
         generation,
         inherited_addopts=(
             "-q -o cache_dir=/old --override-ini=cache_dir=/older "
-            "-o=cache_dir=/oldest --override-ini=cache_dir=/ancient -x"
+            "-o=cache_dir=/oldest --override-ini=cache_dir=/ancient "
+            "--basetemp /tmp/old --basetemp=/tmp/older -x"
         ),
+        process_id=123,
     )
 
     assert selected.pytest_addopts.count("cache_dir=") == 1
     assert "/old" not in selected.pytest_addopts
     assert selected.pytest_addopts.startswith("-q -x ")
     assert selected.pytest_cache == paths.stage("python-pytest") / generation.name
+    assert selected.test_tmp == paths.stage("test-temp") / "run-123"
+    assert selected.pytest_basetemp == selected.test_tmp / "pytest"
+    assert selected.pytest_addopts.count("--basetemp=") == 1
 
 
 def test_selection_rejects_a_pycache_outside_its_policy_stage(tmp_path: Path) -> None:

@@ -34,7 +34,7 @@ def enforce_repository(
     inventory = select_inventory(scan_inventory(paths, policy), cache_id)
     plan = plan_prune(inventory, policy)
     if plan.actions:
-        apply_prune(paths.root, plan, reason=reason)
+        apply_prune(paths, plan, reason=reason)
     after = select_inventory(scan_inventory(paths, policy), cache_id)
     violations = plan_prune(after, policy).violations
     return EnforcementResult(

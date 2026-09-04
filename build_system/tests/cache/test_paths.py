@@ -56,6 +56,54 @@ def test_paths_resolve_from_the_repository_root(tmp_path: Path) -> None:
     assert paths.stage("cargo-debug") == tmp_path / "cache/target/cargo/debug"
 
 
+def test_external_stage_resolves_outside_the_repository(tmp_path: Path) -> None:
+    external = tmp_path / "scratch" / "capsem-tests"
+    external_policy = policy().model_copy(
+        update={
+            "stages": {
+                "test-temp": StagePolicy(
+                    path=external,
+                    external=True,
+                    description="test scratch",
+                    scope=CacheScope.DISK,
+                    warm_size_bytes=20,
+                    max_size_bytes=30,
+                    prune_strategy=PruneStrategy.EPHEMERAL,
+                    maximum_age_hours=1,
+                )
+            }
+        }
+    )
+
+    paths = CachePaths(repository_root=tmp_path / "repository", policy=external_policy)
+
+    assert paths.stage("test-temp").parent == external
+    assert len(paths.stage("test-temp").name) == 8
+
+
+def test_external_stage_cannot_be_inside_the_repository(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    external_policy = policy().model_copy(
+        update={
+            "stages": {
+                "test-temp": StagePolicy(
+                    path=repository / "scratch" / "capsem-tests",
+                    external=True,
+                    description="unsafe scratch",
+                    scope=CacheScope.DISK,
+                    warm_size_bytes=20,
+                    max_size_bytes=30,
+                    prune_strategy=PruneStrategy.EPHEMERAL,
+                    maximum_age_hours=1,
+                )
+            }
+        }
+    )
+
+    with pytest.raises(ValidationError, match="must be outside the repository"):
+        CachePaths(repository_root=repository, policy=external_policy)
+
+
 def test_linked_worktree_defaults_to_the_git_common_checkout(tmp_path: Path) -> None:
     common = tmp_path / "common"
     linked = tmp_path / "linked"

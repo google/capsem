@@ -208,6 +208,19 @@ prune_strategy = "ephemeral"
 maximum_age_hours = 1
 maximum_count = 8
 
+[stages.test-temp]
+description = "Process-isolated temporary files produced by tests and diagnostic tools."
+scope = "disk"
+path = "/var/tmp/capsem-tests"
+external = true
+warm_size_bytes = 8589934592 # 8 GiB
+max_size_bytes = 214748364800 # 200 GiB
+prune_strategy = "ephemeral"
+maximum_age_hours = 24
+maximum_count = 4
+managed_globs = ["run-*"]
+lease_template = ".{key}.lock"
+
 [stages.web-parity]
 description = "Built web surfaces retained for source-versus-package parity checks."
 scope = "disk"

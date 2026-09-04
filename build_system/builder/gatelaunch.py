@@ -1,11 +1,6 @@
 """Start the gate on source-keyed Python bytecode.
 
-CPython validates a `.pyc` against the source's *mtime and size*. Two edits of
-the same length within one timestamp tick therefore leave bytecode that still
-looks valid, and the interpreter runs the old one. During a review of this
-package that produced 74 identical false failures from a reference the source
-no longer contained; an isolated cache made them vanish without a source
-change.
+CPython can accept stale bytecode after same-sized edits in one timestamp tick.
 
 That is not merely bad local feedback. `just test` and both release
 commands begin with `uv run --project build_system --frozen capsem-gate`. The local diagnostic records its
@@ -39,14 +34,13 @@ import tomllib
 from pathlib import Path
 from typing import BinaryIO, NoReturn
 
-#: Set to the exact source-keyed generation. Equality with the current tree,
-#: environment, and interpreter is how the re-exec knows not to happen twice.
+#: Exact source-keyed generation used to prevent a second re-exec.
 MARKER = "CAPSEM_GATE_PYCACHE"
 
-#: The variable CPython itself reads. Exported rather than only passed as `-X`,
-#: because the point is that children inherit it.
+#: Exported so child interpreters inherit the same generation.
 PYCACHE = "PYTHONPYCACHEPREFIX"
 PYTEST_ADDOPTS = "PYTEST_ADDOPTS"
+TMPDIR = "TMPDIR"
 UV_CACHE = "UV_CACHE_DIR"
 RUFF_CACHE = "RUFF_CACHE_DIR"
 PNPM_STORE = "npm_config_store_dir"
@@ -125,10 +119,15 @@ def _gate_policy(root: Path) -> dict:
 
 def _policy_stage(root: Path, authority: Path, stage_id: str) -> Path:
     raw = _policy(root)
-    return authority / raw["root"] / raw["stages"][stage_id]["path"]
+    stage = raw["stages"][stage_id]
+    path = Path(stage["path"])
+    if stage.get("external", False):
+        namespace = hashlib.sha256(str(authority.absolute()).encode()).hexdigest()[:8]
+        return path / namespace
+    return authority / raw["root"] / path
 
 
-def _pytest_addopts(cache: Path) -> str:
+def _pytest_addopts(cache: Path, basetemp: Path) -> str:
     tokens = shlex.split(os.environ.get(PYTEST_ADDOPTS, ""))
     kept: list[str] = []
     index = 0
@@ -144,9 +143,19 @@ def _pytest_addopts(cache: Path) -> str:
         if token.startswith(("-o=cache_dir=", "--override-ini=cache_dir=")):
             index += 1
             continue
+        if token == "--basetemp" and index + 1 < len(tokens):
+            index += 2
+            continue
+        if token.startswith("--basetemp="):
+            index += 1
+            continue
         kept.append(token)
         index += 1
-    return shlex.join((*kept, "-o", f"cache_dir={cache}"))
+    return shlex.join((*kept, "-o", f"cache_dir={cache}", f"--basetemp={basetemp}"))
+
+
+def _test_tmp(root: Path, authority: Path) -> Path:
+    return _policy_stage(root, authority, "test-temp") / f"run-{os.getpid()}"
 
 
 def _python_sources(root: Path) -> tuple[Path, ...]:
@@ -195,6 +204,8 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
         return python
     generation = Path(python[PYCACHE])
     pytest = _policy_stage(source, authority, "python-pytest") / generation.name
+    test_tmp = _test_tmp(source, authority)
+    test_tmp.mkdir(parents=True, exist_ok=True)
     gate = _gate_policy(source)
     toolchain = gate["toolchain"]
     uv = _policy_stage(source, authority, "python-uv")
@@ -203,7 +214,8 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     cache = _policy(source)
     environment = {
         **python,
-        PYTEST_ADDOPTS: _pytest_addopts(pytest),
+        PYTEST_ADDOPTS: _pytest_addopts(pytest, test_tmp / "pytest"),
+        TMPDIR: str(test_tmp),
         UV_CACHE: str(uv),
         RUFF_CACHE: str(ruff),
         PNPM_STORE: str(_policy_stage(source, authority, "node-pnpm")),
@@ -229,8 +241,10 @@ def hold_environment(root: Path | None = None) -> None:
         _hold_generation(generation)
         return
     pytest = _policy_stage(source, authority, "python-pytest") / generation.name
+    test_tmp = _test_tmp(source, authority)
     _hold_generation(generation)
     _hold_generation(pytest)
+    _hold_generation(test_tmp)
 
 
 def _hold_generation(generation: Path) -> BinaryIO:

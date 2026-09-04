@@ -45,6 +45,7 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
     python = select_python(paths, pycache, inherited_addopts=os.environ.get(PYTEST_ADDOPTS, ""))
     retain_generation(paths, "python-pycache", pycache.name)
     retain_generation(paths, "python-pytest", python.pytest_cache.name)
+    retain_generation(paths, "test-temp", python.test_tmp.name)
     record_use(paths, "python-uv", tool="uv", key=key, scope=ReuseScope.SHARED, probe=uv)
     record_use(paths, "python-ruff", tool="ruff", key=key, scope=ReuseScope.SHARED, probe=ruff)
     record_use(
