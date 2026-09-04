@@ -6437,6 +6437,11 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
     assert assessment.total_ms == 1140
     assert assessment.slow_stages == ()
 
+    kernel_only = module.assess_boot_timing(
+        [{"name": "kernel", "duration_ms": module.MAX_BOOT_STAGE_MS * 4}]
+    )
+    assert kernel_only.slow_stages == (), "the kernel is reported, not budgeted"
+    assert kernel_only.total_ms == module.MAX_BOOT_STAGE_MS * 4
     regressed = module.assess_boot_timing(
         [{"name": "network", "duration_ms": module.MAX_BOOT_STAGE_MS + 10}]
     )
