@@ -399,4 +399,5 @@ def test_cross_build_runs_from_materialized_inputs_with_network_denied(
     assert "apt-get" not in script
     assert "rustup target add" not in script
     assert "cargo build --locked --offline" in script
+    assert "--no-default-features --features capsem-bench/guest" in script
     assert command[-3:-1] == ["sh", "-c"]

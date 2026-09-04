@@ -1,210 +1,36 @@
+mod cli;
+#[cfg(feature = "host")]
 mod collector;
+#[cfg(feature = "host")]
 mod commands;
+#[cfg(feature = "host")]
 mod comparison;
+#[cfg(feature = "host")]
 mod machine;
 mod protocol;
+#[cfg(feature = "host")]
 mod protocol_record;
 mod scenarios;
+#[cfg(feature = "host")]
 mod schema;
+#[cfg(feature = "host")]
 mod stats;
+#[cfg(feature = "host")]
 mod store;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
+
+pub(crate) use cli::*;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
 const HTTP_REQUEST_ATTEMPTS: usize = 5;
 const HTTP_RETRY_BACKOFF_BASE_MS: u64 = 2;
 
-#[derive(Parser, Debug)]
-#[command(version = env!("CARGO_PKG_VERSION"), about = "Capsem benchmark harness")]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Run deterministic protocol scenarios against capsem-mock-server.
-    Protocol(ProtocolArgs),
-    /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.
-    ProtocolDelta(ProtocolDeltaArgs),
-    /// Compare host-direct and guest-through-Capsem artifacts.
-    Delta(DeltaArgs),
-    /// Every dimension this binary can measure, and whether a quick run covers it.
-    List,
-    /// Report whether this machine is fit to measure on.
-    Doctor(DoctorArgs),
-    /// Compare two records metric by metric.
-    Compare(CompareArgs),
-    /// Ratchet a directory of records against checked-in evidence.
-    Verify(VerifyArgs),
-    /// Measure dimensions and record what they measured.
-    Run(RunArgs),
-    /// What every measured subject reads, and how it has moved.
-    Report(ReportArgs),
-}
-
-#[derive(Parser, Debug)]
-struct ReportArgs {
-    /// The benchmark store to read.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
-    store: PathBuf,
-    #[arg(long, default_value = "code")]
-    profile: String,
-}
-
-#[derive(Parser, Debug)]
-struct RunArgs {
-    /// Dimensions to measure. Every one when omitted.
-    dimensions: Vec<String>,
-    /// Directory holding one executable per dimension.
-    #[arg(long, default_value = "benchmarks/collectors")]
-    collectors: PathBuf,
-    /// The benchmark store to record into.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
-    out: PathBuf,
-    /// Reduced samples, skipping everything that boots a guest.
-    #[arg(long)]
-    quick: bool,
-    /// Seconds a single collector may take.
-    #[arg(long, default_value_t = 900)]
-    timeout_secs: u64,
-    /// Run each collector through this interpreter rather than executing it
-    /// directly. Collectors that import the project's Python dependencies
-    /// need its environment, not whatever `#!/usr/bin/env python3` resolves to.
-    #[arg(long)]
-    interpreter: Option<String>,
-    #[arg(long, default_value = "unknown")]
-    channel: String,
-    #[arg(long, default_value = "unknown")]
-    commit: String,
-    #[arg(long, default_value = "code")]
-    profile: String,
-}
-
-/// How much growth is allowed, and how much of a move is just the machine.
-///
-/// Defaults mirror `[benchmark_regression] maximum_factor` in
-/// `config/gate.toml`; they become flags rather than constants so the gate can
-/// pass the config-owned value in until this binary reads that file directly.
-#[derive(Parser, Debug, Clone, Copy)]
-pub(crate) struct Thresholds {
-    /// A metric may grow by this ratio before it counts as a regression.
-    #[arg(long, default_value_t = 1.1)]
-    pub(crate) maximum_factor: f64,
-    /// Multiplier on the evidence's own spread. A move inside its baseline's
-    /// noise is reported but never called significant.
-    #[arg(long, default_value_t = 1.0)]
-    pub(crate) noise_factor: f64,
-    /// Smallest resolution with product-performance meaning.
-    #[arg(long, default_value_t = 1.0)]
-    pub(crate) minimum_time_resolution_ms: f64,
-}
-
-#[derive(Parser, Debug)]
-struct CompareArgs {
-    /// The store holding the evidence.
-    baseline: PathBuf,
-    /// The store holding this run.
-    current: PathBuf,
-    /// Which dimension to compare.
-    dimension: String,
-    #[arg(long, default_value = "code")]
-    profile: String,
-    #[command(flatten)]
-    thresholds: Thresholds,
-}
-
-#[derive(Parser, Debug)]
-struct VerifyArgs {
-    /// The store holding this run.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
-    records: PathBuf,
-    /// The store holding checked-in evidence.
-    #[arg(long)]
-    evidence: PathBuf,
-    #[command(flatten)]
-    thresholds: Thresholds,
-}
-
-#[derive(Parser, Debug)]
-struct DoctorArgs {
-    /// Emit the verdict as JSON rather than prose.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Parser, Debug)]
-struct ProtocolArgs {
-    #[arg(long)]
-    base_url: Option<String>,
-    #[arg(long)]
-    dns_udp_addr: Option<String>,
-    #[arg(long, default_value_t = 50_000)]
-    requests: usize,
-    #[arg(long, default_value_t = 64)]
-    concurrency: usize,
-    #[arg(long, default_value_t = 30_000)]
-    timeout_ms: u64,
-    #[arg(long)]
-    scenarios: Option<String>,
-    #[arg(long, default_value = "host_direct")]
-    lane: String,
-    #[arg(long, default_value = "/tmp/capsem-benchmark.json")]
-    json_out: PathBuf,
-    /// Also record into this benchmark store.
-    #[arg(long)]
-    record: Option<PathBuf>,
-    #[arg(long, default_value = "unknown")]
-    channel: String,
-    #[arg(long, default_value = "unknown")]
-    commit: String,
-    #[arg(long, default_value = "code")]
-    profile: String,
-}
-
-#[derive(Parser, Debug)]
-struct DeltaArgs {
-    #[arg(long)]
-    host: PathBuf,
-    #[arg(long)]
-    guest: PathBuf,
-    #[arg(long, default_value = "/tmp/capsem-benchmark-delta.json")]
-    json_out: PathBuf,
-}
-
-#[derive(Parser, Debug)]
-struct ProtocolDeltaArgs {
-    #[arg(long)]
-    base_url: String,
-    #[arg(long)]
-    dns_udp_addr: Option<String>,
-    #[arg(long)]
-    guest_base_url: Option<String>,
-    #[arg(long)]
-    guest_dns_udp_addr: Option<String>,
-    #[arg(long, default_value_t = 50_000)]
-    requests: usize,
-    #[arg(long, default_value_t = 64)]
-    concurrency: usize,
-    #[arg(long, default_value_t = 300)]
-    guest_timeout_secs: u64,
-    #[arg(long, default_value_t = 30_000)]
-    timeout_ms: u64,
-    #[arg(long)]
-    scenarios: Option<String>,
-    #[arg(long)]
-    session: Option<String>,
-    #[arg(long, default_value = "capsem")]
-    capsem_bin: PathBuf,
-    #[arg(long, default_value = "/tmp/capsem-benchmark-protocol-delta.json")]
-    json_out: PathBuf,
-}
-
 use protocol::*;
+#[cfg(test)]
 use scenarios::*;
 
 #[tokio::main]
@@ -219,15 +45,22 @@ async fn main() -> Result<()> {
         scenarios: None,
         lane: "host_direct".to_string(),
         json_out: PathBuf::from("/tmp/capsem-benchmark.json"),
+        #[cfg(feature = "host")]
         record: None,
+        #[cfg(feature = "host")]
         channel: "unknown".to_string(),
+        #[cfg(feature = "host")]
         commit: "unknown".to_string(),
+        #[cfg(feature = "host")]
         profile: "code".to_string(),
     })) {
         Command::Protocol(args) => {
+            #[cfg(feature = "host")]
             let destination = args.record.clone();
+            #[cfg(feature = "host")]
             let (channel, commit, profile) = (args.channel.clone(), args.commit.clone(), args.profile.clone());
             let artifact = run_protocol(args).await?;
+            #[cfg(feature = "host")]
             if let Some(root) = destination {
                 let record = protocol_record::build(
                     &artifact,
@@ -254,9 +87,13 @@ async fn main() -> Result<()> {
             let artifact = run_delta(args)?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
+        #[cfg(feature = "host")]
         Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH, &args.profile),
+        #[cfg(feature = "host")]
         Command::List => commands::list_dimensions(),
+        #[cfg(feature = "host")]
         Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()?),
+        #[cfg(feature = "host")]
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
             return comparison::compare(
@@ -268,7 +105,9 @@ async fn main() -> Result<()> {
                 args.thresholds,
             );
         }
+        #[cfg(feature = "host")]
         Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.thresholds),
+        #[cfg(feature = "host")]
         Command::Run(args) => {
             let wanted = commands::select_dimensions(&args.dimensions)?;
             return commands::run_dimensions(

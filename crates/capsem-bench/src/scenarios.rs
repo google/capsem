@@ -251,6 +251,7 @@ pub(crate) struct ScenarioResult {
     /// Raw per-request latencies, kept for `capsem.bench.v1` and never
     /// serialized into this artifact: `capsem-bench` computes every statistic
     /// itself, so a collector that pre-summarizes hides the distribution.
+    #[cfg(feature = "host")]
     #[serde(skip)]
     pub(crate) latency_samples: Vec<f64>,
     pub(crate) errors: BTreeMap<String, usize>,

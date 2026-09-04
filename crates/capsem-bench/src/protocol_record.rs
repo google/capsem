@@ -1,6 +1,7 @@
 //! Conversion from one protocol artifact into the shared benchmark schema.
 
-use crate::{commands, machine, schema, stats, Artifact};
+use crate::scenarios::Artifact;
+use crate::{commands, machine, schema, stats};
 
 pub(crate) fn build(
     artifact: &Artifact,

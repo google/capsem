@@ -838,7 +838,8 @@ def container_compile_agent(
             'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
             f"cp -r /src/crates /build/crates && "
             f"cargo build --locked --offline --release --target {rust_target} "
-            "-p capsem-agent -p capsem-bench && "
+            "-p capsem-agent -p capsem-bench --no-default-features "
+            "--features capsem-bench/guest && "
             f"rm -f {rm_cmds} && "
             f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
         ]

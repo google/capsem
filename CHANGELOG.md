@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are cached for one hour, while failures are never cached; the bespoke npm
   registry client, pip-audit exporter, and their redundant dependency installs
   are removed.
+- The in-VM benchmark helper now excludes host-only storage, reporting, and
+  machine-inspection code. Its stripped musl payload is 32% smaller, reducing
+  every fresh VM overlay and keeping fork images within their size ratchet
+  without weakening the benchmark baseline.
 - VM kernels, root filesystems, initrds, guest binaries, host packages, and
   release staging views now reuse digest-verified immutable objects through
   component-specific input identities. Hardlinks avoid duplicate multi-gigabyte

@@ -153,9 +153,13 @@ pub(crate) async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<Protoc
         json_out: temp_artifact_path("host"),
         // The delta lane compares two artifacts; recording is the caller's
         // decision, made once for the pair rather than twice inside it.
+        #[cfg(feature = "host")]
         record: None,
+        #[cfg(feature = "host")]
         channel: "unknown".to_string(),
+        #[cfg(feature = "host")]
         commit: "unknown".to_string(),
+        #[cfg(feature = "host")]
         profile: "code".to_string(),
     })
     .await?;
@@ -476,6 +480,7 @@ pub(crate) fn summarize(
         transfer_bytes,
         bytes_per_sec: round1(transfer_bytes as f64 / duration_s),
         latency_ms: latency_summary(samples.iter().map(|sample| sample.latency_ms).collect()),
+        #[cfg(feature = "host")]
         latency_samples: samples.iter().map(|sample| sample.latency_ms).collect(),
         errors,
         secret_shaped_fixture_seen: secret_seen,

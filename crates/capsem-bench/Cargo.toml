@@ -9,17 +9,22 @@ homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["host"]
+host = ["dep:capsem-foundation", "dep:rusqlite"]
+guest = []
+
 [[bin]]
 name = "capsem-bench-rs"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-capsem-foundation = { path = "../capsem-foundation" }
+capsem-foundation = { path = "../capsem-foundation", default-features = false, optional = true }
 clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
