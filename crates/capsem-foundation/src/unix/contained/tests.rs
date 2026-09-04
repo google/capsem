@@ -32,6 +32,11 @@ fn tree() -> Tree {
 }
 
 #[test]
+fn permission_modes_discard_non_permission_bits_portably() {
+    assert_eq!(permission_mode(u32::MAX), permission_mode(0o7777));
+}
+
+#[test]
 fn traversal_refuses_symlinks_at_every_depth() {
     let tree = tree();
     std::fs::create_dir(tree.root_path.join("real")).unwrap();
