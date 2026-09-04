@@ -15,10 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import toolchain
 from .actions import Run, Script
 from .config import GateConfig
-from .execution import SATURATES, Kind, Needs, Speed, Step, step
+from .execution import Kind, Needs, Speed, Step, step
 
 
 def all_of(config: GateConfig) -> list[Step]:
@@ -188,76 +187,6 @@ def generated_settings(config: GateConfig) -> Step:
     )
 
 
-def web_surfaces(config: GateConfig) -> list[Step]:
-    """One step per surface, so a failure says which one.
-
-    The surfaces that bundle claim `astro_build`, so those run one at a time.
-    Astro stages prerendering in a path derived from the project root rather
-    than from the invocation -- `<outDir>/.prerender/` when the output is
-    inside the root, `<root>/.astro/` when it is not -- so neither `--outDir`
-    nor `--cacheDir` isolates two concurrent builds; they delete each other's
-    staging.
-
-    The bundling surfaces do have distinct roots today, so serializing them is
-    insurance rather than a fix, and the alternative is a rule that holds only
-    as long as nobody adds a second consumer of one root.
-
-    Which surfaces those are is read from `building` rather than assumed of all
-    of them, and that is the correction this comment used to need. It claimed a
-    build was well under a second; `release-site` then spent two minutes in
-    `cargo`, holding the Astro exclusive across a Rust build while
-    `web.frontend-build` -- the surface on the critical path, because it gates
-    clippy -- waited behind it. The Rust half is now `web.release-channel`, and
-    what remains here type-checks and runs vitest without bundling anything, so
-    it no longer takes the claim at all.
-    """
-    surfaces = config.websurfaces
-    return [
-        step(
-            f"web.{target}",
-            Run(["bash", surfaces.script, target]),
-            contends=(config.exclusive("astro_build"),) if target in surfaces.building else (),
-            kind=Kind.COMPILE if target in surfaces.building else Kind.STATIC_TEST,
-            speed=Speed.FAST,
-        )
-        for target in surfaces.targets
-    ]
-
-
-def frontend_bundle(config: GateConfig) -> Step:
-    """Build the exact bundle Tauri embeds, without rerunning frontend tests."""
-    frontend = config.frontend
-    return step(
-        "web.frontend-bundle",
-        Run(["bash", frontend.build_script, frontend.build_target]),
-        contends=(
-            config.exclusive("astro_build"),
-            config.exclusive("node_modules"),
-        ),
-        kind=Kind.COMPILE,
-        speed=Speed.FAST,
-    )
-
-
-def clippy(config: GateConfig) -> Step:
-    """The Rust lint gate.
-
-    Clippy is the project-standard `cargo check` superset over `--all-targets`.
-    Workspace warnings are denied, so this gate must deny them too.
-    """
-    return step(
-        "clippy",
-        Run(
-            ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
-            env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
-        ),
-        contends=(config.exclusive("workspace_binaries"),),
-        kind=Kind.COMPILE,
-        speed=Speed.FAST,
-        concurrency=SATURATES,
-    )
-
-
 def rust_format(config: GateConfig) -> Step:
     """Reject Rust formatting drift before any workspace compilation."""
     return step(
@@ -266,45 +195,3 @@ def rust_format(config: GateConfig) -> Step:
         kind=Kind.LINT,
         speed=Speed.FAST,
     )
-
-
-def release_channel(config: GateConfig) -> Step:
-    """Build a release channel twice and prove the two agree.
-
-    Lived inside `web.release-site` until the graph was asked what that step
-    cost. It is not a web surface: `pnpm check` and the vitest run take about a
-    second between them, and the remaining two minutes are
-    `cargo run -p capsem-admin` building a binary the fast phase does not
-    otherwise build. The name said "web", the timing report showed one opaque
-    line, and one action can hide a compiler.
-
-    Split out so it stops holding `astro_build` -- the claim exists to keep two
-    Astro builds from deleting each other's staging, and this held it across a
-    Rust build while `web.frontend`, the surface that gates clippy, waited a
-    minute for it.
-
-    It takes `workspace_binaries` instead, which is the claim it should have
-    had all along: `audit.generated-settings` drives cargo against the same
-    target directory and the two are unordered.
-    """
-    return step(
-        "web.release-channel",
-        Run(["bash", config.websurfaces.script, "release-channel"]),
-        contends=(config.exclusive("workspace_binaries"),),
-        kind=Kind.E2E,
-        needs=frozenset({Needs.DISK}),
-        speed=Speed.SLOW,
-    )
-
-
-def blocking_surface(config: GateConfig, surfaces: list[Step]) -> Step:
-    """The surface clippy has to wait for.
-
-    Looked up by the name in config rather than by position, so reordering the
-    target list cannot silently move the dependency onto the wrong one.
-    """
-    wanted = f"web.{config.websurfaces.blocks_clippy}"
-    # Suffix, not equality: composed into a larger plan these labels carry
-    # their phase's namespace, and matching the whole thing would silently
-    # find nothing.
-    return next(candidate for candidate in surfaces if candidate.label.endswith(wanted))

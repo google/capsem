@@ -357,7 +357,7 @@ path = "tools/audits"
 warm_size_bytes = 67108864 # 64 MiB
 max_size_bytes = 214748364800 # 200 GiB
 prune_strategy = "lru"
-maximum_age_hours = 24
+maximum_age_hours = 1
 maximum_count = 1000
 
 [stages.temporary]

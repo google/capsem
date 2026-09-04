@@ -54,7 +54,9 @@ CARGO_TARGET = "CARGO_TARGET_DIR"
 RUSTC_WRAPPER = "RUSTC_WRAPPER"
 SCCACHE_DIR = "SCCACHE_DIR"
 SCCACHE_CACHE_SIZE = "SCCACHE_CACHE_SIZE"
-SCCACHE_BASEDIR = "SCCACHE_BASEDIR"
+SCCACHE_BASEDIRS = "SCCACHE_BASEDIRS"
+SCCACHE_CLIENT_SIDE = "SCCACHE_CLIENT_SIDE"
+SCCACHE_IDLE_TIMEOUT = "SCCACHE_IDLE_TIMEOUT"
 SCCACHE_SERVER_UDS = "SCCACHE_SERVER_UDS"
 
 FALLBACK_STAGE = Path("cache/tools/python/pycache")
@@ -208,7 +210,9 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
         CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
         SCCACHE_DIR: str(rust),
         SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['max_size_bytes'] // 1024**3}G",
-        SCCACHE_BASEDIR: str(source),
+        SCCACHE_BASEDIRS: str(source),
+        SCCACHE_CLIENT_SIDE: "1" if toolchain["compiler_cache_client_side"] else "0",
+        SCCACHE_IDLE_TIMEOUT: str(toolchain["compiler_cache_idle_timeout_seconds"]),
         SCCACHE_SERVER_UDS: str(rust / toolchain["compiler_cache_socket_name"]),
     }
     if shutil.which(toolchain["compiler_cache_command"]) is not None:

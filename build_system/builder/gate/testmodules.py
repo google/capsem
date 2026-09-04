@@ -24,6 +24,7 @@ from . import (
     sandbox,
     sourcechecks,
     toolchain,
+    webaudits,
 )
 from .command import GateCommand
 from .config import GateConfig
@@ -175,14 +176,14 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
             surface,
             after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
         )
-        for surface in audits.web_surfaces(config)
+        for surface in webaudits.surfaces(config)
     ]
     # The release-channel parity proof used to be the `release-site` surface's
     # tail. It claims no Astro build, so it no longer stalls the queue.
-    channel = phase.add(audits.release_channel(config), after=(syntax, node))
+    channel = phase.add(webaudits.release_channel(config), after=(syntax, node))
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
-    blocking = audits.blocking_surface(config, surfaces)
-    clippy = phase.add(audits.clippy(config), after=(blocking, rust, ort))
+    blocking = webaudits.blocking_surface(config, surfaces)
+    clippy = phase.add(webaudits.clippy(config), after=(blocking, rust, ort))
     return (
         *audited,
         *checked,

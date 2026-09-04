@@ -421,7 +421,9 @@ cargo_target = "CARGO_TARGET_DIR"
 rustc_wrapper = "RUSTC_WRAPPER"
 sccache_dir = "SCCACHE_DIR"
 sccache_cache_size = "SCCACHE_CACHE_SIZE"
-sccache_base_dir = "SCCACHE_BASEDIR"
+sccache_base_dirs = "SCCACHE_BASEDIRS"
+sccache_client_side = "SCCACHE_CLIENT_SIDE"
+sccache_idle_timeout = "SCCACHE_IDLE_TIMEOUT"
 sccache_server_uds = "SCCACHE_SERVER_UDS"
 # Standard tool variables whose values are resolved from config/cache.toml by
 # the gate before it enters a private source checkout.
@@ -1205,6 +1207,8 @@ run_marker = "CAPSEM_GATE_RUN"
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
 compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
+compiler_cache_client_side = true
+compiler_cache_idle_timeout_seconds = 0
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
@@ -2376,7 +2380,10 @@ build_cache = "cache/target/prefix-products"
 cargo_target = "cache/target/cargo"
 cargo_profiles = ["debug", "release"]
 
-name_length = 8
+# Working-tree prefixes are content-addressed. Sixteen hexadecimal characters
+# keep their absolute source path stable across exact repeats without making
+# collision handling a realistic part of ordinary development.
+name_length = 16
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
 # resumed into, and the *next* run is the one that no longer needs the one

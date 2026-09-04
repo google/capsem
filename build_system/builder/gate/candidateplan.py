@@ -28,6 +28,7 @@ from . import (
     testmodules,
     toolchain,
     vmmodules,
+    webaudits,
 )
 from .actions import Run
 from .config import GateConfig
@@ -133,7 +134,7 @@ def compose_modules(
     # `test-candidate` runs this composition alone, where there was not, so each
     # module still makes its own.
     generated = _already_issuing(plan, audits.generated_settings(config))
-    bundled = _already_issuing(plan, audits.frontend_bundle(config))
+    bundled = _already_issuing(plan, webaudits.frontend_bundle(config))
     node = _already_issuing(plan, toolchain.node(config))
     static = staticmodule.static(
         plan,

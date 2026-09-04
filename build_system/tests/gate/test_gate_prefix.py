@@ -141,7 +141,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
     at a relative path and this goes red.
     """
-    from capsem_builder.gate import prefix
+    from capsem_builder.gate import prefix, prefixidentity
 
     config = _config()
     root = prefix.socket_root(config)
@@ -150,7 +150,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
         f"{root} is relative, so it resolves inside the prefix and every "
         "terminal socket grows by the length of the prefix"
     )
-    assert prefix.example(config) not in root.parents
+    assert prefixidentity.example(config) not in root.parents
 
     longest = len(str(root / "capsem-a.XXXXXX")) + 1 + GATEWAY_SUFFIX
     assert longest <= SUN_LEN, (
@@ -160,10 +160,26 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
 def test_the_prefix_example_reserves_the_full_release_commit() -> None:
     """The longest identity is one full commit, not a random abbreviation."""
+    from capsem_builder.gate import prefixidentity
+
+    config = _config()
+    assert prefixidentity.example(config).name == "0" * 40
+
+
+def test_working_tree_prefix_is_stable_for_exact_source_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from capsem_builder.gate import prefix
 
     config = _config()
-    assert prefix.example(config).name == "0" * 40
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *_: "a" * 64)
+
+    first = prefix.for_working_tree(config)
+    second = prefix.for_working_tree(config)
+
+    assert first == second
+    assert first.parent == prefix.parent_dir(config)
+    assert first.name == "a" * config.prefix.name_length
 
     from capsem_builder.gate.workspace import Workspace
 
@@ -837,6 +853,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 
     monkeypatch.setattr(prefix, "allocate", lambda *args: failed)
     monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *args: "a" * 64)
     monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: failed.mkdir())
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
 
@@ -871,6 +888,7 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix, "allocate", lambda *args: fresh)
     monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *args: "b" * 64)
     monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: fresh.mkdir())
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))

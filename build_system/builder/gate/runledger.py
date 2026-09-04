@@ -25,68 +25,15 @@ from pathlib import Path
 from typing import TypeVar
 
 from .config import GateConfig
-from .configschema import Strict
 from .digestschema import LedgerConfig
 from .filesystem import write_text
 from .harnessschema import RunLogConfig
 from .runhistory import history_locked, read, runs
+from .runledgerschema import LedgerRow, StepRow
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
 from .timing import measure
 
 Model = TypeVar("Model", RunStart, PlanShape, RunEnd)
-
-
-class StepRow(Strict):
-    """What one step cost, and whether that cost measured anything.
-
-    `status` is kept beside the duration because a skipped step records a
-    duration near zero, and a median taken over those reports a build that
-    never ran as the fastest one on record.
-    """
-
-    duration_ms: float
-    status: str
-    resource_ms: float = 0.0
-    dependency_ms: float = 0.0
-    """When the graph allowed this step to start. See `Timing.dependency_waits`;
-    defaulted so a row written before the field existed still loads."""
-
-
-class LedgerRow(Strict):
-    """One finished run, distilled to what a trend can use."""
-
-    row_schema: str
-    run_id: str
-    command: str
-    head: str
-    status: str
-    total_ms: float
-
-    identity: str
-    """Digest of everything that has to match before two runs are comparable.
-
-    Stored rather than recomputed because the plan graph it summarizes is the
-    largest thing in a run log, and the ledger's whole purpose is to be small
-    enough to keep forever.
-    """
-
-    critical_path: tuple[str, ...]
-    """Computed while the graph was still on disk. After rotation there are no
-    edges left to compute it from, so a row that did not carry it would lose
-    the only measurement worth acting on."""
-
-    steps: dict[str, StepRow]
-
-    def measured(self, label: str) -> float | None:
-        """This step's duration, or nothing if it did not do the work.
-
-        `skipped` and `carried` both record a duration and neither describes
-        work this run performed. Reading them as measurements is the single
-        easiest way to produce a trend that is confidently wrong in the
-        flattering direction.
-        """
-        row = self.steps.get(label)
-        return row.duration_ms if row is not None and row.status == OK else None
 
 
 def identity(start: RunStart, shape: PlanShape) -> tuple:

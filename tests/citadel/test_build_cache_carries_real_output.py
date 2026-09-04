@@ -197,6 +197,7 @@ def _sequenced(monkeypatch, config, tmp_path: Path, status: int = 0) -> _Runner:
         "capsem_builder.gate.snapshot.populate",
         lambda source, target, cfg: target.mkdir(parents=True),
     )
+    monkeypatch.setattr("capsem_builder.gate.snapshot.digest", lambda *args: "c" * 64)
     monkeypatch.setattr(
         "capsem_builder.gate.buildcache.export", lambda path, destination, cfg: None
     )

@@ -34,6 +34,7 @@ from pathlib import Path
 from . import buildcache, cachelayout, cachetooling, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
+from .prefixidentity import for_source_commit, for_working_tree
 from .prefixlease import lease, parent_dir, reclaim_orphan_leases
 from .pythonenv import uv_run
 from .sourcecommit import SourceCommit, require_detached_checkout
@@ -50,20 +51,6 @@ _CLONE = ("-c",)
 #: How many paths to hand one `cp`. Per-file invocation is 2080 subprocesses;
 #: one invocation is an argv the kernel refuses.
 _BATCH = 200
-
-
-def example(config: GateConfig) -> Path:
-    """A representative prefix path, for arithmetic that must not boot a VM.
-
-    A release uses the full source commit. Candidate identities are shorter,
-    so forty hex characters is the one representative path worth budgeting.
-    """
-    return parent_dir(config) / ("0" * 40)
-
-
-def for_source_commit(config: GateConfig, commit: SourceCommit) -> Path:
-    """The deterministic release prefix: the complete source identity."""
-    return parent_dir(config) / str(commit)
 
 
 def socket_root(config: GateConfig) -> Path:
@@ -173,7 +160,12 @@ def run_from_private_copy(
     expected = for_source_commit(config, commit) if commit is not None else None
     if reuse is not None and expected is not None and reuse.resolve() != expected.resolve():
         raise GateError(f"release source {commit} may only use its exact prefix {expected}")
-    identity = secrets.token_hex(config.prefix.name_length)
+    candidate = None if commit is not None or reuse is not None else for_working_tree(config)
+    identity = (
+        secrets.token_hex(config.prefix.name_length)
+        if candidate is not None and candidate.exists()
+        else (candidate.name if candidate is not None else secrets.token_hex(config.prefix.name_length))
+    )
     path = reuse or expected or allocate(config, identity)
     if path.is_symlink():
         raise GateError(f"exact source prefix {path} must not be a symlink")

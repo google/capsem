@@ -11,9 +11,9 @@ from pathlib import Path
 
 from . import (
     assetplan,
-    audits,
     pytestsuite,
     toolchain,
+    webaudits,
 )
 from .actions import Script
 from .command import GateCommand
@@ -105,7 +105,7 @@ def artifacts(
         toolchain.node(config, (config.frontend.workspace,)), after=after
     )
     prerequisites = (*after, installed) if node is not None else (installed,)
-    frontend = bundled or phase.add(audits.frontend_bundle(config), after=prerequisites)
+    frontend = bundled or phase.add(webaudits.frontend_bundle(config), after=prerequisites)
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",

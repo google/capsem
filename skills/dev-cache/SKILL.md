@@ -119,6 +119,14 @@ artifact frontiers instead of rebuilding them. Low-impact paths are routed by
 commit distance. Release commands self-qualify and do not consume a local
 `just test` prerequisite.
 
+Working-tree gates derive their private prefix name from the exact source
+digest. Do not replace it with a random run ID: Cargo fingerprints contain
+absolute source paths, so random prefixes turn an unchanged repeat into a
+rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
+`SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
+resource teardown. Do not manage its daemon in shell or disable Cargo
+incremental compilation without a measured workload-specific reason.
+
 Never make normal cache reuse opt-in. Do not clean caches to diagnose a product
 failure unless cold-state behavior is itself the subject under test.
 

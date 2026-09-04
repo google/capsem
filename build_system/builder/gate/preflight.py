@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import os
 
+from .cachetooling import CompilerCache
 from .config import GateConfig
 from .errors import GateError
 from .lifecycle import Resource
 from .locks import ExclusiveLock
+from .proc import Runner
 
 
 def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> None:
@@ -46,7 +48,12 @@ def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> No
 
 
 def holdings(
-    config: GateConfig, name: str, *, exclusive: bool, declared: tuple[Resource, ...]
+    config: GateConfig,
+    runner: Runner,
+    name: str,
+    *,
+    exclusive: bool,
+    declared: tuple[Resource, ...],
 ) -> tuple[Resource, ...]:
     """The machine lock first, then whatever the command declared.
 
@@ -56,7 +63,11 @@ def holdings(
     """
     if not exclusive:
         return declared
-    return (ExclusiveLock.for_gate(config, purpose=purpose(name)), *declared)
+    return (
+        ExclusiveLock.for_gate(config, purpose=purpose(name)),
+        CompilerCache(config, runner),
+        *declared,
+    )
 
 
 def purpose(name: str) -> str:

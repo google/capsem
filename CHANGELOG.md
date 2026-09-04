@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy-owned cache stages. Python and uv reuse whole ABI/source or lockfile
   generations, pnpm workspaces share one content store, Cargo internals are
   never selectively pruned, and gate attempts record typed hit/miss/size data.
+  Working-tree gates use a stable content-addressed private source path, and a
+  scoped sccache resource normalizes changed paths without leaking its daemon;
+  exact fast-test repeats therefore retain Cargo fingerprints across isolation.
 - Python and Node advisory checks now run once through checksum-pinned
   OSV-Scanner before the stricter RustSec policy. Exact clean lockfile verdicts
   are cached for one hour, while failures are never cached; the bespoke npm

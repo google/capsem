@@ -110,6 +110,7 @@ class GuardedRunner(Runner):
     ) -> None:
         super().__init__(inner.root)
         self._inner = inner
+        self.observing = inner.observing
         self._journal = journal
         self._tail_lines = tail_lines
         self._checkpoint = checkpoint or (lambda: None)

@@ -8,6 +8,8 @@ from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.telemetry import ReuseScope
 from capsem_builder.gate import cachetooling
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.lifecycle import held
+from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(ROOT)
@@ -50,7 +52,9 @@ def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) ->
     assert compiler[CONFIG.environment.sccache_dir] == str(ROOT / "cache/tools/rust/sccache")
     sccache_max_gib = CACHE_POLICY.stages["rust-sccache"].max_size_bytes // 1024**3
     assert compiler[CONFIG.environment.sccache_cache_size] == f"{sccache_max_gib}G"
-    assert compiler[CONFIG.environment.sccache_base_dir] == str(ROOT)
+    assert compiler[CONFIG.environment.sccache_base_dirs] == str(ROOT)
+    assert compiler[CONFIG.environment.sccache_client_side] == "1"
+    assert compiler[CONFIG.environment.sccache_idle_timeout] == "0"
     assert compiler[CONFIG.environment.sccache_server_uds] == str(
         ROOT / "cache/tools/rust/sccache/sccache.sock"
     )
@@ -100,3 +104,33 @@ def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch)
     assert bootstrap[gatelaunch.UV_CACHE] == typed[CONFIG.environment.uv_cache]
     assert bootstrap[gatelaunch.RUFF_CACHE] == typed[gatelaunch.RUFF_CACHE]
     assert bootstrap[gatelaunch.PNPM_STORE] == typed[CONFIG.environment.pnpm_store]
+    compiler = cachetooling.compiler_environment(CONFIG)
+    assert bootstrap[gatelaunch.SCCACHE_BASEDIRS] == compiler[
+        CONFIG.environment.sccache_base_dirs
+    ]
+    assert bootstrap[gatelaunch.SCCACHE_CLIENT_SIDE] == compiler[
+        CONFIG.environment.sccache_client_side
+    ]
+    assert bootstrap[gatelaunch.SCCACHE_IDLE_TIMEOUT] == compiler[
+        CONFIG.environment.sccache_idle_timeout
+    ]
+
+
+def test_compiler_cache_server_is_scoped_to_the_gate_command(monkeypatch) -> None:
+    monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
+    runner = RecordingRunner(ROOT)
+    runner.observing = False
+    resource = cachetooling.CompilerCache(CONFIG, runner)
+
+    with held(resource):
+        assert resource.environment()[CONFIG.environment.sccache_idle_timeout] == "0"
+
+    assert [command.argv for command in runner.commands] == [
+        ("sccache", "--stop-server"),
+        ("sccache", "--start-server"),
+        ("sccache", "--stop-server"),
+    ]
+    assert all(
+        command.env[CONFIG.environment.sccache_base_dirs] == str(ROOT)
+        for command in runner.commands
+    )
