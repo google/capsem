@@ -667,9 +667,10 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
         credential_ref: None,
     };
 
-    let event_id = emit_dns_security_write_and_rules(&db, &security_rules, event)
+    let (event_id, delegated_rules) = emit_dns_security_write_and_rules(&db, &security_rules, event)
         .await
         .expect("event id allocated");
+    delegated_rules.await.expect("delegated rule rows written");
     let db_for_flush = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db_for_flush.shutdown_blocking())
         .await

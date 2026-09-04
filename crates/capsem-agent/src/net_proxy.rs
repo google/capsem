@@ -27,22 +27,17 @@ mod process_attribution;
 
 use std::collections::VecDeque;
 use std::io;
-use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
 use std::path::Path;
-use std::pin::Pin;
 use std::process;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 
-use nix::libc;
-use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
 use capsem_proto::VSOCK_PORT_SNI_PROXY;
 use process_attribution::encode_meta_line;
-use vsock_io::{vsock_connect, VSOCK_HOST_CID};
+use vsock_io::{vsock_connect, AsyncVsock, VSOCK_HOST_CID};
 
 /// TCP port to listen on for HTTPS traffic (iptables REDIRECT target
 /// for outbound :443).
@@ -54,93 +49,6 @@ const LISTEN_PORT_HTTPS: u16 = 10443;
 /// listener is just an iptables-target convenience.
 const LISTEN_PORT_HTTP: u16 = 10080;
 const RECENT_PID_CAPACITY: usize = 16;
-
-// Async wrapper for vsock RawFd
-struct AsyncVsock {
-    inner: AsyncFd<std::os::unix::net::UnixStream>,
-    fd: RawFd,
-}
-
-impl AsyncVsock {
-    /// Take ownership of `fd`. On every path, including an error, the fd
-    /// belongs to this function afterwards: `from_raw_fd` owns it and
-    /// `AsyncFd::new` drops (closes) the stream when registration fails.
-    /// The caller must not close it again; a second close on a multi-threaded
-    /// runtime can hit a number another connection has just been handed.
-    fn new(fd: RawFd) -> io::Result<Self> {
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-        // We wrap it in a UnixStream to be able to use AsyncFd,
-        // although it's actually an AF_VSOCK socket.
-        let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
-        Ok(Self {
-            inner: AsyncFd::new(std_stream)?,
-            fd,
-        })
-    }
-}
-
-impl AsyncRead for AsyncVsock {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        loop {
-            let mut guard = match self.inner.poll_read_ready(cx) {
-                Poll::Ready(Ok(guard)) => guard,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            };
-
-            let unfilled = buf.initialize_unfilled();
-            match nix::unistd::read(self.fd, unfilled) {
-                Ok(n) => {
-                    buf.advance(n);
-                    return Poll::Ready(Ok(()));
-                }
-                Err(nix::errno::Errno::EAGAIN) => {
-                    guard.clear_ready();
-                }
-                Err(e) => return Poll::Ready(Err(e.into())),
-            }
-        }
-    }
-}
-
-impl AsyncWrite for AsyncVsock {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        loop {
-            let mut guard = match self.inner.poll_write_ready(cx) {
-                Poll::Ready(Ok(guard)) => guard,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            };
-
-            match nix::unistd::write(unsafe { BorrowedFd::borrow_raw(self.fd) }, buf) {
-                Ok(n) => return Poll::Ready(Ok(n)),
-                Err(nix::errno::Errno::EAGAIN) => {
-                    guard.clear_ready();
-                }
-                Err(e) => return Poll::Ready(Err(e.into())),
-            }
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let ret = unsafe { libc::shutdown(self.fd, libc::SHUT_WR) };
-        if ret == 0 {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Ready(Err(io::Error::last_os_error()))
-        }
-    }
-}
-
-// No custom Drop: inner AsyncFd<UnixStream> owns the fd via from_raw_fd
-// and closes it automatically. Manual libc::close would double-close.
 
 #[derive(Default)]
 struct ProcessAttributor {

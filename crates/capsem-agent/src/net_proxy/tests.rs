@@ -212,7 +212,7 @@ async fn async_vsock_new_owns_the_fd_on_failure() {
     let ours = std::fs::read_link(format!("/proc/self/fd/{fd}")).expect("the fd is open before the call");
 
     let err = AsyncVsock::new(fd).err().expect("a regular file cannot be registered");
-    assert_eq!(err.raw_os_error(), Some(libc::EPERM), "{err}");
+    assert_eq!(err.raw_os_error(), Some(nix::libc::EPERM), "{err}");
     let after = std::fs::read_link(format!("/proc/self/fd/{fd}")).ok();
     assert_ne!(
         after.as_ref(),

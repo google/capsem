@@ -1,5 +1,6 @@
 use super::*;
 
+mod dns_frames;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -581,93 +582,6 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
     assert!(
         HostVsockService::from_port(11434).is_none(),
         "guest TCP ports must be redirected through the MITM rail, not exposed as raw VSOCK"
-    );
-}
-
-#[test]
-fn roundtrip_dns_request() {
-    let req = DnsRequest {
-        raw: vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0],
-        proto: "udp".into(),
-        process_name: Some("curl".into()),
-    };
-    let frame = encode_dns_request(&req).unwrap();
-    let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
-    assert!(len < MAX_FRAME_SIZE);
-    let decoded = decode_dns_request(&frame[4..]).unwrap();
-    assert_eq!(decoded, req);
-}
-
-#[test]
-fn roundtrip_dns_request_no_process_name() {
-    let req = DnsRequest {
-        raw: vec![0u8; 12],
-        proto: "tcp".into(),
-        process_name: None,
-    };
-    let frame = encode_dns_request(&req).unwrap();
-    let decoded = decode_dns_request(&frame[4..]).unwrap();
-    assert_eq!(decoded, req);
-}
-
-#[test]
-fn roundtrip_dns_response() {
-    let resp = DnsResponse {
-        raw: vec![0x12, 0x34, 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0],
-        decision: "denied".into(),
-        rcode: 3,
-    };
-    let frame = encode_dns_response(&resp).unwrap();
-    let decoded = decode_dns_response(&frame[4..]).unwrap();
-    assert_eq!(decoded, resp);
-}
-
-#[test]
-fn dns_envelope_is_compact() {
-    // 60-byte raw query + small metadata should fit comfortably
-    // under 200 bytes encoded -- ensures we don't accidentally pull
-    // in heavy framing (e.g. nested struct + named fields blow-up).
-    let req = DnsRequest {
-        raw: vec![0u8; 60],
-        proto: "udp".into(),
-        process_name: None,
-    };
-    let frame = encode_dns_request(&req).unwrap();
-    let payload_len = frame.len() - 4;
-    assert!(
-        payload_len < 200,
-        "DnsRequest payload {payload_len} bytes, expected < 200"
-    );
-}
-
-#[test]
-fn decode_dns_request_garbage_fails() {
-    assert!(decode_dns_request(&[0xFF, 0xFE]).is_err());
-}
-
-#[test]
-fn decode_dns_response_garbage_fails() {
-    assert!(decode_dns_response(&[0xFF, 0xFE]).is_err());
-}
-
-#[test]
-fn dns_envelope_is_disjoint_from_ipc_frames() {
-    // The DNS envelope is a freestanding RMP-encoded struct (NOT a
-    // tagged-enum like HostToGuest / GuestToHost). It must NOT
-    // accidentally trip the looks_like_ipc_frame heuristic, otherwise
-    // a stray DNS frame leaked to a tty would be mis-flagged as a
-    // control-channel leak. Spot-check that an encoded DnsRequest
-    // does NOT match the fixmap[1] / fixmap[2] enum-frame shape.
-    let req = DnsRequest {
-        raw: vec![0u8; 12],
-        proto: "udp".into(),
-        process_name: None,
-    };
-    let frame = encode_dns_request(&req).unwrap();
-    // Skip the 4-byte length prefix; check the RMP body.
-    assert!(
-        !looks_like_ipc_frame(&frame[4..]),
-        "DnsRequest accidentally matches the IPC enum frame shape"
     );
 }
 

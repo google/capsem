@@ -117,6 +117,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest DNS no longer serializes on eight lock-step worker threads. The
+  forwarder now multiplexes queries over two persistent vsock sessions with a
+  correlation id per query, so answers arrive in any order and a slow lookup
+  no longer holds every query queued behind it; the host answers each frame
+  on its own task. Every answer is checked against its query's transaction
+  id and question before it is delivered, a query the host never answers
+  gets a SERVFAIL after three seconds instead of silence, and the forwarder
+  sheds past 128 in-flight queries per session rather than growing a
+  queue. On this KVM host, one client went from 395 to 771 queries per
+  second (p50 2.4 ms to 0.9 ms) and the plateau under 10 to 200 clients
+  from about 2,200 to about 3,600 queries per second.
 - Stopping a VM no longer waits out a fixed timer. The host used to sleep
   two seconds after telling the guest to shut down, and the guest slept the
   same two seconds after signalling its shell instead of waiting for it to

@@ -366,7 +366,10 @@ async fn run_async_main_loop(
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 256)?);
+    // 1024 queued events: a guest resolving and fetching in parallel enqueues
+    // several rows per request, and a full queue makes every producer sleep
+    // in 5 ms steps on its reply path (see `DbWriter::send_with_backpressure`).
+    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 1024)?);
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.

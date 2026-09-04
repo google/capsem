@@ -490,6 +490,12 @@ pub fn decode_audit_record(payload: &[u8]) -> Result<AuditRecord> {
 /// reliable enough to bother.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsRequest {
+    /// Correlation id chosen by the guest. The host echoes it in the
+    /// matching `DnsResponse` so many queries can be in flight on one
+    /// vsock connection and be answered out of order. Peers that predate
+    /// the field decode it as 0 and still speak in lock-step.
+    #[serde(default)]
+    pub id: u32,
     pub raw: Vec<u8>,
     /// "udp" or "tcp" -- the source-side transport, NOT the path used
     /// to reach the upstream nameserver (which is always UDP today).
@@ -509,6 +515,9 @@ pub struct DnsRequest {
 /// NXDOMAIN-from-upstream without re-parsing the wire bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsResponse {
+    /// The `DnsRequest::id` this answers.
+    #[serde(default)]
+    pub id: u32,
     pub raw: Vec<u8>,
     pub decision: String,
     pub rcode: u16,
