@@ -103,7 +103,7 @@ jobs:
 
       - name: Validate selected channel profile through capsem-admin
         run: |
-          mkdir -p target
+          mkdir -p cache/target
           cargo run -p capsem-admin -- validate \
             --channel "${{ inputs.channel }}" \
             --profile "${{ inputs.profile }}" \
