@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import digestreport, runledger
 from .config import GateConfig
-from .filesystem import copy_tree
+from .filesystem import copy_tree, make_dir, remove
 from .runhistory import finished, history_locked, point_latest, runs
 
 
@@ -29,7 +29,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> tuple[Path, .
     imported: list[Path] = []
 
     with history_locked(host_config):
-        target_root.mkdir(parents=True, exist_ok=True)
+        make_dir(target_root)
         for source in reversed(runs(source_config)):
             if not finished(source, source_config.runlog):
                 continue
@@ -37,7 +37,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> tuple[Path, .
             if target.exists():
                 continue
             copy_tree(source, target)
-            (target / host_config.runlog.active_marker).unlink(missing_ok=True)
+            remove(target / host_config.runlog.active_marker)
             imported.append(target)
         if imported:
             point_latest(imported[-1], host_config.runlog)

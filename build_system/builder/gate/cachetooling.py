@@ -114,10 +114,13 @@ class CompilerCache(Resource, name="compiler-cache"):
         self._active = False
 
     def acquire(self) -> None:
+        from .context import Context
+        from .fileactions import MakeDir
+
         if not self._environment or self._runner.observing:
             return
         stage = cachelayout.stage_path(self._config, "rust-sccache")
-        stage.mkdir(parents=True, exist_ok=True)
+        MakeDir(stage).perform(Context(self._runner, self._config, env=self._environment))
         command = self._config.toolchain.compiler_cache_command
         self._runner.succeeds((command, "--stop-server"), env=self._environment)
         self._runner.run((command, "--start-server"), env=self._environment)
