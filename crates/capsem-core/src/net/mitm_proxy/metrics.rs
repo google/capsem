@@ -47,6 +47,7 @@ pub const REQUEST_BODY_BYTES: &str = "mitm.request_body_bytes";
 pub const RESPONSE_BODY_BYTES: &str = "mitm.response_body_bytes";
 pub const DNS_HANDLE_DURATION_MS: &str = "mitm.dns_handle_duration_ms";
 pub const DNS_UPSTREAM_DURATION_MS: &str = "mitm.dns_upstream_duration_ms";
+pub const DNS_UPSTREAM_COALESCED_TOTAL: &str = "mitm.dns_upstream_coalesced_total";
 
 // ── Gauge names ─────────────────────────────────────────────────────
 

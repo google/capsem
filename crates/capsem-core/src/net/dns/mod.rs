@@ -38,6 +38,7 @@
 //! depends on neither -- it only forwards bytes.
 
 pub mod cache;
+mod coalesce;
 pub mod resolver;
 pub mod server;
 pub mod telemetry;

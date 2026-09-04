@@ -11,8 +11,10 @@
 //!   removed and counted as a miss.
 //! * **Eligibility**: only `Decision::Allowed` answers are cached.
 //!   Security blocks run before the cache. Redirect settings are still
-//!   re-checked on every query, and SERVFAIL responses should not be
-//!   persisted.
+//!   re-checked on every query. An upstream NXDOMAIN is cached briefly
+//!   (`insert_negative`, bounded by the SOA minimum and
+//!   `NEGATIVE_MAX_TTL_SECS`); SERVFAIL is never persisted, since it may
+//!   be a transient upstream fault.
 //! * **Bound**: an LRU on entry count (default 1024). Evictions are
 //!   counted via the `mitm.dns_cache_evictions_total` counter.
 //!
@@ -25,6 +27,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hickory_proto::op::Message;
+use hickory_proto::rr::RData;
 use lru::LruCache;
 use tracing::trace;
 
@@ -49,6 +52,11 @@ pub const DEFAULT_MAX_TTL_SECS: u32 = 300;
 /// 0-second TTL ("don't cache") which would make the cache useless
 /// on retry storms; clamp to at least 60s so a burst still benefits.
 pub const MIN_TTL_SECS: u32 = 60;
+
+/// Ceiling on how long an upstream NXDOMAIN is remembered. RFC 2308 lets a
+/// negative answer live for the SOA minimum; a minute is enough to absorb a
+/// client retrying a dead name without amplifying a name that reappears.
+pub const NEGATIVE_MAX_TTL_SECS: u32 = 60;
 
 #[derive(Clone)]
 struct Entry {
@@ -191,6 +199,27 @@ impl DnsAnswerCache {
         }
     }
 
+    /// Remember an upstream NXDOMAIN for `(qname, qtype, qclass)`. The TTL
+    /// is the smaller of the authority section's SOA minimum (RFC 2308) and
+    /// `NEGATIVE_MAX_TTL_SECS`, never below one second. Only an Allowed
+    /// query reaches the upstream, so a denied name can never land here.
+    pub fn insert_negative(&self, qname: &str, qtype: u16, qclass: u16, answer_bytes: &[u8]) {
+        let ttl = negative_ttl_from_answer(answer_bytes).min(self.max_ttl);
+        let entry = Entry {
+            bytes: answer_bytes.to_vec(),
+            expires_at: Instant::now() + ttl,
+        };
+        let key = CacheKey {
+            qname: qname.to_string(),
+            qtype,
+            qclass,
+        };
+        let evicted = self.inner.lock().unwrap().push(key, entry);
+        if evicted.is_some() {
+            ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
+        }
+    }
+
     /// Drop every cached entry. Used when the policy is hot-swapped
     /// in bulk (e.g. corp config reload) -- cheaper than letting
     /// each entry independently re-validate against the new policy
@@ -209,14 +238,14 @@ impl DnsAnswerCache {
     }
 }
 
-/// Extract the cache TTL from an answer message.
+/// Extract the cache TTL from a positive answer message.
 ///
 /// Logic: take `min(record.ttl)` across every answer record, clamp
-/// to `[MIN_TTL_SECS, max_ttl]`. Empty answer section (NoData) gets
-/// `MIN_TTL_SECS` so we still cache the negative-shape answer
-/// briefly. Decode failure short-circuits to `MIN_TTL_SECS` to
-/// avoid hot-looping on a malformed answer that the resolver
-/// somehow accepted.
+/// to `[MIN_TTL_SECS, max_ttl]`. A NoError answer with an empty answer
+/// section (NODATA: the name exists, no record of that type) gets
+/// `MIN_TTL_SECS`. Decode failure short-circuits to `MIN_TTL_SECS` to
+/// avoid hot-looping on a malformed answer that the resolver somehow
+/// accepted. NXDOMAIN answers take `negative_ttl_from_answer` instead.
 fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
     let answer_ttl = match Message::from_vec(answer_bytes) {
         Ok(m) if !m.answers.is_empty() => m.answers.iter().map(|r| r.ttl).min().unwrap_or(MIN_TTL_SECS),
@@ -224,6 +253,27 @@ fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
     };
     let clamped = u64::from(answer_ttl.max(MIN_TTL_SECS));
     Duration::from_secs(clamped).min(max_ttl)
+}
+
+/// The TTL for a negative answer: the SOA minimum from the authority
+/// section when the upstream sent one, capped at `NEGATIVE_MAX_TTL_SECS`,
+/// at least one second. Without a SOA (or with bytes that do not decode)
+/// the cap itself is used, so a dead name is not re-asked every time.
+fn negative_ttl_from_answer(answer_bytes: &[u8]) -> Duration {
+    let soa_minimum = Message::from_vec(answer_bytes).ok().and_then(|message| {
+        message
+            .authorities
+            .iter()
+            .filter_map(|record| match &record.data {
+                RData::SOA(soa) => Some(record.ttl.min(soa.minimum)),
+                _ => None,
+            })
+            .min()
+    });
+    let secs = soa_minimum
+        .unwrap_or(NEGATIVE_MAX_TTL_SECS)
+        .clamp(1, NEGATIVE_MAX_TTL_SECS);
+    Duration::from_secs(u64::from(secs))
 }
 
 #[cfg(test)]

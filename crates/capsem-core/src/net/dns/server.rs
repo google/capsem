@@ -191,6 +191,9 @@ pub struct DnsHandler {
     plugin_policy: SharedPluginPolicy,
     resolver: Arc<DnsResolver>,
     cache: Option<Arc<DnsAnswerCache>>,
+    /// Identical lookups on their way upstream, shared by every clone so
+    /// concurrent queries for one name cost one upstream round trip.
+    in_flight: Arc<super::coalesce::InFlightLookups>,
 }
 
 impl DnsHandler {
@@ -209,6 +212,7 @@ impl DnsHandler {
             plugin_policy,
             resolver,
             cache: None,
+            in_flight: Arc::default(),
         }
     }
 
@@ -226,6 +230,7 @@ impl DnsHandler {
             plugin_policy,
             resolver,
             cache: Some(cache),
+            in_flight: Arc::default(),
         }
     }
 
@@ -435,22 +440,59 @@ impl DnsHandler {
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
         }
 
+        // Every check that could refuse or redirect this query has passed;
+        // only now may it share an upstream lookup with an identical one.
         let t0 = Instant::now();
-        match self.resolver.resolve(query_bytes).await {
+        let key = super::coalesce::LookupKey {
+            qname: query.qname.clone(),
+            qtype: query.qtype,
+            qclass: query.qclass,
+        };
+        let (outcome, led) = match self.in_flight.join_or_lead(key) {
+            super::coalesce::Role::Lead(lease) => {
+                let outcome = self.resolver.resolve(query_bytes).await.map_err(|e| format!("{e:#}"));
+                (lease.finish(outcome), true)
+            }
+            super::coalesce::Role::Follow(rx) => {
+                ::metrics::counter!(m::DNS_UPSTREAM_COALESCED_TOTAL).increment(1);
+                let outcome = match rx.await {
+                    Ok(outcome) => outcome,
+                    Err(_) => Arc::new(Err("upstream lookup leader vanished".to_string())),
+                };
+                (outcome, false)
+            }
+        };
+        match outcome.as_ref() {
             Ok((resp, elapsed)) => {
-                ::metrics::histogram!(m::DNS_UPSTREAM_DURATION_MS).record(elapsed.as_secs_f64() * 1000.0);
+                let mut resp = resp.clone();
+                // A follower's answer was fetched under the leader's
+                // transaction id; hand each query its own back, as the
+                // cache does, or the client's resolver discards it.
+                if resp.len() >= 2 {
+                    resp[0..2].copy_from_slice(&query.id.to_be_bytes());
+                }
                 let rcode = response_rcode(&resp);
-                // Only cache positive (NoError) responses --
-                // SERVFAIL / NXDOMAIN from upstream may be
-                // transient, and we don't want to amplify a
-                // momentary upstream blip into 5 minutes of
-                // wrong answers.
-                if rcode == 0 {
+                if led {
+                    ::metrics::histogram!(m::DNS_UPSTREAM_DURATION_MS).record(elapsed.as_secs_f64() * 1000.0);
                     if let Some(cache) = &self.cache {
-                        cache.insert(&query.qname, query.qtype, query.qclass, &resp);
+                        match rcode {
+                            // Positive answers keep their record TTLs.
+                            0 => cache.insert(&query.qname, query.qtype, query.qclass, &resp),
+                            // A name that does not exist is remembered briefly, so a
+                            // client retrying a dead name does not cost an upstream
+                            // round trip each time. SERVFAIL and other codes may be a
+                            // transient upstream fault and are never cached.
+                            3 => cache.insert_negative(&query.qname, query.qtype, query.qclass, &resp),
+                            _ => {}
+                        }
                     }
                 }
-                let mut result = DnsHandlerResult::allowed(resp, query, elapsed.as_millis() as u64, rcode);
+                let waited_ms = if led {
+                    elapsed.as_millis()
+                } else {
+                    t0.elapsed().as_millis()
+                } as u64;
+                let mut result = DnsHandlerResult::allowed(resp, query, waited_ms, rcode);
                 apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
                 result
             }

@@ -260,3 +260,119 @@ fn default_capacity_and_max_ttl_match_constants() {
     // First one should now be evicted.
     assert!(cache.get("h0.example.com", 1, 1, 0, &policy).is_none());
 }
+
+/// An NXDOMAIN response for `qname`, optionally carrying a SOA in the
+/// authority section with `soa_minimum` seconds.
+fn build_nxdomain_answer(qname: &str, soa_minimum: Option<u32>) -> Vec<u8> {
+    let mut msg = Message::new(0x4444, MessageType::Response, OpCode::Query);
+    msg.metadata.recursion_available = true;
+    msg.metadata.response_code = ResponseCode::NXDomain;
+    let n = Name::from_ascii(qname).unwrap();
+    msg.add_query(Query::query(n, RecordType::A));
+    if let Some(minimum) = soa_minimum {
+        let zone = Name::from_ascii("example.").unwrap();
+        let soa = rdata::SOA::new(
+            Name::from_ascii("ns.example.").unwrap(),
+            Name::from_ascii("hostmaster.example.").unwrap(),
+            1,
+            3600,
+            600,
+            86400,
+            minimum,
+        );
+        msg.add_authority(Record::from_rdata(zone, 3600, RData::SOA(soa)));
+    }
+    msg.to_vec().unwrap()
+}
+
+#[test]
+fn nxdomain_is_cached_for_at_most_the_negative_ceiling() {
+    let cache = DnsAnswerCache::default();
+    cache.insert_negative(
+        "dead.example.",
+        1,
+        1,
+        &build_nxdomain_answer("dead.example.", Some(86_400)),
+    );
+    let hit = cache
+        .get("dead.example.", 1, 1, 0x0101, &allow_all())
+        .expect("negative answer served");
+    assert_eq!(&hit[0..2], &[0x01, 0x01], "the caller's transaction id is patched in");
+    assert_eq!(hit[3] & 0x0F, 3, "still NXDOMAIN");
+    assert_eq!(
+        negative_ttl_from_answer(&build_nxdomain_answer("dead.example.", Some(86_400))),
+        Duration::from_secs(u64::from(NEGATIVE_MAX_TTL_SECS)),
+        "a day-long SOA minimum is capped"
+    );
+}
+
+#[test]
+fn negative_ttl_follows_a_short_soa_minimum_and_never_drops_to_zero() {
+    assert_eq!(
+        negative_ttl_from_answer(&build_nxdomain_answer("d.example.", Some(5))),
+        Duration::from_secs(5)
+    );
+    assert_eq!(
+        negative_ttl_from_answer(&build_nxdomain_answer("d.example.", Some(0))),
+        Duration::from_secs(1),
+        "a zero minimum still caches for a second rather than not at all"
+    );
+    assert_eq!(
+        negative_ttl_from_answer(&build_nxdomain_answer("d.example.", None)),
+        Duration::from_secs(u64::from(NEGATIVE_MAX_TTL_SECS)),
+        "no SOA: the ceiling"
+    );
+    assert_eq!(
+        negative_ttl_from_answer(&[0xde, 0xad]),
+        Duration::from_secs(u64::from(NEGATIVE_MAX_TTL_SECS)),
+        "undecodable bytes: the ceiling, not a panic"
+    );
+}
+
+#[test]
+fn a_negative_entry_yields_to_a_redirect_change_like_any_other() {
+    let cache = DnsAnswerCache::default();
+    cache.insert_negative(
+        "moved.example.",
+        1,
+        1,
+        &build_nxdomain_answer("moved.example.", Some(60)),
+    );
+    let mut policy = NetworkMechanics::new();
+    policy.dns_redirects.push(DnsRedirect::new(
+        "moved.example.",
+        None,
+        vec!["10.0.0.9".parse().unwrap()],
+        60,
+    ));
+    assert!(
+        cache.get("moved.example.", 1, 1, 1, &policy).is_none(),
+        "a redirect added after the negative answer wins"
+    );
+    assert!(cache.is_empty(), "the stale negative entry is evicted");
+}
+
+#[test]
+fn eight_threads_insert_and_read_negative_and_positive_answers_without_poisoning() {
+    let cache = std::sync::Arc::new(DnsAnswerCache::new(64, 300));
+    let handles: Vec<_> = (0..8u32)
+        .map(|worker| {
+            let cache = std::sync::Arc::clone(&cache);
+            std::thread::spawn(move || {
+                for i in 0..200u32 {
+                    let name = format!("n{}.example.", (worker * 200 + i) % 40);
+                    if i % 2 == 0 {
+                        cache.insert(&name, 1, 1, &build_answer(&name, 300, [10, 0, 0, 1]));
+                    } else {
+                        cache.insert_negative(&name, 1, 1, &build_nxdomain_answer(&name, Some(30)));
+                    }
+                    let _ = cache.get(&name, 1, 1, i as u16, &allow_all());
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("no thread panicked");
+    }
+    assert!(cache.len() <= 64);
+}
