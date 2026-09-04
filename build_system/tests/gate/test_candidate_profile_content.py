@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from capsem_builder.gate import cli, vmmodules  # noqa: F401 - register commands
+from capsem_builder.gate import vmmodules
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.content import ProfileContent
 from helpers.gate import RecordingRunner
 
@@ -25,7 +25,7 @@ def test_candidate_glowup_consumes_the_real_base_profile(monkeypatch) -> None:
         return original(*args, **kwargs)
 
     monkeypatch.setattr(vmmodules, "glowup", observed)
-    command = GateCommand.registry["candidate"](
+    command = CandidateCommand(
         RecordingRunner(ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )
