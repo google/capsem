@@ -80,3 +80,12 @@ def test_a_level_where_every_request_failed_is_not_a_measurement() -> None:
     assert failed(section) == [1, 200]
     assert failed({"concurrency_levels": []}) == []
     assert failed({}) == []
+
+
+def test_load_dimensions_get_more_guest_cpus_bounded_by_the_host() -> None:
+    guest_cpus = collector()["guest_cpus"]
+    assert guest_cpus("disk", host_cpus=16) == 2, "non-load modes keep the default"
+    assert guest_cpus("mitm-load", host_cpus=16) == 8
+    assert guest_cpus("dns-load", host_cpus=64) == 8, "capped"
+    assert guest_cpus("mcp-load", host_cpus=6) == 3
+    assert guest_cpus("mitm-load", host_cpus=2) == 2, "never below the default"

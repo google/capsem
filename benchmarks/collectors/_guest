@@ -59,6 +59,22 @@ FORWARDED_ENV = (
 # upstream. The previous target was a non-existent public domain: the guest's
 # resolver returned NXDOMAIN and the client failed before opening a socket,
 # so the "MITM" numbers were DNS-failure numbers and the proxy never ran.
+# The load dimensions run their generator inside the guest: two hundred
+# Python threads doing TLS, plus the guest proxies, on the default two vCPUs
+# measured the generator's starvation, not the host rails. Give those guests
+# half the host's cores, at least the default and at most eight.
+LOAD_MODES = ("dns-load", "mitm-load", "mcp-load")
+LOAD_GUEST_CPUS_MAX = 8
+
+
+def guest_cpus(mode: str, host_cpus: int | None = None) -> int:
+    """vCPUs for the guest that runs `mode`."""
+    if mode not in LOAD_MODES:
+        return DEFAULT_CPUS
+    host = host_cpus if host_cpus is not None else (os.cpu_count() or DEFAULT_CPUS)
+    return max(DEFAULT_CPUS, min(LOAD_GUEST_CPUS_MAX, host // 2))
+
+
 MITM_FIXTURE_HOST = "fixture.capsem.test"
 MITM_FIXTURE_TARGET = f"https://{MITM_FIXTURE_HOST}/tiny"
 
@@ -161,7 +177,7 @@ def main() -> int:
         print(f"provisioning {name}", file=sys.stderr)
         client.post(
             "/vms/create",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
         )
         if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{name} never became exec-ready")
