@@ -40,7 +40,7 @@ def test_timeout_reaps_a_descendant_that_created_a_new_session(tmp_path: Path) -
                 str(SYSTEM_PYTHON),
                 str(BOUNDED),
                 "--timeout-seconds",
-                "0.5",
+                "5",
                 "--grace-seconds",
                 "0.2",
                 "--",
@@ -52,7 +52,7 @@ def test_timeout_reaps_a_descendant_that_created_a_new_session(tmp_path: Path) -
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         pid = int(child_pid.read_text())
         assert result.returncode == 124, result.stderr

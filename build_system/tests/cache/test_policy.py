@@ -87,6 +87,7 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].path == Path("/var/tmp/capsem-tests")
     assert policy.stages["test-temp"].warm_size_bytes == 8 * 1024**3
     assert policy.stages["test-temp"].max_size_bytes == 200 * 1024**3
+    assert policy.stages["test-temp"].maximum_count is None
     assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
     assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
@@ -94,6 +95,8 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.control is not None
     assert policy.runtimes["docker"].warm_size_bytes == 72 * 1024**3
     assert policy.runtimes["docker"].max_size_bytes == 96 * 1024**3
+    assert policy.runtimes["docker"].inventory_retry_attempts == 20
+    assert policy.runtimes["docker"].inventory_retry_delay_milliseconds == 500
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())

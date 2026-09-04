@@ -205,50 +205,15 @@ capsem_linux_verify_vm_devices() {
 }
 
 capsem_linux_prepare_vm_devices() {
+    CAPSEM_VM_DEVICE_PROJECT_ROOT=${1:?capsem_linux_prepare_vm_devices <project-root>}
     CAPSEM_BOOTSTRAP_USER=$(capsem_linux_bootstrap_user)
-    if command -v modprobe >/dev/null 2>&1; then
-        # A stale /dev/vhost-vsock node can outlive its module and makes an
-        # existence check lie. Module loading is idempotent; do it before
-        # inspecting either device so sysfs and the character node agree.
-        capsem_linux_as_root modprobe kvm || true
-        capsem_linux_as_root modprobe vhost_vsock || true
+    CAPSEM_VM_DEVICE_HELPER="$CAPSEM_VM_DEVICE_PROJECT_ROOT/build_system/packaging/shared/install-vm-device-access"
+    if [ ! -f "$CAPSEM_VM_DEVICE_HELPER" ]; then
+        printf "  [FAIL] VM-device helper is missing: %s\n" "$CAPSEM_VM_DEVICE_HELPER" >&2
+        return 1
     fi
-
-    # systemd-logind's stock uaccess rule can remove a manually applied ACL
-    # after the first KVM lifecycle. Install a later rule that keeps both VM
-    # devices group-owned and outside that transient seat policy, then apply it
-    # before adding the current-session ACL below.
-    if command -v udevadm >/dev/null 2>&1; then
-        capsem_linux_as_root tee /etc/udev/rules.d/99-capsem-vm-devices.rules \
-            >/dev/null <<'EOF'
-KERNEL=="kvm", GROUP="kvm", MODE="0666", TAG-="uaccess"
-KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"
-EOF
-        capsem_linux_as_root udevadm control --reload-rules
-        if [ -e /dev/kvm ]; then
-            capsem_linux_as_root udevadm trigger --name-match=kvm
-        fi
-        if [ -e /dev/vhost-vsock ]; then
-            capsem_linux_as_root udevadm trigger --name-match=vhost-vsock
-        fi
-    else
-        printf "  [WARN] udevadm not found; VM device ACLs cannot be made durable\n"
-    fi
-
-    if [ "$(id -u "$CAPSEM_BOOTSTRAP_USER")" -ne 0 ] \
-        && getent group kvm >/dev/null 2>&1; then
-        capsem_linux_as_root usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"
-    fi
-
-    if [ -e /dev/kvm ]; then
-        # logind removes named KVM ACLs when the first VM lifecycle changes the
-        # device. Match the release CI mode so a second VM in this shell stays
-        # usable; KVM itself does not grant raw host-memory access.
-        capsem_linux_as_root chmod 0666 /dev/kvm
-    fi
-    if [ -e /dev/vhost-vsock ]; then
-        capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/vhost-vsock
-    fi
+    capsem_linux_as_root bash "$CAPSEM_VM_DEVICE_HELPER" "$CAPSEM_BOOTSTRAP_USER" \
+        "$CAPSEM_VM_DEVICE_PROJECT_ROOT/build_system/packaging/linux/99-capsem-vm-devices.rules"
 
     capsem_linux_verify_vm_devices
 }

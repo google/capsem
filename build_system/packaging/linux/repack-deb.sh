@@ -40,18 +40,15 @@ embed_pkg_script() {
     } > "$combined"
     mv "$combined" "$maintainer_script"
 }
-
 embed_install_diagnostics() {
     embed_pkg_script install-diagnostics "$1"
 }
-
 embed_install_manifest_resolver() {
     embed_pkg_script install-manifest "$1"
 }
 embed_native_cohort_retirement() {
     embed_pkg_script retire-cohort "$1"
 }
-
 usage() {
     echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
 }
@@ -228,7 +225,9 @@ echo "=== Extracting .deb ==="
 dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
 echo "=== Ensuring Debian package dependencies ==="
-ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" "libxdo3"
+for dependency in libxdo3 acl kmod udev; do
+    ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" "$dependency"
+done
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
@@ -259,8 +258,9 @@ cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_manifest_resolver "$WORK_DIR/deb/DEBIAN/postinst"
 embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/postinst"
+embed_pkg_script install-vm-device-access "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
-
+install -Dm0644 "$SCRIPT_DIR/99-capsem-vm-devices.rules" "$WORK_DIR/deb/usr/lib/udev/rules.d/99-capsem-vm-devices.rules"
 if [ ! -d "$CONFIG_ROOT/profiles" ]; then
     echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
     echo "Run: just _materialize-config" >&2

@@ -157,19 +157,12 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "capsem_linux_apt install -y" in linux
     assert "systemctl enable --now docker" in linux
 
-    # Durable group membership helps future shells. vhost-vsock keeps a narrow
-    # current-user ACL. KVM follows the mode used in Linux CI because logind
-    # removes named KVM ACLs on the first VM lifecycle, before a second VM can
-    # start in the same bootstrap session.
+    # One shared helper owns durable group membership, the udev rule, and the
+    # narrow current-user ACL for both devices.
     assert 'usermod -aG docker "$CAPSEM_BOOTSTRAP_USER"' in linux
-    assert 'usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"' in linux
     assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /var/run/docker.sock' in linux
-    assert "chmod 0666 /dev/kvm" in linux
-    assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/vhost-vsock' in linux
-    assert 'KERNEL=="kvm", GROUP="kvm", MODE="0666", TAG-="uaccess"' in linux
-    assert 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"' in linux
-    assert "modprobe vhost_vsock" in linux
-    assert "udevadm control --reload-rules" in linux
+    assert 'packaging/shared/install-vm-device-access"' in linux
+    assert 'capsem_linux_as_root bash "$CAPSEM_VM_DEVICE_HELPER"' in linux
     assert "docker info" in linux
     assert "docker buildx version" in linux
     assert "bwrap --unshare-net" in linux

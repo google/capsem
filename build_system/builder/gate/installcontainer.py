@@ -55,7 +55,7 @@ def virtualisation_runtime(settings: InstallConfig, *, purpose: str) -> VmDevice
 
 
 def systemd_command(settings: InstallConfig, devices: tuple[str, ...]) -> list[str]:
-    """Prepare the proof user before systemd recomputes its group membership."""
+    """Start systemd before postinstall grants current-session device access."""
     return [
         "bash",
         settings.vm_device_setup_script,
@@ -63,6 +63,13 @@ def systemd_command(settings: InstallConfig, devices: tuple[str, ...]) -> list[s
         settings.systemd_command,
         *devices,
     ]
+
+
+def verify_vm_device_access(docker: Docker, container: str, settings: InstallConfig) -> None:
+    """Prove package postinstall repaired the stale manager's device access."""
+    user = settings.guest_user.name
+    for device in settings.vm_devices:
+        docker.exec(container, ["test", "-r", device, "-a", "-w", device], user=user)
 
 
 class InstallContainer:
@@ -163,15 +170,11 @@ class InstallContainer:
             ],
         )
         self._await_systemd()
-        if self.boots_a_guest:
-            user = self._settings.guest_user.name
-            for device in self._settings.vm_devices:
-                self._docker.exec(
-                    self.name,
-                    ["test", "-r", device, "-a", "-w", device],
-                    user=user,
-                )
         self._claim_paths()
+
+    def verify_vm_device_access(self) -> None:
+        if self.boots_a_guest:
+            verify_vm_device_access(self._docker, self.name, self._settings)
 
     def _content_mounts(self) -> tuple[Mount, ...]:
         if self._content is None:

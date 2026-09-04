@@ -1,0 +1,5 @@
+# Capsem VM devices are restricted to the virtualization group. The shared
+# installer renders matching RUN rules into /run for immediate access by the
+# installing user's already-running manager until its new group set takes over.
+KERNEL=="kvm", GROUP="kvm", MODE="0660", TAG-="uaccess"
+KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"

@@ -57,13 +57,15 @@ def test_installs_dependencies_declared_by_exact_package(tmp_path: Path) -> None
     package = tmp_path / "Capsem_1.2.3_amd64.deb"
     package.write_bytes(b"exact package")
     runner = FakeRunner(
-        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1), libc6 (>= 2.39)\n"
+        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1), "
+        "acl, kmod, udev, libc6 (>= 2.39)\n"
     )
 
     dependencies = INSTALL.install_runtime_dependencies(package, runner=runner)
 
     assert dependencies == (
-        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1), libc6 (>= 2.39)"
+        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1), "
+        "acl, kmod, udev, libc6 (>= 2.39)"
     )
     assert runner.commands == [
         ("dpkg-deb", "--field", str(package.resolve()), "Depends"),
@@ -113,7 +115,9 @@ def test_missing_package_fails_before_any_privileged_command(tmp_path: Path) -> 
 def test_package_path_is_passed_as_one_argument(tmp_path: Path) -> None:
     package = tmp_path / "candidate; touch SHOULD_NOT_EXIST.deb"
     package.write_bytes(b"exact package")
-    runner = FakeRunner("libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3, libc6 (>= 2.39)")
+    runner = FakeRunner(
+        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3, acl, kmod, udev, libc6 (>= 2.39)"
+    )
 
     INSTALL.install_runtime_dependencies(package, runner=runner)
 
@@ -135,7 +139,9 @@ def test_dependency_drift_fails_before_snapshot_or_apt_mutation(tmp_path: Path) 
 def test_verify_only_uses_the_same_authority_without_mutating_apt(tmp_path: Path) -> None:
     package = tmp_path / "Capsem_1.2.3_amd64.deb"
     package.write_bytes(b"exact package")
-    declared = "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3, libc6 (>= 2.39)"
+    declared = (
+        "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3, acl, kmod, udev, libc6 (>= 2.39)"
+    )
     runner = FakeRunner(declared)
 
     assert (

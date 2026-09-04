@@ -22,6 +22,12 @@ def run_cli(*args, uds_path=None, timeout=60):
     return result.stdout, result.stderr, result.returncode
 
 
+@pytest.fixture
+def cli_runner():
+    """Expose the local CLI runner without importing a conftest module."""
+    return run_cli
+
+
 @pytest.fixture(scope="session")
 def service_env():
     """Start a capsem-service on an isolated temp socket."""

@@ -820,19 +820,10 @@ fn print_session_info(info: &SessionInfo) {
 }
 
 async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> anyhow::Result<String> {
-    let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
-    let list = resp.into_result()?;
-    if let Some(session) = list.sessions.iter().find(|session| session.id == typed) {
-        return Ok(session.id.clone());
-    }
-    if let Some(session) = list
-        .sessions
-        .iter()
-        .find(|session| session.name.as_deref() == Some(typed))
-    {
-        return Ok(session.id.clone());
-    }
-    anyhow::bail!("unknown session name or id: {typed}")
+    client
+        .listed_session_id(typed)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unknown session name or id: {typed}"))
 }
 
 fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
@@ -1906,7 +1897,12 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Logs { session, tail }) => {
             client::validate_id(session)?;
-            let session_id = resolve_session_route_id(&client, session).await?;
+            // Failed ephemeral sessions are intentionally absent from `list`,
+            // but the service preserves their logs under the original id.
+            let session_id = client
+                .listed_session_id(session)
+                .await?
+                .unwrap_or_else(|| session.to_owned());
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/vms/{}/logs", session_id)).await?;
             let logs = resp.into_result()?;
 

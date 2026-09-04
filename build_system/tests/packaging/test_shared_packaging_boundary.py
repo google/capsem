@@ -15,6 +15,7 @@ LINUX = ROOT / "build_system" / "packaging" / "linux"
 
 EXPECTED_RESOURCE_MODES = {
     "install-diagnostics": 0o755,
+    "install-vm-device-access": 0o644,
     "install-manifest": 0o644,
     "install-manifest-request.sh": 0o644,
     "package_payload.py": 0o644,
@@ -79,6 +80,24 @@ def test_shared_shell_boundaries_preserve_usage_exit_status() -> None:
             check=False,
         )
         assert result.returncode == 2, result.stderr
+
+
+def test_embedded_vm_device_helper_does_not_consume_maintainer_arguments(
+    tmp_path: Path,
+) -> None:
+    helper = (SHARED / "install-vm-device-access").read_text(encoding="utf-8")
+    postinstall = tmp_path / "postinst"
+    postinstall.write_text(
+        "#!/bin/bash\n" + helper.split("\n", 1)[1] + '\nprintf "postinst:%s\\n" "$1"\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ("bash", str(postinstall), "configure"), capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "postinst:configure\n"
 
 
 def test_gate_selects_shared_resources_from_their_owner() -> None:

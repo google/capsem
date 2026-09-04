@@ -15,6 +15,7 @@ from .installcontainer import (
     VmDeviceRuntime,
     await_systemd,
     systemd_command,
+    verify_vm_device_access,
     virtualisation_runtime,
 )
 from .installproof import InstallProof
@@ -106,6 +107,7 @@ class DebProof:
             )
             self._prepare_handoff(container_deb, expected)
             self._install_package(container_deb, expected)
+            verify_vm_device_access(self._docker, self._proof.container, self._install)
             self._require_binaries(expected)
             ready, total = self._require_status()
             self._verify_release(expected)
@@ -162,14 +164,6 @@ class DebProof:
             interval=self._install.systemd_ready_interval_seconds,
             sleep=self._sleep,
         )
-        user = self._install.guest_user.name
-        for device in self._install.vm_devices:
-            self._docker.exec(
-                self._proof.container,
-                ["test", "-r", device, "-a", "-w", device],
-                user=user,
-            )
-
     def _prepare_handoff(self, package: str, version: str) -> None:
         """Author the exact local graph before the package's postinst runs."""
         layout = self._install.layout

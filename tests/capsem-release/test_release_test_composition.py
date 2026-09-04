@@ -461,6 +461,10 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
 
     assert "tests/capsem-build-chain/" in release_contracts
     assert "tests/capsem-release/" in release_contracts
+    assert "build_system/scripts/build/generate-settings.sh" in release_contracts
+    assert release_contracts.index("generate-settings.sh") < release_contracts.index(
+        "build_system/tests/"
+    )
     for artifact_test in CONFIG.modules.build_chain_artifact_tests:
         assert f"--ignore={artifact_test}" in release_contracts
         assert artifact_test in artifacts

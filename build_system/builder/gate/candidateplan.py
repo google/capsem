@@ -95,11 +95,13 @@ def compose(
     # contracts suite is no longer the step that discovers the environment.
     fast = testmodules.fast(plan, config, after=(recorded,))
     node = _already_issuing(plan, toolchain.node(config))
+    generated = _already_issuing(plan, audits.generated_settings(config))
     contracts = module_contracts.release_contracts(
         plan,
         config,
         after=fast,
         node=node,
+        generated=generated,
         seed_coverage=True,
     )
     modules = compose_modules(

@@ -1,0 +1,14 @@
+name: Capsem Rust cache
+description: Restore Cargo's policy-owned compiler output and dependency cache.
+inputs:
+  key:
+    description: Optional lane-specific cache-key suffix.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      with:
+        key: ${{ inputs.key }}
+        workspaces: . -> cache/target/cargo

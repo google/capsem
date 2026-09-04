@@ -217,7 +217,6 @@ warm_size_bytes = 8589934592 # 8 GiB
 max_size_bytes = 214748364800 # 200 GiB
 prune_strategy = "ephemeral"
 maximum_age_hours = 24
-maximum_count = 4
 managed_globs = ["run-*"]
 lease_template = ".{key}.lock"
 
@@ -393,8 +392,11 @@ kind = "docker"
 command = "docker"
 timeout_seconds = 30
 mutation_timeout_seconds = 600
-inventory_retry_attempts = 3
-inventory_retry_delay_milliseconds = 250
+# BuildKit finalizes snapshot accounting after a build command returns. Keep
+# inventory fail-closed, but allow that exact transient state ten seconds to
+# converge before treating the daemon as unavailable.
+inventory_retry_attempts = 20
+inventory_retry_delay_milliseconds = 500
 log_stage = "container-logs"
 image_prefixes = ["capsem-"]
 container_prefixes = ["capsem-"]

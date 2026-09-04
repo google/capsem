@@ -507,11 +507,11 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
     )
     assert "build_system/scripts/release/verify-installed-release.py" in native
     assert "build_system/scripts/test/prove-installed-shell.py" in native
-    # Both native runners install and exercise their exact package. GitHub's
-    # ARM64 runner has no KVM device, so only the x86_64 row owns the additional
-    # guest-shell marker.
+    # Both native runners install and exercise their exact package. Package
+    # postinstall owns device activation; only x86_64 has the extra VM marker.
     assert "runner: ubuntu-24.04-arm" in native
-    assert native.count("if: matrix.arch == 'x86_64'") == 2
+    assert native.count("if: matrix.arch == 'x86_64'") == 1
+    assert "Enable KVM for exact-package VM proof" not in native
     assert "release-exact-shell-x86_64" in native
     assert "just qualify-binaries" in workflow
     assert "just qualify-binaries" in workflow
@@ -578,8 +578,8 @@ def test_release_matrix_installs_both_architectures_and_uses_available_kvm() -> 
 
     assert "runner: ubuntu-24.04-arm" in linux
     assert "runner: ubuntu-24.04" in linux
-    assert linux.count("if: matrix.arch == 'x86_64'") == 2
-    assert "Enable KVM for exact-package VM proof" in linux
+    assert linux.count("if: matrix.arch == 'x86_64'") == 1
+    assert "Enable KVM for exact-package VM proof" not in linux
     assert "Prove exact-package guest shell execution" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "release-exact-shell-x86_64" in linux

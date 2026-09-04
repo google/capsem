@@ -292,6 +292,9 @@ package_runtime_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    "acl",
+    "kmod",
+    "udev",
     # Derived from the shipped binaries by build_system/packaging/linux/derive-deb-libc-floor.py,
     # not hand-written: the hand-written list above omitted libc entirely, so
     # the package installed on glibc older than it needs and then every binary
@@ -338,6 +341,9 @@ apt_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    "acl",
+    "kmod",
+    "udev",
     "libc6",
 ]
 
@@ -1095,7 +1101,7 @@ must_stay_below_lines = 3000
 "crates/capsem-service/src/tests/profile_routes.rs" = 2682
 "crates/capsem-tui/src/tests.rs" = 2190
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2495
+"crates/capsem/src/main.rs" = 2491
 "crates/capsem/src/support_bundle.rs" = 1047
 "crates/capsem/src/tests.rs" = 1452
 "crates/capsem/src/update.rs" = 2488
@@ -1806,7 +1812,7 @@ max_lines = 20
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
-"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27
+"release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
 
 # ---------------------------------------------------------------------------
@@ -3270,18 +3276,6 @@ digest = "2f11afe49a4c"
 where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
 subject = "capsem_linux_as_root update-binfmts --enable"
 reason = "best-effort; binfmt may be absent or already enabled"
-
-[[boundary.discarded_verdicts]]
-digest = "74539be85480"
-where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
-subject = "capsem_linux_as_root modprobe kvm"
-reason = "best-effort; KVM may be built in, absent, or already loaded, and doctor reports the real state"
-
-[[boundary.discarded_verdicts]]
-digest = "07ddd0ee5d14"
-where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
-subject = "capsem_linux_as_root modprobe vhost_vsock"
-reason = "best-effort; the module may be built in or already loaded, and doctor reports the real state"
 
 [[boundary.discarded_verdicts]]
 digest = "425b81d285a6"

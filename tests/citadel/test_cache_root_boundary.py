@@ -160,8 +160,14 @@ def test_root_cache_is_ignored_without_hiding_source_packages() -> None:
 
 def test_ordinary_cargo_uses_the_owned_compiler_stage() -> None:
     cargo = (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
+    protocol_build = (ROOT / "crates/capsem-proto/build.rs").read_text(
+        encoding="utf-8"
+    )
 
     assert '[build]\ntarget-dir = "cache/target/cargo"' in cargo, RATIONALE
+    assert 'dep-info-basedir = "."' in cargo, RATIONALE
+    assert "CARGO_MANIFEST_DIR" not in protocol_build, RATIONALE
+    assert 'format!("src/{f}")' in protocol_build, RATIONALE
 
 
 def test_bounded_diagnostics_inherit_the_repository_cache_authority() -> None:

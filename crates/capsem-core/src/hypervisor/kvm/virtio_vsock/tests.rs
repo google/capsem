@@ -684,6 +684,15 @@ fn vsock_socket_anchor_is_send() {
     assert_send::<VsockSocketAnchor>();
 }
 
+#[test]
+fn vhost_permission_error_names_installed_service_access() {
+    let message = vhost_vsock_open_error(std::io::Error::from_raw_os_error(libc::EACCES)).to_string();
+
+    assert!(message.contains("Capsem service cannot access"));
+    assert!(message.contains("reinstall the .deb"));
+    assert!(!message.contains("module loaded"));
+}
+
 // A guest reset must detach the vhost backend (SET_RUNNING=0) and clear the
 // activation latch so the next DRIVER_OK re-programs the rings.
 #[test]

@@ -322,9 +322,9 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
-
     config = _config()
     assert snapshot.digest(target, config) == snapshot.digest(source, config)
+    assert os.stat(target / "tracked.txt").st_mtime_ns == os.stat(source / "tracked.txt").st_mtime_ns
 
 
 def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:

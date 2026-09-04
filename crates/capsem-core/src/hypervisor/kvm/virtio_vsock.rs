@@ -724,12 +724,18 @@ fn vhost_ioctl(fd: RawFd, request: u64, arg: u64) -> Result<()> {
 pub(super) fn open_vhost_vsock() -> Result<OwnedFd> {
     let raw = unsafe { libc::open(c"/dev/vhost-vsock".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
     if raw < 0 {
-        bail!(
-            "/dev/vhost-vsock: {} (is vhost_vsock module loaded?)",
-            std::io::Error::last_os_error()
-        );
+        return Err(vhost_vsock_open_error(std::io::Error::last_os_error()));
     }
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+fn vhost_vsock_open_error(error: std::io::Error) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return anyhow::anyhow!(
+            "/dev/vhost-vsock: permission denied. The Capsem service cannot access the device; reinstall the .deb to provision current-session device access"
+        );
+    }
+    anyhow::anyhow!("/dev/vhost-vsock: {error} (is vhost_vsock module loaded?)")
 }
 
 // ---------------------------------------------------------------------------

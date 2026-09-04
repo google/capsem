@@ -524,7 +524,7 @@ def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -
     assert "needs: [deploy-release-channel]" in public
     assert "build_system/scripts/release/verify-channel-downloads.py" in public
     assert "build_system/scripts/release/check-public-binary-release.py" in public
-    assert "Enable KVM for live public-install VM proof" in public
+    assert "Enable KVM for live public-install VM proof" not in public
     assert "build_system/scripts/build/prove-live-public-install.sh" in public
     live_proof = _read("build_system/scripts/build/prove-live-public-install.sh")
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof

@@ -132,6 +132,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debian installation now gives the existing user service immediate ACL-based
+  access to `/dev/kvm` and `/dev/vhost-vsock`, while a packaged udev rule and
+  `kvm` membership preserve restricted access across future logins and device
+  events. Release proofs no longer mask installer failures with world-writable
+  VM devices.
+- `capsem logs <id>` now reaches logs preserved after an ephemeral VM fails
+  before entering the live-session list. Installed-package verification checks
+  this post-mortem path on Linux and macOS, and KVM reports distinguish device
+  permission failures from a missing `vhost_vsock` module.
 - Invalid or empty built-in HTTP grep patterns are now rejected before DNS or
   network authorization, returning the intended validation error without an
   unnecessary outbound lookup.
