@@ -117,6 +117,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The proxy's guest-facing TLS configuration is built once per VM instead
+  of once per connection. A configuration owns the TLS session cache, so
+  every guest connection used to start from an empty cache and pay a full
+  handshake; connections from the same client now resume their session.
+  The SNI is read back from the finished handshake rather than captured
+  by the per-connection resolver.
+- The host's vsock listeners accept a real backlog. The queue was four
+  connections deep, so a guest opening more than four connections at once
+  (a package install, an agent fanning out) had the surplus reset by the
+  kernel instead of queued.
 - Identical DNS lookups in flight at the same time now share one upstream
   round trip: the first query for a name leads and the rest wait for its
   checked answer, each getting its own transaction id and its own ledger
