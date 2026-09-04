@@ -1020,14 +1020,14 @@ def test_native_packages_include_the_release_functional_benchmark() -> None:
         if (PROJECT_ROOT / path).is_file():
             pass
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
-    benchmark = (PROJECT_ROOT / "crates/capsem-bench/src/main.rs").read_text()
+    benchmark_cli = (PROJECT_ROOT / "crates/capsem-bench/src/cli.rs").read_text()
     build_script = (PROJECT_ROOT / config.package.build_script).read_text()
 
     assert "capsem-bench-rs" in workflow
     assert "capsem-bench-rs" in build_script, (
         "the packaged cohort no longer builds the release benchmark"
     )
-    assert '#[command(version = env!("CARGO_PKG_VERSION")' in benchmark
+    assert '#[command(version = env!("CARGO_PKG_VERSION")' in benchmark_cli
 
 
 def test_binary_packages_embed_public_url_but_install_against_serialized_source() -> (
