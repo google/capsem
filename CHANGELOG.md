@@ -117,6 +117,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent `/status` polls no longer queue behind one another at the
+  gateway. A poll that finds a service read in flight waits for it and
+  then shares the next read, which by construction began after the poll
+  arrived, so any number of simultaneous polls (browser, tray, TUI) cost
+  at most two service reads and none is ever answered from a read that
+  predates it. Status reads also use the gateway's pooled service
+  connection instead of a fresh socket and handshake per read, and the
+  previous response is no longer copied whole just to diff VM states.
 - The proxy's guest-facing TLS configuration is built once per VM instead
   of once per connection. A configuration owns the TLS session cache, so
   every guest connection used to start from an empty cache and pay a full
