@@ -43,6 +43,9 @@ class BuilderEnvironment:
     rust_target: str
     """The target being produced, which may be foreign to `docker_platform`."""
 
+    host_rust_target: str
+    """The host triple whose target-gated dependencies cross-build tools need."""
+
     cross: bool
     """Whether the target is foreign, and the image must materialize it."""
 
@@ -77,6 +80,7 @@ def environment(build: BuildConfig, arch_name: str) -> BuilderEnvironment:
         base_image=source.rust_builder_base_image,
         docker_platform=source.docker_platform,
         rust_target=target.rust_target,
+        host_rust_target=source.rust_target,
         cross=arch_name != host_name,
         cross_packages=build.guest_rust_builder.cross_packages if arch_name != host_name else (),
     )
@@ -108,6 +112,7 @@ def image_tag(build: BuildConfig, arch_name: str, root: Path) -> str:
         arch_name,
         resolved.docker_platform,
         resolved.rust_target,
+        resolved.host_rust_target,
         resolved.base_image,
         "cross" if resolved.cross else "native",
         *resolved.cross_packages,
@@ -142,6 +147,7 @@ def build_arguments(resolved: BuilderEnvironment) -> list[str]:
     return [
         f"BASE={resolved.base_image}",
         f"RUST_TARGET={resolved.rust_target}",
+        f"HOST_RUST_TARGET={resolved.host_rust_target}",
         f"CROSS={'1' if resolved.cross else '0'}",
         f"CROSS_PACKAGES={' '.join(resolved.cross_packages)}",
     ]

@@ -64,6 +64,7 @@ def test_guest_rust_builder_materializes_the_checked_in_lock_before_runtime() ->
     assert "rust:slim-bookworm" not in source
     assert "COPY Cargo.toml Cargo.lock rust-toolchain.toml" in source
     assert "cargo fetch --locked" in source
+    assert 'cargo fetch --locked --target "${HOST_RUST_TARGET}"' in source
     assert "apt-get" not in source
     assert "ENV RUSTUP_AUTO_INSTALL=0" in source
     assert "rustup toolchain list" in source
@@ -196,6 +197,8 @@ def test_cold_prefetch_pulls_exact_rust_base_then_builds_locked_helper() -> None
     assert "--network default" in built[0]
     assert f"BASE={resolved.base_image}" in built[0]
     assert f"RUST_TARGET={BUILD.architectures['arm64'].rust_target}" in built[0]
+    host = BUILD.architectures[guestbuilder.host_architecture(BUILD)]
+    assert f"HOST_RUST_TARGET={host.rust_target}" in built[0]
     assert f"CROSS={'1' if resolved.cross else '0'}" in built[0]
     packages = " ".join(resolved.cross_packages)
     assert f"CROSS_PACKAGES={packages}" in built[0]

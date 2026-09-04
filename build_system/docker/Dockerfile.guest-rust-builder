@@ -24,6 +24,7 @@ ARG BASE
 FROM ${BASE}
 
 ARG RUST_TARGET
+ARG HOST_RUST_TARGET
 ARG CROSS=0
 ARG CROSS_PACKAGES
 ENV RUSTUP_AUTO_INSTALL=0
@@ -58,10 +59,15 @@ RUN if [ "${CROSS}" = "1" ]; then \
 # the rustup proxy.
 RUN rustup target list --installed | grep -Fx "${RUST_TARGET}"
 
-# Resolve only what Cargo.lock permits. The runtime build uses the same cache
-# with --locked --offline and --network none, so a missing input is a failure
-# at this boundary instead of a download hidden inside qualification.
-RUN cargo fetch --locked --target "${RUST_TARGET}"
+# Resolve only what Cargo.lock permits. A cross-build consumes both target
+# dependencies and host-target dependencies used by build scripts and proc
+# macros. Cargo's target-filtered fetch does not infer that second set, so the
+# host triple must be materialized explicitly before the network is sealed.
+# The runtime build uses this cache with --locked --offline and --network none.
+RUN cargo fetch --locked --target "${RUST_TARGET}" \
+    && if [ "${HOST_RUST_TARGET}" != "${RUST_TARGET}" ]; then \
+        cargo fetch --locked --target "${HOST_RUST_TARGET}"; \
+    fi
 
 # The runtime mounts its checked-in source at /src and assembles a writable
 # workspace at /build. Keep only the materialized toolchain/registry state;
