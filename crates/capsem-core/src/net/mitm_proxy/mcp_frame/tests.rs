@@ -526,3 +526,98 @@ async fn notification_flood_never_exceeds_the_inflight_cap() {
     drop(guest);
     serve.await.unwrap().unwrap();
 }
+
+// -- The ledger and the reply -------------------------------------------------
+
+fn tool_call_request(stream_id: u32) -> Vec<u8> {
+    let payload = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"ping"}}}"#;
+    capsem_proto::encode_mcp_frame(stream_id, 0, "codex", payload).unwrap()
+}
+
+async fn read_reply(guest: &mut tokio::io::DuplexStream) -> JsonRpcResponse {
+    let total_len = guest.read_u32().await.unwrap() as usize;
+    let mut body = vec![0_u8; total_len];
+    guest.read_exact(&mut body).await.unwrap();
+    let decoded = capsem_proto::decode_mcp_frame_body(&body).unwrap();
+    serde_json::from_slice(&decoded.payload).unwrap()
+}
+
+fn count(reader: &capsem_logger::DbReader, table: &str) -> i64 {
+    let rows: serde_json::Value =
+        serde_json::from_str(&reader.query_raw(&format!("SELECT COUNT(*) FROM {table}")).unwrap()).unwrap();
+    rows["rows"][0][0].as_i64().unwrap()
+}
+
+/// Endpoint whose rules match every MCP tool call, so a rule-ledger row is
+/// owed for each one.
+fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(8);
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            let body = AggregatorResult::CallResult {
+                result: serde_json::json!({"content": [{"type": "text", "text": "pong"}]}),
+            };
+            let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+        }
+    });
+    let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"
+        [profiles.rules.every_tool_call]
+        name = "every_tool_call"
+        action = "allow"
+        detection_level = "informational"
+        match = 'mcp.method == "tools/call"'
+        "#,
+    )
+    .unwrap();
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
+    Arc::new(McpEndpointState::new(
+        aggregator,
+        Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+        Arc::new(tokio::sync::Semaphore::new(4)),
+        super::super::McpTimeouts::default(),
+    ))
+}
+
+/// The tool-call row is accepted by the ledger before the reply is sent;
+/// the rule rows derived from it land shortly after, without holding the
+/// reply.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_call_row_precedes_the_reply_and_rule_rows_follow_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let endpoint = endpoint_with_matching_rule();
+    let (mut guest, server) = tokio::io::duplex(1 << 16);
+    let serve = tokio::spawn(serve_io(Vec::new(), server, endpoint, Arc::clone(&db)));
+
+    guest.write_all(&tool_call_request(1)).await.unwrap();
+    let reply = read_reply(&mut guest).await;
+    assert!(reply.error.is_none(), "{reply:?}");
+
+    // Flush what the writer has accepted so far: the call row is there.
+    db.flush().await;
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    assert_eq!(
+        count(&reader, "tool_calls"),
+        1,
+        "the call row was accepted before the reply"
+    );
+
+    // The derived rule row arrives on its own task.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        db.flush().await;
+        let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+        if count(&reader, "security_rule_events") >= 1 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "rule rows never arrived");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    drop(guest);
+    serve.await.unwrap().unwrap();
+}

@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
-    emit_matching_security_rules_for_evaluated_event, emit_security_write, evaluate_security_boundary,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, evaluate_security_boundary,
     McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
     SecurityEnforcementDecision, SecurityEvent,
 };
@@ -562,6 +562,8 @@ async fn log_mcp_call_with_policy(
     } else {
         "allowed"
     };
+    // Serialized once each: the preview is the bytes, and its length is
+    // the byte count (`to_string` and `to_vec` produce the same JSON).
     let request_preview = req
         .params
         .as_ref()
@@ -570,18 +572,8 @@ async fn log_mcp_call_with_policy(
         .result
         .as_ref()
         .and_then(|result| serde_json::to_string(result).ok());
-    let bytes_sent = req
-        .params
-        .as_ref()
-        .and_then(|params| serde_json::to_vec(params).ok())
-        .map(|bytes| bytes.len() as u64)
-        .unwrap_or(0);
-    let bytes_received = resp
-        .result
-        .as_ref()
-        .and_then(|result| serde_json::to_vec(result).ok())
-        .map(|bytes| bytes.len() as u64)
-        .unwrap_or(0);
+    let bytes_sent = request_preview.as_ref().map_or(0, |preview| preview.len() as u64);
+    let bytes_received = response_preview.as_ref().map_or(0, |preview| preview.len() as u64);
 
     let call = McpCall {
         event_id: None,
@@ -608,20 +600,20 @@ async fn log_mcp_call_with_policy(
     };
     let security_event = security_event_from_mcp_call(&call);
     if let Some(event_id) = emit_security_write(&db, WriteOp::McpCall(call)).await {
+        // The call row is accepted before the reply is sent (above); the
+        // rule-ledger rows derived from it are written on their own task
+        // so the client is not held while a third rule pass runs.
         let rules = security_rules.read().unwrap().clone();
-        if let Err(error) = emit_matching_security_rules_for_evaluated_event(
-            &db,
+        delegate_matching_security_rules_for_evaluated_event(
+            Arc::clone(&db),
             event_id.clone(),
             runtime_mcp_event_type(&req.method),
-            &rules,
-            BTreeMap::new(),
+            rules,
+            Arc::new(BTreeMap::new()),
             security_event,
             current_unix_ms(),
-        )
-        .await
-        {
-            warn!(error = %error, "failed to emit MCP security rule ledger rows");
-        }
+            "framed MCP call",
+        );
         return LoggedMcpEmission {
             event_id: Some(event_id.as_str().to_string()),
         };

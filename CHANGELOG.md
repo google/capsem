@@ -117,6 +117,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP tool calls answer sooner. The call's ledger row is still accepted
+  before the reply, but the security-rule rows derived from it are written
+  on their own task instead of holding the reply through a third rule pass;
+  the call's request and result are serialized once for the ledger instead
+  of twice each; the security engine's built-in plugin set is built once
+  per process rather than rebuilt for every evaluated event (two to three
+  per proxied request, one per DNS query, three per MCP call); and the
+  guest MCP relay parses each line once instead of twice.
 - `capsem create` returns as soon as the VM is launched instead of after a
   fixed half-second. The VM process now writes a launch sentinel the
   moment the hypervisor has started the VM and it is answering IPC (about
