@@ -32,6 +32,7 @@ from . import (
 )
 from .actions import Run
 from .config import GateConfig
+from .content import ProfileContent
 from .execution import Kind, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
@@ -169,6 +170,10 @@ def compose_modules(
         config,
         qualification=qualification,
         after=(functional,),
+        local_content=ProfileContent.built_profile(
+            config,
+            config.suites.pytest.base_profile,
+        ),
         materialized=prepared.profile_content,
     )
     # After the glow-up, not instead of it. The local lane's install proof runs

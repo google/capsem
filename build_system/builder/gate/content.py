@@ -52,6 +52,11 @@ class ProfileContent:
         )
 
     @classmethod
+    def built_profile(cls, config, profile: str) -> ProfileContent:
+        """One real per-profile bundle built below the gate's test root."""
+        return cls.isolated(config, config.path(config.assets.test_root) / profile)
+
+    @classmethod
     def standalone(cls, config) -> ProfileContent:
         """The checkout layout accepted only by the public standalone rail."""
         return cls(

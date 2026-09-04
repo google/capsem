@@ -58,6 +58,7 @@ def glowup(
     qualification: Qualification,
     after: tuple[Step, ...] = (),
     staged: ProfileContent | None = None,
+    local_content: ProfileContent | None = None,
     materialized: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
@@ -65,7 +66,15 @@ def glowup(
     if qualification.pulled:
         content = staged or ProfileContent.standalone(config)
         return pulled_package(phase, config, qualification, after, content)
-    return _build_and_prove(plan, phase, config, after, materialized=materialized)
+    content = local_content or ProfileContent.standalone(config)
+    return _build_and_prove(
+        plan,
+        phase,
+        config,
+        after,
+        content=content,
+        materialized=materialized,
+    )
 
 
 # -- the release lane ------------------------------------------------------
@@ -216,13 +225,13 @@ def _build_and_prove(
     config: GateConfig,
     after: tuple,
     *,
+    content: ProfileContent,
     materialized: Step | None,
 ) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
     materialized = materialized or plan.shared(runtimeprepare.materialize_config_step(config))
     previous: tuple = (materialized, *after)
-    content = ProfileContent.standalone(config)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader
