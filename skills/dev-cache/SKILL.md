@@ -43,6 +43,12 @@ path from repository literals, environment variables, or a backend name. A
 consumer that only inspects or controls a cache uses `CacheRegistry` and never
 receives its path.
 
+A shared cache stage must not contain or be contained by a prefix export.
+Exports are replaceable product views; shared stages are retained authorities.
+Overlapping them makes a successful export erase its own receipts and traps an
+exact-source run in a repair loop. VM generations live in the `assets` cache
+stage, while `cache/target/assets` remains only the assembled runtime view.
+
 Pinned external executables use `CachedToolPolicy` and `materialize()`. The
 policy declares one HTTPS URL and SHA-256 per host platform; the primitive
 downloads once, verifies before atomic publication, installs mode 0555, and

@@ -123,6 +123,42 @@ def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
     )
 
 
+def test_vm_generation_cache_is_not_inside_an_exported_view() -> None:
+    """Export replaces runtime assets and must not erase reusable generations.
+
+    The first unified VM cache put its generation store below
+    `cache/target/assets`. That path is also an exact exported view, so a focused
+    repair built valid receipts and its final export immediately deleted them.
+    The next exact resume then demanded the same repair forever.
+    """
+    config = _config()
+    policy = load_policy(ROOT)
+    generation_store = policy.root / policy.stages["assets"].path
+    exported = [Path(path) for path in config.prefix.exports]
+    overlap = [
+        path
+        for path in exported
+        if generation_store == path
+        or generation_store.is_relative_to(path)
+        or path.is_relative_to(generation_store)
+    ]
+
+    assert not overlap, (
+        f"VM generation cache {generation_store} overlaps exported view(s) {overlap}; "
+        "an export will erase the receipts exact resume needs"
+    )
+
+
+def test_legacy_benchmark_output_root_cannot_return() -> None:
+    stale = "cache/target/" + "test-benchmarks"
+    offenders = [
+        path.relative_to(ROOT)
+        for path in (*ROOT.joinpath("crates").rglob("*.rs"), *ROOT.joinpath("tests").rglob("*.py"))
+        if stale in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"legacy benchmark cache root returned in {offenders}"
+
+
 def test_a_prefix_gives_its_output_back_through_the_door_it_leaves_by(
     tmp_path: Path,
 ) -> None:

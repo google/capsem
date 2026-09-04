@@ -127,17 +127,29 @@ maximum_count = 2
 [stages.assets]
 description = "Content-addressed kernel, initrd, and rootfs generations reused by VM tests."
 scope = "disk"
-path = "target/assets"
+# Separate from `target/assets`, which is the exported runtime view. The gate
+# replaces that view atomically after a run; nesting the generation store below
+# it made a successful export erase the receipts required by exact resume.
+path = "target/vm-assets"
 entry_root = "generations"
 selector_globs = [
-  "target/assets/*/build-*",
-  "worktrees/*/cache/target/assets/*/build-*",
+  "target/tests/ironbank/*/build-*",
+  "worktrees/*/cache/target/tests/ironbank/*/build-*",
 ]
 warm_size_bytes = 8589934592 # 8 GiB
 max_size_bytes = 17179869184 # 16 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 10
+
+[stages.assembled-assets]
+description = "Current assembled VM runtime view consumed by local shells and packaging."
+scope = "disk"
+path = "target/assets"
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
+prune_strategy = "none"
+maximum_age_hours = 336
 
 [stages.packages]
 description = "Built Debian packages and their provenance receipts."

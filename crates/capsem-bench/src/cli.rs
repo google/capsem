@@ -42,7 +42,7 @@ pub(crate) enum Command {
 #[derive(Parser, Debug)]
 pub(crate) struct ReportArgs {
     /// The benchmark store to read.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) store: PathBuf,
     #[arg(long, default_value = "code")]
     pub(crate) profile: String,
@@ -57,7 +57,7 @@ pub(crate) struct RunArgs {
     #[arg(long, default_value = "benchmarks/collectors")]
     pub(crate) collectors: PathBuf,
     /// The benchmark store to record into.
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) out: PathBuf,
     /// Reduced samples, skipping everything that boots a guest.
     #[arg(long)]
@@ -103,7 +103,7 @@ pub(crate) struct CompareArgs {
 #[cfg(feature = "host")]
 #[derive(Parser, Debug)]
 pub(crate) struct VerifyArgs {
-    #[arg(long, default_value = "cache/target/test-benchmarks/benchmarks.db")]
+    #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) records: PathBuf,
     #[arg(long)]
     pub(crate) evidence: PathBuf,

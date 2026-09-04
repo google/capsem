@@ -80,6 +80,7 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.root == Path("cache")
     assert policy.authority_environment == "CAPSEM_CACHE_AUTHORITY"
     assert policy.stages["cargo"].path == Path("target/cargo")
+    assert policy.stages["assets"].path == Path("target/vm-assets")
     assert policy.stages["assets"].entry_root == Path("generations")
     assert policy.stages["python-pycache"].managed_globs == ("cpython-*",)
     assert policy.stages["python-pycache"].lease_template == ".{key}.lock"

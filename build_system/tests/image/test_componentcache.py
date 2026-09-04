@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
 from capsem_builder.image.componentcache import (
     build_identity,
     input_digest,
@@ -85,7 +86,12 @@ def test_component_restores_through_a_shared_asset_lane_symlink(
     prefix = repository(prefix_root)
     monkeypatch.setenv(load_policy(prefix).authority_environment, str(authority))
 
-    generation = authority / "cache/target/assets/generations/current"
+    policy = load_policy(authority)
+    generation = (
+        CachePaths(repository_root=authority, policy=policy).stage("assets")
+        / policy.stages["assets"].entry_root
+        / "current"
+    )
     first = generation / "code/build-arm64/arm64"
     first.mkdir(parents=True)
     first.joinpath("vmlinuz").write_bytes(b"kernel")

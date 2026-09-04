@@ -244,7 +244,7 @@ def test_common_registry_evicts_old_asset_generation_but_preserves_selector(
         payload = path / "code" / "build-x86_64" / "rootfs.erofs"
         payload.parent.mkdir(parents=True)
         payload.write_bytes(b"vm")
-    selector = paths.root / "target" / "assets" / "code" / "build-x86_64"
+    selector = paths.root / "target" / "tests" / "ironbank" / "code" / "build-x86_64"
     selector.parent.mkdir(parents=True)
     selector.symlink_to(current / "code" / "build-x86_64")
 
