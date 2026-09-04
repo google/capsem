@@ -83,12 +83,10 @@ def test_arguments_with_spaces_survive_as_single_arguments(tmp_path: Path) -> No
 
 def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
-    (tmp_path / "config/gate.toml").write_bytes(
-        (PROJECT_ROOT / "config/gate.toml").read_bytes()
-    )
+    (tmp_path / "config/gate.toml").write_bytes((PROJECT_ROOT / "config/gate.toml").read_bytes())
     runner = RecordingRunner(tmp_path)
 
-    runner.script("build_system/scripts/build/sync-container-clock.py", "gc")
+    runner.script("build_system/scripts/build/sync-container-clock.py", "probe")
 
     assert runner.commands[0].argv == (
         "uv",
@@ -98,7 +96,7 @@ def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
         "--frozen",
         "python",
         str(tmp_path / "build_system/scripts/build/sync-container-clock.py"),
-        "gc",
+        "probe",
     )
 
 
@@ -277,9 +275,7 @@ def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Pa
     # inversion that wastes the most time to diagnose.
     strict = StopPolicy(grace_seconds=10.0, poll_seconds=0.1, refuse_survivors=True)
     with pytest.raises(GateError, match="descendants remained") as refused:
-        Runner(PROJECT_ROOT, stop_policy=strict).run(
-            (sys.executable, "-c", helper, str(pids))
-        )
+        Runner(PROJECT_ROOT, stop_policy=strict).run((sys.executable, "-c", helper, str(pids)))
 
     # Naming the survivor is the whole use of this guard away from a terminal.
     # It fired once in a release lane and said only that *something* had

@@ -9,10 +9,15 @@ from pathlib import Path
 import yaml
 from capsem_builder.gate.versions import workspace_version
 from helpers.workflow_contract import workflow_job_source, workflow_step_source
-from rust_sources import sibling_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
+ASSETS_CHANNEL_BUILD = (
+    ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_build.rs"
+)
+CHANNEL_BUILD_TESTS = (
+    ROOT / "crates" / "capsem-admin" / "src" / "tests" / "channel_build.rs"
+)
 RELEASE_GRAPH = ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 PROFILE_WORKFLOW = ROOT / ".github" / "workflows" / "release-assets.yaml"
 BINARY_WORKFLOW = ROOT / ".github" / "workflows" / "release.yaml"
@@ -78,7 +83,7 @@ def test_profile_then_binary_compatibility_checks_every_current_package() -> Non
 
 
 def test_staged_profile_cannot_activate_until_binary_bounds_match() -> None:
-    source = ADMIN.read_text(encoding="utf-8")
+    source = ASSETS_CHANNEL_BUILD.read_text(encoding="utf-8")
     build = _function(
         source,
         "build_assets_channel_from_graph",
@@ -98,7 +103,7 @@ def test_staged_profile_cannot_activate_until_binary_bounds_match() -> None:
     assert record.index("validate_graph_profiles_match_current_binary") < record.index("fs::write")
     assert (
         "staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile"
-        in sibling_tests(ADMIN)
+        in CHANNEL_BUILD_TESTS.read_text(encoding="utf-8")
     )
 
 

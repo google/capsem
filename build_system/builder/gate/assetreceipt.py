@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from ..release.obom import validate_exported_rootfs_obom
-from . import cachelayout
+from . import assetstore, cachelayout
 from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import digest_of, write_text
@@ -35,9 +35,14 @@ def _location_matches(
     profile: str,
     architecture: str,
 ) -> bool:
-    if len(identity) != 64 or identity.strip("0123456789abcdef") or not profile or Path(profile).name != profile:
+    if (
+        len(identity) != 64
+        or identity.strip("0123456789abcdef")
+        or not profile
+        or Path(profile).name != profile
+    ):
         return False
-    cached = cachelayout.shared_path(config, config.prefix.vm_image_cache)
+    cached = assetstore.root(config)
     cached = cached / identity / profile / f"build-{architecture}"
     local = config.path(config.assets.test_root) / profile / f"build-{architecture}"
     resolved = output.resolve()
@@ -138,11 +143,7 @@ def _size(document: dict[str, object]) -> int:
             continue
         fields = cast(dict[str, object], entry)
         size = fields.get("size")
-        if (
-            fields.get("kind") == "file"
-            and isinstance(size, int)
-            and not isinstance(size, bool)
-        ):
+        if fields.get("kind") == "file" and isinstance(size, int) and not isinstance(size, bool):
             total += size
     return total
 
@@ -242,8 +243,8 @@ def validates(
             or created > now
             or last_used > now
             or size != _size(expected)
-            or size > config.assets.cache.maximum_bytes
-            or now - created > config.assets.cache.maximum_age_hours * 3600
+            or size > cachelayout.stage_policy(config, "assets").max_size_bytes
+            or now - created > cachelayout.stage_policy(config, "assets").maximum_age_hours * 3600
         ):
             return False
         if touch:

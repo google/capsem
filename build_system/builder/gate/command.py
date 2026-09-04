@@ -50,7 +50,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
     exclusive: ClassVar[bool] = False
     """Whether this needs the machine to itself.
 
-    True for anything that wipes `CAPSEM_HOME`, drives Docker storage rails, or
+    True for anything that wipes `CAPSEM_HOME`, mutates managed caches, or
     starts a service -- which is to say every gate proper. False for the ones
     that only read, so a developer can ask `runs show` a question while a gate
     is running.
@@ -74,8 +74,8 @@ class GateCommand(CommandHooks, Recorded, ABC):
 
     False for everything that only reports. A half-exported release
     environment is refused -- it can only produce a hybrid proof -- but that
-    refusal must not reach `runs last`, `logs` or `gc --dry-run`, which are
-    exactly what an operator reaches for *because* the workflow broke. Declared
+    refusal must not reach `runs last` or `logs`, which are exactly what an
+    operator reaches for *because* the workflow broke. Declared
     rather than inferred: guessing from the name or from what the plan happens
     to mention puts the answer somewhere nobody looks when adding a module.
     """

@@ -39,10 +39,11 @@ use tokio::process::Command;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
-
 mod asset_background;
 mod blocking;
 mod instance_reaper;
+mod process_control;
+mod profile_mutation_cache;
 mod profile_status_cache;
 mod session_cleanup;
 mod session_db_handles;
@@ -59,19 +60,17 @@ mod update_command;
 mod update_status;
 mod vm_files;
 mod vm_lifecycle;
-
 use ledger_routes::*;
 use profile_routes::*;
+use profile_status_cache::*;
 use router_runtime::*;
 use service_runtime::*;
-use vm_files::*;
-use vm_lifecycle::*;
-
-use profile_status_cache::*;
 use shutdown_policy::*;
 use suspend_confirmation::{observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation};
 use update_command::{update_command_plan, UpdateCommandKind};
 use update_status::update_status_response_from_paths;
+use vm_files::*;
+use vm_lifecycle::*;
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
 /// console output written through `CappedLogWriter`, so its size is the guest's
@@ -280,8 +279,8 @@ struct ServiceState {
     /// filesystem on every request.
     last_defunct_reconcile_ms: AtomicU64,
     /// Final `/stats` HTTP response bytes derived from the logger-owned
-    /// `main.db` query. The epoch ties this cache to the DB handle's own
-    /// invalidation generation so writes cannot leave stale route bytes behind.
+    /// `main.db` query. The typed session-summary epoch invalidates it for
+    /// session/usage writes without coupling it to profile-mutation ledger rows.
     stats_response_cache: Mutex<Option<CachedStatsResponse>>,
     /// Final stats/detail bytes for inactive sessions. Running sessions keep
     /// reading live DB state; stopped/seeded sessions can reuse bytes until
@@ -1012,8 +1011,9 @@ impl ServiceState {
     #[must_use = "evicted entries still have filesystem artifacts; pass each to ServiceState::scrub_evicted_instance"]
     fn drain_dead_instances(&self) -> Vec<(String, InstanceInfo)> {
         let mut instances = self.instances.lock().unwrap();
+        let mut probe = process_control::ProcessProbe::new("drain-dead-instances");
         let dead = instances
-            .extract_if(|_, info| unsafe { nix::libc::kill(info.pid as i32, 0) } != 0)
+            .extract_if(|_, info| probe.is_gone(info.pid))
             .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
                 (id, info)

@@ -31,8 +31,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
         "build_system/tests/cache/test_admission.py",
         "build_system/tests/cache/test_admission_state.py",
-        "build_system/tests/cache/test_capacity.py",
         "build_system/tests/cache/test_cli.py",
+        "build_system/tests/cache/test_direct_environment.py",
         "build_system/tests/cache/test_failure_artifacts.py",
         "build_system/tests/cache/test_gitimpact.py",
         "build_system/tests/cache/test_inventory.py",
@@ -41,8 +41,11 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/cache/test_paths.py",
         "build_system/tests/cache/test_planner.py",
         "build_system/tests/cache/test_policy.py",
+        "build_system/tests/cache/test_pythonenv.py",
         "build_system/tests/cache/test_runtime_adapters.py",
         "build_system/tests/cache/test_runtime_control.py",
+        "build_system/tests/cache/test_registry.py",
+        "build_system/tests/cache/test_stats.py",
         "build_system/tests/cache/test_telemetry.py",
         "build_system/tests/cache/test_tool_adapters.py",
         "build_system/tests/cache/test_views.py",
@@ -52,8 +55,10 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_gate_cache_layout.py",
         "build_system/tests/gate/test_gate_cache_tooling.py",
         "build_system/tests/gate/test_gate_qualification_reuse.py",
+        "build_system/tests/gate/test_gate_pycache_authority.py",
         "build_system/tests/gate/test_gate_test_admission.py",
         "build_system/tests/gate/test_host_docker_ownership.py",
+        "build_system/tests/gate/test_rust_coverage_ratchet.py",
         "build_system/tests/gate/test_web_tool_module_boundary.py",
         "build_system/tests/helpers/__init__.py",
         "build_system/tests/helpers/injection_test.py",
@@ -63,6 +68,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/helpers/prove_installed_shell.py",
         "build_system/tests/image/test_image_module_boundary.py",
         "build_system/tests/image/test_componentcache.py",
+        "build_system/tests/image/test_guest_binary_source_contract.py",
         "build_system/tests/packaging/test_linux_packaging_boundary.py",
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
         "build_system/tests/packaging/test_shared_packaging_boundary.py",
@@ -75,6 +81,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/release/test_release_verification_tool_boundary.py",
         "build_system/tests/release/test_remote_ci_verdict_contract.py",
         "build_system/tests/scripts/test_audit_python_lock.py",
+        "build_system/tests/scripts/test_rust_affected.py",
         "build_system/tests/conftest.py",
         "build_system/tests/test_ownership.toml",
         "build_system/tests/test_project_boundary.py",
@@ -150,9 +157,7 @@ def _problems(rows: Iterable[Mapping[str, Any]], tracked: frozenset[str]) -> lis
             problems.append(f"duplicate {label} paths: {duplicates}")
 
     owned_targets = set(targets) | set(BOUNDARY_FILES)
-    actual_build_tests = {
-        path for path in tracked if path.startswith("build_system/tests/")
-    }
+    actual_build_tests = {path for path in tracked if path.startswith("build_system/tests/")}
     unowned = sorted(actual_build_tests - owned_targets)
     missing_boundaries = sorted(BOUNDARY_FILES - tracked)
     if unowned:

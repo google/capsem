@@ -240,7 +240,7 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     # several modules through one workspace.
     assert "Deliberately not the benchmark root" in workspace
 
-    cleared = _step_at(labels, "prepare.cache-budget")
+    cleared = _step_at(labels, "prepare.cache-enforcement")
     assert cleared < _step_at(labels, "functional.")
     assert cleared < _step_at(labels, "glowup.")
 
@@ -299,11 +299,11 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
     )
 
 
-def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
-    """A storage budget measured before the daemon exists measures nothing."""
+def test_local_gate_bootstraps_docker_before_cache_enforcement() -> None:
+    """Runtime cache enforcement needs the Docker daemon inventory."""
     labels = list(_gate_plan().labels)
 
-    assert _step_at(labels, "prepare.bootstrap") < _step_at(labels, "prepare.cache-budget")
+    assert _step_at(labels, "prepare.bootstrap") < _step_at(labels, "prepare.cache-enforcement")
 
 
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:

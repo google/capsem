@@ -6,7 +6,7 @@ test failed while reporting a broken product.
 
     coverage floor        asserted 65      justfile said 63
     guest kernel          demanded >= 7    build.toml pinned 6.18
-    docker free space     fixture 30 GiB   policy floor rose to 40
+    docker cache maximum fixture 30 GiB   policy maximum rose to 40
     benchmark retention   asserted (1, 6)  Cargo.toml said 0.6
     release fixtures      spelled 1.6.x    gate.toml release.line said 0.6
     service /version      startswith("1.") Cargo.toml said 0.6.0
@@ -83,6 +83,5 @@ def test_no_test_restates_a_value_its_config_declares() -> None:
 
     assert not offenders, (
         "these restate a value their config already declares, so the config "
-        "moving breaks them and reports a broken product:\n  "
-        + "\n  ".join(offenders)
+        "moving breaks them and reports a broken product:\n  " + "\n  ".join(offenders)
     )

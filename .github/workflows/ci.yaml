@@ -313,7 +313,7 @@ jobs:
         run: |
           bash build_system/scripts/test/prepare-install-test-assets.sh
           cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp -p capsem-mock-server -p capsem-bench
-          for bin in cache/target/debug/capsem-process cache/target/debug/capsem-service cache/target/debug/capsem cache/target/debug/capsem-mcp cache/target/debug/capsem-mock-server cache/target/debug/capsem-bench-rs; do
+          for bin in cache/target/cargo/debug/capsem-process cache/target/cargo/debug/capsem-service cache/target/cargo/debug/capsem cache/target/cargo/debug/capsem-mcp cache/target/cargo/debug/capsem-mock-server cache/target/cargo/debug/capsem-bench-rs; do
             codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force "$bin"
           done
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/ \
@@ -558,6 +558,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/docs/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - name: Install docs dependencies
         run: cd web/docs && pnpm install --frozen-lockfile

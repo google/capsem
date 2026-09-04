@@ -192,9 +192,7 @@ fn update_status_lines_does_not_invent_track_or_cache_state_when_current() {
     assert!(!lines.join("\n").contains("cache"));
 }
 
-// -----------------------------------------------------------------------
 // CLI parsing
-// -----------------------------------------------------------------------
 
 #[test]
 fn parse_no_subcommand() {
@@ -641,9 +639,7 @@ fn parse_uds_path_default_none() {
     assert_eq!(cli.uds_path, None);
 }
 
-// -----------------------------------------------------------------------
 // RAM conversion
-// -----------------------------------------------------------------------
 
 #[test]
 fn ram_gb_to_mb_conversion() {
@@ -651,9 +647,7 @@ fn ram_gb_to_mb_conversion() {
     assert_eq!(ram_gb * 1024, 4096);
 }
 
-// -----------------------------------------------------------------------
 // New commands: exec, delete, info, doctor
-// -----------------------------------------------------------------------
 
 #[test]
 fn parse_exec() {
@@ -851,6 +845,18 @@ fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
         DoctorMockServerLock::path_for_addr(DOCTOR_MOCK_SERVER_ADDR),
         std::env::temp_dir().join("capsem-mock-server-127-0-0-1-3713.lock")
     );
+}
+
+#[test]
+fn doctor_mock_server_lock_is_exclusive_and_reacquirable() {
+    let dir = tempfile::tempdir().unwrap();
+    let addr = dir.path().file_name().unwrap().to_string_lossy();
+    let path = DoctorMockServerLock::path_for_addr(&addr);
+    let first = DoctorMockServerLock::acquire(&addr, Duration::ZERO).unwrap();
+    assert!(DoctorMockServerLock::acquire(&addr, Duration::ZERO).is_err());
+    drop(first);
+    drop(DoctorMockServerLock::acquire(&addr, Duration::ZERO).unwrap());
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -1320,10 +1326,7 @@ fn parse_update_url_overrides_reject_url_shorthand_paths() {
     }
 }
 
-// -----------------------------------------------------------------------
 // CAPSEM_RUN_DIR resolution
-// -----------------------------------------------------------------------
-
 #[test]
 fn run_dir_override_logic() {
     let resolve = |env_val: Option<&str>, home: &str| -> PathBuf {
@@ -1338,10 +1341,7 @@ fn run_dir_override_logic() {
     assert_eq!(resolve(None, "/Users/test"), PathBuf::from("/Users/test/.capsem/run"),);
 }
 
-// -----------------------------------------------------------------------
 // Fork / Image CLI parsing
-// -----------------------------------------------------------------------
-
 #[test]
 fn parse_fork() {
     let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);

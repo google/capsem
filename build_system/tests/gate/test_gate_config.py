@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from pydantic import ValidationError
@@ -295,17 +296,19 @@ def test_the_preinstall_admin_is_not_the_installed_one(
     assert config.install.preinstall_admin.startswith(config.install.preinstall_root)
 
 
-def test_the_package_lane_names_no_volume_at_all(config) -> None:
-    """Was: the per-architecture `/cargo-target` volume must differ per arch.
-
-    It did, and it had to, because a shared named volume rebuilt the world on
-    every alternation. There is no named volume now -- the build directory is
-    anonymous, so Docker allocates one per container and reclaims it with that
-    container, which is per-architecture by construction and shares nothing
-    between two gates.
-    """
+def test_the_package_lane_uses_one_policy_owned_volume_per_architecture(config) -> None:
+    """Alternating architectures must neither collide nor compile cold."""
     assert not hasattr(config.package, "volumes")
     assert config.package.cargo_target_mount.startswith("/")
+    names = {
+        config.package.cargo_target_volume.format(arch=arch.name)
+        for arch in config.architectures.values()
+    }
+    assert len(names) == len(config.architectures)
+    docker = load_policy(PROJECT_ROOT).runtimes["docker"]
+    assert isinstance(docker, DockerRuntimePolicy)
+    prefixes = docker.volume_prefixes
+    assert all(name.startswith(prefixes) for name in names)
 
 
 def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(
@@ -317,14 +320,11 @@ def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(
     )
 
 
-def test_cache_release_boundaries_name_declared_rails() -> None:
+def test_cache_control_has_no_one_off_release_side_channel() -> None:
     control = load_policy(PROJECT_ROOT).control
     assert control is not None
 
-    unknown = {release.rail for release in control.docker.releases.values()} - set(
-        control.docker.rails
-    )
-    assert not unknown
+    assert not hasattr(control.docker, "releases")
 
 
 # ---------------------------------------------------------------------------
@@ -375,10 +375,8 @@ def test_the_lockfile_lives_outside_every_tree_the_gate_wipes(
     assert config.locks.gate.path.startswith("~/")
     assert config.locks.gate.holder_record.startswith("~/")
 
-    wiped = [Path(entry) for entry in config.disk.reclaimable]
-    for tree in wiped:
-        assert tree not in lock.parents, f"{lock} sits inside reclaimable {tree}"
-        assert tree not in holder.parents, f"{holder} sits inside reclaimable {tree}"
+    assert not str(lock).startswith("cache/")
+    assert not str(holder).startswith("cache/")
 
 
 @pytest.mark.parametrize("field", ("path", "holder_record"))
@@ -401,7 +399,7 @@ def test_the_lock_waits_long_enough_to_outlast_a_gate_run(
 
 
 # ---------------------------------------------------------------------------
-# The run log and the disk it occupies
+# The bounded run log
 # ---------------------------------------------------------------------------
 
 
@@ -413,44 +411,6 @@ def test_the_run_log_keeps_enough_history_to_compare_against(
     assert settings.keep_runs >= 2, "one kept run cannot be compared with anything"
     assert settings.keep_bytes > 0
     assert settings.slow_action_seconds > 0
-
-
-def test_the_run_log_is_itself_reclaimable(config: gate_config.GateConfig) -> None:
-    """Rotation bounds it during a run; `gc` has to be able to reclaim the rest."""
-    assert config.runlog.root in config.disk.reclaimable
-
-
-def test_nothing_reclaimable_can_be_aimed_outside_the_checkout(
-    config: gate_config.GateConfig,
-) -> None:
-    """These are whole-tree removals. The difference between a relative path
-    and one that escapes upwards is a single editing mistake."""
-    for entry in config.disk.reclaimable:
-        assert not Path(entry).is_absolute()
-        assert ".." not in Path(entry).parts
-
-
-@pytest.mark.parametrize("escape", ["/etc", "../../elsewhere", "cache/target/../.."])
-def test_a_reclaimable_path_that_escapes_is_refused_at_load(tmp_path: Path, escape: str) -> None:
-    """Red-first, permanently: the loader must reject the shape it forbids."""
-    root = _checkout(tmp_path)
-    source = root / "config"
-    original = (source / "gate.toml").read_text(encoding="utf-8")
-    (source / "gate.toml").write_text(
-        original.replace('    "cache/target/gate-runs",', f'    "{escape}",')
-    )
-
-    with pytest.raises(GateError) as failure:
-        gate_config.load(root)
-
-    assert "escape" in str(failure.value)
-
-
-def test_the_free_space_floor_exceeds_what_one_run_is_warned_about(
-    config: gate_config.GateConfig,
-) -> None:
-    """Otherwise the gate refuses to start on a footprint it considers normal."""
-    assert config.disk.required_free_gb > config.disk.run_footprint_warn_gb
 
 
 # ---------------------------------------------------------------------------

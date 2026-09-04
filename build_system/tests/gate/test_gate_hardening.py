@@ -313,7 +313,6 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
             "source_commit": SourceCommit("0" * 40),
         },
         "cross-compile": {"arch": "arm64"},
-        "storage": {"action": "gc", "rail": None},
         "prove-deb": {
             "package": "x.deb",
             "content_root": "cache/target/content",
@@ -324,7 +323,6 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
         "dev": {"surface": "ui", "args": []},
         "logs": {"target": ""},
         "runs": {"action": "list", "run": None, "failed": False, "other": None},
-        "gc": {"aggressive": False},
     }
 
     for name, command in sorted(GateCommand.registry.items()):
@@ -350,18 +348,14 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_guest_binary_freshness_covers_more_than_rust_sources() -> None:
-    """An mtime comparison against `*.rs` misses most of what a build reads.
-
-    `Cargo.toml`, `Cargo.lock`, a build script, a feature flag, the toolchain
-    pin, any transitive crate -- change one and the staged binary is stale
-    while every `.rs` file is older than it. The staged binary then ships into
-    an initrd that does not match the source it claims to be built from.
-    """
+def test_guest_binary_identity_covers_more_than_rust_sources() -> None:
+    """The content key includes workspace inputs that affect guest bytes."""
     from capsem_builder.gate import config as gate_config
+    from capsem_builder.image.config import load_guest_config
 
     config = gate_config.load(PROJECT_ROOT)
-    watched = set(config.initrd.freshness_inputs)
+    build = load_guest_config(config.path(config.imagebuild.source_config)).build
+    watched = set(build.guest_rust_builder.source_roots)
 
     assert "Cargo.lock" in watched
     assert "Cargo.toml" in watched

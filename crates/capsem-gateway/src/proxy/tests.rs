@@ -3,6 +3,7 @@
 use super::*;
 use axum::body::Body;
 use axum::routing::any;
+use axum::serve::ListenerExt;
 use axum::Router;
 use bytes::Bytes;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,9 +12,11 @@ use tower::ServiceExt;
 use crate::status::StatusCache;
 
 fn proxy_app(uds_path: &str) -> Router {
+    let uds_path = std::path::PathBuf::from(uds_path);
     let state = Arc::new(AppState {
         token: "test".into(),
-        uds_path: uds_path.into(),
+        service_client: crate::service_client::ServiceClient::new(&uds_path),
+        uds_path,
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
@@ -42,15 +45,27 @@ fn proxy_app(uds_path: &str) -> Router {
 
 /// Start a mock UDS server with the given router, return (sock_path, join_handle, tempdir).
 async fn mock_uds(app: axum::Router) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    let (path, handle, dir, _) = mock_uds_counting(app).await;
+    (path, handle, dir)
+}
+
+async fn mock_uds_counting(
+    app: axum::Router,
+) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir, Arc<AtomicUsize>) {
     let dir = tempfile::tempdir().unwrap();
     let sock_path = dir.path().join("mock.sock");
     let path_str = sock_path.to_str().unwrap().to_string();
     let uds = tokio::net::UnixListener::bind(&sock_path).unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let accepted = connections.clone();
+    let uds = uds.tap_io(move |_| {
+        accepted.fetch_add(1, Ordering::SeqCst);
+    });
     let handle = tokio::spawn(async move {
         axum::serve(uds, app).await.ok();
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
-    (path_str, handle, dir)
+    (path_str, handle, dir, connections)
 }
 
 async fn status_of(app: Router, method: &str, uri: &str) -> StatusCode {
@@ -138,6 +153,34 @@ async fn forwards_get_to_uds() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["sandboxes"], serde_json::json!([]));
     h.abort();
+}
+
+#[tokio::test]
+async fn reuses_uds_connection_for_sequential_requests() {
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
+    );
+    let (path, handle, _dir, connections) = mock_uds_counting(mock).await;
+    let app = proxy_app(&path);
+
+    for _ in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/vms/list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    }
+
+    assert_eq!(connections.load(Ordering::SeqCst), 1);
+    handle.abort();
 }
 
 #[tokio::test]
@@ -300,6 +343,23 @@ async fn preserves_upstream_response_headers() {
     assert_eq!(resp.headers().get("x-custom").unwrap(), "test-value");
     assert_eq!(resp.headers().get("x-request-id").unwrap(), "abc-123");
     h.abort();
+}
+
+#[test]
+fn sized_json_response_can_stream_without_rebuffering() {
+    let headers = HeaderMap::from_iter([
+        (CONTENT_TYPE, HeaderValue::from_static("application/json")),
+        (CONTENT_LENGTH, HeaderValue::from_static("42")),
+    ]);
+
+    assert!(!should_buffer_json_response(true, &headers));
+}
+
+#[test]
+fn unsized_json_response_is_buffered_for_a_content_length() {
+    let headers = HeaderMap::from_iter([(CONTENT_TYPE, HeaderValue::from_static("application/json"))]);
+
+    assert!(should_buffer_json_response(true, &headers));
 }
 
 #[tokio::test]
@@ -608,7 +668,7 @@ async fn concurrent_proxy_requests() {
     h.abort();
 }
 
-// --- Timeout constants (issues #2, #10) ---
+// --- Timeout constant (issues #2, #10) ---
 
 #[test]
 fn request_timeout_covers_suspend_operation() {
@@ -616,17 +676,5 @@ fn request_timeout_covers_suspend_operation() {
     assert!(
         REQUEST_TIMEOUT >= Duration::from_secs(30),
         "proxy timeout must exceed worst-case suspend duration"
-    );
-}
-
-#[test]
-fn conn_driver_timeout_is_bounded() {
-    assert!(
-        CONN_DRIVER_TIMEOUT <= Duration::from_secs(600),
-        "driver timeout should not be excessive"
-    );
-    assert!(
-        CONN_DRIVER_TIMEOUT > REQUEST_TIMEOUT,
-        "driver timeout must exceed request timeout"
     );
 }

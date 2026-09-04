@@ -37,7 +37,6 @@ def _relocated_prefix(tmp_path: Path, *, keep: int | None = None):
     values = {
         "parent": str(tmp_path),
         "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-        "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
         "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
     }
     if keep is not None:
@@ -92,7 +91,9 @@ def source(tmp_path: Path) -> Path:
     (root / "private" / "tauri" / "key.pem").write_text("SECRET\n", encoding="utf-8")
     # Build output, which the prefix must not carry -- 164 GB and 84s in the
     # real checkout, against 186 MB and 2.2s without it.
-    (root / "cache" / "target" / "cargo" / "debug" / "huge.bin").write_text("x" * 4096, encoding="utf-8")
+    (root / "cache" / "target" / "cargo" / "debug" / "huge.bin").write_text(
+        "x" * 4096, encoding="utf-8"
+    )
 
     # A tracked symlink pointing at a directory. `git ls-files` lists it like
     # any other entry, and this repository really has them -- `.agents/skills`
@@ -373,7 +374,9 @@ def test_a_refresh_keeps_what_the_earlier_run_built(source: Path) -> None:
     (target / ".venv" / "bin").mkdir(parents=True)
     (target / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
     (target / "cache" / "target" / "cargo" / "debug").mkdir(parents=True, exist_ok=True)
-    (target / "cache" / "target" / "cargo" / "debug" / "built.bin").write_text("artifact\n", encoding="utf-8")
+    (target / "cache" / "target" / "cargo" / "debug" / "built.bin").write_text(
+        "artifact\n", encoding="utf-8"
+    )
 
     (source / "untracked.txt").unlink()
     snapshot.refresh(source, target, _config())
@@ -707,9 +710,8 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     """Bounded growth, on the way in.
 
     A failed run keeps its tree so it can be resumed into, which means nothing
-    on the failure path deletes it -- and `[disk] reclaimable` only accepts
-    paths inside the checkout, so `gc` never reached these. One retained prefix
-    on this machine was 22 GiB and carried the copied signing material with it.
+    on the failure path deletes it. One retained prefix on this machine was 22
+    GiB and carried the copied signing material with it.
 
     Swept on entry rather than on exit, the same shape as `[workspace] home`:
     the run *after* a failure is the one that no longer needs its tree.
@@ -783,6 +785,9 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {reused}"
 
         def run(self, *args, **kwargs) -> int:
+            environment = kwargs["env"]
+            assert environment[config.environment.repository_root] == str(reused)
+            assert environment[config.environment.source_checkout] == str(config.root)
             return 0
 
     from capsem_builder.gate import buildcache
@@ -937,7 +942,7 @@ def test_a_linked_worktree_gets_a_repository_of_its_own(tmp_path: Path) -> None:
     assert _git(prefix, "ls-files") == "tracked.txt", "the index was not populated from HEAD"
 
     # Self-contained: hardlinked objects, no `alternates` pointing back. A
-    # borrowed object store would let a `gc` in the original prune bytes out
+    # borrowed object store would let Git pruning in the original remove bytes
     # from under a running gate.
     assert not (prefix / ".git" / "objects" / "info" / "alternates").exists()
 
@@ -1112,6 +1117,23 @@ def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
     assert sorted(p.name for p in target.iterdir()) == ["already-here", "arriving"]
 
 
+def test_merging_replaces_an_immutable_cached_file(tmp_path: Path) -> None:
+    """An exported package may already be a read-only object-store view."""
+    from capsem_builder.gate.filesystem import merge_tree
+
+    source, target = tmp_path / "src", tmp_path / "dst"
+    source.mkdir()
+    target.mkdir()
+    (source / "package.deb").write_text("new")
+    existing = target / "package.deb"
+    existing.write_text("old")
+    existing.chmod(0o444)
+
+    merge_tree(source, target)
+
+    assert existing.read_text() == "new"
+
+
 def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     """`copy_tree` must not dereference, for the same reason `merge_tree` must not.
 
@@ -1139,7 +1161,7 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     assert (target / "arch" / "big.bin").read_bytes() == b"payload"
 
 
-def _shared_target_config(tmp_path: Path, warning_gb: float):
+def _shared_target_config(tmp_path: Path):
     """A config whose prefix root and shared build root are both disposable."""
     original = _config()
     return original.model_copy(
@@ -1148,11 +1170,7 @@ def _shared_target_config(tmp_path: Path, warning_gb: float):
                 update={
                     "parent": str(tmp_path / "prefixes"),
                     "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-                    "vm_image_cache": str(
-                        tmp_path / "cache" / "target" / "assets" / "generations"
-                    ),
                     "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
-                    "cargo_target_warning_gb": warning_gb,
                 }
             )
         }
@@ -1162,33 +1180,23 @@ def _shared_target_config(tmp_path: Path, warning_gb: float):
 def test_the_shared_build_directory_is_measured_and_never_automatically_discarded(
     tmp_path: Path,
 ) -> None:
-    """Both sides of the advisory threshold retain the compiler cache.
+    """Measuring the compiler cache never mutates it.
 
     Cargo decides staleness from the tree as a whole. An automatic selective
     prune would corrupt that judgement, while whole-tree eviction made an
-    ordinary `just test` unexpectedly cold. Destruction is an explicit
-    `--clean-build` operation; the configured size is a visible warning.
+    ordinary `just test` unexpectedly cold. Destruction remains an explicit
+    `--clean-build` operation.
     """
     from capsem_builder.gate import cargotarget
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     shared = cargotarget.path(config)
     (shared / "debug").mkdir(parents=True)
     (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 4096)
 
     held = cargotarget.measure(config)
-    assert 0 < held.gb < 1.0
+    assert held.gb > 0
     assert (shared / "debug" / "libcapsem.rlib").exists()
-
-    # The same tree, against a warning threshold it exceeds.
-    over = cargotarget.measure(
-        _shared_target_config(tmp_path, warning_gb=4096 / 1024**3 / 2)
-    )
-    assert over.gb > 4096 / 1024**3 / 2
-    assert (shared / "debug" / "libcapsem.rlib").exists(), (
-        "crossing the advisory threshold discarded reusable compiler output; "
-        "only an explicit --clean-build may make a qualification cold"
-    )
 
 
 def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
@@ -1202,7 +1210,7 @@ def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
     """
     from capsem_builder.gate import cargotarget
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     shared = cargotarget.path(config)
     (shared / "debug").mkdir(parents=True)
     (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 8192)
@@ -1224,7 +1232,7 @@ def test_a_lease_outlives_its_prefix_only_until_the_next_sweep(tmp_path: Path) -
     """
     from capsem_builder.gate.prefixlease import reclaim_orphan_leases
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     root = Path(config.prefix.parent)
     root.mkdir(parents=True)
     live = root / ("a" * 8)
@@ -1249,7 +1257,7 @@ def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> 
     """
     from capsem_builder.gate.prefixlease import lease, reclaim_orphan_leases
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     root = Path(config.prefix.parent)
     root.mkdir(parents=True)
     gone = root / ("c" * 8)
@@ -1275,7 +1283,7 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
     """
     from capsem_builder.gate import cargotarget
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     pulled = tmp_path / "pulled-bin"
     pulled.mkdir()
     (pulled / "capsem").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -1284,7 +1292,9 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
     cargotarget.link_pulled_binaries(config, prefix_path, pulled)
 
     resolved = prefix_path / "cache" / "target" / "cargo" / "debug" / "capsem"
-    assert resolved.is_file(), "a hardcoded cache/target/cargo/debug path must resolve to the pulled binary"
+    assert resolved.is_file(), (
+        "a hardcoded cache/target/cargo/debug path must resolve to the pulled binary"
+    )
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == pulled
 
 
@@ -1293,7 +1303,7 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
     from capsem_builder.gate import cargotarget
     from capsem_builder.gate.errors import GateError
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     pulled = tmp_path / "pulled"
     pulled.mkdir()
     prefix_path = tmp_path / "prefixes" / ("b" * 8)
@@ -1323,9 +1333,7 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
         (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    config = _shared_target_config(tmp_path, warning_gb=1.0).model_copy(
-        update={"root": checkout}
-    )
+    config = _shared_target_config(tmp_path).model_copy(update={"root": checkout})
     binaries = tmp_path / "pulled-bin"
     binaries.mkdir()
     prefix_path = tmp_path / "prefixes" / ("c" * 8)
@@ -1350,13 +1358,15 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     """No release variables means the build root, exactly as before."""
     from capsem_builder.gate import cachelayout, cargotarget
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
     prefix_path = tmp_path / "prefixes" / ("d" * 8)
 
     cargotarget.link_prefix_trees(config, prefix_path)
 
-    assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == cargotarget.path(config) / "debug"
+    assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == cargotarget.path(
+        config
+    ) / "debug"
     assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
         config, "objects"
     )
@@ -1368,7 +1378,7 @@ def test_a_private_prefix_object_store_is_refused(tmp_path: Path) -> None:
     from capsem_builder.gate import cargotarget
     from capsem_builder.gate.errors import GateError
 
-    config = _shared_target_config(tmp_path, warning_gb=1.0)
+    config = _shared_target_config(tmp_path)
     prefix_path = tmp_path / "prefixes" / ("e" * 8)
     (prefix_path / "cache" / "objects").mkdir(parents=True)
 

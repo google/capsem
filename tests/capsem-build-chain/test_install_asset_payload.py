@@ -238,144 +238,6 @@ def _load_release_installed_probe() -> ModuleType:
     return release_installed_probe
 
 
-def _run_docker_space_gate(
-    tmp_path: Path,
-    *,
-    before_kib: int,
-    after_kib: int,
-    after_trim_kib: int | None = None,
-    volumes: str = "",
-    rail: str = "assets",
-) -> subprocess.CompletedProcess[str]:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir(parents=True)
-    state = tmp_path / "pruned"
-    commands = tmp_path / "docker-commands"
-    docker = fake_bin / "docker"
-    docker.write_text(
-        """#!/bin/sh
-set -eu
-printf '%s\\n' "$*" >> "$FAKE_DOCKER_COMMANDS"
-if [ "$1" = "run" ]; then
-    case "$*" in
-        *debian:bookworm-slim*)
-            phase=$(cat "$FAKE_DOCKER_STATE" 2>/dev/null || true)
-            if [ "$phase" = "pruned" ]; then
-                free="$FAKE_DOCKER_AFTER_KIB"
-            else
-                free="$FAKE_DOCKER_BEFORE_KIB"
-            fi
-            total=$((200 * 1024 * 1024))
-            used=$((total - free))
-            printf '%s %s %s\\n' "$total" "$used" "$free"
-            ;;
-        *alpine:3.20*)
-            printf 'trimmed\\n' > "$FAKE_DOCKER_STATE"
-            ;;
-        *)
-            printf 'unexpected fake docker run: %s\\n' "$*" >&2
-            exit 97
-            ;;
-    esac
-elif [ "$1" = "builder" ] && [ "$2" = "prune" ]; then
-    printf 'pruned\\n' > "$FAKE_DOCKER_STATE"
-elif [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
-    case " $FAKE_DOCKER_VOLUMES " in
-        *" $3 "*) printf '{}\\n' ;;
-        *) exit 1 ;;
-    esac
-elif [ "$1" = "volume" ] && [ "$2" = "rm" ]; then
-    :
-elif [ "$2" = "ls" ] && { [ "$1" = "container" ] || [ "$1" = "image" ]; }; then
-    :
-elif [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
-    exit 1
-elif [ "$1" = "ps" ]; then
-    :
-elif [ "$1" = "system" ] && [ "$2" = "df" ]; then
-    if [ "$3" = "--format" ]; then
-        printf '%s\\n' \
-          '{"Active":"0","Reclaimable":"1GB (50%)","Size":"2GB","TotalCount":"2","Type":"Images"}' \
-          '{"Active":"0","Reclaimable":"0B","Size":"0B","TotalCount":"0","Type":"Containers"}' \
-          '{"Active":"0","Reclaimable":"0B","Size":"0B","TotalCount":"0","Type":"Local Volumes"}' \
-          '{"Active":"0","Reclaimable":"8GB","Size":"10GB","TotalCount":"10","Type":"Build Cache"}'
-    else
-        printf 'Local Volumes space usage:\\n\\nVOLUME NAME LINKS SIZE\\n'
-        for volume in $FAKE_DOCKER_VOLUMES; do
-            printf '%s 0 1GB\\n' "$volume"
-        done
-        printf '\\nBuild cache usage:\\n'
-    fi
-else
-    printf 'unexpected fake docker command: %s\\n' "$*" >&2
-    exit 97
-fi
-"""
-    )
-    docker.chmod(0o755)
-    colima = fake_bin / "colima"
-    colima.write_text(
-        """#!/bin/sh
-set -eu
-if [ "$1" = "status" ]; then
-    printf 'running\\n'
-elif [ "$1" = "ssh" ]; then
-    printf '/mnt/lima-colima: 1 GiB (1073741824 bytes) trimmed\\n'
-else
-    exit 97
-fi
-"""
-    )
-    colima.chmod(0o755)
-    env = os.environ.copy()
-    env.update(
-        {
-            "PATH": f"{fake_bin}:{env['PATH']}",
-            "FAKE_DOCKER_STATE": str(state),
-            "FAKE_DOCKER_BEFORE_KIB": str(before_kib),
-            "FAKE_DOCKER_AFTER_KIB": str(after_kib),
-            "FAKE_DOCKER_VOLUMES": volumes,
-            "FAKE_DOCKER_COMMANDS": str(commands),
-        }
-    )
-    return subprocess.run(
-        [
-            "uv",
-            "run",
-            "--project",
-            "build_system",
-            "--frozen",
-            "capsem-cache",
-            "--repository",
-            str(PROJECT_ROOT),
-            "ensure-space",
-            rail,
-        ],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-
-def _cache_rail(rail: str) -> dict:
-    """The cache policy's limits for `rail`.
-
-    Read rather than restated. These fixtures simulate a daemon sitting above
-    or below the free-space floor, so every literal here is only meaningful
-    relative to that floor: hardcoding "30 GiB is plenty" silently became
-    "30 GiB is not enough" the moment the floor moved to 40, and the failure
-    surfaced as a release gate refusing to build assets.
-    """
-    import tomllib
-
-    policy = tomllib.loads(
-        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
-    )
-    return policy["control"]["docker"]["rails"][rail]
-
-
 def _gate_order() -> list[str]:
     """Every step of the complete gate, in an order the graph permits.
 
@@ -426,15 +288,16 @@ def _gate_plan_step(label: str):
     )
 
 
-def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
-    # Refuse a build the daemon cannot finish before its expensive lanes.
-    # The preflight is inside `AssetGate`; prove it reads the assets rail.
+def test_asset_gate_enforces_owned_caches_before_expensive_lanes() -> None:
+    # Enforce both runtime and VM generations through typed cache IDs.
     assets_source = (
         PROJECT_ROOT / "build_system" / "builder" / "gate" / "assets.py"
     ).read_text(encoding="utf-8")
-    assert "ensure_space" in assets_source
-    # The lanes are steps now, so "capacity before building" is an edge rather
-    # than statement order: `preflight` reserves and both lanes depend on it.
+    assert 'self._cache.enforce("docker", "assets")' in assets_source
+    assert (
+        'self._cache.enforce("assets", "active VM asset generations")' in assets_source
+    )
+    # The lanes are steps, so enforcement before building is a graph edge.
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
@@ -444,52 +307,6 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert plan.after_of("assets.asset-dependencies") == {"assets.preflight"}
     for arch in ("arm64", "x86_64"):
         assert plan.after_of(f"assets.build.{arch}") == {"assets.asset-dependencies"}
-
-    assets = _cache_rail("assets")
-    floor_gib = assets["minimum_free_bytes"] // 1024**3
-    # Comfortably clear of the floor, and clearly under it, whatever it is.
-    ample_gib = floor_gib + 10
-    starved_gib = max(floor_gib // 4, 1)
-    ample_kib = ample_gib * 1024 * 1024
-    starved_kib = starved_gib * 1024 * 1024
-
-    enough = _run_docker_space_gate(
-        tmp_path / "enough", before_kib=ample_kib, after_kib=0
-    )
-    assert enough.returncode == 0, enough.stderr
-    assert '"violations": []' in enough.stdout
-
-    reclaimed = _run_docker_space_gate(
-        tmp_path / "reclaimed",
-        before_kib=starved_kib,
-        after_kib=ample_kib,
-    )
-    assert reclaimed.returncode == 0, reclaimed.stderr
-    assert '"pruned": true' in reclaimed.stdout
-    reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
-    assert "builder prune --force --all --reserved-space 0B" in reclaimed_commands
-    assert "until=" not in reclaimed_commands
-    assert "builder prune -af" not in reclaimed_commands
-
-    package_reclaimed = _run_docker_space_gate(
-        tmp_path / "package-reclaimed",
-        before_kib=starved_kib,
-        after_kib=ample_kib,
-        rail="package",
-    )
-    assert package_reclaimed.returncode == 0, package_reclaimed.stderr
-    assert '"pruned": true' in package_reclaimed.stdout
-    package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
-    assert "builder prune --force --all --reserved-space 0B" in package_commands
-    assert "until=" not in package_commands
-
-    exhausted = _run_docker_space_gate(
-        tmp_path / "exhausted",
-        before_kib=starved_kib,
-        after_kib=starved_kib,
-    )
-    assert exhausted.returncode != 0
-    assert f"requires {assets['minimum_free_bytes']} free bytes" in exhausted.stderr
 
 
 def test_native_install_reuses_the_release_package_builder() -> None:
@@ -1302,9 +1119,9 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     tests = "\n".join(
         (PROJECT_ROOT / path).read_text()
         for path in (
-            "tests/capsem-install/conftest.py",
-            "tests/capsem-install/test_asset_download.py",
-            "tests/capsem-install/test_update.py",
+            "tests/capsem_install/conftest.py",
+            "tests/capsem_install/test_asset_download.py",
+            "tests/capsem_install/test_update.py",
         )
     )
     issued = _planned("install-image")
@@ -1472,13 +1289,11 @@ def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
     assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index("FROM")
 
 
-def test_cross_compile_preflights_docker_capacity_after_builder_before_package() -> (
-    None
-):
-    """Capacity is checked twice: once the builder exists, once before the build.
+def test_cross_compile_enforces_docker_cache_after_builder_before_package() -> None:
+    """Owned usage is checked once the builder exists and again before the build.
 
-    The builder image itself consumes the headroom, so a single check before it
-    measures a number that is wrong by the time it matters.
+    The builder image contributes to the same cache, so the second check sees
+    the actual pre-build state.
     """
     from capsem_builder.gate import config as gate_config
 
@@ -1486,9 +1301,9 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     source = (PROJECT_ROOT / "build_system/builder/gate/packagerail.py").read_text()
     plan = _planned("cross-compile", arch="arm64")
 
-    assert source.count('ensure_space("package")') == 2
-    assert plan.index("host-image") < plan.index("package.arm64.space")
-    assert plan.index("package.arm64.space") < plan.index("package.arm64.materialize")
+    assert source.count('self._cache.enforce("docker", "package")') == 2
+    assert plan.index("host-image") < plan.index("package.arm64.cache")
+    assert plan.index("package.arm64.cache") < plan.index("package.arm64.materialize")
     assert plan.index("package.arm64.materialize") < plan.index("package.arm64.build")
     assert config.package.builder.runtime_network == "none"
 
@@ -1547,23 +1362,18 @@ def test_obsolete_named_volume_release_steps_are_gone() -> None:
     assert not [label for label in plan if "storage.completed" in label]
 
 
-def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
-    """After the *second* consumer, never between the assets and the assembly.
-
-    `capsem-host-builder` is a dependency of both package builds, so its final
-    tag survives until neither needs it.
-    """
+def test_full_gate_retains_the_host_builder_as_a_bounded_cache() -> None:
+    """The shared parent stays reusable after its consumers complete."""
     order = _gate_order()
 
-    # `after-install`, not `after-packages`: the install helper derives from
-    # the exact local host builder before the source image is sealed, so the
-    # packages are not the last thing that needs the parent tag.
     import tomllib
 
     policy = tomllib.loads((PROJECT_ROOT / "config/cache.toml").read_text())
-    release = policy["control"]["docker"]["releases"]["after-install"]
-    assert release["rail"] == "install"
-    assert release["images"] == ["capsem-host-builder:latest"]
+    control = policy["control"]["docker"]
+    assert "releases" not in control
+    owner = control["images"]["capsem-host-builder"]
+    assert owner["repository"] == "capsem-host-builder"
+    assert owner["prune_strategy"] == "generational"
     assert (
         _at(order, "package.arm64")
         < _at(order, "package.x86_64")
@@ -1571,9 +1381,8 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     )
 
 
-def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
-    """The whole gate's budget is taken once, up front, and reclaims nothing
-    a rebuild would have to redo."""
+def test_full_gate_enforces_all_owned_caches_without_broad_deletion() -> None:
+    """The whole gate enforces typed owners before expensive work."""
     from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
@@ -1586,16 +1395,12 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
     control = load_policy(PROJECT_ROOT).control
     assert control is not None
-    assert "candidate-boundary" not in control.docker.releases
-    assert tuple(config.candidate.candidate_budget) == ("default", "candidate-boundary")
-    # `candidate-boundary` labels the capacity evidence. It is not a release
-    # phase: no working resource is owned before the candidate starts, so a
-    # release action here would only take two snapshots and reclaim nothing.
-    budget = _gate_plan_step("prepare.cache-budget")
-    rendered = budget.render()
-    assert any("no room to finish" in line for line in rendered)
+    assert config.candidate.candidate_cache == "all"
+    enforcement = _gate_plan_step("prepare.cache-enforcement")
+    rendered = enforcement.render()
+    assert any("enforce configured cache maximums" in line for line in rendered)
     assert not any("release the storage held" in line for line in rendered)
-    assert _at(order, "prepare.cache-budget") < _at(order, "assets.preflight")
+    assert _at(order, "prepare.cache-enforcement") < _at(order, "assets.preflight")
     for destructive in (
         "docker image rm -f",
         "docker volume rm",
@@ -1786,7 +1591,7 @@ def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) ->
         ),
     )._describe()
 
-    assert ("install.capacity", "install.materialize") in plan.edges
+    assert ("install.cache", "install.materialize") in plan.edges
     assert ("install.materialize", "install.image-build") in plan.edges
     assert ("install.image-build", "install.image-smoke") in plan.edges
     assert ("install.image-smoke", "install") in plan.edges

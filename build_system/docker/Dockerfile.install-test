@@ -12,7 +12,8 @@ RUN --mount=type=cache,id=capsem-install-source-cargo-${TARGETARCH},target=/tmp/
     RUSTUP_AUTO_INSTALL=0 CARGO_NET_OFFLINE=true \
     CARGO_TARGET_DIR=/tmp/capsem-install-current-cli \
     cargo build --locked --offline -p capsem --bin capsem \
-    && test -x /tmp/capsem-install-current-cli/debug/capsem
+    && install -m 0555 /tmp/capsem-install-current-cli/debug/capsem \
+        /tmp/capsem-install-current
 
 FROM ${BASE}
 ARG INPUT_IDENTITY
@@ -40,7 +41,7 @@ RUN cd /src/build_system/release_site \
 USER root
 
 COPY --from=source-cli --chmod=0555 \
-    /tmp/capsem-install-current-cli/debug/capsem ${FRESH_CLI}
+    /tmp/capsem-install-current ${FRESH_CLI}
 RUN test -x "${UV_PROJECT_ENVIRONMENT}/bin/python" \
     && test -x "${FRESH_CLI}" \
     && test -x /src/build_system/release_site/node_modules/.bin/astro

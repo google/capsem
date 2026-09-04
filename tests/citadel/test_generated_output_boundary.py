@@ -209,16 +209,7 @@ def _observe(probes: list[str]) -> Observed:
     tracked = tuple(_git("ls-files"))
     sources = _text_sources(list(tracked))
     subject = tuple(_git("ls-files", "-co", "--exclude-standard"))
-    ignored = frozenset(
-        probe
-        for probe in probes
-        if subprocess.run(
-            ("git", "check-ignore", "--quiet", "--", probe),
-            cwd=ROOT,
-            check=False,
-        ).returncode
-        == 0
-    )
+    ignored = frozenset(probe for probe in probes if _probe_is_ignored(ROOT, probe))
     return Observed(
         producers=_producer_records(sources),
         ambient_assets=_ambient_asset_records(sources),
@@ -228,6 +219,25 @@ def _observe(probes: list[str]) -> Observed:
         ignored_probes=ignored,
         prefix_exports=_prefix_exports(),
         output_roots=_output_roots(),
+    )
+
+
+def _probe_is_ignored(root: Path, probe: str) -> bool:
+    """Check the owning path when an exported cache symlink blocks traversal."""
+    candidate = root
+    checked = probe
+    for part in Path(probe).parts:
+        candidate /= part
+        if candidate.is_symlink():
+            checked = candidate.relative_to(root).as_posix()
+            break
+    return (
+        subprocess.run(
+            ("git", "check-ignore", "--quiet", "--", checked),
+            cwd=root,
+            check=False,
+        ).returncode
+        == 0
     )
 
 
@@ -366,6 +376,21 @@ def test_each_generated_output_violation_is_observed_red(
     ), RATIONALE
 
 
+def test_ignored_probe_uses_the_exported_symlink_owner(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+    (repository / ".gitignore").write_text("/cache/\n", encoding="utf-8")
+    exported = tmp_path / "exported-assets"
+    exported.mkdir()
+    target = repository / "cache" / "target"
+    target.mkdir(parents=True)
+    (target / "assets").symlink_to(exported, target_is_directory=True)
+
+    assert _probe_is_ignored(repository, "cache/target/assets/.boundary-probe")
+    assert not _probe_is_ignored(repository, "outside/.boundary-probe")
+
+
 def test_empty_output_surface_fails_closed() -> None:
     assert any(
         "missing approved output" in problem for problem in _problems({}, _synthetic())
@@ -375,14 +400,12 @@ def test_empty_output_surface_fails_closed() -> None:
 def test_producer_scanner_distinguishes_repository_roots() -> None:
     records = _producer_records(
         {
-            "scripts/new.py": "\n".join(
-                (
-                    'Path("assets/cache").mkdir(parents=True)',
-                    'output_pkg = Path("../packages/Capsem.pkg")',
-                    'Path("cache/target/staging/assets/cache").mkdir(parents=True)',
-                    'Path("/assets/container-cache").mkdir(parents=True)',
-                    'Path("$CAPSEM_HOME/assets/manifest.json").write_text(data)',
-                )
+            "scripts/new.py": (
+                'Path("assets/cache").mkdir(parents=True)\n'
+                'output_pkg = Path("../packages/Capsem.pkg")\n'
+                'Path("cache/target/staging/assets/cache").mkdir(parents=True)\n'
+                'Path("/assets/container-cache").mkdir(parents=True)\n'
+                'Path("$CAPSEM_HOME/assets/manifest.json").write_text(data)'
             )
         }
     )
@@ -395,13 +418,11 @@ def test_producer_scanner_distinguishes_repository_roots() -> None:
 def test_ambient_scanner_distinguishes_path_defaults_from_asset_data() -> None:
     records = _ambient_asset_records(
         {
-            "scripts/new.py": "\n".join(
-                (
-                    'parser.add_argument("--assets", default=Path("assets"))',
-                    'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"',
-                    "assets: list[Asset] = Field(default_factory=list)",
-                    'parser.add_argument("--lane", choices=("assets",), default="assets")',
-                )
+            "scripts/new.py": (
+                'parser.add_argument("--assets", default=Path("assets"))\n'
+                'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"\n'
+                "assets: list[Asset] = Field(default_factory=list)\n"
+                'parser.add_argument("--lane", choices=("assets",), default="assets")'
             )
         }
     )
@@ -552,19 +573,24 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
 
 def test_generated_output_transfer_and_cleanup_ownership_is_symmetric() -> None:
     config = _gate_config()
+    cache = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
     exports = set(config["prefix"]["exports"])
-    reclaimable = set(config["disk"]["reclaimable"])
     generated = set(FINAL_OUTPUT_ROOTS.values())
+    stage_by_path = {
+        f"{cache['root']}/{stage['path']}": stage for stage in cache["stages"].values()
+    }
 
     assert exports == generated, RATIONALE
-    protected = {
-        FINAL_OUTPUT_ROOTS["assets"],
-        FINAL_OUTPUT_ROOTS["materialized_config"],
-        FINAL_OUTPUT_ROOTS["packages"],
+    assert generated <= set(stage_by_path), RATIONALE
+    contract = {
+        "description",
+        "scope",
+        "warm_size_bytes",
+        "max_size_bytes",
+        "prune_strategy",
     }
-    assert generated - protected <= reclaimable, RATIONALE
-    assert protected.isdisjoint(reclaimable), RATIONALE
-    assert all(path.startswith("cache/target/") for path in reclaimable), RATIONALE
+    assert all(contract <= set(stage_by_path[path]) for path in generated), RATIONALE
+    assert all(path.startswith("cache/target/") for path in generated), RATIONALE
 
     gitignore = {
         line.strip()

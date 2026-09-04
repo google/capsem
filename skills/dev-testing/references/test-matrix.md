@@ -79,6 +79,6 @@ directories move. Do not copy the config-owned Rust floors into prose.
 | capsem-lifecycle | `integration` | Yes | Collect | No | Yes |
 | capsem-build-chain | `build_chain` | Yes | Collect | No | Yes |
 | capsem-recipes | `recipe` | No | Run | No | Yes |
-| capsem-install | `install` | No | Yes (Docker) | No | Yes |
+| capsem_install | `install` | No | Yes (Docker) | No | Yes |
 
 "Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.

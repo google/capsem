@@ -5,7 +5,8 @@ from pathlib import Path
 from capsem_builder.cache.admission import decide_admission
 from capsem_builder.cache.models import (
     CachePolicy,
-    PruneMethod,
+    CacheScope,
+    PruneStrategy,
     StagePolicy,
 )
 from capsem_builder.cache.models import TestAdmissionPolicy as AdmissionPolicy
@@ -16,14 +17,15 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={
             "state": StagePolicy(
                 path=Path("state"),
-                warning_bytes=1,
-                soft_bytes=2,
-                hard_bytes=3,
-                prune=PruneMethod.LRU,
+                description="test cache",
+                scope=CacheScope.DISK,
+                warm_size_bytes=2,
+                max_size_bytes=3,
+                prune_strategy=PruneStrategy.LRU,
                 maximum_age_hours=72,
             )
         },

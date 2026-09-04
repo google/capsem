@@ -1266,7 +1266,7 @@ SELECT json_object(
 pub(super) async fn read_stats_response_from_main_db_handle(state: &ServiceState) -> Result<Vec<u8>, AppError> {
     let db_path = state.main_db_path();
     let db = &state.profile_mutation_db;
-    let db_epoch = db.read_cache_epoch();
+    let db_epoch = db.read_cache_epoch(capsem_logger::ReadCacheDomain::SessionSummary);
     if let Some(cached) = state.stats_response_cache.lock().unwrap().clone() {
         if cached.db_epoch == db_epoch {
             return Ok(cached.bytes);
@@ -2099,6 +2099,7 @@ pub(super) async fn handle_profile_plugin_update(
         profile
             .set_plugin_config(&plugin_id, config, "service-api")
             .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?,
+        &profile,
     )
     .await?;
     log_profile_mutation_applied("profile_plugin_edit", &event);
@@ -2546,8 +2547,7 @@ pub(super) async fn handle_enforcement_rule_upsert(
             );
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
-    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -2624,8 +2624,7 @@ pub(super) async fn handle_detection_rule_upsert(
             );
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
-    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_upsert", &event);
     Ok(Json(EnforcementRuleResponse {
         rule_id,
@@ -2665,8 +2664,7 @@ pub(super) async fn handle_enforcement_rule_delete(
         );
         AppError(status, error)
     })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
-    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
@@ -2695,8 +2693,7 @@ pub(super) async fn handle_detection_rule_delete(
         log_profile_mutation_route_rejected("detection_rule_delete", &profile_id, "rule", &rule_id, "delete", &error);
         AppError(status, error)
     })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
-    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_delete", &event);
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }

@@ -11,6 +11,7 @@ coverage must ratchet the floor upward instead of silently becoming disposable.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import tomllib
 from collections import defaultdict
@@ -124,10 +125,11 @@ def violations(
             )
         elif coverage.percent - floor > max_headroom + 1e-9:
             minimum = coverage.percent - max_headroom
+            required_floor = math.ceil((minimum - 1e-9) * 100.0) / 100.0
             problems.append(
                 f"{crate}: {coverage.percent:.2f}% leaves {coverage.percent - floor:.2f} "
                 f"points above its {floor:.2f}% floor; raise the floor to at least "
-                f"{minimum:.2f}% in the same change"
+                f"{required_floor:.2f}% in the same change"
             )
     return problems
 

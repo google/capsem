@@ -14,8 +14,8 @@ from typing import Annotated, Any, Literal
 import blake3
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
-from ..cache.config import load_policy
-from ..cache.objects import ObjectRef, import_file, materialize
+from ..cache.config import load_paths
+from ..cache.objects import ObjectRef, digest_file, import_file, materialize
 from ..cache.paths import CachePaths
 
 TOKEN = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -87,7 +87,14 @@ def _source_files(target: Path) -> Iterator[Path]:
 
 def build_identity(record: dict[str, Any], *, extra: dict[str, Any] | None = None) -> str:
     """Hash only byte-affecting build inputs, excluding commit and runtime labels."""
-    keys = ("arch", "template", "docker_platform", "dockerfile", "build_context", "dependency_image")
+    keys = (
+        "arch",
+        "template",
+        "docker_platform",
+        "dockerfile",
+        "build_context",
+        "dependency_image",
+    )
     missing = [key for key in keys if key not in record]
     if missing:
         raise ValueError(f"component build identity lacks inputs: {missing}")
@@ -98,13 +105,59 @@ def build_identity(record: dict[str, Any], *, extra: dict[str, Any] | None = Non
 
 
 def _paths(repository: Path) -> CachePaths:
-    return CachePaths(repository_root=repository.resolve(), policy=load_policy(repository))
+    return load_paths(repository.resolve())
 
 
 def _receipt(paths: CachePaths, component: str, identity: str) -> Path:
     if not TOKEN.fullmatch(component) or len(identity) != 64:
         raise ValueError("component cache identity is not canonical")
     return paths.stage("objects") / "components" / component / f"{identity}.json"
+
+
+def _load_receipt(paths: CachePaths, component: str, identity: str) -> ComponentReceipt | None:
+    receipt_path = _receipt(paths, component, identity)
+    if not receipt_path.is_file():
+        return None
+    receipt = ComponentReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8"))
+    if (
+        receipt.schema_id != SCHEMA
+        or receipt.component != component
+        or receipt.input_digest != identity
+    ):
+        raise ValueError(f"component receipt identity mismatch: {receipt_path}")
+    return receipt
+
+
+def current(
+    repository: Path,
+    component: str,
+    identity: str,
+    output: Path,
+) -> tuple[Path, ...] | None:
+    """Return current exact outputs without mutating or trusting timestamps."""
+    paths = _paths(repository)
+    output_root = output.resolve()
+    if not output_root.is_relative_to(paths.root.resolve()):
+        return None
+    receipt = _load_receipt(paths, component, identity)
+    if receipt is None:
+        return None
+    found: list[Path] = []
+    for relative, reference in sorted(receipt.files.items()):
+        candidate = output / relative
+        if candidate.is_symlink() or not candidate.is_file():
+            return None
+        if not candidate.resolve().is_relative_to(output_root):
+            return None
+        metadata = candidate.stat()
+        if (
+            metadata.st_size != reference.logical_bytes
+            or stat.S_IMODE(metadata.st_mode) != reference.mode
+            or digest_file(candidate) != reference.digest
+        ):
+            return None
+        found.append(candidate)
+    return tuple(found)
 
 
 def restore(
@@ -117,17 +170,9 @@ def restore(
     paths = _paths(repository)
     if not output.resolve().is_relative_to(paths.root.resolve()):
         return None
-    receipt_path = _receipt(paths, component, identity)
-    if not receipt_path.is_file():
+    receipt = _load_receipt(paths, component, identity)
+    if receipt is None:
         return None
-    receipt = ComponentReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8"))
-    if (
-        receipt.schema_id != SCHEMA
-        or receipt.component != component
-        or receipt.input_digest != identity
-        or not receipt.files
-    ):
-        raise ValueError(f"component receipt identity mismatch: {receipt_path}")
     restored: list[Path] = []
     for relative, reference in sorted(receipt.files.items()):
         destination = output / relative

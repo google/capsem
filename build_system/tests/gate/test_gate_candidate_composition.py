@@ -214,6 +214,22 @@ def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
     assert all(("host-image", label) in plan.edges for label in dependencies)
 
 
+def test_glowup_reuses_the_profile_content_materialized_by_preparation() -> None:
+    """Standalone ownership must not become duplicate work in composition."""
+    plan = _plan()
+    materializers = [
+        step.label
+        for step in plan.steps
+        if any(
+            action.render() == "bash build_system/scripts/build/materialize-config.sh"
+            for action in step.actions
+        )
+    ]
+
+    assert materializers == ["prepare.materialize-config"]
+    assert "prepare.materialize-config" in ancestors(plan, "package.arm64.content")
+
+
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:
     """A phase is finished when every independent branch of it is finished.
 

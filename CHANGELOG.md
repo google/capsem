@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Capsem advances to version 0.6.3 for the cache-control, test-performance,
+  runtime, and security fixes collected in this release.
+- The TCP gateway now pools its HTTP-over-UDS service connections and streams
+  already-sized JSON responses without copying them into a second buffer,
+  disables Nagle buffering on accepted control-plane connections, and reduces
+  hot-route CPU and tail latency while retaining request limits and headers.
+- Profile mutations now publish the already-validated profile into only the
+  affected typed route caches. Orthogonal mutation-ledger writes no longer
+  evict session-stat responses, while session and usage writes still do.
+- Host-side process control, descriptor handling, advisory locks,
+  descriptor-relative filesystem containment, and private file publication now
+  share one `capsem-foundation` Unix layer. Owned descriptors eliminate
+  ambiguous close responsibility, expected races retain typed errno-aware
+  outcomes, unexpected failures carry operation context, and Citadel prevents
+  host consumers from bypassing the boundary while preserving reviewed
+  kernel-ABI implementations.
 - Repository-generated and reusable state now has one hard cache root:
   `cache/`. Cargo profiles, VM assets, packages, release products, coverage,
   journals, private gate worktrees, and retained prefix products no longer
@@ -24,10 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies, strict receipts make every reused byte auditable, and runtime boot
   evidence remains fresh rather than being mistaken for construction output.
 - `just cache` now reconciles repository usage with owned Docker images,
-  containers, BuildKit data, and Tart VMs through bounded typed adapters.
-  Snapshots write strict receipts under `cache/containers`, prune previews
-  protect active and foreign resources, and applied native cleanup is exact,
-  reasoned, and journaled alongside its runtime output.
+  containers, persistent per-architecture package compiler volumes, BuildKit
+  data, and Tart VMs through bounded typed adapters. Package builds retain
+  Cargo fingerprints across gates instead of compiling both targets cold.
+  Every owner exposes the same description, scope, maximum size, warm size,
+  and prune strategy through `just cache stats`; prune previews protect active
+  and foreign resources, and applied cleanup is exact, reasoned, and journaled.
 - Complete local tests now refuse low-impact repeats until ten commits have
   accumulated since the latest successful proof and print the exact focused
   owners to run instead. High-impact and unknown changes remain eligible;
@@ -64,9 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `just cache` now provides a typed, repository-owned inventory and retention
-  interface. Status and verification are read-only, pruning previews its exact
-  plan unless `--apply` is supplied, and every applied deletion is contained
-  beneath `cache/` and journaled with its reason.
+  interface. Stats and verification are read-only, pruning previews its exact
+  plan unless `--apply` is supplied, and a common registry hides disk,
+  Docker/Colima, and Tart mechanisms from callers. Every applied deletion is
+  ownership-scoped and journaled with its reason.
 - Developer verification now has explicit cost boundaries: `just fast-test`
   prints that it is incomplete, `just focus-test <group>` reruns one existing
   owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or
@@ -138,6 +157,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a poll with nothing new went from 8 ms to 56 µs and a poll right after a
   write from 10 ms to 1.7 ms; at 200,000 rows, 90 ms to 3 ms and 110 ms to
   4 ms. A new criterion bench keeps both numbers measured.
+- Invalid or empty built-in HTTP grep patterns are now rejected before DNS or
+  network authorization, returning the intended validation error without an
+  unnecessary outbound lookup.
+- KVM pause now clears prior vCPU snapshots before publishing the pausing
+  lifecycle state, so a freshly parked vCPU snapshot cannot be erased by the
+  requesting thread under contention.
+- Plaintext credential-store updates now use collision-safe sibling files that
+  are owner-only before secrets are written, atomically replace the prior
+  complete store, and durably sync both file and directory without following a
+  predictable temporary-file symlink.
 - Saving the persistent VM registry no longer holds its lock while the file
   is written and fsynced. Every list, info and status poll takes that lock to
   read, so each persist, fork, suspend, exit or purge stalled them for the
@@ -349,6 +378,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache pressure cleanup now honors each owned image repository's retention
   count before trimming BuildKit to its total-byte target, and rootfs cache
   identities include the exact asset-tools image used for EROFS and inventory.
+- Cache control now separates shared storage authority from qualified-source
+  policy, preserves leased and structural entries, enforces generation and
+  free-space limits, reports typed health, and reuses Rust compilation through
+  the pinned sccache toolchain with a cache-owned daemon endpoint.
+- Python lock auditing now uses the shared repository HTTP cache and bounded
+  retries for transient advisory-service failures, while vulnerability results
+  still fail immediately and requirement hashes are validated through PyPI.
+- MITM forwarding now rejects disallowed plain-HTTP upstream ports before the
+  host dials them, and gzip collection rejects decompression beyond its bounded
+  payload limit instead of allowing a compressed body to exhaust host memory.
 - Complete local qualification now retains the shared Cargo build directory
   even when it crosses its advisory size threshold; only an explicit cold-build
   diagnostic may discard reusable compiler output.
@@ -4416,7 +4455,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source contract asserts a Rust test name against production source instead of
   the sibling `tests.rs` the test lives in. This class cost two release
   attempts: sixteen contracts under `tests/capsem-release/`, then five more
-  under `tests/capsem-install/` that run only inside the Docker install gate and
+  under `tests/capsem_install/` that run only inside the Docker install gate and
   so stayed invisible until forty minutes into a release run. The guard resolves
   each assertion's target through the AST, per function scope, so contracts that
   legitimately name a relocated test while asserting it against a test module or
@@ -10039,7 +10078,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the published manifest, curl-checks every `<base>/v<tag>/<arch>-<name>` URL
   is reachable, AND runs the just-released binary's `capsem update --assets`
   against real GitHub. Closes the gap that hid the URL bug for one release.
-- Fixed `tests/capsem-install/test_asset_download.py`: fake release dir was
+- Fixed `tests/capsem_install/test_asset_download.py`: fake release dir was
   at `v<asset_version>` (mirroring the same buggy mental model as the code).
   Now at `v<binary_version>` so it actually models GitHub.
 - Dropped the `_build-host` dependency from `just test-install`. The recipe
@@ -10079,7 +10118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tauri` v2.11.0 crate (`cargo tauri build` refuses mismatched majors/minors).
 
 ### Fixed (install-test fixture)
-- `tests/capsem-install/test_asset_download.py` hardcoded `serve_dir/v1.0.1/`
+- `tests/capsem_install/test_asset_download.py` hardcoded `serve_dir/v1.0.1/`
   for the fake release dir, but the installed binary builds asset URLs from
   its own `CARGO_PKG_VERSION` (e.g. `v1.0.1777065213`). Every run inside the
   install-test container 404'd. Replaced with `f"v{_binary_version()}"` -- a
@@ -11382,7 +11421,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ManifestV2::resolve()` looks up) and removes the legacy `v1.0.*/`
   directories that accumulated from the old v1 layout. Also updated
   `build_system/scripts/test/simulate-install.sh` to honor the same layout so
-  `tests/capsem-install/` agrees with production.
+  `tests/capsem_install/` agrees with production.
 
 ### Added
 - **`capsem setup` actually downloads VM assets, and `capsem update --assets`
@@ -11397,9 +11436,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download target.
 
 ### Tests
-- **`tests/capsem-install/` is now safe to run bare-metal.** The module-level
+- **`tests/capsem_install/` is now safe to run bare-metal.** The module-level
   `CAPSEM_DIR` previously hardcoded `$HOME/.capsem`, so running
-  `pytest tests/capsem-install/` clobbered the developer's real install
+  `pytest tests/capsem_install/` clobbered the developer's real install
   (`simulate-install.sh` overwrote binaries; `test_full_uninstall` literally
   asserted `~/.capsem` was removed). `conftest.py` now provisions a temp
   `CAPSEM_HOME` for the session and auto-skips the `live_system` tier
@@ -11425,7 +11464,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build failures") with no duplicate compile (clippy is a strict superset of
   check). Smoke additionally gained `pnpm run check` in its parallel block --
   previously a Svelte/TS type error only surfaced under `just test`.
-- **`just test` ignores `tests/capsem-recipes/` and `tests/capsem-install/`
+- **`just test` ignores `tests/capsem-recipes/` and `tests/capsem_install/`
   in its parallel pytest stage.** Both directories contain tests that
   `subprocess.run(["cargo", "build", ...])` from inside pytest; under `-n 4`
   this atomically replaced the codesigned `capsem-service` / `capsem-process`
@@ -11764,9 +11803,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection" / "VM never exec-ready" cascades. Each site now scopes the
   match to its own install prefix:
   - `build_system/scripts/test/simulate-install.sh` matches `$INSTALL_DIR/<name>`.
-  - `tests/capsem-install/conftest.py::_kill_service` matches
+  - `tests/capsem_install/conftest.py::_kill_service` matches
     `$INSTALL_DIR/<name>`.
-  - `tests/capsem-install/test_service_install.py` matches
+  - `tests/capsem_install/test_service_install.py` matches
     `$INSTALL_DIR/capsem-service`.
   - `crates/capsem/src/uninstall.rs` and
     `crates/capsem/src/service_install.rs` use `current_exe().parent()` to

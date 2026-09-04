@@ -8,13 +8,11 @@
 //!   - `StartupLock` -- a filesystem lock next to the socket that serialises
 //!     startup races. Released when dropped (including on crash).
 
-use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use nix::fcntl::{Flock, FlockArg};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
@@ -84,7 +82,7 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
 /// name. `/tmp` is always writable and survives a suspend; the flock
 /// releases automatically on crash (fd close).
 pub struct VzHostLock {
-    _flock: Flock<std::fs::File>,
+    _lock: capsem_foundation::unix::lock::FileLock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,28 +106,20 @@ impl VzHostLock {
 
     fn acquire_path(path: &Path, mode: VzHostLockMode, timeout: Duration) -> Result<Option<Self>> {
         let deadline = Instant::now() + timeout;
-        let arg = match mode {
-            VzHostLockMode::Shared => FlockArg::LockSharedNonblock,
-            VzHostLockMode::Exclusive => FlockArg::LockExclusiveNonblock,
+        let mode = match mode {
+            VzHostLockMode::Shared => capsem_foundation::unix::lock::LockMode::Shared,
+            VzHostLockMode::Exclusive => capsem_foundation::unix::lock::LockMode::Exclusive,
         };
         loop {
-            let file = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(path)
-                .with_context(|| format!("failed to open vz host lock {}", path.display()))?;
-            match Flock::lock(file, arg) {
-                Ok(flock) => return Ok(Some(Self { _flock: flock })),
-                Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
+            match capsem_foundation::unix::lock::try_acquire(path, mode)
+                .with_context(|| format!("failed to acquire vz host lock {}", path.display()))?
+            {
+                capsem_foundation::unix::lock::LockAttempt::Acquired(lock) => return Ok(Some(Self { _lock: lock })),
+                capsem_foundation::unix::lock::LockAttempt::Contended => {
                     if Instant::now() >= deadline {
                         return Ok(None);
                     }
                     std::thread::sleep(Duration::from_millis(50));
-                }
-                Err((_file, e)) => {
-                    return Err(anyhow::anyhow!("flock failed on {}: {}", path.display(), e));
                 }
             }
         }
@@ -145,7 +135,7 @@ impl VzHostLock {
 /// this handle releases the lock (fd close or explicit LOCK_UN) -- so a crash
 /// during startup does NOT leave the lock held.
 pub struct StartupLock {
-    _flock: Flock<std::fs::File>,
+    _lock: capsem_foundation::unix::lock::FileLock,
 }
 
 impl StartupLock {
@@ -153,31 +143,20 @@ impl StartupLock {
     /// release it. Returns `Ok(Some(lock))` on success or `Ok(None)` if the
     /// holder never released within the deadline.
     pub fn acquire(lock_path: &Path, timeout: Duration) -> Result<Option<Self>> {
-        if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create parent of lock file {}", lock_path.display()))?;
-        }
-
         let deadline = Instant::now() + timeout;
         loop {
-            let file = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(lock_path)
-                .with_context(|| format!("failed to open lock file {}", lock_path.display()))?;
-
-            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
-                Ok(flock) => return Ok(Some(Self { _flock: flock })),
-                Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
+            match capsem_foundation::unix::lock::try_acquire(
+                lock_path,
+                capsem_foundation::unix::lock::LockMode::Exclusive,
+            )
+            .with_context(|| format!("failed to acquire startup lock {}", lock_path.display()))?
+            {
+                capsem_foundation::unix::lock::LockAttempt::Acquired(lock) => return Ok(Some(Self { _lock: lock })),
+                capsem_foundation::unix::lock::LockAttempt::Contended => {
                     if Instant::now() >= deadline {
                         return Ok(None);
                     }
                     std::thread::sleep(Duration::from_millis(100));
-                }
-                Err((_file, e)) => {
-                    return Err(anyhow::anyhow!("flock failed on {}: {}", lock_path.display(), e));
                 }
             }
         }

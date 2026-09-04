@@ -23,6 +23,60 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class HeadroomGuard(BaseModel):
+    """One measured value and the operating margin its ceiling must retain."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    label: str = Field(min_length=1)
+    measured: float = Field(ge=0, allow_inf_nan=False)
+    ceiling: float = Field(gt=0, allow_inf_nan=False)
+    minimum_factor: float = Field(gt=1, allow_inf_nan=False)
+    accounting_slack: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    unit: str = Field(min_length=1)
+
+    @property
+    def required_ceiling(self) -> float:
+        return self.measured * self.minimum_factor
+
+    @property
+    def effective_ceiling(self) -> float:
+        return self.ceiling + self.accounting_slack
+
+    def verify(self) -> None:
+        if self.required_ceiling > self.effective_ceiling:
+            raise AssertionError(
+                f"{self.label} leaves less than "
+                f"{(self.minimum_factor - 1) * 100:.0f}% headroom: "
+                f"measured={self.measured:.3f}{self.unit}, "
+                f"ceiling={self.ceiling:.3f}{self.unit}, "
+                f"accounting_slack={self.accounting_slack:.3f}{self.unit}, "
+                f"required_ceiling={self.required_ceiling:.3f}{self.unit}"
+            )
+
+
+def assert_has_headroom(
+    *,
+    label: str,
+    measured: float,
+    ceiling: float,
+    minimum_factor: float,
+    unit: str,
+    accounting_slack: float = 0.0,
+) -> None:
+    """Reject a passing measurement that has consumed its operating margin."""
+    HeadroomGuard(
+        label=label,
+        measured=measured,
+        ceiling=ceiling,
+        minimum_factor=minimum_factor,
+        accounting_slack=accounting_slack,
+        unit=unit,
+    ).verify()
+
 
 class BenchmarkMetric(StrEnum):
     # These duration probes run on a shared host. The least-contended timing
@@ -98,17 +152,6 @@ def latest_checked_in_benchmark(
 
 def maximum_factor(project_root: Path) -> float:
     return _regression(project_root, "maximum_factor")
-
-
-def hot_route_factor(project_root: Path) -> float:
-    """Headroom over the ironbank gate's authored hot-route budgets.
-
-    Separate from `maximum_factor` because they answer different questions --
-    "is this fast enough" against an authored budget, and "has this changed"
-    against recorded evidence. One value served both, so tuning either moved
-    the other.
-    """
-    return _regression(project_root, "hot_route_factor")
 
 
 def _regression(project_root: Path, key: str) -> float:

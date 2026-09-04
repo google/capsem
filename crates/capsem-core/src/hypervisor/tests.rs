@@ -50,7 +50,7 @@ fn _assert_send_sync() {
 #[test]
 fn vsock_connection_preserves_fields() {
     let conn = VsockConnection::new(42, 5001, Box::new(()));
-    assert_eq!(conn.fd, 42);
+    assert_eq!(conn.raw_fd(), 42);
     assert_eq!(conn.port, 5001);
 }
 
@@ -58,14 +58,14 @@ fn vsock_connection_preserves_fields() {
 fn vsock_connection_zero_fd() {
     // fd 0 (stdin) is a valid fd value
     let conn = VsockConnection::new(0, 5000, Box::new(()));
-    assert_eq!(conn.fd, 0);
+    assert_eq!(conn.raw_fd(), 0);
 }
 
 #[test]
 fn vsock_connection_negative_fd() {
     // -1 represents an invalid fd, but the struct should still hold it
     let conn = VsockConnection::new(-1, 5000, Box::new(()));
-    assert_eq!(conn.fd, -1);
+    assert_eq!(conn.raw_fd(), -1);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn vsock_connection_anchor_drop_order() {
 fn vsock_connection_unit_anchor() {
     // () anchor is the lightest possible -- verify it works
     let conn = VsockConnection::new(99, 5002, Box::new(()));
-    assert_eq!(conn.fd, 99);
+    assert_eq!(conn.raw_fd(), 99);
     drop(conn); // should not panic
 }
 
@@ -140,7 +140,7 @@ fn vsock_connection_string_anchor() {
 fn vsock_connection_vec_anchor() {
     let data: Vec<u8> = vec![1, 2, 3, 4];
     let conn = VsockConnection::new(7, 5001, Box::new(data));
-    assert_eq!(conn.fd, 7);
+    assert_eq!(conn.raw_fd(), 7);
 }
 
 // -----------------------------------------------------------------------
@@ -151,7 +151,7 @@ fn vsock_connection_vec_anchor() {
 fn vsock_connection_send_across_thread() {
     let conn = VsockConnection::new(42, 5001, Box::new(()));
     let handle = std::thread::spawn(move || {
-        assert_eq!(conn.fd, 42);
+        assert_eq!(conn.raw_fd(), 42);
         assert_eq!(conn.port, 5001);
     });
     handle.join().unwrap();
@@ -162,7 +162,7 @@ fn vsock_connection_shared_across_threads() {
     let conn = Arc::new(VsockConnection::new(42, 5001, Box::new(())));
     let conn2 = Arc::clone(&conn);
     let handle = std::thread::spawn(move || {
-        assert_eq!(conn2.fd, 42);
+        assert_eq!(conn2.raw_fd(), 42);
     });
     assert_eq!(conn.port, 5001);
     handle.join().unwrap();

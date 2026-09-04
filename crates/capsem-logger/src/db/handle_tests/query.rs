@@ -323,7 +323,7 @@ async fn db_handle_query_many_result_from_before_an_invalidation_is_not_cached()
     let key: Vec<DbQueryOwned> = vec![("SELECT 1".to_string(), Vec::new())];
     let stale = vec![DbQueryJson::from("{\"stale\":true}".to_string())];
 
-    let epoch_before = db.read_cache_epoch();
+    let epoch_before = db.read_cache_epoch(ReadCacheDomain::All);
     db.invalidate_read_cache();
     db.store_query_many_cache(epoch_before, key.clone(), stale);
     assert!(
@@ -331,7 +331,7 @@ async fn db_handle_query_many_result_from_before_an_invalidation_is_not_cached()
         "a result older than the last invalidation must not be cached"
     );
 
-    let epoch_now = db.read_cache_epoch();
+    let epoch_now = db.read_cache_epoch(ReadCacheDomain::All);
     db.store_query_many_cache(epoch_now, key, vec![DbQueryJson::from("{}".to_string())]);
     assert!(db.inner.query_many_cache.lock().unwrap().is_some());
 }

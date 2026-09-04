@@ -2,14 +2,9 @@
 # Capsem Doctor -- macOS-specific checks
 # Sourced by doctor-common.sh, do not run directly.
 
-recommended_docker_disk_gib() {
-    uv run --project build_system --frozen capsem-cache --repository "$PROJECT_ROOT" policy \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["control"]["docker"]["recommended_disk_bytes"] // 1024**3)'
-}
-
-minimum_docker_disk_gib() {
-    uv run --project build_system --frozen capsem-cache --repository "$PROJECT_ROOT" policy \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["control"]["docker"]["minimum_disk_bytes"] // 1024**3)'
+docker_cache_max_gib() {
+    uv run --project build_system --frozen capsem-cache --repository "$PROJECT_ROOT" contract docker \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["max_size_bytes"] // 1024**3)'
 }
 
 tool_hint() {
@@ -28,8 +23,8 @@ tool_hint() {
         cpio)          echo "brew install cpio" ;;
         tart)          echo "brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart" ;;
         sshpass)       echo "brew install cirruslabs/cli/sshpass" ;;
-        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
-        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
+        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(docker_cache_max_gib)" ;;
+        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(docker_cache_max_gib)" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;
     esac
 }
@@ -59,16 +54,13 @@ check_platform() {
         fail "sshpass not found -- install: $(tool_hint sshpass)"
     fi
     if command -v tart &>/dev/null; then
-        local tart_snapshot
-        tart_snapshot=$(uv run --project build_system --frozen capsem-cache --repository "$PROJECT_ROOT" \
-            runtime-status tart 2>&1 || true)
-        if printf '%s\n' "$tart_snapshot" | grep -q 'macos-sequoia-base'; then
-            pass "Tart base image cache present"
-        else
-            pass "Tart base image cache not present (first glow-up will pull it)"
-        fi
-        if printf '%s\n' "$tart_snapshot" | grep -q 'capsem-glowup-'; then
-            fail "stale Capsem-owned Tart VM found -- run: just cache runtime-prune tart --apply --reason doctor"
+        local tart_plan tart_actions
+        tart_plan=$(uv run --project build_system --frozen capsem-cache --repository "$PROJECT_ROOT" \
+            prune tart --json 2>/dev/null || true)
+        tart_actions=$(printf '%s\n' "$tart_plan" | python3 -c \
+            'import json,sys; data=json.load(sys.stdin); print(data[0]["action_count"])' 2>/dev/null || echo 0)
+        if [[ "$tart_actions" -gt 0 ]]; then
+            fail "stale Capsem-owned Tart VM found -- run: just cache prune tart --apply --reason doctor"
         else
             pass "no leaked Capsem-owned Tart VMs"
         fi
@@ -120,7 +112,7 @@ check_platform() {
 
         # Resources
         if command -v docker &>/dev/null; then
-            local mem_mb cpus disk_total_kib disk_total_gib minimum_disk_gib recommended_disk_gib
+            local mem_mb cpus disk_total_kib disk_total_gib cache_max_gib
             mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
             cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
             if [[ "$mem_mb" -gt 0 ]]; then
@@ -132,17 +124,14 @@ check_platform() {
                     pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs"
                 fi
             fi
-            minimum_disk_gib=$(minimum_docker_disk_gib)
-            recommended_disk_gib=$(recommended_docker_disk_gib)
+            cache_max_gib=$(docker_cache_max_gib)
             disk_total_kib=$(colima ssh -- sh -c "df -Pk /var/lib/docker | awk 'NR == 2 { print \$2 }'" 2>/dev/null || echo 0)
             if [[ "$disk_total_kib" =~ ^[0-9]+$ ]] && [[ "$disk_total_kib" -gt 0 ]]; then
                 disk_total_gib=$((disk_total_kib / 1024 / 1024))
-                if [[ "$disk_total_gib" -lt "$minimum_disk_gib" ]]; then
-                    fail "Colima Docker disk: ${disk_total_gib}GiB (minimum ${minimum_disk_gib}GiB) -- expand: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk ${recommended_disk_gib}"
-                elif [[ "$disk_total_gib" -lt "$recommended_disk_gib" ]]; then
-                    pass "Colima Docker disk: ${disk_total_gib}GiB (supported; ${recommended_disk_gib}GiB recommended for new runtimes)"
+                if [[ "$disk_total_gib" -lt "$cache_max_gib" ]]; then
+                    fail "Colima Docker disk: ${disk_total_gib}GiB cannot hold the ${cache_max_gib}GiB Docker cache maximum -- expand: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk ${cache_max_gib}"
                 else
-                    pass "Colima Docker disk: ${disk_total_gib}GiB"
+                    pass "Colima Docker disk: ${disk_total_gib}GiB (cache max ${cache_max_gib}GiB)"
                 fi
             else
                 fail "could not measure Colima Docker disk capacity"

@@ -298,7 +298,7 @@ impl Hypervisor for KvmHypervisor {
                 ram_base: memory::RAM_BASE,
                 ram_size: config.ram_bytes,
                 cpu_count: config.cpu_count,
-                cmdline: kernel_cmdline.clone(),
+                cmdline: kernel_cmdline,
                 initrd_start: initrd_info.as_ref().map(|i| i.guest_addr).unwrap_or(0),
                 initrd_end: initrd_info.as_ref().map(|i| i.guest_addr + i.size as u64).unwrap_or(0),
                 virtio_devices,

@@ -24,8 +24,8 @@ value they do not recognise.
 in the form the user meets it. The argument must be a value that came from
 somewhere.
 
-What is deliberately *not* forbidden: table keys. `release("after-install")`
-and `ensure_space("install")` name which entry to look up, and an unknown one
+What is deliberately *not* forbidden: cache owner IDs. `enforce("docker")`
+names which entry to look up, and an unknown one
 raises immediately with the legal set listed. That is an API, not a copy.
 """
 
@@ -226,7 +226,10 @@ def test_the_architecture_enum_agrees_with_the_config() -> None:
     """
     from capsem_builder.gate.execution import Arch
 
-    concrete = {member.name.lower() for member in Arch} - {Arch.HOST.name.lower(), Arch.ANY.name.lower()}
+    concrete = {member.name.lower() for member in Arch} - {
+        Arch.HOST.name.lower(),
+        Arch.ANY.name.lower(),
+    }
     declared = set(_config()["architectures"])
 
     assert concrete == declared, (

@@ -136,6 +136,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Citadel guards | `/citadel` | Adding a guard, a linter, or a source surface; a citadel test failing |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
 | CI triage | `/dev-ci` | Red gates, pr-gate failures, rerun decisions, stop-the-line policy |
+| Cache control | `/dev-cache` | Cache inventory, retention, reuse, cleanup, or disk/Docker/Colima/Tart cache changes |
 | Sprints | `/dev-sprint` | Running a multi-step feature sprint |
 | Release | `/release-process` | CI, signing, notarization, changelog |
 | Release gate proof | `/ironbank` | Black-box acceptance proof for VM, network, MCP, security, or release-gate behavior |
@@ -293,7 +294,8 @@ Two more, which follow from the first:
   coordinate nothing between two `capsem-gate` processes.
 
 One gate runs per machine, enforced by `flock` rather than a pidfile, and every
-run is recorded under `cache/target/gate-runs/` and bounded by `[disk]`. The run log
+run is recorded under `cache/target/gate-runs/` and bounded by the
+`stages.gate-runs` cache contract. The run log
 is written by the runner rather than by call sites, so nothing can be forgotten
 into invisibility.
 

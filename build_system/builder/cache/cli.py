@@ -3,54 +3,94 @@
 from __future__ import annotations
 
 import json
-import shlex
 from pathlib import Path
 
 import click
 
-from .config import load_policy
+from .api import CacheOperation, CacheRequest
+from .config import load_paths, load_policy
 from .inventory import scan_inventory
-from .operations import apply_prune
 from .paths import CachePaths
-from .planner import plan_clean, plan_prune
-from .render import inventory_text, plan_text
-from .runtimeinventory import scan_runtimes, write_receipts
-from .runtimeoperations import apply_runtime_prune
-from .runtimeplanner import plan_runtime_clean, plan_runtime_prune
+from .registry import CacheRegistry
+from .stats import render as stats_text
 
 
-def _state(repository: Path, *, native: bool = False):
+def _policy_paths(context: click.Context):
+    repository = context.obj["repository"]
+    policy_repository = context.obj["policy_repository"]
     root = repository.resolve()
-    policy = load_policy(root)
+    policy = load_policy(policy_repository)
     paths = CachePaths(repository_root=root, policy=policy)
-    report = scan_inventory(paths, policy)
-    snapshot = scan_runtimes(policy, offline=not native)
-    report = report.model_copy(update={"runtimes": snapshot.runtimes})
-    return policy, paths, report, snapshot
+    return policy, paths
+
+
+def _registry(context: click.Context) -> CacheRegistry:
+    policy, paths = _policy_paths(context)
+    return CacheRegistry(paths, policy)
+
+
+def _mutation_output(results, *, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps([item.model_dump(mode="json") for item in results], indent=2))
+    else:
+        for item in results:
+            verb = "APPLIED" if item.applied else "PREVIEW"
+            click.echo(
+                f"{verb} {item.operation} {item.cache_id}: {item.action_count} actions, "
+                f"{item.reclaim_bytes} reclaimable bytes"
+            )
+            for violation in item.violations:
+                click.echo(f"  VIOLATION: {violation}")
+    violations = tuple(error for item in results for error in item.violations)
+    if violations:
+        raise click.ClickException("; ".join(violations))
 
 
 @click.group()
 @click.option(
     "--repository",
     type=click.Path(path_type=Path, file_okay=False),
-    default=Path.cwd,
-    show_default="current directory",
+    default=None,
+    help="Explicit cache-storage checkout; defaults to the shared cache authority.",
+)
+@click.option(
+    "--policy-repository",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Read cache policy from this source tree while controlling --repository storage.",
 )
 @click.pass_context
-def main(context: click.Context, repository: Path) -> None:
+def main(context: click.Context, repository: Path | None, policy_repository: Path | None) -> None:
     """Inspect and control Capsem's repository cache."""
     context.ensure_object(dict)
-    context.obj["repository"] = repository.resolve()
+    policy_root = (policy_repository or repository or Path.cwd()).resolve()
+    storage_root = (
+        repository.resolve() if repository is not None else load_paths(policy_root).repository_root
+    )
+    context.obj["repository"] = storage_root
+    context.obj["policy_repository"] = policy_root
 
 
-@main.command()
+@main.command("stats")
 @click.option("--json", "as_json", is_flag=True, help="Emit the typed JSON report.")
 @click.option("--offline", is_flag=True, help="Do not query native runtimes.")
 @click.pass_context
-def status(context: click.Context, as_json: bool, offline: bool) -> None:
-    """Show total and per-stage cache inventory."""
-    _, _, report, _ = _state(context.obj["repository"], native=not offline)
-    click.echo(report.model_dump_json(indent=2) if as_json else inventory_text(report))
+def stats(context: click.Context, as_json: bool, offline: bool) -> None:
+    """Show current, warm, and maximum usage for every cache owner."""
+    report = _registry(context).stats(offline=offline)
+    click.echo(report.model_dump_json(indent=2) if as_json else stats_text(report))
+
+
+@main.command("contract")
+@click.argument("cache_id")
+@click.pass_context
+def contract(context: click.Context, cache_id: str) -> None:
+    """Show one owner's typed, mechanism-independent cache contract."""
+    try:
+        value = _registry(context).contract(cache_id)
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
+    click.echo(value.model_dump_json(indent=2))
 
 
 @main.command()
@@ -58,7 +98,8 @@ def status(context: click.Context, as_json: bool, offline: bool) -> None:
 @click.pass_context
 def verify(context: click.Context, as_json: bool) -> None:
     """Validate policy, path containment, and inventory accounting."""
-    policy, paths, report, _ = _state(context.obj["repository"])
+    policy, paths = _policy_paths(context)
+    report = scan_inventory(paths, policy)
     for stage_id in policy.stages:
         paths.stage(stage_id).relative_to(paths.root)
     if report.unclassified:
@@ -75,38 +116,24 @@ def verify(context: click.Context, as_json: bool) -> None:
 
 
 @main.command()
+@click.argument("cache_id", required=False, default="all")
 @click.option("--apply", is_flag=True, help="Execute the displayed plan.")
 @click.option("--reason", default="policy prune", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit the typed JSON plan.")
 @click.pass_context
-def prune(context: click.Context, apply: bool, reason: str, as_json: bool) -> None:
-    """Plan deterministic policy pruning; preview unless --apply is present."""
-    policy, paths, report, snapshot = _state(context.obj["repository"], native=True)
-    plan = plan_prune(report, policy)
-    runtime_plan = plan_runtime_prune(snapshot, policy)
-    if apply:
-        apply_prune(paths.root, plan, reason=reason)
-        result = apply_runtime_prune(paths, policy, runtime_plan, reason=reason)
-        if any(item.returncode != 0 for item in result.results):
-            raise click.ClickException("one or more native cache mutations failed; inspect the log")
-    if as_json:
-        click.echo(
-            json.dumps(
-                {
-                    "filesystem": plan.model_dump(mode="json"),
-                    "runtimes": runtime_plan.model_dump(mode="json"),
-                },
-                indent=2,
-            )
-        )
-    else:
-        click.echo(plan_text(plan, preview=not apply))
-        click.echo(
-            f"{'PREVIEW' if not apply else 'APPLIED'} native: reclaim "
-            f"{runtime_plan.reclaim_bytes} bytes in {len(runtime_plan.actions)} actions"
-        )
-        for violation in runtime_plan.violations:
-            click.echo(f"  VIOLATION: {violation}")
+def prune(context: click.Context, cache_id: str, apply: bool, reason: str, as_json: bool) -> None:
+    """Plan deterministic pruning for one owner or all owners."""
+    request = CacheRequest(
+        operation=CacheOperation.PRUNE,
+        cache_id=cache_id,
+        apply=apply,
+        reason=reason,
+    )
+    try:
+        results = _registry(context).mutate(request)
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
+    _mutation_output(results, as_json=as_json)
 
 
 @main.command()
@@ -119,67 +146,35 @@ def clean(context: click.Context, stage_id: str, apply: bool, reason: str, as_js
     """Plan removal of one stage or all stages."""
     if apply and stage_id == "all" and not reason.strip():
         raise click.UsageError("clean all --apply requires --reason")
-    policy, paths, report, snapshot = _state(context.obj["repository"], native=stage_id == "all")
+    request = CacheRequest(
+        operation=CacheOperation.CLEAN,
+        cache_id=stage_id,
+        apply=apply,
+        reason=reason or f"clean {stage_id}",
+    )
     try:
-        plan = plan_clean(report, stage_id)
-    except KeyError as error:
+        results = _registry(context).mutate(request)
+    except ValueError as error:
         raise click.UsageError(str(error)) from error
-    if apply:
-        apply_prune(paths.root, plan, reason=reason or f"clean {stage_id}")
-    runtime_plan = plan_runtime_clean(snapshot, policy) if stage_id == "all" else None
-    if apply and runtime_plan is not None:
-        result = apply_runtime_prune(
-            paths, policy, runtime_plan, reason=reason or "clean all native caches"
-        )
-        if any(item.returncode != 0 for item in result.results):
-            raise click.ClickException("one or more native cache cleanup actions failed")
-    if as_json:
-        click.echo(
-            json.dumps(
-                {
-                    "filesystem": plan.model_dump(mode="json"),
-                    "runtimes": (
-                        runtime_plan.model_dump(mode="json") if runtime_plan is not None else None
-                    ),
-                },
-                indent=2,
-            )
-        )
-    else:
-        click.echo(plan_text(plan, preview=not apply))
-        if runtime_plan is not None:
-            click.echo(
-                f"{'PREVIEW' if not apply else 'APPLIED'} native clean: "
-                f"{len(runtime_plan.actions)} owned actions"
-            )
+    _mutation_output(results, as_json=as_json)
 
 
-@main.command()
-@click.option("--json", "as_json", is_flag=True, help="Emit the typed runtime snapshot.")
+@main.command(hidden=True, context_settings={"ignore_unknown_options": True})
+@click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def snapshot(context: click.Context, as_json: bool) -> None:
-    """Persist exact Docker/BuildKit/Tart inventory receipts."""
-    policy, paths, _, report = _state(context.obj["repository"], native=True)
-    receipts = write_receipts(paths, policy, report)
-    if as_json:
-        click.echo(report.model_dump_json(indent=2))
-    else:
-        click.echo(
-            f"Recorded {len(receipts)} runtime receipts: native={report.native_bytes} "
-            f"owned={report.owned_bytes}"
-        )
-
-
-@main.command(hidden=True)
-@click.argument("command", default="")
-@click.pass_context
-def dispatch(context: click.Context, command: str) -> None:
-    """Parse the one safely quoted command string supplied by Just."""
-    arguments = shlex.split(command) or ["status"]
-    if arguments[0] == "dispatch":
+def dispatch(context: click.Context, arguments: tuple[str, ...]) -> None:
+    """Forward the exact argument vector supplied by Just."""
+    selected = list(arguments) or ["stats"]
+    if selected[0] == "dispatch":
         raise click.UsageError("nested cache dispatch is not allowed")
     main.main(
-        args=["--repository", str(context.obj["repository"]), *arguments],
+        args=[
+            "--repository",
+            str(context.obj["repository"]),
+            "--policy-repository",
+            str(context.obj["policy_repository"]),
+            *selected,
+        ],
         prog_name="capsem-cache",
         standalone_mode=False,
     )

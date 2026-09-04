@@ -216,9 +216,7 @@ def test_the_re_entry_error_names_the_run_that_is_holding_it(journal, monkeypatc
 
 
 def test_a_read_only_command_may_still_answer_inside_a_run(journal, monkeypatch) -> None:
-    """`runs last` and `gc --dry-run` take no lock, so they cannot deadlock --
-    and being able to ask what is happening from inside a running gate is the
-    entire point of them."""
+    """Read-only run inspection takes no lock, so it cannot deadlock."""
     monkeypatch.setenv(RUN_MARKER, "gate-20260801-abc123")
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(runner, steps=(step("look", Run(["echo", "hello"])),))
@@ -239,6 +237,9 @@ def test_a_run_marks_the_environment_its_children_inherit(journal, monkeypatch, 
     takes the lock, and it must not be the developer's own.
     """
     monkeypatch.delenv(RUN_MARKER, raising=False)
+    monkeypatch.setattr(
+        "capsem_builder.gate.scopeenv.cachetooling.compiler_environment", lambda _: {}
+    )
     runner = RecordingRunner(_checkout(tmp_path))
     command = _probe(runner, cls=_Exclusive, steps=(step("look", Run(["echo", "hello"])),))
 
@@ -303,7 +304,7 @@ def test_an_ordinary_program_is_not_mistaken_for_re_entry(journal) -> None:
                 ),
                 Run(["cargo", "build", "--workspace"]),
                 Run(["docker", "run", "--label", "just", "alpine"]),
-                Script(CONFIG, "build_system/scripts/audit/audit-python-lock.sh"),
+                Script(CONFIG, "build_system/scripts/audit/audit-python-lock.py"),
             ),
         ),
     )
@@ -512,9 +513,17 @@ def test_a_failing_command_is_recorded_with_its_status(journal) -> None:
     assert [entry["exit"] for entry in journal.execs] == [1]
 
 
-def test_the_recorded_environment_is_the_delta_not_the_machines(journal) -> None:
+def test_the_recorded_environment_is_the_delta_not_the_machines(journal, monkeypatch) -> None:
     """This file gets attached to bug reports, and a release machine's
     environment holds tokens."""
+    compiler = {
+        CONFIG.environment.rustc_wrapper: "sccache",
+        CONFIG.environment.sccache_dir: "/cache/sccache",
+    }
+    monkeypatch.setattr(
+        "capsem_builder.gate.scopeenv.cachetooling.compiler_environment",
+        lambda _: compiler,
+    )
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(
         runner, steps=(step("one", Run(["cargo", "build"], env={"CAPSEM_MARK": "1"})),)
@@ -528,9 +537,11 @@ def test_the_recorded_environment_is_the_delta_not_the_machines(journal) -> None
     # resolving the tree it happens to sit in, so a bug report that omitted it
     # would omit which bytes the run was about. It is a revision, not a secret.
     assert recorded["env"] == {
+        **compiler,
         "CAPSEM_MARK": "1",
         CONFIG.environment.command_sandbox_mode: "off",
         CONFIG.environment.qualified_source_commit: qualified_commit(PROJECT_ROOT, None),
+        CONFIG.environment.repository_root: str(PROJECT_ROOT),
     }
 
 

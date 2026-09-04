@@ -190,7 +190,7 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
     # fragment of a `docker run ... bash -c` argument.
     assert (
         'bash build_system/scripts/build/check-build-provenance.sh '
-        '"/cargo-cache/target/$RUST_TARGET/release/capsem"'
+        '"$RELEASE_DIR/capsem"'
         in linux_builder
     )
     assert (

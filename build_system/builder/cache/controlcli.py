@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
+
 import click
 
-from .capacity import ensure_capacity
+from .api import CacheOperation, CacheRequest
 from .config import load_policy
+from .dockerimages import plan_repository_reclaim
 from .failureartifacts import capture_failure as capture_failure_bundle
 from .paths import CachePaths
+from .registry import CacheRegistry
 from .runtimeinventory import scan_runtimes
 from .runtimeoperations import apply_runtime_prune
-from .runtimeplanner import plan_release, plan_repository_reclaim, plan_runtime_prune
 
 
 def _state(
@@ -20,7 +23,7 @@ def _state(
     docker_control: bool = False,
 ):
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
     if docker_control:
         if policy.control is None:
@@ -61,37 +64,29 @@ def reclaim_image(context, resource_id, keep, protect, apply, reason) -> None:
     _apply(paths, policy, plan, apply=apply, reason=reason)
 
 
-@click.command("release")
-@click.argument("boundary")
-@click.option("--apply", is_flag=True)
-@click.option("--reason", default="final cache consumer completed")
+@click.command("enforce")
+@click.argument("cache_id")
+@click.option("--reason", default="cache size enforcement")
 @click.pass_context
-def release_boundary(context, boundary, apply, reason) -> None:
-    """Release exact working images at one lifetime boundary."""
-    policy, paths, snapshot = _state(context, docker_control=True)
-    try:
-        plan = plan_release(snapshot, policy, boundary)
-    except ValueError as error:
-        raise click.ClickException(str(error)) from error
-    _apply(paths, policy, plan, apply=apply, reason=reason)
-
-
-@click.command("ensure-space")
-@click.argument("rail")
-@click.option("--reason", default="build rail preflight")
-@click.pass_context
-def ensure_space(context, rail, reason) -> None:
-    """Prove Docker daemon headroom, retaining hot BuildKit layers."""
+def enforce(context, cache_id, reason) -> None:
+    """Enforce one cache owner, or all repository owners, by owned size."""
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
+    request = CacheRequest(
+        operation=CacheOperation.ENFORCE,
+        cache_id=cache_id,
+        apply=True,
+        reason=reason,
+    )
     try:
-        decision = ensure_capacity(paths, policy, rail, reason=reason)
+        decisions = CacheRegistry(paths, policy).mutate(request)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
-    click.echo(decision.model_dump_json(indent=2))
-    if decision.violations:
-        raise click.ClickException("; ".join(decision.violations))
+    click.echo(json.dumps([item.model_dump(mode="json") for item in decisions], indent=2))
+    violations = tuple(error for item in decisions for error in item.violations)
+    if violations:
+        raise click.ClickException("; ".join(violations))
 
 
 @click.command("capture-failure")
@@ -103,7 +98,7 @@ def ensure_space(context, rail, reason) -> None:
 def capture_failure(context, label, run_id, source_commit, offline) -> None:
     """Preserve bounded typed evidence after an expensive failure."""
     root = context.obj["repository"]
-    policy = load_policy(root)
+    policy = load_policy(context.obj["policy_repository"])
     paths = CachePaths(repository_root=root, policy=policy)
     try:
         destination = capture_failure_bundle(
@@ -119,43 +114,11 @@ def capture_failure(context, label, run_id, source_commit, offline) -> None:
     click.echo(destination)
 
 
-@click.command("runtime-status")
-@click.argument("runtime_id")
-@click.pass_context
-def runtime_status(context, runtime_id) -> None:
-    """Emit one strict native runtime inventory."""
-    _, _, snapshot = _state(context, runtime_id=runtime_id)
-    click.echo(snapshot.model_dump_json(indent=2))
-
-
-@click.command("runtime-prune")
-@click.argument("runtime_id")
-@click.option("--apply", is_flag=True)
-@click.option("--reason", default="native runtime retention")
-@click.pass_context
-def runtime_prune(context, runtime_id, apply, reason) -> None:
-    """Apply routine retention to one explicitly selected runtime."""
-    policy, paths, snapshot = _state(context, runtime_id=runtime_id)
-    plan = plan_runtime_prune(snapshot, policy)
-    _apply(paths, policy, plan, apply=apply, reason=reason)
-
-
-@click.command("policy")
-@click.pass_context
-def show_policy(context) -> None:
-    """Emit the validated policy used by every cache producer."""
-    click.echo(load_policy(context.obj["repository"]).model_dump_json(indent=2))
-
-
 def register(group: click.Group) -> None:
     """Register native commands without growing the generic CLI module."""
     for command in (
         reclaim_image,
-        release_boundary,
-        ensure_space,
+        enforce,
         capture_failure,
-        runtime_status,
-        runtime_prune,
-        show_policy,
     ):
         group.add_command(command)

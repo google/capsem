@@ -105,10 +105,7 @@ pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState,
     };
 
     if pid > 0 {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        );
+        process_control::send_or_log(pid, process_control::Signal::Terminate, "failed-restore-cleanup");
     }
 
     tracing::warn!(id, pid, "removing failed warm restore before cold fallback");

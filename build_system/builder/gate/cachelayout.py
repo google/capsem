@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
 from pathlib import Path
 
-from ..cache.config import load_policy
+from ..cache.config import load_paths, load_policy
+from ..cache.models import StagePolicy
 from ..cache.paths import CachePaths
 from .config import GateConfig
 from .errors import GateError
@@ -14,11 +13,7 @@ from .errors import GateError
 
 def authority(config: GateConfig) -> Path:
     """Return the outer checkout that owns shared cache state."""
-    raw = os.environ.get(config.environment.source_checkout)
-    root = Path(raw) if raw else config.root
-    if not root.is_absolute():
-        raise GateError(f"cache authority must be absolute: {root}")
-    return root.absolute()
+    return cache_paths(config).repository_root
 
 
 def shared_path(config: GateConfig, configured: str | Path) -> Path:
@@ -42,17 +37,26 @@ def stage_path(config: GateConfig, stage_id: str) -> Path:
         raise GateError(str(error)) from error
 
 
+def stage_relative_path(config: GateConfig, stage_id: str) -> Path:
+    """Return one policy stage as a repository-relative container path."""
+    policy = load_policy(config.root)
+    try:
+        return policy.root / policy.stages[stage_id].path
+    except KeyError as error:
+        raise GateError(f"cache policy has no disk owner {stage_id!r}") from error
+
+
+def stage_policy(config: GateConfig, stage_id: str) -> StagePolicy:
+    """Return one disk cache contract from the sole cache authority."""
+    try:
+        return load_policy(config.root).stages[stage_id]
+    except KeyError as error:
+        raise GateError(f"cache policy has no disk owner {stage_id!r}") from error
+
+
 def cache_paths(config: GateConfig) -> CachePaths:
     """Return the typed path authority shared by gate cache adapters."""
-    return CachePaths(repository_root=authority(config), policy=load_policy(config.root))
-
-
-def keyed_stage_path(config: GateConfig, stage_id: str, *inputs: str) -> Path:
-    """Resolve a whole removable generation keyed by exact input bytes."""
-    digest = hashlib.sha256()
-    for relative in inputs:
-        digest.update(relative.encode())
-        digest.update(b"\0")
-        digest.update((config.root / relative).read_bytes())
-        digest.update(b"\0")
-    return stage_path(config, stage_id) / digest.hexdigest()
+    try:
+        return load_paths(config.root)
+    except ValueError as error:
+        raise GateError(str(error)) from error

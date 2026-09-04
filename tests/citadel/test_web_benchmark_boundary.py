@@ -130,15 +130,19 @@ def _lint_mappings() -> tuple[str, ...]:
     )
 
 
-def _coverage_mappings() -> tuple[str, ...]:
+def _coverage_mappings_from(source: str) -> tuple[str, ...]:
     target_web = re.compile(r"(?<![\w-])web/(?:app|docs|marketing|graphics)/")
     return tuple(
-        f"{line_number}:{line.strip()}"
-        for line_number, line in enumerate(
-            (ROOT / "codecov.yml").read_text(encoding="utf-8").splitlines(), 1
-        )
+        line.strip()
+        for line in source.splitlines()
         if target_web.search(line)
         or any(pattern.search(line) for pattern in REFERENCE_PATTERNS.values())
+    )
+
+
+def _coverage_mappings() -> tuple[str, ...]:
+    return _coverage_mappings_from(
+        (ROOT / "codecov.yml").read_text(encoding="utf-8")
     )
 
 
@@ -348,6 +352,13 @@ def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
 
     assert len(after) == len(before) + 1
     assert _digest(after) != _digest(before)
+
+
+def test_coverage_mapping_fingerprint_ignores_unrelated_line_movement() -> None:
+    before = "    - web/app/src/**\n    - web/docs/src/**\n"
+    after = "# unrelated component\n" + before
+
+    assert _coverage_mappings_from(before) == _coverage_mappings_from(after)
 
 
 def test_tauri_asset_resolver_is_observed_red() -> None:

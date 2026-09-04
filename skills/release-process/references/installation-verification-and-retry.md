@@ -60,7 +60,7 @@ the final publishable package. Neither substitutes for the other.
 
 Linux install qualification separates four observable graph boundaries:
 
-1. reserve the config-owned Docker/storage headroom;
+1. enforce the config-owned Docker cache maximum through the common cache API;
 2. materialize locked uv/pnpm and snapshot-owned OS inputs from the exact
    host-platform builder child;
 3. build the source image with BuildKit networking disabled;

@@ -1,0 +1,44 @@
+# Exact transition debt and reviewed domain-ABI ownership for
+# test_unix_boundary.py. Values are SHA-256 fingerprints of normalized source
+# lines containing direct nix/libc references. Entries may shrink or disappear;
+# any addition or changed fingerprint requires explicit review.
+
+[migration.rust]
+
+[migration.manifest]
+
+[domain_abi.rust]
+"crates/capsem-agent/src/audit.rs" = "2ff815c166e12c8323e75f8d5259072f9f3247877d0cdab6238eaf192fe078ab"
+"crates/capsem-agent/src/bin/capsem_sysutil.rs" = "2456e6eea72b13097ac6f4a3204861deb89f36706ac53d6fc4973c1518aa0592"
+"crates/capsem-agent/src/control_writer.rs" = "7bb055fc33322daf9f68fabd409338a10da68f7c92ddc19343d271c8be051f75"
+"crates/capsem-agent/src/dns_proxy.rs" = "23b0c4643e274ef82313471339d2c8195c37810ef4dd4dc9bd71635b60cfd7c5"
+"crates/capsem-agent/src/main.rs" = "a07eb0b96c4c1a5aa60f4c99cf35949d26c03af9e99720a02e52878725776da1"
+"crates/capsem-agent/src/mcp_server.rs" = "c13ca2276c05f67b07b2a19e8244dff4e1eafc9ba767a90422dd89c57952d580"
+"crates/capsem-agent/src/net_proxy.rs" = "964fb30c69d7a0e4a9f8ac03c0c921035d56a0f73ed2139301b64b396daf0d79"
+"crates/capsem-agent/src/shutdown.rs" = "c59308ad70e3e026ca82edd165eba2a776fc247b8d11c7b5fc816966560005da"
+"crates/capsem-agent/src/terminal_bridge.rs" = "a998fbd07bf14d4d1f7d01fc2756142c9fffd037a8840fe28fcf9723df4db656"
+"crates/capsem-agent/src/vsock_io.rs" = "833225b337440ea9ecbc1d720dc4a73911de363c9cf8d2b86bb83eb36770464b"
+"crates/capsem-core/src/auto_snapshot.rs" = "8c74a509534e2ab852cbd8a486536065090ea2064fbe111752f5637b2e3abc6e"
+"crates/capsem-core/src/auto_snapshot/sparse_copy.rs" = "2ae415613b699b3ee820ff965560126503f0e6a2bd5063323dd1dc778079d603"
+"crates/capsem-core/src/hypervisor/apple_vz/machine.rs" = "6b58f0be51ae99954999ec72250f8439fa6ee56c5fd8b62f8950431810d48d20"
+"crates/capsem-core/src/hypervisor/fuse/file_handles.rs" = "8c554b16db7c779aec5cb136aaa9f72d19a16ae58f9afbc6200ca7dbd45d8933"
+"crates/capsem-core/src/hypervisor/fuse/inode_table.rs" = "8b6d76dfaeea22135bfe43e1f5bbb7db56645f62661f1dc98b83ae21ea83d128"
+"crates/capsem-core/src/hypervisor/fuse/mod.rs" = "9d369eaa322adb9caa7bb31e0027add0954e2b1227bd0f6f94b4d7eca6e16de6"
+"crates/capsem-core/src/hypervisor/kvm/memory.rs" = "14f1c25642aa142b82757768b3a452c995446f62e2d4c13e45b212c1853b05f3"
+"crates/capsem-core/src/hypervisor/kvm/mod.rs" = "85ae2c4d9a09c96a3ae2690112206a073b41d676a58a9f72ff637c5c462d098e"
+"crates/capsem-core/src/hypervisor/kvm/sys.rs" = "a0e1f5ef3f9831d714922ee8a364f254ae97906b455b4cdf7b145d86378f4bb6"
+"crates/capsem-core/src/hypervisor/kvm/vcpu.rs" = "31cfc08c9b7a7b20980005a0ec69d57bf68bd9ea19f2ca4c28bd99ed4df875b0"
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = "b5afdd2273970adef7c40ad5cdbaf59e092c2eae1449e02dd84aa07dc421cbd3"
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk/fd_util.rs" = "380483007d81c4751ff3e79c5867ee4688a7e3a5ecdd11ee5be91235a85cd1c2"
+"crates/capsem-core/src/hypervisor/kvm/virtio_console.rs" = "b0a92055b6ed9190b992f25a16b92b2aa0242b3c4be245d474410b0b2fa6cdeb"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs" = "68d881024c1366de0e1c95bf8f24dc63270a79efc7244fd0bb0349cb3232e421"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_dir.rs" = "1c2723207e04d0be3594c7ba21fdc13d6ff761e6f6d4dbff85ab2fc06da3f4c4"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_file.rs" = "b5f5c223d1f514cb692d8e6604227f687087f481b07ed84b42b1a20b7a693be4"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "2567f7fd272183d7fe5fc5b604fbf04b3dce4f2d67a03f0fdf02585ed337a59a"
+"crates/capsem-core/src/hypervisor/kvm/virtio_mmio.rs" = "f9797a518c8d6273151bc775f9a176a72f3b0a62e09cd4cd4fb636477b58627b"
+"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "38ac81c538e7574bc7e7eb5f9960686ec034bcd5bdfa58ccf5009db7f63f3a09"
+"crates/capsem-core/src/hypervisor/kvm/virtio_vsock/lifecycle.rs" = "83c7ec268765e594bebe53715a3d148a37e0cd9ad3dd9bb58f1d15a4eaba093b"
+
+[domain_abi.manifest]
+"crates/capsem-agent/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
+"crates/capsem-core/Cargo.toml" = "3512ff7e4cd15fd714394f3a490a7ecab92625a98c46b267e54c6616a6edb67b"

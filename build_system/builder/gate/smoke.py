@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from . import pytestsuite, vmproofs
 from .actions import Run
-from .buildschema import SmokeGroup
 from .command import GateCommand
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
@@ -24,6 +23,7 @@ from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
 from .service import Service
+from .serviceschema import SmokeGroup
 from .testmodules import InWorkspace
 from .workspace import Workspace
 

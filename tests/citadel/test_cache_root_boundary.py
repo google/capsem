@@ -7,9 +7,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = re.compile(
-    r"(?:~?/)?\.cg(?:-[A-Za-z0-9_-]+)?/|(?<!cache/)(?<!/build/)target/"
-)
+LEGACY = re.compile(r"(?:~?/)?\.cg(?:-[A-Za-z0-9_-]+)?/|(?<!cache/)(?<!/build/)target/")
 RETIRED_CONTROL = (
     "config/storage-policy.toml",
     "docker-storage-policy.py",
@@ -164,3 +162,16 @@ def test_ordinary_cargo_uses_the_owned_compiler_stage() -> None:
     cargo = (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
 
     assert '[build]\ntarget-dir = "cache/target/cargo"' in cargo, RATIONALE
+
+
+def test_bounded_diagnostics_inherit_the_repository_cache_authority() -> None:
+    wrapper = (
+        ROOT / "build_system/builder/gate/tools/ci/run_bounded_command.py"
+    ).read_text(encoding="utf-8")
+    launcher = (ROOT / "build_system/scripts/ci/run-bounded-command.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "env=_contained_environment()" in wrapper, RATIONALE
+    assert "gatelaunch.contained_environment(root)" in wrapper, RATIONALE
+    assert "sys.dont_write_bytecode = True" in launcher, RATIONALE

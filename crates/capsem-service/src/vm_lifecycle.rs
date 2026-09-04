@@ -232,16 +232,20 @@ pub(super) async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration
     if pid == 0 {
         return true;
     }
-    let pid_i32 = pid as i32;
-    let exited = || async move { (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(()) };
-    if poll_until(process_exit_poll_options(timeout), exited).await.is_ok() {
+    let mut probe = process_control::ProcessProbe::new("wait-for-vm-process-exit");
+    if poll_until(process_exit_poll_options(timeout), || {
+        std::future::ready(probe.is_gone(pid).then_some(()))
+    })
+    .await
+    .is_ok()
+    {
         return true;
     }
     tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
-    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid_i32), nix::sys::signal::Signal::SIGKILL);
+    process_control::send_or_log(pid, process_control::Signal::Kill, "vm-process-timeout-escalation");
     if poll_until(
         PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)),
-        exited,
+        || std::future::ready(probe.is_gone(pid).then_some(())),
     )
     .await
     .is_err()
@@ -319,19 +323,13 @@ pub(super) async fn shutdown_vm_process(
                 }
             }
         } else if pid > 0 {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            process_control::send_or_log(pid, process_control::Signal::Terminate, "vm-ipc-shutdown-fallback");
         }
     } else if shutdown_claimed && pid > 0 {
         // Destructive delete has no state to flush. SIGKILL also prevents the
         // ordinary signal handler from doing a full workspace reconciliation
         // whose output would be deleted immediately afterward.
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGKILL,
-        );
+        process_control::send_or_log(pid, process_control::Signal::Kill, "discard-vm-process");
     }
 
     tracing::debug!(id, shutdown_claimed, "shutdown_vm_process removing instance");
@@ -466,10 +464,7 @@ pub(super) async fn handle_suspend(
         // orphan temp dirs accumulated over one test run). SIGKILL the
         // child, reclaim the instance slot, and surface the error.
         if pid > 0 {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGKILL,
-            );
+            process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
         }
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
         state.instances.lock().unwrap().remove(&id);

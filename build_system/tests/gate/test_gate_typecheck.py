@@ -16,8 +16,7 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
     """Closed enum and identity seams fail before runtime for typed callers."""
     fixture = (
-        PROJECT_ROOT
-        / "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.txt"
+        PROJECT_ROOT / "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.txt"
     )
     probe = tmp_path / "gate_vocabulary_strings.py"
     probe.write_bytes(fixture.read_bytes())
@@ -54,7 +53,7 @@ def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
     assert checked.returncode != 0, evidence
     assert evidence.count("invalid-argument-type") == 9, evidence
     assert 'Expected `Effect`, found `Literal["process"]`' in evidence
-    assert 'Expected `InstallImageStep`, found `Literal["install.capacity"]`' in evidence
+    assert 'Expected `InstallImageStep`, found `Literal["install.cache"]`' in evidence
     assert 'Expected `SandboxMode`, found `Literal["off"]`' in evidence
     assert 'Expected `BuildNetwork`, found `Literal["none"]`' in evidence
     assert 'Expected `ContainerNetwork`, found `Literal["none"]`' in evidence

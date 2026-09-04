@@ -31,7 +31,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import buildcache, cachetooling, cargotarget, snapshot
+from . import buildcache, cachelayout, cachetooling, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .prefixlease import lease, parent_dir, reclaim_orphan_leases
@@ -87,9 +87,10 @@ def sweep(config: GateConfig) -> list[Path]:
     its home on entry: a run that failed leaves its tree so it can be inspected
     or resumed into, and the run *after* it is the one that no longer needs it.
 
-    Nothing else does this. `[disk] reclaimable` only accepts paths inside the
-    checkout, so before this a failed gate left its copy indefinitely -- 22 GiB
-    on this machine, carrying the copied signing material with it.
+    The cache registry owns sibling retained prefixes as a separate cache; this
+    lifecycle releases only its current lease. Before this sweep existed, a
+    failed gate left its copy indefinitely -- 22 GiB on this machine, carrying
+    copied signing material with it.
     """
     root = parent_dir(config)
     if not root.is_dir():
@@ -192,19 +193,10 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"reclaimed stale prefix {stale}")
         for orphan in reclaim_orphan_leases(config):
             runner.note(f"reclaimed orphan lease {orphan.name}")
-        # Reported every run. Crossing the advisory threshold must never turn
-        # a public qualification cold; only the explicit `--clean-build` path
-        # may discard compiler output.
+        # Reported every run. The cache controller owns limits and eviction;
+        # this producer only records the bytes it contributed.
         held = cargotarget.measure(config)
-        runner.note(
-            f"shared build directory {held.gb:.1f} GB "
-            f"(advisory threshold {config.prefix.cargo_target_warning_gb:.0f} GB)"
-            + (
-                " -- above threshold, retained for warm reuse"
-                if held.gb > config.prefix.cargo_target_warning_gb
-                else ""
-            )
-        )
+        runner.note(f"shared build directory {held.gb:.1f} GB")
         cachetooling.record_cargo(
             config,
             key=str(commit or "working-tree"),
@@ -243,8 +235,10 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     cargotarget.link_prefix_trees(config, path)
     child_env = {
         config.environment.source_checkout: str(config.root),
+        config.environment.repository_root: str(path),
+        cachelayout.cache_paths(config).policy.authority_environment: str(config.root),
         config.environment.cargo_target: str(cargotarget.path(config)),
-        **cachetooling.environment(config, key=str(commit or path.name)),
+        **cachetooling.environment(config, key=str(commit or path.name), source_root=path),
     }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
@@ -262,7 +256,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
         # continuation, and an explicitly reused prefix remains iteration
         # state even when a focused diagnostic succeeds: that diagnostic is
         # not the complete candidate it is helping repair. `sweep` on a later
-        # fresh run bounds accumulation; `gc` reaches only inside a checkout.
+        # fresh run bounds accumulation within the managed cache generation.
         runner.note(f"prefix kept for resuming: {path}")
     return status
 

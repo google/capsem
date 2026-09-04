@@ -94,7 +94,9 @@ def test_bootstrap_materializes_locked_python_metadata_before_frozen_sync() -> N
     bootstrap = _read("bootstrap.sh")
 
     assert "uv lock --project build_system --locked" in bootstrap
-    assert bootstrap.index("uv lock --project build_system --locked") < bootstrap.index("uv sync --project build_system --frozen")
+    assert bootstrap.index("uv lock --project build_system --locked") < bootstrap.index(
+        "uv sync --project build_system --frozen"
+    )
 
 
 def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
@@ -630,7 +632,11 @@ def test_bootstrap_refuses_to_replace_an_unmanaged_rust_tool(tmp_path: Path) -> 
     (local_bin / "rustup").write_text("owned elsewhere\n", encoding="utf-8")
 
     completed = subprocess.run(
-        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        [
+            "sh",
+            "-c",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools",
+        ],
         cwd=PROJECT_ROOT,
         env={"HOME": str(tmp_path / "home"), "PATH": f"{rust_bin}:/usr/bin:/bin"},
         check=False,
@@ -662,6 +668,7 @@ def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
         "cargo-audit",
         "cargo-sbom",
         "cargo-tauri",
+        "sccache",
     ]
 
 
@@ -685,6 +692,7 @@ def test_rust_bootstrap_reads_exact_cargo_tool_versions_from_the_same_inventory(
         "cargo-audit\tcargo-audit 0.22.1\tcargo-audit --version",
         "cargo-sbom\tcargo-sbom 0.10.0\tcargo-sbom --version",
         "cargo-tauri\ttauri-cli 2.11.1\tcargo-tauri --version",
+        "sccache\tsccache 0.17.0\tsccache --version",
     ]
 
 
@@ -826,7 +834,11 @@ def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
         binary.chmod(0o755)
 
     first = subprocess.run(
-        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        [
+            "sh",
+            "-c",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools",
+        ],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": f"{rust_bin}:/usr/bin:/bin"},
         check=True,
@@ -834,7 +846,11 @@ def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
         capture_output=True,
     )
     second = subprocess.run(
-        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        [
+            "sh",
+            "-c",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools",
+        ],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": f"{local_bin}:/usr/bin:/bin"},
         check=True,
@@ -907,7 +923,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     labels = _gate_labels()
     assert any(label.startswith("fast.") for label in labels)
     assert "prepare.bootstrap" in labels
-    assert "prepare.cache-budget" in labels
+    assert "prepare.cache-enforcement" in labels
     assert "python.ruff" in labels
     assert "python.ty.strict" in labels
     for command in [
@@ -935,7 +951,10 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
+    assert (
+        "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
+        in fast_gate
+    )
     assert "run: just test" not in binary_workflow
     assert "run: just test" not in profile_workflow
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()

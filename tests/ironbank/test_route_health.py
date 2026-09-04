@@ -8,10 +8,9 @@ quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
 from __future__ import annotations
 
 import contextlib
-import http.client
 import json
-import socket
 import statistics
+import subprocess
 import threading
 import time
 import uuid
@@ -24,7 +23,6 @@ from typing import Any
 
 import psutil
 import pytest
-from helpers.benchmark_ratchet import hot_route_factor
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -34,6 +32,23 @@ from helpers.constants import (
     HTTP_TIMEOUT,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.http_transport import Transport
+from helpers.process_cpu import process_cpu_seconds
+from helpers.route_health_budget import (
+    HOT_ROUTE_REFERENCE_SAMPLES,
+    HOT_ROUTE_WINDOW_SAMPLES,
+    HOT_ROUTE_WINDOWS,
+    concurrent_stats_budget,
+)
+from helpers.route_health_budget import (
+    assert_hot_route_budget as _assert_hot_route_budget,
+)
+from helpers.route_health_budget import (
+    assert_timing_budget as _assert_timing_budget,
+)
+from helpers.route_health_budget import (
+    scaled_hot_route_budget as _scaled_hot_route_budget,
+)
 from helpers.service import ServiceInstance, vm_name, wait_exec_ready
 
 from tests.ironbank.test_stats_detail_contract import (
@@ -47,11 +62,6 @@ from tests.ironbank.test_stats_detail_contract import (
 
 SEEDED_VM_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CPU_ACCOUNTING_SLACK_S = 0.011
-HOT_ROUTE_REFERENCE_SAMPLES = 64
-HOT_ROUTE_WINDOW_SAMPLES = 128
-HOT_ROUTE_WINDOWS = 3
-HOT_ROUTE_REGRESSION_FACTOR = hot_route_factor(PROJECT_ROOT)
 
 pytestmark = pytest.mark.integration
 
@@ -102,41 +112,14 @@ class ConcurrentRouteWriteBenchmark:
     final_default_rule_id: str
 
 
-class UnixHttpConnection(http.client.HTTPConnection):
-    """Persistent HTTP/1.1 client over a Unix domain socket.
-
-    The route-health benchmark must measure Capsem, not `curl` process startup.
-    """
-
-    def __init__(self, socket_path: str, *, timeout: float = 5.0):
-        super().__init__("localhost", timeout=timeout)
-        self.socket_path = socket_path
-
-    def connect(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        sock.connect(self.socket_path)
-        self.sock = sock
-
-
-class TcpNoDelayHttpConnection(http.client.HTTPConnection):
-    """Persistent HTTP/1.1 client with Nagle disabled for route timing."""
-
-    def connect(self) -> None:
-        super().connect()
-        if self.sock is not None:
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-
 class PersistentJsonClient:
     def __init__(
         self,
-        connection_factory: Callable[[], http.client.HTTPConnection],
+        transport: Transport,
         *,
         auth_token: str | None = None,
     ):
-        self._connection_factory = connection_factory
-        self._conn = connection_factory()
+        self._transport = transport
         self._auth_token = auth_token
 
     def get(self, path: str, timeout: int = 20) -> Any:
@@ -146,7 +129,7 @@ class PersistentJsonClient:
         return self._request("POST", path, body, timeout=timeout)
 
     def close(self) -> None:
-        self._conn.close()
+        self._transport.close()
 
     def _request(
         self,
@@ -160,39 +143,28 @@ class PersistentJsonClient:
         headers = {"Content-Type": "application/json", "Connection": "keep-alive"}
         if self._auth_token is not None:
             headers["Authorization"] = f"Bearer {self._auth_token}"
-        self._conn.timeout = timeout
-        try:
-            return self._request_once(method, path, payload, headers)
-        except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError):
-            self._conn.close()
-            self._conn = self._connection_factory()
-            return self._request_once(method, path, payload, headers)
-
-    def _request_once(
-        self,
-        method: str,
-        path: str,
-        payload: bytes | None,
-        headers: dict[str, str],
-    ) -> Any:
-        self._conn.request(method, path, body=payload, headers=headers)
-        response = self._conn.getresponse()
-        raw = response.read()
-        assert 200 <= response.status < 300, (method, path, response.status, raw[:500])
+        status, _, raw = self._transport.request(
+            method,
+            path,
+            body=payload,
+            headers=headers,
+            timeout=timeout,
+        )
+        assert 200 <= status < 300, (method, path, status, raw[:500])
         if not raw:
             return None
         return json.loads(raw.decode("utf-8"))
 
 
 def _fast_service_client(service: ServiceInstance) -> PersistentJsonClient:
-    return PersistentJsonClient(lambda: UnixHttpConnection(str(service.uds_path)))
+    return PersistentJsonClient(Transport(socket_path=str(service.uds_path)))
 
 
 def _fast_gateway_client(gateway: GatewayInstance) -> PersistentJsonClient:
     assert gateway.port is not None
     assert gateway.token is not None
     return PersistentJsonClient(
-        lambda: TcpNoDelayHttpConnection("127.0.0.1", gateway.port, timeout=5.0),
+        Transport(host="127.0.0.1", port=gateway.port),
         auth_token=gateway.token,
     )
 
@@ -268,10 +240,9 @@ def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> No
 
 def _cpu_seconds(proc: psutil.Process) -> Decimal:
     try:
-        times = proc.cpu_times()
-    except psutil.Error as error:  # pragma: no cover - test infra failure path
+        return process_cpu_seconds(proc)
+    except (OSError, ValueError, psutil.Error) as error:  # pragma: no cover
         raise AssertionError(f"unable to read CPU times for pid {proc.pid}: {error}") from error
-    return Decimal(str(times.user)) + Decimal(str(times.system))
 
 
 def _cpu_delta_seconds(*, after: Decimal, before: Decimal) -> float:
@@ -368,6 +339,26 @@ def _measure_hot_route(
     )
 
 
+def _capture_hot_route_budget(
+    failures: list[AssertionError],
+    timing: RouteTiming,
+    *,
+    path: str,
+    gateway: bool = False,
+) -> None:
+    """Keep measuring after a breach so one run reports every tight budget."""
+    try:
+        _assert_hot_route_budget(timing, path=path, gateway=gateway)
+    except AssertionError as error:
+        failures.append(error)
+
+
+def _raise_budget_failures(failures: list[AssertionError]) -> None:
+    assert not failures, "route timing budgets without required headroom:\n" + "\n".join(
+        str(failure) for failure in failures
+    )
+
+
 def _measure_once(
     label: str,
     call: Callable[[], Any],
@@ -394,46 +385,6 @@ def _measure_once(
     )
 
 
-def _assert_timing_budget(
-    timing: RouteTiming,
-    *,
-    p95_ms: float,
-    max_ms: float | None,
-    cpu_s: float,
-    p99_ms: float | None = None,
-    cpu_slack_s: float = CPU_ACCOUNTING_SLACK_S,
-) -> None:
-    print(
-        "ROUTE_HEALTH "
-        f"{timing.label} p50={timing.p50_ms:.1f}ms "
-        f"p95={timing.p95_ms:.1f}ms "
-        f"p99={timing.p99_ms:.1f}ms max={timing.max_ms:.1f}ms "
-        f"service_cpu={timing.service_cpu_s:.3f}s "
-        f"gateway_cpu={timing.gateway_cpu_s if timing.gateway_cpu_s is not None else 'n/a'}"
-    )
-    assert timing.p95_ms <= p95_ms, (
-        f"{timing.label} p95={timing.p95_ms:.1f}ms > {p95_ms}ms; samples={timing.samples_ms}"
-    )
-    if p99_ms is not None:
-        assert timing.p99_ms <= p99_ms, (
-            f"{timing.label} p99={timing.p99_ms:.1f}ms > {p99_ms}ms; samples={timing.samples_ms}"
-        )
-    if max_ms is not None:
-        assert timing.max_ms <= max_ms, (
-            f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; samples={timing.samples_ms}"
-        )
-    # psutil reports process CPU from OS accounting ticks. The default allows
-    # one tick for quantization; callers that compare an exact accounted tick
-    # boundary may explicitly pass zero slack.
-    assert timing.service_cpu_s <= cpu_s + cpu_slack_s, (
-        f"{timing.label} service CPU={timing.service_cpu_s:.3f}s > {cpu_s:.3f}s"
-    )
-    if timing.gateway_cpu_s is not None:
-        assert timing.gateway_cpu_s <= cpu_s + cpu_slack_s, (
-            f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
-        )
-
-
 def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
     return {
         "label": timing.label,
@@ -445,224 +396,6 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
         "service_cpu_s": round(timing.service_cpu_s, 6),
         "gateway_cpu_s": (None if timing.gateway_cpu_s is None else round(timing.gateway_cpu_s, 6)),
     }
-
-
-def _is_vm_scalar_state_route(path: str) -> bool:
-    if "/vms/" not in path:
-        return False
-    suffix = path.split("/vms/", 1)[1].split("?", 1)[0]
-    return suffix.count("/") == 1 and (suffix.endswith(("/status", "/info")))
-
-
-def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
-    if path == "/status" and gateway:
-        # Gateway status is not the service's scalar status route. It composes
-        # service status, VM inventory, and profile/asset readiness into the
-        # public dashboard payload. Give it the same Linux debug-build envelope
-        # as gateway /vms/list; both serialize the dashboard inventory rather
-        # than one scalar service DTO. Keep direct /status at the tiny default.
-        return (4.0, 10.0, 0.19)
-    if _is_vm_scalar_state_route(path):
-        # Per-session state routes touch richer lifecycle/profile metadata than
-        # global scalar status, but must still stay memory-backed and responsive
-        # enough for TUI/UI polling. Linux debug builds route a running VM
-        # through session DB readiness/status and storage DTO assembly; keep
-        # the aggregate CPU budget above the measured release-gate baseline
-        # without allowing projection rebuilds or route-time SQLite ownership.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.15 if not gateway else 0.19,
-        )
-    if path == "/vms/list":
-        # Empty-list polling is cheaper, but an active VM row includes lifecycle
-        # and profile metadata. Keep the budget memory-backed while allowing the
-        # one-VM debug-build route-health loop observed on Linux. The gateway
-        # serializes that row after proxying it, so it shares the richer scalar
-        # session-route CPU envelope rather than the empty-list measurement.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.19,
-        )
-    if path in {"/profiles/list", "/profiles/status"}:
-        # Profile inventory and readiness are richer than scalar service status:
-        # both return per-profile DTOs, while status adds asset readiness and
-        # manifest provenance. They must stay cache backed, but Linux debug
-        # builds account the same gateway CPU envelope for their JSON payloads.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.08 if not gateway else 0.12,
-        )
-    if "/stats/detail" in path:
-        # Detail is the largest user-facing ledger route and includes body blob
-        # metadata/content. It must still be DB-handle/memory backed rather
-        # than rebuilding projections or blocking on route-owned SQLite. The
-        # response body is large enough that debug-build JSON encoding can burn
-        # more aggregate CPU than scalar hot routes across 64 samples.
-        return (
-            12.0 if not gateway else 16.0,
-            35.0 if not gateway else 45.0,
-            0.70 if not gateway else 0.90,
-        )
-    if any(
-        marker in path
-        for marker in (
-            "/history",
-            "/timeline",
-            "/security/status",
-            "/security/latest",
-            "/detection/status",
-            "/detection/latest",
-            "/enforcement/status",
-            "/enforcement/latest",
-        )
-    ):
-        # Ledger list/status routes should be near-constant DB-handle reads.
-        # Aggregate security status routes cross enough rows that debug JSON
-        # encoding can brush into the 6ms range locally; CPU remains the
-        # regression tripwire for route-time disk scans/projection rebuilds.
-        # Gateway measurements include proxy hop jitter, but must stay
-        # sub-10ms p95.
-        aggregate_security = any(
-            path.endswith(marker) or f"{marker}?" in path
-            for marker in (
-                "/security/status",
-                "/security/latest",
-                "/detection/status",
-                "/detection/latest",
-                "/enforcement/status",
-                "/enforcement/latest",
-            )
-        )
-        return (
-            7.0 if not gateway else 9.0,
-            14.0 if not gateway else 18.0,
-            (0.30 if not gateway else 0.42)
-            if aggregate_security
-            else (0.14 if not gateway else 0.20),
-        )
-    if path.endswith("/assets/status"):
-        # Asset status returns a richer per-file readiness payload than scalar
-        # status routes. It is still byte-cache backed; this budget keeps 64
-        # debug-build calls bounded and catches any return to file hashing or
-        # route-time DB reads.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.16 if not gateway else 0.22,
-        )
-    if path.endswith("/mcp/default/info"):
-        # Default MCP info returns the profile's full builtin/default server
-        # shape. Gateway JSON buffering adds a proxy/body materialization hop;
-        # on Linux debug builds the full route loop can account ~0.17s service
-        # CPU across 64 samples while remaining a small in-memory response.
-        return (
-            2.0 if not gateway else 5.0,
-            5.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.19,
-        )
-    if path.endswith("/mcp/servers/list"):
-        # MCP server inventory is still cache backed, but larger than scalar
-        # profile info and measured through the gateway proxy loop it can use
-        # more service CPU ticks than the default tiny-route budget.
-        return (
-            3.0 if not gateway else 4.0,
-            6.0 if not gateway else 9.0,
-            0.06 if not gateway else 0.14,
-        )
-    if path.endswith("/rules/list"):
-        # Rule-inventory routes return the in-memory compiled/default rule
-        # shape. They are larger than scalar info/status routes and must stay
-        # comfortably sub-2ms without reparsing rule files or touching SQLite.
-        return (
-            2.0 if not gateway else 3.0,
-            5.0 if not gateway else 8.0,
-            0.08 if not gateway else 0.12,
-        )
-    if path.endswith("/latest"):
-        # Latest ledgers are projection backed. They can be a larger array than
-        # status routes, but route-time SQLite reads would show up immediately
-        # in this loop.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.14,
-        )
-    if path.endswith("/evaluate"):
-        # Rule evaluation is not a passive poll route, but it is the enforcement
-        # control plane and must stay memory/compiler-cache backed. This catches
-        # accidental route-time SQLite or rule-file reloads on every decision.
-        # Full-suite debug builds can account just under 0.09s service CPU for
-        # 64 cached decisions while still staying sub-2ms p95.
-        return (
-            2.0 if not gateway else 3.0,
-            5.0 if not gateway else 8.0,
-            0.10 if not gateway else 0.14,
-        )
-    if "/plugins/" in path and (path.endswith(("/info", "/credentials/info"))):
-        # Plugin and credential inventory routes hydrate runtime counters from
-        # in-memory projections. Keep them off Keychain/SQLite/hashing paths.
-        return (
-            3.0 if not gateway else 4.0,
-            8.0 if not gateway else 10.0,
-            0.10 if not gateway else 0.14,
-        )
-    if path == "/stats":
-        # `/stats` is byte-projection backed, but it is still one of the
-        # larger hot JSON bodies. The gateway adds a TCP hop, one UDS proxy
-        # connection, and JSON response buffering per request, so the gateway
-        # p95 budget tracks the Linux release-gate baseline while staying well
-        # under the broader hot-route envelope.
-        return (
-            2.0 if not gateway else 4.0,
-            5.0 if not gateway else 9.0,
-            0.12 if gateway else 0.08,
-        )
-    return (
-        2.0 if not gateway else 3.0,
-        5.0 if not gateway else 8.0,
-        0.05 if not gateway else 0.09,
-    )
-
-
-def _scaled_hot_route_budget(
-    path: str,
-    *,
-    gateway: bool,
-    samples: int,
-) -> tuple[float, float, float]:
-    p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
-    return (
-        p95_ms * HOT_ROUTE_REGRESSION_FACTOR,
-        p99_ms * HOT_ROUTE_REGRESSION_FACTOR,
-        cpu_s
-        * samples
-        / HOT_ROUTE_REFERENCE_SAMPLES
-        * HOT_ROUTE_REGRESSION_FACTOR,
-    )
-
-
-def _assert_hot_route_budget(
-    timing: RouteTiming,
-    *,
-    path: str,
-    gateway: bool = False,
-) -> None:
-    assert len(timing.samples_ms) == HOT_ROUTE_WINDOW_SAMPLES
-    p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
-        path,
-        gateway=gateway,
-        samples=HOT_ROUTE_WINDOW_SAMPLES,
-    )
-    _assert_timing_budget(
-        timing,
-        p95_ms=p95_ms,
-        p99_ms=p99_ms,
-        max_ms=None,
-        cpu_s=cpu_s,
-    )
 
 
 def _hot_route_contracts(profile: str) -> list[RouteContract]:
@@ -1093,6 +826,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     gateway: GatewayInstance | None = None
     fast_service_client: PersistentJsonClient | None = None
     fast_gateway_client: PersistentJsonClient | None = None
+    budget_failures: list[AssertionError] = []
     try:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
@@ -1110,7 +844,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 lambda c=contract: _assert_contract(fast_service_client, c),
                 service_proc=service_proc,
             )
-            _assert_hot_route_budget(timing, path=contract.path)
+            _capture_hot_route_budget(budget_failures, timing, path=contract.path)
 
         hot_gateway_routes = [
             RouteContract(
@@ -1140,7 +874,13 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 service_proc=service_proc,
                 gateway_proc=gateway_proc,
             )
-            _assert_hot_route_budget(timing, path=contract.path, gateway=True)
+            _capture_hot_route_budget(
+                budget_failures,
+                timing,
+                path=contract.path,
+                gateway=True,
+            )
+        _raise_budget_failures(budget_failures)
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
@@ -1157,6 +897,7 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
     gateway: GatewayInstance | None = None
     fast_service_client: PersistentJsonClient | None = None
     fast_gateway_client: PersistentJsonClient | None = None
+    budget_failures: list[AssertionError] = []
     try:
         session_dir = service.tmp_dir / "persistent" / SEEDED_VM_ID
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -1195,11 +936,13 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
                 )
                 summary = route_timing_summary(timing)
                 print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
-                _assert_hot_route_budget(
+                _capture_hot_route_budget(
+                    budget_failures,
                     timing,
                     path=route_contract.path,
                     gateway=is_gateway,
                 )
+        _raise_budget_failures(budget_failures)
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
@@ -1248,7 +991,14 @@ def run_concurrent_route_read_write_benchmark(
                     # overlap without inventing a fake DB path.
                     if index < len(actions) - 1:
                         time.sleep(0.002)
-            except BaseException as error:  # pragma: no cover - surfaced below
+            except (
+                AssertionError,
+                KeyError,
+                OSError,
+                TypeError,
+                ValueError,
+                subprocess.SubprocessError,
+            ) as error:  # pragma: no cover - surfaced below
                 writer_errors.append(error)
             finally:
                 writer_done.set()
@@ -1310,12 +1060,13 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
     # the tail on p99, matching the route-latency benchmark contract, so one
     # scheduler outlier does not fail a run whose p95 and CPU prove the route
     # stayed projection-backed.
+    budget = concurrent_stats_budget()
     _assert_timing_budget(
         result.timing,
-        p95_ms=15.0,
-        p99_ms=40.0,
+        p95_ms=budget.p95_ms,
+        p99_ms=budget.p99_ms,
         max_ms=None,
-        cpu_s=0.34,
+        cpu_s=budget.cpu_s,
     )
 
     assert result.final_default_action == result.writer_results[-1]["action"]
@@ -1334,6 +1085,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
+        assert gateway.token is not None
         service_client = service.client()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         assert service.proc is not None
@@ -1402,17 +1154,17 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                     gateway_proc=gateway_for_cpu,
                     samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
-                p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
+                budget = _scaled_hot_route_budget(
                     contract.path,
                     gateway=gateway_for_cpu is not None,
                     samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
                 _assert_timing_budget(
                     timing,
-                    p95_ms=max(p95_ms, 350.0),
-                    p99_ms=max(p99_ms, 500.0),
+                    p95_ms=max(budget.p95_ms, 350.0),
+                    p99_ms=max(budget.p99_ms, 500.0),
                     max_ms=None,
-                    cpu_s=cpu_s,
+                    cpu_s=budget.cpu_s,
                 )
 
         running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)

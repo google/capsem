@@ -2,6 +2,7 @@
 //! exercise initiator+responder against the same wire.
 
 use super::*;
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 
@@ -17,6 +18,28 @@ fn negotiate_succeeds_when_both_sides_match() {
 
     assert_eq!(init_peer.peer, "capsem-process-test");
     assert_eq!(resp_peer.peer, "capsem-service-test");
+}
+
+#[test]
+fn successful_negotiation_restores_nonblocking_mode() {
+    let (mut initiator_stream, mut responder_stream) = UnixStream::pair().unwrap();
+    initiator_stream.set_nonblocking(true).unwrap();
+
+    let initiator = std::thread::spawn(move || {
+        let result = negotiate_initiator(&mut initiator_stream, "capsem-service-test", "");
+        (initiator_stream, result)
+    });
+    let responder = std::thread::spawn(move || negotiate_responder(&mut responder_stream, "capsem-process-test", ""));
+
+    responder.join().unwrap().unwrap();
+    let (initiator_stream, result) = initiator.join().unwrap();
+    result.unwrap();
+
+    let was_nonblocking = crate::unix::fd::set_nonblocking(initiator_stream.as_fd(), true).unwrap();
+    assert!(
+        was_nonblocking,
+        "successful handshake must restore the caller's descriptor mode"
+    );
 }
 
 #[test]

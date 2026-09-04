@@ -26,15 +26,16 @@ pub(super) async fn serve_dns_session(
 ) {
     use std::io::Write as _;
 
-    let conn_fd = conn.fd;
     loop {
         // Move the fd in/out via spawn_blocking so we don't run sync I/O on
         // the tokio runtime. The DNS handler itself is async (UDP forwarder
         // returns Future), so we read one request, run the handler, then
         // write one response.
+        let Some(mut read_file) = clone_fd(&conn, "duplicate-dns-vsock-reader") else {
+            break;
+        };
         let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
-            let mut file = clone_fd(conn_fd)?;
-            read_bounded_frame(&mut file).context("DNS port: failed to read frame")
+            read_bounded_frame(&mut read_file).context("DNS port: failed to read frame")
         })
         .await;
 
@@ -88,9 +89,12 @@ pub(super) async fn serve_dns_session(
             }
         };
 
+        let Some(mut write_file) = clone_fd(&conn, "duplicate-dns-vsock-writer") else {
+            break;
+        };
         let write_res = tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut file = clone_fd(conn_fd)?;
-            file.write_all(&frame)
+            write_file
+                .write_all(&frame)
                 .context("DNS port: failed to write response frame")?;
             Ok(())
         })

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from ..cache.config import load_policy
-from ..policy.cachepolicy import CacheLimits
+from ..cache.controlmodels import ImageCachePolicy
+from . import cachelayout
+from .config import for_root
 from .errors import GateError
 from .proc import Runner
 from .sourcecommit import SourceCommit
@@ -14,6 +16,7 @@ class CacheControl:
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
+        self._repository = cachelayout.authority(for_root(runner.root))
         self._policy = load_policy(runner.root)
 
     def _run(self, *arguments: str, check: bool = True) -> int:
@@ -21,49 +24,25 @@ class CacheControl:
             (
                 "capsem-cache",
                 "--repository",
+                str(self._repository),
+                "--policy-repository",
                 str(self._runner.root),
                 *arguments,
             ),
             check=check,
         )
 
-    def release(self, boundary: str, *, best_effort: bool = False) -> None:
-        """Release exact working images after their final consumer."""
-        control = self._policy.control
-        if control is None or boundary not in control.docker.releases:
-            expected = () if control is None else tuple(sorted(control.docker.releases))
-            raise GateError(
-                f"unknown cache release boundary {boundary!r}; expected "
-                f"{', '.join(expected) or 'a configured boundary'}"
-            )
-        self._run(
-            "release",
-            boundary,
-            "--apply",
-            "--reason",
-            f"gate completed cache boundary {boundary}",
-            check=not best_effort,
-        )
-
-    def image_limits(self, resource: str) -> CacheLimits:
-        """Return receipt bounds from the sole validated cache policy."""
+    def image_policy(self, resource: str) -> ImageCachePolicy:
+        """Return one typed Docker image owner from the sole cache policy."""
         if self._policy.control is None:
             raise GateError("cache policy has no Docker image controls")
         try:
             image = self._policy.control.docker.images[resource]
         except KeyError:
             raise GateError(f"cache policy has no image resource {resource!r}") from None
-        if (
-            image.maximum_count is None
-            or image.maximum_age_hours is None
-            or image.maximum_bytes is None
-        ):
+        if image.maximum_count is None or image.maximum_age_hours is None:
             raise GateError(f"cache image resource {resource!r} has no receipt bounds")
-        return CacheLimits(
-            maximum_count=image.maximum_count,
-            maximum_age_seconds=image.maximum_age_seconds,
-            maximum_bytes=image.maximum_bytes,
-        )
+        return image
 
     def reclaim(self, resource: str, *, keep: str, protect: tuple[str, ...] = ()) -> None:
         """Retire superseded tags around a caller-owned exact anchor."""
@@ -116,7 +95,7 @@ class CacheControl:
             identity.extend(("--source-commit", str(source_commit)))
         self._run("capture-failure", "--label", label, *identity, check=False)
 
-    def ensure_space(self, rail: str, label: str | None = None) -> None:
-        """Refuse work the Docker daemon cannot finish."""
-        reason = f"gate preflight for {label or rail}"
-        self._run("ensure-space", rail, "--reason", reason)
+    def enforce(self, cache_id: str, label: str | None = None) -> None:
+        """Enforce one cache owner's maximum before expensive work."""
+        reason = f"gate cache enforcement for {label or cache_id}"
+        self._run("enforce", cache_id, "--reason", reason)

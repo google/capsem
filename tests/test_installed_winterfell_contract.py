@@ -3,12 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
 import pytest
-
-from tests.helpers import service
+from helpers import service
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = (
@@ -29,6 +30,31 @@ def _load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_runner_resolves_helpers_without_pytest_path_side_effects() -> None:
+    script = f"""
+import importlib.util
+from pathlib import Path
+
+path = Path({str(RUNNER_PATH)!r})
+spec = importlib.util.spec_from_file_location("winterfell_isolated", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module._resolve_winterfell_artifact_roots({{}})
+"""
+    environment = {**os.environ, "PYTHONPATH": ""}
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _installed_roots(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -196,6 +222,10 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         os.fspath(Path(module.sys.executable)),
         "-m",
         "pytest",
+        "-c",
+        "build_system/pyproject.toml",
+        "--rootdir",
+        ".",
         "tests/capsem-mcp/test_winterfell_rw.py",
         "tests/capsem-mcp/test_winterfell_exec.py",
         "-q",

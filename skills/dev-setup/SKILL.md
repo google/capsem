@@ -303,17 +303,19 @@ active images, foreign resources, retention pins, and every applied deletion
 remain visible in one inventory and journal:
 
 ```bash
-just cache status
-just cache 'runtime-prune docker' # exact preview; no mutation
-just cache 'runtime-prune docker --apply --reason "Colima disk recovery"'
+just cache stats
+just cache prune docker # exact preview; no mutation
+just cache prune docker --apply --reason "Colima cache recovery"
 ```
 
 Do not bypass this with broad `docker system/image/builder prune` commands:
 they cannot distinguish active Capsem reuse from disposable state and leave no
 controller journal. The runtime adapter runs the configured host-side trim
-after an applied Colima reclamation. `just cache status` reports repository and
+after an applied Colima reclamation. `just cache stats` reports repository and
 native-runtime state together; use `--offline` when Docker or Tart is
 intentionally unavailable.
+
+Read `/dev-cache` before changing cache ownership, limits, or cleanup behavior.
 
 ### Docker credential helper error (`docker-credential-osxkeychain not found`)
 When Colima is installed standalone (without Docker Desktop), `~/.docker/config.json` may reference a credential helper that doesn't exist. The symptom is `docker run` failing to pull images with `exec: "docker-credential-osxkeychain": executable file not found`.

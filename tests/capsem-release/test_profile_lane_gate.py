@@ -20,6 +20,9 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+ADMIN_RELEASE_COMMAND_TESTS = (
+    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "release_commands.rs"
+)
 
 
 def test_profile_json_has_min_capsem_not_current_binary() -> None:
@@ -80,7 +83,7 @@ def test_admin_profile_release_is_one_lane_scoped_command() -> None:
     assert "changed_profiles: Vec<String>" in admin_source
     assert "compatible_with_current_binary: bool" in admin_source
 
-    admin_tests = sibling_tests(PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs")
+    admin_tests = ADMIN_RELEASE_COMMAND_TESTS.read_text(encoding="utf-8")
     assert "release_command_has_one_operator_shape" in admin_tests
     assert (
         "profile_release_merges_only_selected_profile_and_reports_compatibility"

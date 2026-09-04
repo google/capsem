@@ -15,7 +15,18 @@ from rust_sources import sibling_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
-ADMIN_MAIN = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
+ADMIN_PACKAGE_INSPECTION = (
+    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "package_inspection.rs"
+)
+ADMIN_RENDER = (
+    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_render.rs"
+)
+ADMIN_VALIDATION = (
+    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_validation.rs"
+)
+ADMIN_CHANNEL_BUILD_TESTS = (
+    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "channel_build.rs"
+)
 DIFF_POLICY = Path(check_release_graph_diff.__file__)
 DIFF_POLICY_TESTS = PROJECT_ROOT / "tests" / "capsem-release" / "test_release_lane_diff_policy.py"
 
@@ -57,15 +68,20 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
 
 
 def test_sha1_only_spdx_is_rejected() -> None:
-    source = ADMIN_MAIN.read_text(encoding="utf-8")
+    package_inspection = ADMIN_PACKAGE_INSPECTION.read_text(encoding="utf-8")
+    render = ADMIN_RENDER.read_text(encoding="utf-8")
+    validation = ADMIN_VALIDATION.read_text(encoding="utf-8")
+    tests = ADMIN_CHANNEL_BUILD_TESTS.read_text(encoding="utf-8")
 
-    assert "fn validate_host_spdx_sbom_bytes" in source
-    assert "let blake3 = blake3::hash(&bytes).to_hex().to_string();" in source
-    assert "blake3: file.blake3.clone()" in source
-    assert "channel manifest host binary {} has malformed blake3" in source
-    assert 'algorithm.eq_ignore_ascii_case("SHA256")' in source
-    assert "missing SHA256 checksum" in source
-    assert "host_spdx_requires_sha256_file_checksums" in sibling_tests(ADMIN_MAIN)
+    assert "fn validate_host_spdx_sbom_bytes" in render
+    assert (
+        "let blake3 = blake3::hash(&bytes).to_hex().to_string();" in package_inspection
+    )
+    assert "blake3: file.blake3.clone()" in render
+    assert "channel manifest host binary {} has malformed blake3" in validation
+    assert 'algorithm.eq_ignore_ascii_case("SHA256")' in render
+    assert "missing SHA256 checksum" in render
+    assert "host_spdx_requires_sha256_file_checksums" in tests
 
 
 def test_binary_lane_allowed_diff_gate_is_channel_scoped() -> None:

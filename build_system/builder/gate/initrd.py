@@ -6,8 +6,8 @@ shell `> "$INITRD"` -- truncate and write in place -- mutates that hardlink's
 contents too. A VM mid-`VmConfig::build`, reading the old hash-named path,
 then sees bytes that do not match the embedded hash.
 
-Cross-compilation runs only when staged binaries are missing or older than
-their inputs; the former shell `find -newer` is a stat comparison here.
+Cross-compilation runs only when staging does not match its content-addressed
+guest-binary receipt. Checkout timestamps do not affect that identity.
 """
 
 from __future__ import annotations

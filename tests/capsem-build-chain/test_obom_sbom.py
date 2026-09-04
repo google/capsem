@@ -153,22 +153,35 @@ def test_cdxgen_is_digest_pinned_in_the_one_asset_helper() -> None:
 
 def test_admin_materialization_and_service_routes_expose_verified_obom_evidence() -> None:
     admin = _read("crates/capsem-admin/src/main.rs")
-    service = _read("crates/capsem-service/src/main.rs")
+    profile_images = _read("crates/capsem-admin/src/profile_images.rs")
+    service_router = _read("crates/capsem-service/src/router_runtime.rs")
+    profile_routes = _read("crates/capsem-service/src/profile_routes.rs")
+    obom_routes = _read("crates/capsem-service/src/profile_routes/obom.rs")
     api = _read("crates/capsem-service/src/api.rs")
 
-    assert "materialize_profile_obom_descriptor" in admin
-    assert 'manifest_assets.get("obom.cdx.json")' in admin
-    assert "check_local_asset(assets_dir, arch, logical_name, hash, size)" in admin
-    assert "read_obom_generator" in admin
+    assert "materialize_profile_obom_descriptor" in profile_images
+    assert 'manifest_assets.get("obom.cdx.json")' in profile_images
+    assert (
+        "check_local_asset(assets_dir, arch, logical_name, hash, size)"
+        in profile_images
+    )
+    assert "read_obom_generator" in profile_images
     assert "ProfileMaterializedObomReport" in admin
-    assert 'scope: "base_image"' in admin
-    assert "source profile {location} must not contain generated obom pins" in admin
+    assert 'scope: "base_image"' in profile_images
+    assert (
+        "source profile {location} must not contain generated obom pins"
+        in profile_images
+    )
 
-    assert 'route("/profiles/{profile_id}/obom", get(handle_profile_obom))' in service
-    assert "fn profile_obom_info" in service
-    assert "read_local_profile_obom" in service
-    assert "profile OBOM hash mismatch" in service
-    assert "profile OBOM size mismatch" in service
+    assert (
+        'route("/profiles/{profile_id}/obom", get(handle_profile_obom))'
+        in service_router
+    )
+    assert "mod obom;" in profile_routes
+    assert "fn profile_obom_info" in obom_routes
+    assert "read_local_profile_obom" in obom_routes
+    assert "profile OBOM hash mismatch" in obom_routes
+    assert "profile OBOM size mismatch" in obom_routes
     assert "rootfs_hash" in api
     assert "generator_version" in api
 

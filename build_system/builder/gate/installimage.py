@@ -28,7 +28,7 @@ INPUT_KEY_LABEL = "org.capsem.install-image.input-key"
 
 
 class InstallImageStep(StrEnum):
-    CAPACITY = "install.capacity"
+    CACHE = "install.cache"
     MATERIALIZE = "install.materialize"
     BUILD = "install.image-build"
     SMOKE = "install.image-smoke"
@@ -188,11 +188,11 @@ def build_source_image(
     )
     runtime_digest = installreceipt.digest(docker.runtime_identity())
     image_size = docker.image_size(tag)
-    limits = CacheControl(runner).image_limits(_source_repository(config))
-    if image_size > limits.maximum_bytes:
+    policy = CacheControl(runner).image_policy(_source_repository(config))
+    if image_size > policy.max_size_bytes:
         raise GateError(
             f"install qualification image is {image_size} bytes, above the configured "
-            f"{limits.maximum_bytes}-byte cache bound"
+            f"{policy.max_size_bytes}-byte cache bound"
         )
     now = time.time()
     found = InstallImageIdentity(

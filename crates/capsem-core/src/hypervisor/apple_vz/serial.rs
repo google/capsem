@@ -1,7 +1,9 @@
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
+#[cfg(test)]
+use std::os::fd::{FromRawFd, RawFd};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use objc2::rc::Retained;
 use objc2::AllocAnyThread;
 use objc2_foundation::NSPipe;
@@ -51,19 +53,17 @@ pub fn create_serial_port() -> Result<(
     // Get the raw fd for the host-side read end of the output pipe.
     let output_read_fd = output_pipe.fileHandleForReading().fileDescriptor();
     // Dup it so we have our own fd that survives even if NSPipe manages the original.
-    let output_read_fd_dup = unsafe { libc::dup(output_read_fd) };
-    if output_read_fd_dup < 0 {
-        return Err(anyhow::anyhow!("dup() failed: {}", std::io::Error::last_os_error()));
-    }
-    let output_read_fd_dup = unsafe { OwnedFd::from_raw_fd(output_read_fd_dup) };
+    // SAFETY: NSPipe owns this descriptor for the duration of the duplicate call.
+    let output_read_fd = unsafe { BorrowedFd::borrow_raw(output_read_fd) };
+    let output_read_fd_dup =
+        capsem_foundation::unix::fd::duplicate(output_read_fd).context("duplicate Apple VZ output pipe")?;
 
     // Get the raw fd for the host-owned input pipe writer.
     let input_write_fd = input_pipe.fileHandleForWriting().fileDescriptor();
-    let input_write_fd_dup = unsafe { libc::dup(input_write_fd) };
-    if input_write_fd_dup < 0 {
-        return Err(anyhow::anyhow!("dup() failed: {}", std::io::Error::last_os_error()));
-    }
-    let input_write_fd_dup = unsafe { OwnedFd::from_raw_fd(input_write_fd_dup) };
+    // SAFETY: NSPipe owns this descriptor for the duration of the duplicate call.
+    let input_write_fd = unsafe { BorrowedFd::borrow_raw(input_write_fd) };
+    let input_write_fd_dup =
+        capsem_foundation::unix::fd::duplicate(input_write_fd).context("duplicate Apple VZ input pipe")?;
 
     let (tx, _rx) = broadcast::channel(256);
     let console = AppleVzSerialConsole {

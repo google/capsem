@@ -138,7 +138,7 @@ def compose_modules(
     static = staticmodule.static(
         plan,
         config,
-        after=(prepared,),
+        after=(prepared.ready,),
         generated=generated,
         bundled=bundled,
         node=node,
@@ -156,7 +156,13 @@ def compose_modules(
         source_contracts_proved=source_contracts_proved,
         isolated_assets=not qualification.pulled,
     )
-    glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
+    glowup = vmmodules.glowup(
+        plan,
+        config,
+        qualification=qualification,
+        after=(functional,),
+        materialized=prepared.profile_content,
+    )
     # After the glow-up, not instead of it. The local lane's install proof runs
     # the package it built; this runs the same package again through the pulled
     # path a release lane takes, against a cohort resolved by digest.

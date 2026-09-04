@@ -33,7 +33,7 @@ fn db_handle_contract_names_db_ownership_and_schema_failures() {
     );
 }
 
-fn temp_db_path(name: &str) -> PathBuf {
+pub(super) fn temp_db_path(name: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("capsem-test-db-handle-{name}-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(p.with_extension("db-wal"));
@@ -41,7 +41,7 @@ fn temp_db_path(name: &str) -> PathBuf {
     p
 }
 
-fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
+pub(super) fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
     NetEvent {
         event_id: None,
         timestamp: SystemTime::now(),

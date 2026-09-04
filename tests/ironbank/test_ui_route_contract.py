@@ -49,6 +49,7 @@ def test_profile_ui_routes_exist_through_service_and_gateway() -> None:
         service.start()
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
+        assert gateway.token is not None
         service_client = service.client()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
 

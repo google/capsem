@@ -156,12 +156,11 @@ def test_the_argv_each_step_issues() -> None:
     described = _plan().describe()
 
     assert (
-        "uv run --project build_system --frozen ruff check "
-        "--config build_system/pyproject.toml ."
+        "uv run --project build_system --frozen ruff check --config build_system/pyproject.toml ."
     ) in described
     assert (
         "uv run --isolated --no-editable --reinstall-package capsem-builder "
-        "--no-build-isolation-package capsem-builder --offline "
+        "--no-build-isolation-package capsem-builder "
         "--project build_system --frozen ty check --project build_system "
         "--error-on-warning --python-platform all"
     ) in described
@@ -176,7 +175,7 @@ def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None
         rendered = " ".join(arguments)
         assert rendered.startswith(
             "uv run --isolated --no-editable --reinstall-package capsem-builder "
-            "--no-build-isolation-package capsem-builder --offline "
+            "--no-build-isolation-package capsem-builder "
             "--project build_system --frozen ty check"
         )
 
@@ -184,9 +183,7 @@ def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None
     assert "--extra-search-path" not in strict
     assert "build_system/sdist_command.py" in strict
 
-    relaxed_arguments = tuple(
-        shlex.split(" ".join(plan.step_named("python.ty.relaxed").render()))
-    )
+    relaxed_arguments = tuple(shlex.split(" ".join(plan.step_named("python.ty.relaxed").render())))
     pairs = list(pairwise(relaxed_arguments))
     for path in CONFIG.lint.ty_search_paths:
         assert pairs.count(("--extra-search-path", path)) == 1

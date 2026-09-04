@@ -73,8 +73,10 @@ component_management:
       name: Network
       paths:
         - crates/capsem-core/src/net/mod.rs
+        - crates/capsem-core/src/net/hostname.rs
         - crates/capsem-core/src/net/ai_traffic/**
         - crates/capsem-core/src/net/cert_authority.rs
+        - crates/capsem-core/src/net/decompress.rs
         - crates/capsem-core/src/net/dns/**
         - crates/capsem-core/src/net/interpreters/**
         - crates/capsem-core/src/net/mitm_proxy/**
@@ -97,7 +99,9 @@ component_management:
       paths:
         - crates/capsem-core/src/mcp/**
         - crates/capsem-core/src/auto_snapshot.rs
+        - crates/capsem-core/src/auto_snapshot/**
         - crates/capsem-core/src/auditfs.rs
+        - crates/capsem-core/src/contained_fs.rs
         - crates/capsem-core/src/fs_monitor.rs
         - crates/capsem-core/src/bin/mcp_export.rs
 
@@ -107,6 +111,7 @@ component_management:
       name: Monitoring
       paths:
         - crates/capsem-logger/src/**
+        - crates/capsem-core/src/pty_log.rs
         - crates/capsem-core/src/session/**
 
     # Machine lifecycle, VM config, vsock manager, host-side lifecycle state

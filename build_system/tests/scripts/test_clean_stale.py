@@ -2,37 +2,19 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
 import socket
-import sys
 import tempfile
 import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.image.tools.build import clean_stale, cleanup_tmp
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = (
-    REPO_ROOT
-    / "build_system/builder/image/tools/build/clean_stale.py"
-)
-
-
-def _load_module():
-    spec = importlib.util.spec_from_file_location("clean_stale", SCRIPT_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["clean_stale"] = module  # dataclass needs sys.modules lookup
-    spec.loader.exec_module(module)
-    return module
-
-
-clean_stale = _load_module()
-
-
 def _make_orphan_socket(path: Path) -> None:
     """Create a UDS file with no listener (bind, then close)."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -257,13 +239,13 @@ def test_tmp_fixture_budget_evicts_oldest_recent_fixture(
     # that fits exactly the newest fixture instead of assuming ~10 KB does.
     with os.scandir(tmp) as entries:
         eligible_sizes = {
-            entry.name: clean_stale._entry_disk_usage_bytes(entry)
+                entry.name: cleanup_tmp._entry_disk_usage_bytes(entry)
             for entry in entries
             if entry.name.startswith("capsem-test-")
         }
     newest_size = eligible_sizes[newest.name]
     monkeypatch.setattr(
-        clean_stale,
+        cleanup_tmp,
         "TEST_TMP_BUDGET_GB",
         newest_size / (1024**3),
     )
@@ -282,7 +264,7 @@ def test_tmp_fixture_budget_uses_allocated_size_for_sparse_images(
     tmp = tmp_path / "T"
     tmp.mkdir()
     monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
-    monkeypatch.setattr(clean_stale, "TEST_TMP_BUDGET_GB", 0.001)  # ~1 MB
+    monkeypatch.setattr(cleanup_tmp, "TEST_TMP_BUDGET_GB", 0.001)  # ~1 MB
 
     sparse = tmp / "capsem-test-sparse"
     sparse.mkdir()
@@ -323,150 +305,6 @@ def test_tmp_fixture_non_matching_name_kept(tmp_path: Path):
 
     assert result.removed == 0
     assert other.exists()
-
-
-def test_cargo_prune_respects_threshold(tmp_path: Path):
-    """Old deps files and old build/fingerprint/incremental dirs removed;
-    recent ones kept. Use the moderate path (no release dir)."""
-    debug = tmp_path / "cache" / "target" / "cargo" / "debug"
-    (debug / "deps").mkdir(parents=True)
-    old_dep = debug / "deps" / "libold.rlib"
-    new_dep = debug / "deps" / "libnew.rlib"
-    old_dep.write_text("x")
-    new_dep.write_text("y")
-
-    old_time = time.time() - 10 * 86400  # 10 days ago
-    os.utime(old_dep, (old_time, old_time))
-    # new_dep has current mtime
-
-    (debug / "build" / "crate-old").mkdir(parents=True)
-    (debug / "build" / "crate-old" / "f").write_text("x")
-    os.utime(debug / "build" / "crate-old", (old_time, old_time))
-
-    (debug / "build" / "crate-new").mkdir(parents=True)
-    (debug / "build" / "crate-new" / "f").write_text("x")
-
-    (debug / ".fingerprint" / "stale").mkdir(parents=True)
-    os.utime(debug / ".fingerprint" / "stale", (old_time, old_time))
-
-    (debug / "incremental" / "stale").mkdir(parents=True)
-    os.utime(debug / "incremental" / "stale", (old_time, old_time))
-
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-
-    assert result.removed == 4
-    assert not old_dep.exists()
-    assert new_dep.exists()
-    assert not (debug / "build" / "crate-old").exists()
-    assert (debug / "build" / "crate-new").exists()
-    assert not (debug / ".fingerprint" / "stale").exists()
-    assert not (debug / "incremental" / "stale").exists()
-
-
-def test_cargo_budget_evicts_oldest_incremental_over_cap(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """When incremental/ exceeds its size budget, oldest dirs get evicted.
-
-    Regression: the age-based prune alone left 23 GB of incremental/ on disk
-    during active dev because every build touches every session dir, so
-    nothing ever crossed the 2-3 day age threshold. The size budget enforces
-    a cap regardless of mtime freshness; oldest entries lose first.
-    """
-    # Shrink the budget so a realistic fixture exceeds it without needing GBs.
-    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)  # ~10 KB
-    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
-    incremental.mkdir(parents=True)
-    # Three session dirs, each 8 KB. Combined 24 KB > 10 KB budget.
-    for idx, age_days in enumerate([5, 2, 0]):  # oldest ... newest
-        sess = incremental / f"s-{idx}"
-        sess.mkdir()
-        (sess / "blob").write_bytes(b"\x00" * 8192)
-        t = time.time() - age_days * 86400
-        os.utime(sess, (t, t))
-    # Confirm nothing is "old" enough for the age-based prune (days <= 2 days ago
-    # after aggressive threshold of 2d would prune s-0 only, leaving 16 KB > budget).
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-    remaining = sorted(p.name for p in incremental.iterdir())
-    # Budget pass must have evicted oldest (s-0, then s-1) until under 10 KB cap.
-    # Newest s-2 (8 KB) must survive -- it's the warm cache we want to keep.
-    assert "s-2" in remaining, f"newest session dir must survive, got {remaining}"
-    assert "s-0" not in remaining, f"oldest session dir must be evicted by budget, got {remaining}"
-    # Detail string should mention the budget pass fired.
-    assert "budget=" in result.detail, (
-        f"StageResult.detail should report budget evictions, got: {result.detail!r}"
-    )
-
-
-def test_cargo_budget_no_op_when_under_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """With plenty of slack under the budget, the prune does nothing."""
-    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 1.0)  # 1 GB cap
-    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
-    incremental.mkdir(parents=True)
-    sess = incremental / "fresh"
-    sess.mkdir()
-    (sess / "blob").write_bytes(b"\x00" * 1024)  # 1 KB, miles under budget
-
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-    assert sess.exists(), "entry under budget must be kept"
-    assert "budget=" not in result.detail, f"no budget evictions expected, got: {result.detail!r}"
-
-
-def test_cargo_budget_deps_only_counts_cargo_extensions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """Budget on deps/ must only touch cargo's .rlib/.o/.rmeta/.d output.
-
-    Test binaries and other files (no extension, or extensions we don't
-    manage) must survive even if the dir exceeds budget overall.
-    """
-    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "deps", 0.000_01)  # ~10 KB
-    deps = tmp_path / "cache" / "target" / "cargo" / "debug" / "deps"
-    deps.mkdir(parents=True)
-
-    old_rlib = deps / "libcrate-aaa.rlib"
-    old_rlib.write_bytes(b"\x00" * 8192)
-    os.utime(old_rlib, (time.time() - 5 * 86400, time.time() - 5 * 86400))
-
-    new_rlib = deps / "libcrate-bbb.rlib"
-    new_rlib.write_bytes(b"\x00" * 8192)
-    # Test binary -- no .rlib/.o/.rmeta/.d extension, must survive.
-    test_bin = deps / "test_mycrate-abc123"
-    test_bin.write_bytes(b"\x00" * 8192)
-    os.utime(test_bin, (time.time() - 30 * 86400, time.time() - 30 * 86400))
-
-    # Under the default age threshold (3 days), the ancient test_bin would be
-    # targeted if the script counted it -- but the entry_filter scopes to
-    # cargo extensions only, so the budget pass must leave it alone.
-    clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-    assert test_bin.exists(), "test binary must not be pruned by the budget pass"
-    # Budget drops the oldest .rlib first -- old_rlib must be gone.
-    assert not old_rlib.exists(), "oldest .rlib should have been evicted"
-
-
-def test_cargo_budget_evicts_oldest_linked_test_binaries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """Bound linked tests separately while retaining the newest focused cache."""
-    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "linked", 0.000_01)
-    deps = tmp_path / "cache" / "target" / "cargo" / "debug" / "deps"
-    deps.mkdir(parents=True)
-
-    old_binary = deps / "test_old-aaa111"
-    old_binary.write_bytes(b"\x00" * 8192)
-    old_binary.chmod(0o755)
-    old_time = time.time() - 5 * 86400
-    os.utime(old_binary, (old_time, old_time))
-
-    new_binary = deps / "test_new-bbb222"
-    new_binary.write_bytes(b"\x00" * 8192)
-    new_binary.chmod(0o755)
-
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-
-    assert not old_binary.exists(), "oldest linked test binary should be evicted"
-    assert new_binary.exists(), "newest linked test binary should stay warm"
-    assert "budget=" in result.detail
 
 
 def test_target_transient_cleanup_removes_only_old_reproducible_outputs(
@@ -530,30 +368,6 @@ def test_target_tmp_cleanup_removes_old_scratch_but_preserves_fresh_work(
     assert fresh.exists()
 
 
-def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
-    """When cache/target/release has old content, aggressive mode is used and cache/target/doc
-    is dropped if nothing recent lives inside it."""
-    release = tmp_path / "cache" / "target" / "cargo" / "release"
-    release.mkdir(parents=True)
-    old_bin = release / "capsem"
-    old_bin.write_text("x")
-    old_time = time.time() - 5 * 86400
-    os.utime(old_bin, (old_time, old_time))
-    # Ensure release/ mtime itself is old so the heuristic triggers.
-    os.utime(release, (old_time, old_time))
-
-    doc = tmp_path / "cache" / "target" / "cargo" / "doc"
-    doc.mkdir(parents=True)
-    (doc / "page.html").write_text("x")
-    os.utime(doc / "page.html", (old_time, old_time))
-    os.utime(doc, (old_time, old_time))
-
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-
-    assert "aggressive" in result.detail
-    assert not doc.exists()
-
-
 def test_dry_run_removes_nothing(tmp_path: Path, short_sock_dir: Path):
     debug = tmp_path / "cache" / "target" / "cargo" / "debug"
     debug.mkdir(parents=True)
@@ -589,32 +403,9 @@ def test_sockets_dir_missing(tmp_path: Path):
 
 
 def test_target_missing(tmp_path: Path):
-    """Missing cache/target/ dir is not an error for either stage."""
+    """Missing cache/target/ dir is not an error."""
     ra = clean_stale.clean_rootfs_scratch(tmp_path, dry_run=False, verbose=False)
-    rd = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
     assert ra.removed == 0
-    assert rd.removed == 0
-
-
-def test_cargo_cleanup_reports_real_before_after_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)
-    incremental = tmp_path / "cache" / "target" / "cargo" / "debug" / "incremental"
-    old = incremental / "old"
-    new = incremental / "new"
-    old.mkdir(parents=True)
-    new.mkdir()
-    (old / "blob").write_bytes(b"x" * 16_384)
-    (new / "blob").write_bytes(b"x" * 8_192)
-    old_time = time.time() - 5 * 86400
-    os.utime(old, (old_time, old_time))
-
-    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
-
-    assert result.bytes_before > result.bytes_after
-    assert result.bytes_reclaimed == result.bytes_before - result.bytes_after
-    assert result.bytes_reclaimed > 0
 
 
 def test_main_persists_cleanup_ledger(tmp_path: Path):
@@ -636,4 +427,30 @@ def test_main_persists_cleanup_ledger(tmp_path: Path):
     payload = json.loads(report.read_text().splitlines()[-1])
     assert payload["schema"] == "capsem.host_cleanup.v1"
     assert payload["target"]["before_bytes"] >= payload["target"]["after_bytes"]
-    assert any(stage["name"] == "cargo" for stage in payload["stages"])
+    assert all(stage["name"] != "cargo" for stage in payload["stages"])
+
+
+def test_main_places_default_ledger_in_policy_owned_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config = tmp_path / "config"
+    config.mkdir()
+    shutil.copy2(REPO_ROOT / "config/cache.toml", config / "cache.toml")
+    monkeypatch.delenv(load_policy(tmp_path).authority_environment, raising=False)
+
+    rc = clean_stale.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--tmp-dir",
+            str(tmp_path / "tmp"),
+            "--sockets-dir",
+            str(tmp_path / "sockets"),
+        ]
+    )
+
+    assert rc == 0
+    ledger = tmp_path / "cache/state/host-cleanup.jsonl"
+    assert json.loads(ledger.read_text().splitlines()[-1])["schema"] == (
+        "capsem.host_cleanup.v1"
+    )

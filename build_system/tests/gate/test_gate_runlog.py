@@ -388,7 +388,7 @@ def test_a_checkout_without_git_still_records_a_run(tmp_path: Path) -> None:
 
 
 def test_measuring_a_directory_that_is_gone_is_not_an_error(tmp_path: Path) -> None:
-    """Rotation and `gc` both measure trees that another run may have taken."""
+    """Rotation may measure a tree that another run already reclaimed."""
     from capsem_builder.gate.runhistory import tree_size
 
     assert tree_size(tmp_path / "never-existed") == 0

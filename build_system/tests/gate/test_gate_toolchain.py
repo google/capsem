@@ -24,6 +24,7 @@ EXPECTED_TOOLS = {
     "cargo-audit": (("cargo-audit", "--version"), "cargo-audit 0.22.1", "0.22.1"),
     "cargo-sbom": (("cargo-sbom", "--version"), "cargo-sbom 0.10.0", "0.10.0"),
     "cargo-tauri": (("cargo-tauri", "--version"), "tauri-cli 2.11.1", "2.11.1"),
+    "sccache": (("sccache", "--version"), "sccache 0.17.0", "0.17.0"),
 }
 
 
@@ -77,9 +78,9 @@ def test_sealed_fast_ci_preinstalls_the_same_nextest_pin() -> None:
     chosen = re.search(r"--sets ([a-z,]+)", workflow)
     assert chosen is not None, "the fast gate no longer selects a declared tool set"
 
-    sets = tomllib.loads(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )["toolchain"]["sets"]
+    sets = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
+        "toolchain"
+    ]["sets"]
     members: set[str] = set()
     for label in chosen.group(1).split(","):
         members.update(sets[label])

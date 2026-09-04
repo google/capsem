@@ -7,7 +7,7 @@ sibling, not the production file the test was moved out of -- see
 
 This has already cost two release attempts. Sixteen contracts under
 `tests/capsem-release/` searched production files for relocated test names, and
-five more under `tests/capsem-install/` did the same; the second set runs only
+five more under `tests/capsem_install/` did the same; the second set runs only
 inside the Docker install gate, so it stayed invisible until forty minutes into
 a release run. Nothing but this test connects a Rust file layout change to the
 Python assertions that depend on it, and both failures looked like a broken

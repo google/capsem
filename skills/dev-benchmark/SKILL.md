@@ -94,6 +94,12 @@ machine, which is exactly what happened: 0.6.0 qualification failed on
 `gateway /vms/list CPU=0.160s > 0.140s`, and a rerun showed it was a one-off.
 `significant` requires the breach to also exceed the baseline's own `cv`.
 
+Treat low-single-digit route-latency movement, including 3-5 ms, as host and
+scheduler noise rather than a product speedup or regression. Route-health
+ceilings are rounded gross-regression guards with a config-owned 20% operating
+margin; they are not comparative performance claims. A real comparative claim
+comes from repeated stored evidence and must clear its observed variance.
+
 `[benchmark_regression] maximum_factor` is the ratio, config-owned and
 relative to checked-in evidence. There is deliberately no absolute
 seconds-or-megabytes cap: one would be a number somebody authored rather than

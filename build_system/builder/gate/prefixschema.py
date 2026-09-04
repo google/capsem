@@ -22,10 +22,8 @@ class PrefixConfig(Strict):
 
     parent: str
     build_cache: str
-    vm_image_cache: str
     cargo_target: str
     cargo_profiles: tuple[str, ...]
-    cargo_target_warning_gb: float
     lease_template: str
     name_length: int
     keep: int
@@ -68,16 +66,14 @@ class PrefixConfig(Strict):
             )
         resumable = set(self.resumable)
         if not resumable <= set(self.lent):
-            raise ValueError(
-                f"{sorted(resumable - set(self.lent))} is resumable but not lent"
-            )
+            raise ValueError(f"{sorted(resumable - set(self.lent))} is resumable but not lent")
         if not resumable <= set(self.produced):
             raise ValueError(
                 f"{sorted(resumable - set(self.produced))} is resumable but not produced"
             )
         return self
 
-    @field_validator("parent", "build_cache", "cargo_target", "vm_image_cache")
+    @field_validator("parent", "build_cache", "cargo_target")
     @classmethod
     def _shared_roots_are_cache_owned(cls, value: str) -> str:
         """Checked-in relative roots belong to cache/; tests may use absolutes."""
@@ -100,7 +96,6 @@ class PrefixConfig(Strict):
         for name, configured in (
             ("build_cache", self.build_cache),
             ("cargo_target", self.cargo_target),
-            ("vm_image_cache", self.vm_image_cache),
         ):
             retained = PurePosixPath(configured)
             if retained == parent or parent in retained.parents:
@@ -123,16 +118,3 @@ class PrefixConfig(Strict):
             if PurePosixPath(profile).name != profile or profile in {"", ".", ".."}:
                 raise ValueError(f"cargo profile {profile!r} must be one plain directory name")
         return self
-
-    @field_validator("cargo_target_warning_gb")
-    @classmethod
-    def _warning_is_a_real_size(cls, threshold: float) -> float:
-        """The reported threshold must describe a real positive size.
-
-        It is advisory rather than destructive: `[disk] required_free_gb` is
-        the fail-closed filesystem floor, and `--clean-build` is the explicit
-        way to discard compiler output.
-        """
-        if threshold <= 0:
-            raise ValueError("cargo_target_warning_gb must be a positive size in GB")
-        return threshold

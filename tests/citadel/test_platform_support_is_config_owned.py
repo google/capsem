@@ -21,7 +21,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GATE_CONFIG = PROJECT_ROOT / "config/gate.toml"
-CACHE_CONFIG = PROJECT_ROOT / "config/cache.toml"
 README = PROJECT_ROOT / "README.md"
 DOCS = PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "getting-started.md"
 TAURI = PROJECT_ROOT / "crates/capsem-app/tauri.conf.json"
@@ -72,23 +71,15 @@ def test_probe_images_are_pinned_by_digest() -> None:
         assert len(row["digest"]) == len("sha256:") + 64, row
 
 
-def test_cache_controller_probe_image_is_pinned_by_digest() -> None:
-    """Capacity enforcement must execute the same image on every run."""
-    image = tomllib.loads(CACHE_CONFIG.read_text(encoding="utf-8"))["control"]["docker"][
-        "capacity_probe_image"
-    ]
-    _, separator, digest = image.rpartition("@sha256:")
-
-    assert separator and len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
-
-
 def test_readme_badges_match_the_supported_releases() -> None:
     readme = README.read_text(encoding="utf-8")
     macos = _platforms()["macos"]["minimum_version"].split(".")[0]
 
     assert f"badge/macOS-{macos}%2B" in readme
     for name, version in _oldest_per_name().items():
-        assert f"badge/{name}-{version}%2B" in readme, f"no README badge for {name} {version}"
+        assert f"badge/{name}-{version}%2B" in readme, (
+            f"no README badge for {name} {version}"
+        )
 
 
 def _support_row(text: str, system: str) -> str:
@@ -98,7 +89,9 @@ def _support_row(text: str, system: str) -> str:
         for line in text.splitlines()
         if line.startswith("|") and line.split("|")[1].strip() == system
     ]
-    assert len(rows) == 1, f"expected exactly one support row for {system}, found {len(rows)}"
+    assert len(rows) == 1, (
+        f"expected exactly one support row for {system}, found {len(rows)}"
+    )
     return rows[0]
 
 
@@ -109,7 +102,9 @@ def test_readme_and_docs_state_the_same_supported_releases() -> None:
     for surface in (README, DOCS):
         text = surface.read_text(encoding="utf-8")
         row = _support_row(text, "macOS")
-        assert f"{major} ({macos['minimum_release_name']}) or later" in row, surface.name
+        assert f"{major} ({macos['minimum_release_name']}) or later" in row, (
+            surface.name
+        )
         for name, version in _oldest_per_name().items():
             row = _support_row(text, name)
             assert f"{version} or later" in row, (
@@ -140,4 +135,4 @@ def test_the_two_public_installers_are_the_same_file() -> None:
     """They are hand-maintained copies, so only equality keeps them honest."""
     site, docs = (path.read_text(encoding="utf-8") for path in INSTALLERS)
 
-    assert site == docs, "web/marketing/public/install.sh and web/docs/public/install.sh have diverged"
+    assert site == docs, f"{INSTALLERS[0]} and {INSTALLERS[1]} have diverged"

@@ -143,14 +143,18 @@ def test_an_invalid_cache_control_is_reported(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     policy = root / "config/cache.toml"
     policy.write_text(
-        policy.read_text(encoding="utf-8").replace('rail = "install"', 'rail = "imaginary"'),
+        policy.read_text(encoding="utf-8").replace(
+            "max_size_bytes = 214748364800 # 200 GiB",
+            "max_size_bytes = 0 # invalid",
+            1,
+        ),
         encoding="utf-8",
     )
 
     findings = doctor.check(RecordingRunner(root))
 
     assert [finding.check for finding in findings] == ["cache policy"]
-    assert "imaginary" in findings[0].detail
+    assert "max_size_bytes" in findings[0].detail
 
 
 def test_a_recipe_dispatching_to_an_unknown_subcommand_is_reported(
@@ -237,9 +241,14 @@ def test_every_declared_console_script_is_runnable() -> None:
         for executable in declared
     }
 
+    expected_help = {
+        "capsem-builder": "Capsem builder -- backend helper tooling.",
+        "capsem-cache": "Inspect and control Capsem's repository cache.",
+        "capsem-gate": "candidate",
+    }
     for executable, result in results.items():
         assert result.returncode == 0, result.stderr
-        assert executable in result.stdout
+        assert expected_help[executable] in result.stdout
     # It got past the launcher: the subcommands only exist once `capsem_builder.gate`
     # has been imported, which happens on the far side of the re-exec.
     assert "candidate" in results["capsem-gate"].stdout

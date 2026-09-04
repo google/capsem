@@ -7,6 +7,7 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import imagebuild
 from capsem_builder.gate.actions import Action
@@ -16,6 +17,7 @@ from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CACHE_POLICY = load_policy(PROJECT_ROOT)
 
 
 class _Probe(Action, name="asset-recovery-probe"):
@@ -341,21 +343,21 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
 
     covered = set(assetidentity.roots(gate_config.load(PROJECT_ROOT)))
     for required in (
-        "guest",                  # guest scripts and files the images contain
-        "config",                 # profiles, packages, VM values, and templates
-        "build_system/builder/image",     # the image build implementation
-        "crates/capsem-admin",    # the profile-owned public build rail
-        "crates/capsem-core",     # profile/config semantics used by admin
-        "crates/capsem-logger",   # capsem-core's local dependency closure
-        "crates/capsem-agent",    # the guest agent binary
-        "crates/capsem-proto",    # the agent/core shared protocol
-        "crates/capsem-bench",    # the guest benchmark binary in rootfs
-        "Cargo.toml",             # workspace versions and dependency features
-        "Cargo.lock",             # exact Rust dependency graph
+        "guest",  # guest scripts and files the images contain
+        "config",  # profiles, packages, VM values, and templates
+        "build_system/builder/image",  # the image build implementation
+        "crates/capsem-admin",  # the profile-owned public build rail
+        "crates/capsem-core",  # profile/config semantics used by admin
+        "crates/capsem-logger",  # capsem-core's local dependency closure
+        "crates/capsem-agent",  # the guest agent binary
+        "crates/capsem-proto",  # the agent/core shared protocol
+        "crates/capsem-bench",  # the guest benchmark binary in rootfs
+        "Cargo.toml",  # workspace versions and dependency features
+        "Cargo.lock",  # exact Rust dependency graph
         "build_system/pyproject.toml",  # Python builder dependency declaration
-        "build_system/uv.lock",         # exact Python dependency graph
-        ".cargo",                 # cross-target compiler/linker configuration
-        "rust-toolchain.toml",    # exact Rust compiler and components
+        "build_system/uv.lock",  # exact Python dependency graph
+        ".cargo",  # cross-target compiler/linker configuration
+        "rust-toolchain.toml",  # exact Rust compiler and components
     ):
         assert any(root == required or root.startswith(f"{required}/") for root in covered), (
             f"{required} can change what a VM boots and is not part of the lane "
@@ -440,11 +442,14 @@ def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
     from capsem_builder.gate import assetreceipt
 
     base = gate_config.load(PROJECT_ROOT)
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "cache.toml").write_bytes(
+        (PROJECT_ROOT / "config" / "cache.toml").read_bytes()
+    )
     prefix = base.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
@@ -484,9 +489,7 @@ def test_the_lane_skips_a_build_only_when_its_receipt_and_bytes_match(tmp_path: 
 
 
 @pytest.mark.parametrize("mutation", ["change", "delete", "add"])
-def test_a_receipt_never_accepts_mutated_or_partial_output(
-    tmp_path: Path, mutation: str
-) -> None:
+def test_a_receipt_never_accepts_mutated_or_partial_output(tmp_path: Path, mutation: str) -> None:
     """Existence plus a matching input stamp is not reusable authority."""
     from capsem_builder.gate import assetreceipt
 
@@ -510,6 +513,10 @@ def test_preflight_keeps_only_reusable_lane_roots(
     from capsem_builder.gate.assetlanes import Profile
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
+    # A complete gate exports the outer checkout for its private prefix. This
+    # unit owns a temporary repository and must not inherit that cache owner,
+    # or its fixture in /tmp is incorrectly paired with the live cache.
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
     profile_root = output.parent
     (profile_root / config.assets.merged_assets_dir).mkdir()
     (profile_root / config.assets.merged_config_dir).mkdir()

@@ -53,6 +53,16 @@ pub type DbQueryJson = String;
 type DbQueryOwned = (String, Vec<serde_json::Value>);
 type DbQueryManyCache = Option<(Vec<DbQueryOwned>, Vec<DbQueryJson>)>;
 
+/// Typed invalidation domains for DB-owned data consumed by cached readers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadCacheDomain {
+    /// Any accepted write can affect this reader.
+    All,
+    /// Aggregates sourced from the main DB session/usage tables. Profile
+    /// mutation ledger rows are orthogonal and must not evict this projection.
+    SessionSummary,
+}
+
 pub const DB_QUERY_TOTAL: &str = "db.query_total";
 pub const DB_QUERY_DURATION_MS: &str = "db.query_duration_ms";
 pub const DB_QUERY_RESULT_ROWS: &str = "db.query_result_rows";
@@ -142,6 +152,7 @@ struct DbHandleInner {
     ready_cache: Mutex<Option<DbResult<()>>>,
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
+    session_summary_cache_epoch: AtomicU64,
     sync_from_disk_before_query: bool,
 }
 
@@ -213,6 +224,7 @@ impl DbHandle {
                 ready_cache: Mutex::new(None),
                 query_many_cache: Mutex::new(None),
                 read_cache_epoch: AtomicU64::new(0),
+                session_summary_cache_epoch: AtomicU64::new(0),
                 sync_from_disk_before_query,
             }),
         })
@@ -385,7 +397,7 @@ impl DbHandle {
         // invalidation that lands while the reader thread is executing bumps
         // it, and a result from before it must not be cached: it would be
         // served as current until the next invalidation.
-        let epoch_before = self.read_cache_epoch();
+        let epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
@@ -447,7 +459,7 @@ impl DbHandle {
     /// query ran, in which case the result may predate a write and is dropped.
     pub(crate) fn store_query_many_cache(&self, epoch_before: u64, key: Vec<DbQueryOwned>, result: Vec<DbQueryJson>) {
         let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
-        if self.read_cache_epoch() != epoch_before {
+        if self.read_cache_epoch(ReadCacheDomain::All) != epoch_before {
             tracing::debug!(
                 db_path = %self.inner.path.display(),
                 operation = "query_many",
@@ -463,12 +475,23 @@ impl DbHandle {
     pub fn invalidate_read_cache(&self) {
         *self.inner.query_many_cache.lock().unwrap() = None;
         self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Monotonic read-cache generation for callers that cache derived route
-    /// bytes from DB-owned query results.
-    pub fn read_cache_epoch(&self) -> u64 {
-        self.inner.read_cache_epoch.load(Ordering::Acquire)
+    fn invalidate_after_write(&self, affects_session_summary: bool) {
+        *self.inner.query_many_cache.lock().unwrap() = None;
+        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        if affects_session_summary {
+            self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    /// Monotonic generation for one typed DB read domain.
+    pub fn read_cache_epoch(&self, domain: ReadCacheDomain) -> u64 {
+        match domain {
+            ReadCacheDomain::All => self.inner.read_cache_epoch.load(Ordering::Acquire),
+            ReadCacheDomain::SessionSummary => self.inner.session_summary_cache_epoch.load(Ordering::Acquire),
+        }
     }
 
     /// Write one telemetry/security event through the DB-owned writer path.
@@ -479,6 +502,7 @@ impl DbHandle {
     pub async fn write(&self, op: WriteOp) -> DbResult<()> {
         let started = Instant::now();
         let op_kind = op.kind();
+        let affects_session_summary = !matches!(&op, WriteOp::ProfileMutationEvent(_));
         let Some(writer) = &self.inner.writer else {
             let error = "db handle is read-only; session writes must use the owning process DB handle".to_string();
             tracing::error!(
@@ -502,7 +526,7 @@ impl DbHandle {
             );
             error
         })?;
-        self.invalidate_read_cache();
+        self.invalidate_after_write(affects_session_summary);
         tracing::debug!(
             db_path = %self.inner.path.display(),
             operation = "write",
@@ -910,6 +934,9 @@ pub fn snapshot_session_db(src: &Path, dst: &Path) -> anyhow::Result<()> {
         anyhow::bail!("cloned session db failed quick_check: {quick_check}")
     }
 }
+
+#[cfg(test)]
+mod cache_tests;
 
 #[cfg(test)]
 mod handle_tests;

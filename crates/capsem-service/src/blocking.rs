@@ -37,14 +37,4 @@ impl ServiceState {
             )
         })
     }
-
-    /// Re-read one profile's rule files after a mutation, off the worker.
-    pub(crate) async fn refresh_profile_rule_cache_off_worker(
-        self: &Arc<Self>,
-        profile_id: String,
-    ) -> Result<(), AppError> {
-        self.off_worker(move |state| state.refresh_profile_rule_cache(Some(&profile_id)))
-            .await?
-            .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
-    }
 }

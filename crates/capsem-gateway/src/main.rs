@@ -1,6 +1,8 @@
 mod auth;
 mod cors;
+mod listener;
 mod proxy;
+mod service_client;
 mod status;
 mod terminal;
 
@@ -20,6 +22,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::auth::{AuthFailureTracker, AuthState};
+use crate::service_client::ServiceClient;
 use crate::status::StatusCache;
 
 #[derive(Parser, Debug)]
@@ -56,6 +59,7 @@ struct Args {
 pub struct AppState {
     pub token: String,
     pub uds_path: PathBuf,
+    pub service_client: ServiceClient,
     pub status_cache: StatusCache,
     pub auth_failures: AuthFailureTracker,
     /// Broadcast channel for real-time events to WebSocket /events clients.
@@ -129,9 +133,11 @@ async fn main() -> Result<()> {
     let auth_state = AuthState::new(&run_dir, &token, bound_port)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    let service_client = ServiceClient::new(&uds_path);
     let state = Arc::new(AppState {
         token,
         uds_path,
+        service_client,
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx,
@@ -168,14 +174,17 @@ async fn main() -> Result<()> {
 
     // Graceful shutdown on SIGTERM/SIGINT
     let shutdown_auth = auth_state.clone();
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            info!("shutting down");
-            shutdown_auth.cleanup();
-        })
-        .await
-        .context("server error")?;
+    axum::serve(
+        listener::low_latency(listener),
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        info!("shutting down");
+        shutdown_auth.cleanup();
+    })
+    .await
+    .context("server error")?;
 
     // Belt-and-suspenders cleanup (signal handler may not run on all exit paths)
     auth_state.cleanup();

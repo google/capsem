@@ -8,8 +8,8 @@ distributions = [
   "build_system/pyproject.toml=capsem-builder",
 ]
 entrypoints = [
-  "build_system/pyproject.toml:capsem-builder=capsem_builder.image.cli:main",
-  "build_system/pyproject.toml:capsem-cache=capsem_builder.cache.cli:main",
+  "build_system/pyproject.toml:capsem-builder=capsem_builder.gatelaunch:builder_main",
+  "build_system/pyproject.toml:capsem-cache=capsem_builder.gatelaunch:cache_main",
   "build_system/pyproject.toml:capsem-gate=capsem_builder.gatelaunch:main",
 ]
 old_import_count = 0

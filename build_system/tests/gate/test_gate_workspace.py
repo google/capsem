@@ -17,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.paths import CachePaths
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.lifecycle import held
@@ -196,9 +198,11 @@ def test_the_home_is_reclaimable_and_the_lock_is_not_inside_it() -> None:
     """The run takes the machine lock and then wipes this. A lockfile inside
     would be unlinked while held, and the next run would lock a fresh inode."""
     config = gate_config.load(PROJECT_ROOT)
+    policy = load_policy(PROJECT_ROOT)
+    cache_paths = CachePaths(repository_root=PROJECT_ROOT, policy=policy)
 
-    assert any(config.workspace.home.startswith(entry) for entry in config.disk.reclaimable), (
-        "the workspace must be reclaimable by `gc`"
+    assert config.path(config.workspace.home).is_relative_to(cache_paths.stage("test-home")), (
+        "the workspace must be owned by the typed test-home cache"
     )
     assert (
         not Path(config.locks.gate.path)

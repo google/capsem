@@ -68,13 +68,13 @@ def test_hot_route_cpu_budget_scales_with_the_measurement_window() -> None:
     within_budget = RouteTiming(
         label="service /profiles/code/enforcement/info",
         samples_ms=samples,
-        service_cpu_s=0.13,
+        service_cpu_s=0.09,
         gateway_cpu_s=None,
     )
     over_budget = RouteTiming(
         label=within_budget.label,
         samples_ms=samples,
-        service_cpu_s=0.132,
+        service_cpu_s=0.10,
         gateway_cpu_s=None,
     )
 
@@ -156,11 +156,11 @@ def test_windowed_route_measurement_uses_independent_reference_windows(
     assert timing.service_cpu_s == 0.09
 
 
-def test_reference_route_budget_uses_the_configured_regression_factor() -> None:
-    _p95_ms, _p99_ms, cpu_s = _scaled_hot_route_budget(
+def test_reference_route_budget_uses_the_configured_ceiling() -> None:
+    budget = _scaled_hot_route_budget(
         "/vms/list",
         gateway=True,
         samples=HOT_ROUTE_REFERENCE_SAMPLES,
     )
 
-    assert cpu_s == pytest.approx(0.19 * route_health.HOT_ROUTE_REGRESSION_FACTOR)
+    assert budget.cpu_s == pytest.approx(0.23)

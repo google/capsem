@@ -19,8 +19,8 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from . import cachelayout, installplan, platformproof, runtimeprepare
 from . import config as gate_config
-from . import installplan, platformproof
 from .actions import Call
 from .cachecontrol import CacheControl
 from .command import GateCommand
@@ -105,7 +105,7 @@ class InstallGate:
 
         try:
             self._container.require_rosetta()
-            self._cache.ensure_space("install")
+            self._cache.enforce("docker", "install")
             self._container.start(options=options)
             self._prove(package)
         finally:
@@ -115,7 +115,6 @@ class InstallGate:
             self._graph.clear_handoff()
             self._container.return_paths()
             self._container.stop()
-            self._cache.release("after-install", best_effort=True)
             self._cache.prune(best_effort=True)
 
         self._container.verify_rosetta_survived()
@@ -175,12 +174,13 @@ class InstallGate:
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
         # its non-root build can write there. Hand the host-owned storage ledger
         # back before invoking the host controller; cleanup restores the rest.
-        self._container.hand_back(f"{self._settings.mount}/{self._settings.storage_ledger}")
+        state = cachelayout.stage_relative_path(self._config, "state")
+        self._container.hand_back(f"{self._settings.mount}/{state}")
         # Package and image assembly can consume the reserve measured at start.
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside
         # a fixture after hours of otherwise-green release work.
-        self._cache.ensure_space("install")
+        self._cache.enforce("docker", "install")
 
         self._proof.run_install_suite()
         if not self._container.boots_a_guest:
@@ -251,6 +251,7 @@ class InstallCommand(
         # the static preflight step; standalone install builds it once here.
         image = installplan.fragment(plan, self._config)
         selected = getattr(self._args, "selected_content_root", None)
+        prerequisites = (image,)
         if selected:
             root = Path(selected)
             root = root if root.is_absolute() else self._config.path(str(root))
@@ -259,7 +260,9 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(ProfileContent.standalone(self._config))
-        plan.add(install_step(self._config, content=content), after=(image,))
+            prepared = plan.add(runtimeprepare.materialize_config_step(self._config))
+            prerequisites += (prepared,)
+        plan.add(install_step(self._config, content=content), after=prerequisites)
         return plan
 
 

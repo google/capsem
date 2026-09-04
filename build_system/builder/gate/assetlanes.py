@@ -19,13 +19,13 @@ either result is read.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assetcache, assetidentity, assetreceipt, imagebuild
+from . import assetidentity, assetreceipt, assetstore, imagebuild
 from . import config as gate_config
 from .actions import Action
+from .cachecontrol import CacheControl
 from .config import Arch
 from .context import Context
 from .errors import GateError
@@ -77,20 +77,7 @@ def prepare_workspace(config: gate_config.GateConfig, profiles: list[Profile]) -
             if child.name not in retained or (not child.is_symlink() and not child.is_dir()):
                 remove(child)
     identity = assetidentity.lane_identity(config)
-    assetcache.materialize(config, tuple(expected), identity)
-    expected_lanes = frozenset(
-        lane_assets(config, profile, arch)
-        for profile in profiles
-        for arch in config.architectures.values()
-    )
-    now = time.time()
-    fresh = frozenset(
-        path
-        for path in expected_lanes
-        if (metadata := assetreceipt.cache_metadata(config, path)) is not None
-        and now - metadata[0] <= config.assets.cache.maximum_age_hours * 3600
-    )
-    assetcache.enforce(config, protected=fresh)
+    assetstore.materialize(config, tuple(expected), identity)
 
 
 class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
@@ -113,7 +100,6 @@ class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
         return "verify exact source-bound asset lane receipts"
 
     def perform(self, context: Context) -> None:
-        del context
         identity = assetidentity.lane_identity(self._config)
         invalid = [
             f"{profile.name}/{arch.name}"
@@ -144,7 +130,6 @@ class SealPackedReceipts(Action, name="seal-packed-asset-lane-receipts"):
         return "record exact packed asset lane receipts"
 
     def perform(self, context: Context) -> None:
-        del context
         identity = assetidentity.lane_identity(self._config)
         for profile in self._profiles:
             for arch in self._config.architectures.values():
@@ -156,14 +141,7 @@ class SealPackedReceipts(Action, name="seal-packed-asset-lane-receipts"):
                     arch=arch,
                     stage=assetreceipt.PACKED_STAGE,
                 )
-        assetcache.enforce(
-            self._config,
-            protected=frozenset(
-                lane_assets(self._config, profile, arch)
-                for profile in self._profiles
-                for arch in self._config.architectures.values()
-            ),
-        )
+        CacheControl(context.runner).enforce("assets", "packed VM assets")
 
 
 class AssetLanes:
@@ -199,7 +177,7 @@ class AssetLanes:
                 )
                 self._require_artifacts(output / arch.name)
                 continue
-            assetcache.reset_lane(
+            assetstore.reset_lane(
                 self._config,
                 output,
                 identity,

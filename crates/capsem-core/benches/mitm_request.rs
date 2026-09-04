@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
@@ -111,10 +110,8 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> SocketAddr {
             let (stream, _) = listener.accept().await.unwrap();
             let config = Arc::clone(&config);
             tokio::spawn(async move {
-                let fd = stream.into_std().unwrap().into_raw_fd();
+                let fd: std::os::fd::OwnedFd = stream.into_std().unwrap().into();
                 mitm_proxy::handle_connection(fd, config).await;
-                // handle_connection wraps the fd in ManuallyDrop; we own it.
-                unsafe { libc::close(fd) };
             });
         }
     });

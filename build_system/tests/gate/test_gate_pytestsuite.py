@@ -116,7 +116,7 @@ def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:
     argv = _argv(pytestsuite.broad(CONFIG, profile="code"))
 
     assert "--ignore=tests/capsem-recipes" in argv
-    assert "--ignore=tests/capsem-install" in argv
+    assert "--ignore=tests/capsem_install" in argv
 
 
 def test_the_serial_snapshot_files_are_excluded_from_the_parallel_run() -> None:
@@ -229,8 +229,8 @@ def test_a_timing_suite_does_not_stop_at_the_first_failure() -> None:
     assert budget in _argv(pytestsuite.broad(CONFIG, profile="code"))
 
 
-def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
-    """Collection is a source-shape proof, not a VM or built-output proof."""
+def test_collection_is_cache_contained_strict_and_artifact_independent() -> None:
+    """Collection keeps the typed pytest cache, without VM or built-output dependencies."""
     collection = pytestsuite.collection(CONFIG)
     rendered = " ".join(collection.render())
 
@@ -241,11 +241,11 @@ def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
     for flag in (
         "--collect-only",
         "-qq",
-        "-p no:cacheprovider",
         "--strict-config",
         "--strict-markers",
     ):
         assert flag in rendered
+    assert "-p no:cacheprovider" not in rendered
     assert CONFIG.suites.pytest.require_artifacts not in rendered
     assert "--cov" not in rendered
     assert "-n" not in rendered

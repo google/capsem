@@ -52,6 +52,53 @@ fn write_secret_file_leaves_no_temp_sibling() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn write_secret_file_never_follows_a_predictable_temp_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credential-store.json");
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"untouched").unwrap();
+    let predictable = dir
+        .path()
+        .join(format!(".credential-store.json.tmp.{}", std::process::id()));
+    std::os::unix::fs::symlink(&victim, predictable).unwrap();
+
+    write_secret_file(&path, b"secret").unwrap();
+
+    assert_eq!(std::fs::read(&victim).unwrap(), b"untouched");
+    assert!(!std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read(&path).unwrap(), b"secret");
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_secret_writes_never_share_a_temp_file() {
+    use std::sync::{Arc, Barrier};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = Arc::new(dir.path().join("credential-store.json"));
+    let writers = 16;
+    let barrier = Arc::new(Barrier::new(writers));
+    let mut handles = Vec::with_capacity(writers);
+    for index in 0..writers {
+        let path = Arc::clone(&path);
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            let payload = format!("secret-{index}");
+            barrier.wait();
+            write_secret_file(&path, payload.as_bytes()).map(|()| payload)
+        }));
+    }
+    let payloads: Vec<_> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap().unwrap())
+        .collect();
+
+    let final_value = std::fs::read_to_string(path.as_ref()).unwrap();
+    assert!(payloads.contains(&final_value));
+}
+
 /// Set by [`two_processes_capturing_concurrently_keep_every_entry`] when it
 /// re-executes this test binary as a writer child: `<store path>|<prefix>`.
 const CHILD_WRITER_ENV: &str = "CAPSEM_TEST_DURABLE_STORE_CHILD";

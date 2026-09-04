@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache.objects import digest_file, verify
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
@@ -108,9 +109,7 @@ class Building(RecordingRunner):
         if BUILD_SCRIPT in str(command) and self._records is not None:
             packages = self.root / PACKAGE_ROOT
             packages.mkdir(parents=True, exist_ok=True)
-            (packages / f".cross-compile-{TARGET.name}-deb").write_text(
-                self._records + "\n"
-            )
+            (packages / f".cross-compile-{TARGET.name}-deb").write_text(self._records + "\n")
             target = packages / self._records
             if target.parent == packages:
                 target.write_text("package bytes")
@@ -124,7 +123,7 @@ def _run_lane(rail):
     The phases are plan steps now, so a test that wants the whole lane says
     so -- and a test that wants one phase can finally ask for one.
     """
-    rail.reserve()
+    rail.enforce_cache()
     rail.sync_clock()
     rail.require_content()
     rail.materialize()
@@ -486,7 +485,10 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
         'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" '
         '"${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}" "${HOST_PACKAGES}"'
     ) in normalized_dockerfile
-    assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
+    assert (
+        "COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs"
+        in dockerfile
+    )
     assert "ARG INPUT_IDENTITY" in dockerfile
     assert "org.capsem.package-builder.input-key=${INPUT_IDENTITY}" in dockerfile
     assert "ARG INPUT_KEY" not in dockerfile
@@ -759,10 +761,7 @@ def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) ->
 
 
 def _ort_materializer():
-    path = (
-        PROJECT_ROOT
-        / "build_system/builder/image/tools/build/materialize_package_ort.py"
-    )
+    path = PROJECT_ROOT / "build_system/builder/image/tools/build/materialize_package_ort.py"
     spec = importlib.util.spec_from_file_location("package_ort_materializer", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1145,11 +1144,10 @@ def test_the_builder_receives_every_name_for_the_target(
     assert f"bash /src/{BUILD_SCRIPT}" in build
 
 
-def test_the_lane_shares_no_named_volume_with_any_other_run(
+def test_the_lane_reuses_one_accounted_target_volume_per_architecture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A shared /cargo-target across architectures would rebuild the world on
-    every alternation; a per-architecture registry would refetch the index."""
+    """Cargo output survives gates without mixing architectures or stores."""
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
@@ -1157,22 +1155,13 @@ def test_the_lane_shares_no_named_volume_with_any_other_run(
     _run_lane(_rail(runner))
 
     build = runner.matching(r"docker create")[0]
-    # Reimplemented from a test that required exactly the opposite, and was
-    # right at the time: the cargo caches were shared named volumes and the
-    # target dir was one per architecture.
-    #
-    # They mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
-    # where `Dockerfile.host-builder` installs the toolchain, the cross-targets
-    # and its tools -- so the image carried all of it and the container saw a
-    # volume instead.
-    #
-    # The build directory is still off the host filesystem; it is simply
-    # anonymous, so Docker allocates one per container and reclaims it with
-    # that container rather than carrying it between two gates.
     assert "capsem-cargo-registry" not in build
     assert "capsem-rustup" not in build
-    assert "capsem-host-target" not in build
-    assert "-v /cargo-target" in build, f"the build directory left the container: {build}"
+    volume = CONFIG.package.cargo_target_volume.format(arch=TARGET.name)
+    assert f"-v {volume}:{CONFIG.package.cargo_target_mount}" in build
+    docker = cachelayout.cache_paths(CONFIG).policy.runtimes["docker"]
+    assert isinstance(docker, DockerRuntimePolicy)
+    assert volume.startswith(docker.volume_prefixes)
 
 
 def test_the_package_lane_mounts_no_git_metadata(
@@ -1502,22 +1491,20 @@ def test_the_builder_environment_carries_the_signing_material_it_was_given() -> 
     assert environment[CONFIG.package.signing.key_variable] == "secret-key-bytes"
 
 
-def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
-    """Twice, deliberately -- but not twice in the same breath.
+def test_the_docker_cache_is_enforced_at_two_different_moments() -> None:
+    """Twice, deliberately, around the materialized builder image.
 
-    The pair exists because the builder image is itself part of what fills
-    this rail: one check once it exists, one immediately before the package
-    build spends the headroom. Both calls sat on adjacent lines, so they
-    measured the same moment and the second could only ever agree with the
-    first. Removing one looked right and would have lost a real check.
+    The builder image is itself part of Docker-owned usage: one enforcement
+    occurs once it exists, and another immediately before the package build.
     """
     source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "packagerail.py").read_text(
         encoding="utf-8"
     )
 
-    assert source.count('ensure_space("package")') == 2
+    call = 'self._cache.enforce("docker", "package")'
+    assert source.count(call) == 2
     build = source.index("def build(self)")
-    first = source.index('ensure_space("package")')
-    second = source.index('ensure_space("package")', build)
+    first = source.index(call)
+    second = source.index(call, build)
 
     assert first < build < second, "both checks sit in one method, so they measure a single moment"

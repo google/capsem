@@ -18,7 +18,10 @@ fn file_event(idx: usize) -> WriteOp {
 fn bench_db_writer_bursts(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_writer_pressure");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(2));
+    // The 4096-event case needs about four seconds for ten samples. Keep a
+    // rounded 20% margin so Criterion does not silently shorten the sample
+    // count and make one run incomparable with the next.
+    group.measurement_time(Duration::from_secs(5));
 
     for burst_size in [128usize, 1024usize, 4096usize] {
         group.throughput(Throughput::Elements(burst_size as u64));

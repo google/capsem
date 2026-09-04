@@ -6,7 +6,8 @@ each re-deciding whether to pass `-u capsem`, whether to wrap the command in
 which is why several ended up three backslashes deep around a single path, and
 why one of them did not change directory at all.
 
-The disk budget those containers consume is `storage.py`.
+Their runtime storage is inventoried and controlled behind the common cache
+registry; command callers do not inspect Docker's data root.
 """
 
 from __future__ import annotations

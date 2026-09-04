@@ -1590,7 +1590,7 @@ pub(super) async fn handle_profile_skill_add(
         log_profile_mutation_route_rejected("profile_skill_add", &profile_id, "skill", &request.path, "add", &error);
         AppError(StatusCode::BAD_REQUEST, error)
     })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_skill_add", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -1615,7 +1615,7 @@ pub(super) async fn handle_profile_skill_edit(
             log_profile_mutation_route_rejected("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit", &error);
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_skill_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -1651,7 +1651,7 @@ pub(super) async fn handle_profile_skill_delete(
         );
         AppError(StatusCode::BAD_REQUEST, error)
     })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_skill_delete", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -1781,6 +1781,7 @@ pub(super) fn unix_timestamp_ms() -> i64 {
 pub(super) async fn write_profile_mutation_event(
     state: &ServiceState,
     summary: capsem_core::net::policy_config::ProfileMutationSummary,
+    profile: &Profile,
 ) -> Result<capsem_logger::ProfileMutationEvent, AppError> {
     let mutation_id = capsem_core::security_engine::SecurityEventId::new_uuid4()
         .as_str()
@@ -1810,8 +1811,7 @@ pub(super) async fn write_profile_mutation_event(
                 format!("profile mutation ledger write failed: {error}"),
             )
         })?;
-    state.invalidate_main_db_route_caches();
-    refresh_profile_route_caches(state)?;
+    profile_mutation_cache::refresh_after_profile_mutation(state, profile, &event)?;
     log_profile_mutation_applied("profile_mutation_ledger", &event);
     Ok(event)
 }
@@ -1953,7 +1953,7 @@ pub(super) async fn handle_profile_mcp_server_edit(
             );
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_server_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -2007,7 +2007,7 @@ pub(super) async fn handle_profile_mcp_server_delete(
         );
         AppError(StatusCode::BAD_REQUEST, error)
     })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_server_delete", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -2206,8 +2206,7 @@ pub(super) async fn handle_profile_mcp_default_edit(
             );
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
-    state.refresh_profile_rule_cache_off_worker(profile_id.clone()).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_default_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -2253,7 +2252,7 @@ pub(super) async fn handle_profile_mcp_tool_edit(
             );
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
-    let event = write_profile_mutation_event(&state, summary).await?;
+    let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_tool_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,

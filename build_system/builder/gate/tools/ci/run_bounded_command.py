@@ -19,6 +19,25 @@ from typing import Protocol
 TIMEOUT_EXIT = 124
 
 
+def _contained_environment() -> dict[str, str]:
+    """Route direct language tools through the repository cache policy."""
+    inherited = dict(os.environ)
+    raw_root = inherited.get("CAPSEM_REPOSITORY_ROOT")
+    if not raw_root:
+        return inherited
+    from pathlib import Path
+
+    root = Path(raw_root).resolve()
+    if not (root / "config/cache.toml").is_file():
+        return inherited
+
+    from capsem_builder import gatelaunch
+
+    selected = gatelaunch.contained_environment(root)
+    gatelaunch.hold_environment(root)
+    return {**inherited, **selected}
+
+
 class _ProcessGroup(Protocol):
     pid: int
 
@@ -98,6 +117,7 @@ def run(argv: Sequence[str]) -> int:
 
     process = subprocess.Popen(
         command,
+        env=_contained_environment(),
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )

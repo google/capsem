@@ -1,10 +1,11 @@
 """Filesystem inventory reports deterministic stage-owned usage."""
 
+import fcntl
 import os
 from pathlib import Path
 
-from capsem_builder.cache.inventory import scan_inventory
-from capsem_builder.cache.models import CachePolicy, PruneMethod, StagePolicy
+from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
+from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 
 
@@ -12,14 +13,15 @@ def policy() -> CachePolicy:
     return CachePolicy(
         version=1,
         root=Path("cache"),
-        minimum_free_bytes=1,
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={
             "objects": StagePolicy(
                 path=Path("target/objects"),
-                warning_bytes=10,
-                soft_bytes=20,
-                hard_bytes=30,
-                prune=PruneMethod.LRU,
+                description="test cache",
+                scope=CacheScope.DISK,
+                warm_size_bytes=20,
+                max_size_bytes=30,
+                prune_strategy=PruneStrategy.LRU,
                 maximum_age_hours=72,
             )
         },
@@ -88,3 +90,45 @@ def test_inventory_reports_minimal_unclassified_roots(tmp_path: Path) -> None:
 
     assert [entry.relative_path for entry in report.unclassified] == [Path("target/stray")]
     assert report.unclassified[0].logical_bytes == len(b"unmanaged")
+
+
+def test_inventory_separates_metadata_and_protects_active_leases(tmp_path: Path) -> None:
+    stage = (
+        policy()
+        .stages["objects"]
+        .model_copy(update={"managed_globs": ("[!.]*",), "lease_template": ".{key}.lock"})
+    )
+    configured = policy().model_copy(update={"stages": {"objects": stage}})
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    generation = paths.stage("objects") / "generation"
+    generation.mkdir(parents=True)
+    lease = paths.stage("objects") / ".generation.lock"
+    lease.touch()
+
+    with lease.open("rb") as descriptor:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        report = scan_inventory(paths, configured, now_ns=10)
+
+    entries = {entry.key: entry for entry in report.stages[0].entries}
+    assert entries["generation"].managed and entries["generation"].protected
+    assert not entries[".generation.lock"].managed
+
+
+def test_retention_inventory_skips_policy_protected_stages(tmp_path: Path) -> None:
+    retained = policy().stages["objects"].model_copy(update={"prune_strategy": PruneStrategy.NONE})
+    reclaimable = retained.model_copy(
+        update={"path": Path("target/reclaimable"), "prune_strategy": PruneStrategy.LRU}
+    )
+    configured = policy().model_copy(
+        update={"stages": {"objects": retained, "reclaimable": reclaimable}}
+    )
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    for stage_id in configured.stages:
+        entry = paths.stage(stage_id) / "entry"
+        entry.mkdir(parents=True)
+        (entry / "payload").write_bytes(stage_id.encode())
+
+    report = scan_retention_inventory(paths, configured, now_ns=10)
+
+    assert [stage.stage_id for stage in report.stages] == ["reclaimable"]
+    assert report.stages[0].logical_bytes == len(b"reclaimable")

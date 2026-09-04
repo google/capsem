@@ -11,10 +11,16 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_validator
+from pydantic import (
+    NonNegativeFloat,
+    PositiveFloat,
+    PositiveInt,
+    StringConstraints,
+    model_validator,
+)
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
-from .configschema import Strict
+from .configschema import SafeToken, Strict
 from .releaseschema import ReleasePairingEnvironment
 
 
@@ -137,6 +143,7 @@ class SigningConfig(Strict):
 
 
 class FrontendConfig(Strict):
+    workspace: str
     build_script: str
     build_target: str
     app_crate: str
@@ -180,6 +187,23 @@ class ImageBuildConfig(Strict):
         return self
 
 
+class PythonLockAuditConfig(Strict):
+    requirements: str
+    cache_stage: SafeToken
+    cache_subdirectory: SafeToken
+    service: Literal["osv", "pypi"]
+    attempts: PositiveInt
+    retry_seconds: NonNegativeFloat
+    socket_timeout_seconds: PositiveInt
+
+    @model_validator(mode="after")
+    def requirements_stays_in_cache(self) -> PythonLockAuditConfig:
+        path = PurePosixPath(self.requirements)
+        if path.is_absolute() or ".." in path.parts or path.parts[:2] != ("cache", "state"):
+            raise ValueError("Python audit requirements must stay under cache/state/")
+        return self
+
+
 class AuditsConfig(Strict):
     cargo: str
     dependency_drift: str
@@ -195,6 +219,7 @@ class AuditsConfig(Strict):
     skills_dir: str
     max_skill_description_chars: PositiveInt
     max_skill_body_lines: PositiveInt
+    python_lock_policy: PythonLockAuditConfig
 
 
 class WebSurfacesConfig(Strict):
@@ -242,45 +267,9 @@ class SuitesConfig(Strict):
     pytest: PytestConfig
 
 
-class ServiceConfig(Strict):
-    """The development daemon, on the same rail an installed package uses."""
-
-    binary: str
-    process_binary: str
-    sync_assets_script: str
-    generated_profiles: str
-    assets_dir: str
-    home_assets: str
-    home_profiles: str
-    socket: str
-    pidfile: str
-    retired_config: tuple[str, ...]
-    ready_attempts: int
-    ready_interval_seconds: float
-    log_level: str
-
-
-class SmokeGroup(Strict):
-    name: str
-    paths: tuple[str, ...]
-    markers: str
-    parallel: int = 0
-
-
-class SmokeConfig(Strict):
-    doctor: tuple[str, ...]
-    run_id_variable: str
-    log: str
-    groups: tuple[SmokeGroup, ...]
-    serial_groups: tuple[SmokeGroup, ...]
-
-
 class InitrdConfig(Strict):
     binaries: tuple[str, ...]
     staging: str
-    sources: tuple[str, ...]
-    freshness_globs: tuple[str, ...]
-    freshness_inputs: tuple[str, ...]
     build: tuple[str, ...]
     init: str
     files: tuple[str, ...]

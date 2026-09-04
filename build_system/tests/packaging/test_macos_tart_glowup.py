@@ -134,7 +134,7 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
         "capsem-cache",
         "--repository",
         str(PROJECT_ROOT),
-        "runtime-prune",
+        "prune",
         "tart",
         "--apply",
         "--reason",

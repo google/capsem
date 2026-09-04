@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 import time
-from datetime import UTC, datetime
 
+from . import dockervolumes
+from .dockerformat import json_lines, parse_size, reclaimable_size, timestamp
 from .runtimeexec import CommandRunner, execute
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -17,57 +17,17 @@ from .runtimemodels import (
     RuntimeResource,
 )
 
-SIZE_UNITS = {
-    "B": 1,
-    "KB": 1000,
-    "MB": 1000**2,
-    "GB": 1000**3,
-    "TB": 1000**4,
-    "KIB": 1024,
-    "MIB": 1024**2,
-    "GIB": 1024**3,
-    "TIB": 1024**4,
-}
-
-
-def parse_size(value: str) -> int:
-    token = value.strip().split()[0].replace(",", "")
-    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([A-Za-z]+)", token)
-    if match is None or match.group(2).upper() not in SIZE_UNITS:
-        raise ValueError(f"unsupported Docker size: {value!r}")
-    return int(float(match.group(1)) * SIZE_UNITS[match.group(2).upper()])
-
-
-def _timestamp(value: str) -> int:
-    if not value:
-        return 0
-    normalized = value.removesuffix(" UTC").replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S %z")
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1_000_000_000)
-
-
-def _json_lines(output: str) -> tuple[dict[str, object], ...]:
-    rows = tuple(json.loads(line) for line in output.splitlines() if line.strip())
-    if any(not isinstance(row, dict) for row in rows):
-        raise ValueError("Docker JSON-lines output contains a non-object")
-    return rows
-
 
 def _categories(output: str) -> tuple[RuntimeCategory, ...]:
     rows = []
-    for raw in _json_lines(output):
+    for raw in json_lines(output):
         rows.append(
             RuntimeCategory(
                 name=str(raw["Type"]),
                 count=int(str(raw["TotalCount"])),
                 active=int(str(raw["Active"])),
                 logical_bytes=parse_size(str(raw["Size"])),
-                reclaimable_bytes=parse_size(str(raw["Reclaimable"])),
+                reclaimable_bytes=reclaimable_size(str(raw["Reclaimable"])),
             )
         )
     return tuple(rows)
@@ -77,12 +37,20 @@ def categories(
     policy: DockerRuntimePolicy, *, runner: CommandRunner = execute
 ) -> tuple[RuntimeCategory, ...]:
     """Read Docker's typed top-level storage inventory without image traversal."""
-    summary = runner(
-        (policy.command, "system", "df", "--format", "{{json .}}"),
-        policy.timeout_seconds,
-    )
-    if summary.returncode != 0:
-        raise ValueError(summary.stderr or summary.stdout or "Docker unavailable")
+    command = (policy.command, "system", "df", "--format", "{{json .}}")
+    for attempt in range(policy.inventory_retry_attempts):
+        summary = runner(command, policy.timeout_seconds)
+        if summary.returncode == 0:
+            break
+        error = summary.stderr or summary.stdout or "Docker unavailable"
+        transient = (
+            "failed to calculate image disk usage" in error
+            and "snapshot" in error
+            and "does not exist" in error
+        )
+        if not transient or attempt + 1 == policy.inventory_retry_attempts:
+            raise ValueError(error)
+        time.sleep(policy.inventory_retry_delay_milliseconds / 1000)
     try:
         return _categories(summary.stdout)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -103,7 +71,7 @@ def _owned_images(
     ids = sorted(
         {
             str(row["ID"])
-            for row in _json_lines(listed.stdout)
+            for row in json_lines(listed.stdout)
             if any(str(row["Repository"]).startswith(prefix) for prefix in policy.image_prefixes)
         }
     )
@@ -134,15 +102,15 @@ def _owned_images(
         )
         if not names:
             continue
-        timestamp = _timestamp(created)
+        created_at = timestamp(created)
         resources.append(
             RuntimeResource(
                 kind=ResourceKind.IMAGE,
                 identity=identity,
                 names=names,
                 logical_bytes=int(size),
-                created_ns=timestamp,
-                last_used_ns=timestamp,
+                created_ns=created_at,
+                last_used_ns=created_at,
                 active=any(name in used_images for name in names),
                 owned=True,
                 protected=any(name in used_images for name in names),
@@ -171,13 +139,13 @@ def _containers(
         raise ValueError(result.stderr or "Docker container inventory failed")
     resources = []
     used_images = set()
-    for raw in _json_lines(result.stdout):
+    for raw in json_lines(result.stdout):
         used_images.add(str(raw.get("Image", "")))
         name = str(raw.get("Names", ""))
         if not any(name.startswith(prefix) for prefix in policy.container_prefixes):
             continue
         active = str(raw.get("State", "")).lower() == "running"
-        created = _timestamp(str(raw.get("CreatedAt", "")))
+        created = timestamp(str(raw.get("CreatedAt", "")))
         resources.append(
             RuntimeResource(
                 kind=ResourceKind.CONTAINER,
@@ -206,6 +174,7 @@ def inventory(
         storage = categories(policy, runner=runner)
         containers, used_images = _containers(policy, runner)
         images = _owned_images(policy, runner, used_images)
+        volumes = dockervolumes.inventory(policy, runner=runner)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         return RuntimeInventory(
             runtime_id=runtime_id,
@@ -218,19 +187,23 @@ def inventory(
         )
     build = next((row for row in storage if row.name == "Build Cache"), None)
     build_resource = (
-        RuntimeResource(
-            kind=ResourceKind.BUILD_CACHE,
-            identity="buildkit",
-            names=("BuildKit shared cache",),
-            logical_bytes=build.logical_bytes,
-            created_ns=0,
-            last_used_ns=0,
-            active=False,
-            owned=True,
-            protected=False,
-        ),
-    ) if policy.build_cache_owned and build is not None else ()
-    resources = (*images, *containers, *build_resource)
+        (
+            RuntimeResource(
+                kind=ResourceKind.BUILD_CACHE,
+                identity="buildkit",
+                names=("BuildKit shared cache",),
+                logical_bytes=build.logical_bytes,
+                created_ns=0,
+                last_used_ns=0,
+                active=False,
+                owned=True,
+                protected=False,
+            ),
+        )
+        if policy.build_cache_owned and build is not None
+        else ()
+    )
+    resources = (*images, *containers, *volumes, *build_resource)
     return RuntimeInventory(
         runtime_id=runtime_id,
         kind=RuntimeKind.DOCKER,

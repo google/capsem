@@ -121,7 +121,7 @@ fn block_checkpoint_restore_rejects_guest_id_drift_for_same_inode() {
     let path = temp_disk("checkpoint-id-source.img", 4096);
     let alias = path.with_file_name("checkpoint-id-alias.img");
     let _ = std::fs::remove_file(&alias);
-    std::fs::hard_link(&path, &alias).unwrap();
+    crate::auditfs::link_test_fixture(&path, &alias).unwrap();
     let mut source = VirtioBlockDevice::new(&path, false).unwrap();
     let state = source.checkpoint_state().unwrap();
     let mut restored = VirtioBlockDevice::new(&alias, false).unwrap();

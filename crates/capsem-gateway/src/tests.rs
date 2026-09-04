@@ -34,6 +34,7 @@ fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test".into(),
         uds_path: uds_path.into(),
+        service_client: ServiceClient::new(std::path::Path::new(uds_path)),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
@@ -77,6 +78,7 @@ fn token_app() -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test-secret-token-64chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         uds_path: "/tmp/test.sock".into(),
+        service_client: ServiceClient::new(std::path::Path::new("/tmp/test.sock")),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
@@ -129,6 +131,7 @@ fn cors_app() -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
         uds_path: "/tmp/test.sock".into(),
+        service_client: ServiceClient::new(std::path::Path::new("/tmp/test.sock")),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
@@ -348,6 +351,7 @@ async fn events_ws_without_upgrade_header_is_rejected() {
     let state = Arc::new(AppState {
         token: "t".into(),
         uds_path: "/tmp/x.sock".into(),
+        service_client: ServiceClient::new(std::path::Path::new("/tmp/x.sock")),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,

@@ -205,7 +205,7 @@ async fn download_missing_assets_skips_direct_arch_dev_layout() {
 }
 
 // CAPSEM_ASSET_BASE_URL override is exercised end-to-end by the Python
-// integration test in tests/capsem-install/test_asset_download.py against
+// integration test in tests/capsem_install/test_asset_download.py against
 // a real local HTTP server. We deliberately don't unit-test it here:
 // env mutation is process-wide and races with other tests in this binary.
 

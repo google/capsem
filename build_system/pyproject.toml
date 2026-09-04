@@ -1,6 +1,6 @@
 [project]
 name = "capsem-builder"
-version = "0.6.2"
+version = "0.6.3"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.scripts]
-capsem-builder = "capsem_builder.image.cli:main"
-capsem-cache = "capsem_builder.cache.cli:main"
+capsem-builder = "capsem_builder.gatelaunch:builder_main"
+capsem-cache = "capsem_builder.gatelaunch:cache_main"
 capsem-gate = "capsem_builder.gatelaunch:main"
 
 [build-system]

@@ -11,7 +11,9 @@ from pathlib import Path
 
 from . import (
     assetplan,
+    audits,
     pytestsuite,
+    toolchain,
 )
 from .actions import Script
 from .command import GateCommand
@@ -96,6 +98,11 @@ def artifacts(
         )
 
     built = assetplan.fragment(plan, config, after=after)
+    node = phase.add(
+        toolchain.node(config, (config.frontend.workspace,)),
+        after=after,
+    )
+    bundled = phase.add(audits.frontend_bundle(config), after=(node,))
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",
@@ -106,7 +113,7 @@ def artifacts(
             # same one every other build locks.
             contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
-        after=(built,),
+        after=(built, bundled),
     )
 
 

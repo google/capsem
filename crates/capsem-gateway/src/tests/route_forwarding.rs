@@ -4,6 +4,7 @@ fn service_proxy_app(uds_path: &str) -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
         uds_path: uds_path.into(),
+        service_client: ServiceClient::new(std::path::Path::new(uds_path)),
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,

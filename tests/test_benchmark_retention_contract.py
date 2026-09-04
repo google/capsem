@@ -394,16 +394,15 @@ def test_evidence_tolerance_and_route_budgets_are_separate_knobs() -> None:
     """
     config = tomllib.loads(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )["benchmark_regression"]
-
-    assert "hot_route_factor" in config, (
-        "the ironbank hot-route budgets have no knob of their own, so they "
-        "move whenever evidence tolerance is tuned"
     )
-    source = (PROJECT_ROOT / "tests" / "ironbank" / "test_route_health.py").read_text(
+
+    assert "minimum_headroom_factor" in config["benchmark"]["route_health"], (
+        "the route-health ceilings have no minimum operating-margin policy"
+    )
+    source = (PROJECT_ROOT / "tests" / "helpers" / "route_health_budget.py").read_text(
         encoding="utf-8"
     )
-    assert "hot_route_factor" in source, (
-        "test_route_health.py still reads the evidence ratchet as its budget "
-        "headroom"
+    assert "benchmark.route_health" in source, (
+        "the route-health budget library does not read its own typed config"
     )
+    assert set(config["benchmark_regression"]) == {"maximum_factor"}

@@ -29,7 +29,11 @@ PAYLOAD = b"an image that takes twenty minutes to build"
 
 
 def _seed_cache_inputs(checkout: Path) -> None:
-    for relative in ("config/cache.toml", "build_system/uv.lock", "build_system/pyproject.toml"):
+    for relative in (
+        "config/cache.toml",
+        "build_system/uv.lock",
+        "build_system/pyproject.toml",
+    ):
         destination = checkout / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((ROOT / relative).read_bytes())
@@ -42,7 +46,6 @@ def _relocated(tmp_path: Path):
         update={
             "parent": str(tmp_path / "prefixes"),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
@@ -120,7 +123,9 @@ def test_scaffolding_is_never_copied_back_into_the_checkout() -> None:
     assert not both, f"{both} is declared as both published output and scaffolding"
 
 
-def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path) -> None:
+def test_a_tree_reached_through_a_link_is_carried_as_its_contents(
+    tmp_path: Path,
+) -> None:
     """Profile content reaches the assets through a relative symlink.
 
     `cache/target/tests/ironbank/<profile>/assets` is a link to `cache/target/assets`,
@@ -139,7 +144,9 @@ def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path
 
     for relative in config.prefix.lent:
         cached = buildcache.root(config) / relative
-        assert not cached.is_symlink(), f"the cache holds a link for {relative}, not a tree"
+        assert not cached.is_symlink(), (
+            f"the cache holds a link for {relative}, not a tree"
+        )
         assert (cached / "x86_64" / "rootfs.erofs").read_bytes() == PAYLOAD
 
 
@@ -187,9 +194,12 @@ def _sequenced(monkeypatch, config, tmp_path: Path, status: int = 0) -> _Runner:
     global _LENT
     _LENT = config.prefix.lent
     monkeypatch.setattr(
-        "capsem_builder.gate.snapshot.populate", lambda source, target, cfg: target.mkdir(parents=True)
+        "capsem_builder.gate.snapshot.populate",
+        lambda source, target, cfg: target.mkdir(parents=True),
     )
-    monkeypatch.setattr("capsem_builder.gate.buildcache.export", lambda path, destination, cfg: None)
+    monkeypatch.setattr(
+        "capsem_builder.gate.buildcache.export", lambda path, destination, cfg: None
+    )
     return _Runner(status)
 
 
@@ -206,7 +216,9 @@ def _owning_its_checkout(config, tmp_path: Path):
     return config.model_copy(update={"root": empty})
 
 
-def test_a_finished_run_leaves_its_work_for_the_one_after_it(tmp_path, monkeypatch) -> None:
+def test_a_finished_run_leaves_its_work_for_the_one_after_it(
+    tmp_path, monkeypatch
+) -> None:
     """The sequence that was wired and never demonstrated.
 
     Run one builds and completes; run two must start with what run one left.
@@ -243,7 +255,9 @@ def test_a_finished_run_leaves_its_work_for_the_one_after_it(tmp_path, monkeypat
     )
 
 
-def test_the_first_run_starts_from_what_the_checkout_already_holds(tmp_path, monkeypatch) -> None:
+def test_the_first_run_starts_from_what_the_checkout_already_holds(
+    tmp_path, monkeypatch
+) -> None:
     """An empty cache is not the same as no previous work.
 
     `[prefix] exports` copies these trees back into the checkout at the end of
@@ -297,7 +311,9 @@ def test_the_checkout_is_only_consulted_when_the_cache_is_empty(tmp_path) -> Non
     assert not (buildcache.root(config) / relative / "older").exists()
 
 
-def test_the_very_first_run_is_lent_what_the_checkout_exported(tmp_path, monkeypatch) -> None:
+def test_the_very_first_run_is_lent_what_the_checkout_exported(
+    tmp_path, monkeypatch
+) -> None:
     """Wired, not merely available.
 
     `adopt` existing and never being called is this file's own subject one level
@@ -412,4 +428,6 @@ def test_adopting_never_reads_a_tree_the_run_was_not_pointed_at(tmp_path: Path) 
     (elsewhere / config.prefix.lent[0] / "rootfs.erofs").write_bytes(PAYLOAD)
 
     assert buildcache.adopt(config, tmp_path / "empty-checkout") == []
-    assert not buildcache.root(config).exists() or not list(buildcache.root(config).iterdir())
+    assert not buildcache.root(config).exists() or not list(
+        buildcache.root(config).iterdir()
+    )

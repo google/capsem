@@ -238,29 +238,6 @@ class RunLogConfig(Strict):
         return self
 
 
-class DiskConfig(Strict):
-    reclaimable: tuple[str, ...]
-    required_free_gb: int
-    required_free_scratch_gb: int
-    run_footprint_warn_gb: int
-
-    @field_validator("reclaimable")
-    @classmethod
-    def _stay_inside_the_checkout(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
-        """A reclaimer that can be aimed outside the checkout is a delete command.
-
-        Checked at load, with the offending entry named, rather than trusted at
-        the call site: the reclaimer removes whole trees, and the difference
-        between a relative path and one that escapes upwards is one editing
-        mistake.
-        """
-        for path in paths:
-            parts = PurePosixPath(path)
-            if parts.is_absolute() or ".." in parts.parts:
-                raise ValueError(f"{path!r} must be relative and must not escape upwards")
-        return paths
-
-
 class WorkspaceConfig(Strict):
     home: str
     run_dir: str

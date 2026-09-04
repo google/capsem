@@ -513,7 +513,6 @@ fn validate_restore_registers(state: &TransportState, snapshot: &VirtioMmioSnaps
     Ok(())
 }
 
-#[cfg(target_arch = "x86_64")]
 #[derive(Debug)]
 pub(super) struct QueueMemoryRange {
     pub(super) start: u64,
@@ -522,7 +521,6 @@ pub(super) struct QueueMemoryRange {
     pub(super) name: &'static str,
 }
 
-#[cfg(target_arch = "x86_64")]
 /// Validate guest-declared virtqueue geometry before the rings are trusted.
 ///
 /// Shared by the warm-restore path and the cold DRIVER_OK path so both enforce
@@ -582,7 +580,6 @@ fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapsh
     Ok(ranges)
 }
 
-#[cfg(target_arch = "x86_64")]
 fn queue_memory_ranges(index: usize, queue: &QueueSnapshot) -> Result<[QueueMemoryRange; 3]> {
     let size = u64::from(queue.num);
     let spans = [
@@ -635,7 +632,6 @@ pub(super) fn ready_queue_memory_ranges(snapshot: &VirtioMmioSnapshot) -> Result
     Ok(ranges)
 }
 
-#[cfg(target_arch = "x86_64")]
 fn validate_queue_nonoverlap(ranges: &mut [QueueMemoryRange]) -> Result<()> {
     ranges.sort_unstable_by_key(|range| (range.start, range.end));
     for pair in ranges.windows(2) {

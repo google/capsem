@@ -102,6 +102,30 @@ def test_improvement_past_headroom_requires_the_floor_to_ratchet() -> None:
     ]
 
 
+def test_required_floor_rounds_up_to_a_sufficient_hundredth() -> None:
+    coverage = RATCHET.Coverage(hit=78514, found=100000)
+
+    problems = RATCHET.violations(
+        {"product-core": coverage},
+        {"product-core"},
+        {"product-core": 75.50},
+        3.0,
+        40.0,
+    )
+
+    assert problems == [
+        "product-core: 78.51% leaves 3.01 points above its 75.50% floor; "
+        "raise the floor to at least 75.52% in the same change"
+    ]
+    assert RATCHET.violations(
+        {"product-core": coverage},
+        {"product-core"},
+        {"product-core": 75.52},
+        3.0,
+        40.0,
+    ) == []
+
+
 def test_coverage_inside_the_platform_variation_band_passes() -> None:
     assert (
         RATCHET.violations(

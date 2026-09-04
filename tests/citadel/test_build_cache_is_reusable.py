@@ -23,6 +23,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path, PurePosixPath
 
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.contract import PruneStrategy
 from capsem_builder.gate import buildcache, cargotarget, prefix
 from capsem_builder.gate import config as gate_config
 
@@ -40,7 +42,6 @@ def _relocated(tmp_path: Path):
         update={
             "parent": str(tmp_path / "prefixes"),
             "build_cache": str(tmp_path / "cache" / "target" / "prefix-products"),
-            "vm_image_cache": str(tmp_path / "cache" / "target" / "assets" / "generations"),
             "cargo_target": str(tmp_path / "cache" / "target" / "cargo"),
         }
     )
@@ -122,7 +123,9 @@ def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
     )
 
 
-def test_a_prefix_gives_its_output_back_through_the_door_it_leaves_by(tmp_path: Path) -> None:
+def test_a_prefix_gives_its_output_back_through_the_door_it_leaves_by(
+    tmp_path: Path,
+) -> None:
     """`reclaim` is that door -- a sweep, a repopulated release prefix, a
     successful run -- so the salvage belongs there and not at the call sites.
 
@@ -182,16 +185,14 @@ def test_the_public_complete_gate_never_discards_reusable_output() -> None:
     )
 
 
-def test_an_over_threshold_compiler_cache_is_still_reused(tmp_path: Path) -> None:
+def test_compiler_cache_is_measured_but_only_explicitly_cleaned(tmp_path: Path) -> None:
     """The reuse contract covers policy as well as the public recipe spelling.
 
-    The recipe guard above was green while a separate pre-run size policy
-    deleted 41.9 GiB of compiler output at a 40 GiB threshold. Exercise that
-    exact boundary: an advisory warning may become loud, but not destructive.
+    The recipe guard above was green while a pre-run threshold deleted 41.9
+    GiB of compiler output. The shared Cargo tree is deliberately opaque to
+    generic pruning because selectively deleting Cargo internals is unsound.
     """
     config = _relocated(tmp_path)
-    settings = config.prefix.model_copy(update={"cargo_target_warning_gb": 0.000001})
-    config = config.model_copy(update={"prefix": settings})
     shared = cargotarget.path(config)
     artifact = shared / "debug" / "deps" / "libcapsem.rlib"
     artifact.parent.mkdir(parents=True)
@@ -200,9 +201,10 @@ def test_an_over_threshold_compiler_cache_is_still_reused(tmp_path: Path) -> Non
 
     observed = cargotarget.measure(config)
 
-    assert observed.gb > config.prefix.cargo_target_warning_gb
+    assert observed.gb > 0
+    assert load_policy(ROOT).stages["cargo"].prune_strategy is PruneStrategy.NONE
     assert artifact.read_bytes() == payload, (
-        "crossing the compiler-cache warning discarded the warm gate output; "
+        "measuring the compiler cache discarded the warm gate output; "
         "only an explicit --clean-build may do that"
     )
 

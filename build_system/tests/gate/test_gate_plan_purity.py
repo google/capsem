@@ -126,11 +126,11 @@ def test_the_axis_agreement_is_a_step_and_runs_after_materialization() -> None:
     """
     from helpers.gate import gate_labels
 
-    # In the functional module alone there is nothing to materialize, so the
-    # claim is that the check runs before anything depends on it.
+    # The standalone functional owner must materialize its own runtime before
+    # checking the axis; otherwise it only passes on a warm checkout.
     alone = gate_labels("test-functional")
     assert "functional.axis" in alone, alone
-    assert alone.index("functional.axis") == 0, alone[:3]
+    assert alone.index("prepare.materialize-config") < alone.index("functional.axis"), alone
 
     # In the complete gate it must come after the step that materializes --
     # asserted as ordering rather than a direct edge, because the intervening

@@ -24,10 +24,11 @@
 
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 
-# Inventory and control the repository cache. The variadic is deliberately one
-# quoted command string; capsem-cache parses it as data and never as shell.
+# Inventory and control the repository cache. Positional arguments preserve
+# every caller-owned argv boundary, including multiword option values.
+[positional-arguments]
 cache *command:
-    uv run --project build_system --frozen capsem-cache dispatch {{quote(command)}}
+    uv run --project build_system --frozen capsem-cache dispatch "$@"
 
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
@@ -202,7 +203,7 @@ _test-source-checks:
     just _test-release-contracts
 
 _test-compiled-checks: _clean-stale _check-generated-settings
-    just cache ensure-space default --reason "compiled test preflight"
+    just cache enforce docker --reason "compiled test preflight"
     uv run --project build_system --frozen capsem-gate test-static
 
 _test-artifacts:
@@ -219,10 +220,6 @@ _test-glowup:
 
 _test-release-contracts: _release-site-pnpm-install
     uv run --project build_system --frozen capsem-gate test-release-contracts
-
-# Require Docker headroom without discarding content-addressed compiler caches.
-# Cargo validates cached artifacts against the current source inputs; bounded
-# reuse speeds forward fixes without weakening the before/after tree invariant.
 
 _test-recipes:
     uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-recipes/ -v --tb=short -m recipe
@@ -315,7 +312,7 @@ install:
 # Capsem had no such entry point: nine Criterion targets existed and nothing
 # ran them, and a release once failed on a gateway CPU figure that no run had
 # ever recorded.
-bench *dimensions: _prepared-runtime
+bench *dimensions:
     @uv run --project build_system --frozen capsem-gate bench {{ quote(dimensions) }}
 
 # The dev loop: only the dimensions that need no guest, bounded so it stays a
@@ -346,7 +343,7 @@ logs target="":
     uv run --project build_system --frozen capsem-gate logs {{quote(target)}}
 
 
-# Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
+# Remove stale rootfs copies, orphan UDS sockets, and transient test output.
 # See build_system/scripts/build/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
     @uv run --project build_system --frozen python3 build_system/scripts/build/clean_stale.py

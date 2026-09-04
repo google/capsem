@@ -34,9 +34,7 @@ from .buildschema import (
     LogsConfig,
     ModulesConfig,
     SbomConfig,
-    ServiceConfig,
     SigningConfig,
-    SmokeConfig,
     SuitesConfig,
     WebSurfacesConfig,
 )
@@ -54,7 +52,6 @@ from .digestschema import BenchmarkRegressionConfig
 from .errors import GateError
 from .harnessschema import (
     BoundaryConfig,
-    DiskConfig,
     Exclusive,
     ExecutionConfig,
     PrefixConfig,
@@ -71,6 +68,7 @@ from .productschema import (
     PackageConfig,
 )
 from .releaseschema import ReleaseConfig
+from .serviceschema import ServiceConfig, SmokeConfig
 from .toolchainschema import ToolchainConfig
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"
@@ -103,7 +101,6 @@ class GateConfig(Strict):
     locks: LocksConfig
     runlog: RunLogConfig
     benchmark_regression: BenchmarkRegressionConfig
-    disk: DiskConfig
     prefix: PrefixConfig
     sandbox: SandboxConfig
     workspace: WorkspaceConfig

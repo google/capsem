@@ -39,6 +39,19 @@ def _ordered(paths: Sequence[Path], names: tuple[str, ...]) -> tuple[Path, ...]:
     return tuple(by_name[name] for name in names)
 
 
+def current(
+    build: BuildConfig,
+    arch_name: str,
+    repository: Path,
+    output: Path,
+    binary_names: tuple[str, ...],
+) -> bool:
+    """Whether staging exactly matches the current content-addressed generation."""
+    generation = identity(build, arch_name, repository, binary_names)
+    found = componentcache.current(repository, "guest-binaries", generation, output)
+    return found is not None and bool(_ordered(found, binary_names))
+
+
 def materialize(
     build: BuildConfig,
     arch_name: str,

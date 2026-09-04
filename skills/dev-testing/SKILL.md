@@ -133,7 +133,7 @@ must still exercise the installed package and post-install behavior.
 Read `references/local-ci-parity.md` before editing any release workflow, gate
 recipe, or CI job. It holds the Ironbank parity rule (every portable release
 gate must be owned by `just test`), scanner/tool pinning, Docker platform and
-prune discipline, runtime/disk budgets, and the source-guard contracts.
+prune discipline, common cache contracts, and the source-guard contracts.
 
 ## TDD workflow
 
@@ -417,7 +417,7 @@ scope, so a contract that legitimately names a relocated test while asserting it
 against a test module or spec document is not flagged.
 
 **Why it matters.** This layout change broke sixteen contracts under
-`tests/capsem-release/`, then five more under `tests/capsem-install/` that run
+`tests/capsem-release/`, then five more under `tests/capsem_install/` that run
 only inside the Docker install gate -- invisible until forty minutes into a
 release run. Nothing about the failure pointed at a moved function; it read as a
 broken release.
@@ -449,7 +449,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Recovery | `capsem-recovery/` | `recovery` | Yes | Stale socket/instances, orphaned process, double service |
 | Rootfs artifacts | `capsem-rootfs-artifacts/` | `rootfs` | No | Artifact files, build context, doctor consistency |
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
-| Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
+| Install | `capsem_install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
 `just test` is the only public complete local verification. `just fast-test`
 is incomplete feedback, `just focus-test` selects a closed existing owner, and
@@ -552,21 +552,23 @@ first sends production code to the ambient run directory while the fixture
 writes into a temp one. Bisect by exporting one variable at a time; that names
 the culprit in two runs instead of guessing.
 
-### Thresholds belong in one place
+### Cache limits belong in the cache contract
 
 A number copied next to a rule drifts from it silently. Three separate gate
 failures in one session traced to this: a coverage floor copied into a test, a
-guest kernel major copied beside its pin, and a Docker fixture hardcoding
-"plenty" of free space independently from the configured minimum.
+guest kernel major copied beside its pin, and a Docker fixture restating a
+storage assumption outside the cache policy.
 
 Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
 
 ```python
-floor = tomllib.loads(BUILD_CONFIG.read_text())["rails"]["assets"]["minimum_free_gib"]
-ample_kib = (floor + 10) * 1024 * 1024   # follows the floor; never restates it
+maximum = load_policy(ROOT).runtimes["docker"].max_size_bytes
+assert registry.contract("docker").max_size_bytes == maximum
 ```
 
 Prove it derives rather than hardcodes: change the source value and confirm the test *follows* instead of breaking.
+Read `/dev-cache` for the common cache model; tests must not recreate backend
+accounting or machine-capacity rails.
 
 ## Platform gating tests
 

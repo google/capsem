@@ -165,7 +165,13 @@ class EnvironmentConfig(Strict):
     benchmark_root: str
     coverage_file: str
     source_checkout: str
+    repository_root: str
     cargo_target: str
+    rustc_wrapper: str
+    sccache_dir: str
+    sccache_cache_size: str
+    sccache_base_dir: str
+    sccache_server_uds: str
     uv_cache: str
     pnpm_store: str
     source_commit: str
@@ -196,6 +202,7 @@ class CandidateConfig(Strict):
     keep_awake_marker: str
     source_digest_script: str
     orphan_script: str
+    orphan_baseline_file: str
     source_state_file: str
     source_snapshot_dir: str
     colima: str
@@ -206,8 +213,7 @@ class CandidateConfig(Strict):
     generated_settings_script: str
     materialize_script: str
     recipe_suite: tuple[str, ...]
-    candidate_budget: tuple[str, ...]
-    failure_rail: str
+    candidate_cache: str
     unknown_head: str
 
 

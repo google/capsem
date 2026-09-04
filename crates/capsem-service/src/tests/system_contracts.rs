@@ -1,12 +1,6 @@
 use super::*;
 
 #[test]
-fn statvfs_bytes_accepts_platform_block_widths() {
-    assert_eq!(statvfs_bytes(7_u32, 4096), 28_672);
-    assert_eq!(statvfs_bytes(7_u64, 4096), 28_672);
-}
-
-#[test]
 fn suspend_confirm_timeout_matches_public_api_budget() {
     assert_eq!(
         SUSPEND_CONFIRM_TIMEOUT_SECS, 45,

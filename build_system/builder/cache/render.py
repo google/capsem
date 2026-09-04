@@ -18,19 +18,14 @@ def inventory_text(report: CacheInventory) -> str:
     lines = [
         f"Cache: {report.root}",
         f"Total: {bytes_label(report.logical_bytes)} logical, "
-        f"{bytes_label(report.allocated_bytes)} allocated; free: "
-        f"{bytes_label(report.filesystem_free_bytes)}",
+        f"{bytes_label(report.allocated_bytes)} allocated",
     ]
     for stage in report.stages:
-        kind = "external" if stage.external else "local"
         lines.append(
-            f"  {stage.stage_id}: {bytes_label(stage.logical_bytes)} "
-            f"({stage.entry_count} entries, {kind})"
+            f"  {stage.stage_id}: {bytes_label(stage.logical_bytes)} ({stage.entry_count} entries)"
         )
     for entry in report.unclassified:
-        lines.append(
-            f"  UNCLASSIFIED {entry.relative_path}: {bytes_label(entry.logical_bytes)}"
-        )
+        lines.append(f"  UNCLASSIFIED {entry.relative_path}: {bytes_label(entry.logical_bytes)}")
     for runtime in report.runtimes:
         state = "available" if runtime.available else f"unavailable: {runtime.error}"
         lines.append(

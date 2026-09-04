@@ -4,11 +4,10 @@ Split from `command`, which is about what a command *is* -- what it holds, what
 it contains, and the order `execute` puts those in. This is the other question:
 does asking count as doing.
 
-It is not a constant. `runs last --failed` opened a run and repointed `latest`
-at itself before answering, so the honest answer to "which run failed" could be
-the question; and `gc --dry-run` is inspection while a plain `gc` reclaims whole
-trees, which is the same command answering differently depending on how it was
-called.
+`runs last --failed` once opened a run and repointed `latest` at itself before
+answering, so the honest answer to "which run failed" could be the question.
+Inspection commands therefore opt out explicitly while every command that can
+change the machine records by default.
 
 A mixin rather than free functions: every one of these reads the command's own
 configuration, arguments and invocation, and threading four of those through a
@@ -55,14 +54,7 @@ class Recorded:
     """
 
     def should_record(self) -> bool:
-        """Whether *this invocation* writes a run of its own.
-
-        A method rather than the class constant it was, because the answer can
-        depend on how the command was called: `gc --dry-run` is inspection and
-        a normal `gc` reclaims whole trees. As a constant, `gc` was marked
-        silent and classified with the run readers, so a partial reclaim left
-        no durable evidence of what it had deleted.
-        """
+        """Whether this invocation writes a run of its own."""
         return self.records
 
     @contextmanager

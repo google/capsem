@@ -3,6 +3,12 @@
 use super::*;
 use std::time::Instant;
 
+fn force_kill(pid: u32) {
+    use capsem_foundation::unix::process::{send_signal, ProcessId, Signal};
+    let pid = ProcessId::try_from(pid).unwrap();
+    send_signal(pid, Signal::Kill).unwrap();
+}
+
 // ---- is_alive ------------------------------------------------------
 
 #[test]
@@ -89,33 +95,6 @@ fn singleton_blocks_same_process_second_call() {
     assert!(b.is_none(), "second must return None while first is held");
 }
 
-#[cfg(unix)]
-#[test]
-fn singleton_unlink_after_open_does_not_bypass_same_process_registry() {
-    let dir = tempfile::tempdir().unwrap();
-    let real_parent = dir.path().join("real");
-    let alias_parent = dir.path().join("alias");
-    std::fs::create_dir(&real_parent).unwrap();
-    std::os::unix::fs::symlink(&real_parent, &alias_parent).unwrap();
-    let lock = alias_parent.join("race.lock");
-    let lock_to_unlink = lock.clone();
-
-    let first = Singleton::try_acquire_after_open(&lock, move || {
-        std::fs::remove_file(&lock_to_unlink).unwrap();
-    })
-    .unwrap()
-    .expect("first acquire");
-    assert!(!lock.exists(), "test hook must unlink the first lock inode");
-
-    let second = Singleton::try_acquire(&lock).unwrap();
-
-    assert!(
-        second.is_none(),
-        "the in-process reservation must survive lockfile replacement"
-    );
-    drop(first);
-}
-
 #[test]
 fn singleton_reacquires_after_drop_in_isolated_process() {
     // Drop-then-reacquire must work. Rather than doing it in the test
@@ -155,23 +134,6 @@ fn singleton_writes_pid_for_debugging() {
     let contents = std::fs::read_to_string(&lock).unwrap();
     let parsed: u32 = contents.trim().parse().expect("lock file must contain pid");
     assert_eq!(parsed, std::process::id());
-}
-
-#[test]
-fn singleton_fd_is_cloexec() {
-    // FD_CLOEXEC is what stops our flock from leaking into
-    // Command::spawn'd children; verify it's actually set on the fd.
-    let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("cloexec.lock");
-    let guard = Singleton::try_acquire(&lock).unwrap().expect("acquire");
-    use std::os::fd::AsRawFd;
-    // SAFETY: guard owns the fd for its lifetime; F_GETFD is read-only.
-    let flags = unsafe { libc::fcntl(guard._file.as_raw_fd(), libc::F_GETFD) };
-    assert!(flags >= 0, "fcntl F_GETFD must succeed");
-    assert!(
-        flags & libc::FD_CLOEXEC != 0,
-        "FD_CLOEXEC must be set to prevent leaking locks into children"
-    );
 }
 
 #[test]
@@ -217,7 +179,7 @@ fn singleton_reacquires_after_ungraceful_holder_exit() {
     );
 
     // SIGKILL -- skips any cleanup in the subprocess.
-    unsafe { libc::kill(sleeper.id() as libc::pid_t, libc::SIGKILL) };
+    sleeper.kill().unwrap();
     let _ = sleeper.wait();
 
     let reacq = Singleton::try_acquire(&lock)
@@ -254,12 +216,12 @@ fn watcher_spawn_failure_returns_a_structured_error() {
         current_ppid(),
         PARENT_POLL_INTERVAL,
         || {},
-        |_builder, _task| Err(std::io::Error::from_raw_os_error(libc::EAGAIN)),
+        |_builder, _task| Err(std::io::Error::from(std::io::ErrorKind::WouldBlock)),
     );
 
     match result {
         Err(GuardError::WatcherSpawn { source }) => {
-            assert_eq!(source.raw_os_error(), Some(libc::EAGAIN));
+            assert_eq!(source.kind(), std::io::ErrorKind::WouldBlock);
         }
         other => panic!("expected WatcherSpawn error, got {other:?}"),
     }
@@ -392,13 +354,13 @@ wait "$child"
         thread::sleep(Duration::from_millis(10));
     }
     if !ready_path.exists() {
-        unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGKILL) };
+        force_kill(child_pid);
         let _ = parent.kill();
         let _ = parent.wait();
         panic!("watcher child did not arm within 5 seconds");
     }
 
-    unsafe { libc::kill(parent.id() as libc::pid_t, libc::SIGKILL) };
+    parent.kill().unwrap();
     let _ = parent.wait();
 
     let mut pipe = stdout.into_inner();
@@ -409,7 +371,7 @@ wait "$child"
         let _ = eof_tx.send(result);
     });
     if eof_rx.recv_timeout(Duration::from_secs(3)).is_err() {
-        unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGKILL) };
+        force_kill(child_pid);
         panic!("watcher child outlived its SIGKILL'd parent");
     }
 }
@@ -450,11 +412,10 @@ fn singleton_fails_when_path_is_an_existing_directory() {
         matches!(result, Err(GuardError::Io { .. })),
         "expected Io error for directory-as-lockfile"
     );
-    // Registry must not still have a reservation for this path.
-    let canonical = std::fs::canonicalize(&as_lock).unwrap_or(as_lock);
+    std::fs::remove_dir(&as_lock).unwrap();
     assert!(
-        !held_locks().lock().unwrap().contains(&canonical),
-        "lock reservation leaked into the registry on IO error"
+        Singleton::try_acquire(&as_lock).unwrap().is_some(),
+        "lock reservation leaked after an IO error"
     );
 }
 

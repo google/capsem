@@ -68,7 +68,9 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/vsock")
+    monkeypatch.setattr(
+        "capsem_builder.gate.host.device_available", lambda path: path != "/dev/vsock"
+    )
     container, runner = _container()
 
     options = container.runtime_options()
@@ -104,7 +106,9 @@ def test_a_linux_host_without_kvm_refuses_rather_than_proving_less(
     failing, because the gate would then report a pass for a proof it did not
     run."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/kvm")
+    monkeypatch.setattr(
+        "capsem_builder.gate.host.device_available", lambda path: path != "/dev/kvm"
+    )
     container, _ = _container()
 
     with pytest.raises(GateError, match="/dev/kvm"):
@@ -224,8 +228,7 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
     mount = CONFIG.install.mount
     assert f"-v {resolved}:{resolved}:ro" in started
     assert (
-        f"-v {resolved / CONFIG.assets.merged_assets_dir}:"
-        f"{mount}/{CONFIG.functional.assets_dir}:ro"
+        f"-v {resolved / CONFIG.assets.merged_assets_dir}:{mount}/{CONFIG.functional.assets_dir}:ro"
     ) in started
     assert (
         f"-v {resolved / CONFIG.assets.merged_config_dir}:"
@@ -323,20 +326,19 @@ def test_a_degraded_system_is_accepted(tmp_path: Path, monkeypatch: pytest.Monke
     assert runner.ran(r"chown -R capsem:capsem")
 
 
-def test_only_the_target_directory_entry_is_granted_not_its_contents(
+def test_every_owned_parent_entry_is_granted_not_its_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`rm -rf cache/target/install-test-*` needs write permission on the parent
-    entry, not on the entries themselves. A recursive chown here would walk
-    every cargo artifact in the checkout."""
+    """Each owned path can be replaced without walking unrelated output."""
     _on(monkeypatch, "Darwin")
     container, runner = _container()
 
     container.start(options=[])
 
-    parent = Path(CONFIG.install.layout.assets).parent
-    assert runner.ran(rf"chown capsem:capsem /src/{parent}$")
-    assert not runner.ran(rf"chown -R capsem:capsem /src/{parent}$")
+    issued = "\n".join(runner.rendered)
+    for parent in CONFIG.install.layout.owned_parent_paths(CONFIG.install.mount):
+        assert parent in issued
+    assert not runner.ran(r"chown -R capsem:capsem /src/cache/target/release/distribution$")
 
 
 def test_writes_are_handed_back_to_the_host_user(
@@ -382,13 +384,6 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
         r"docker run --rm",
     )
     assert not runner.ran(r"--no-cache")
-    # And it reclaims nothing on the way out. It used to release the parity
-    # lane's builder rail from here, which was ordered only by the line it sat
-    # on -- so once this preflight moved ahead of that lane, the release landed
-    # 164ms before `cache-ownership` ran the image it had just deleted.
-    assert not runner.ran(r"capsem-cache .* release"), (
-        "the preflight releases another lane's rail; that rail's own step does"
-    )
 
 
 def test_install_dependency_materialization_is_the_only_network_open_phase() -> None:
@@ -452,6 +447,21 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert runner.last_index_of(
         r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-install-builder:"
     ) > runner.index_of(r"docker build .*Dockerfile\.install-test")
+
+
+def test_install_source_cli_escapes_the_ephemeral_cargo_cache_mount() -> None:
+    dockerfile = (PROJECT_ROOT / CONFIG.install.dockerfile).read_text(encoding="utf-8")
+    source = " ".join(dockerfile.replace("\\\n", " ").split())
+
+    assert (
+        "install -m 0555 /tmp/capsem-install-current-cli/debug/capsem /tmp/capsem-install-current"
+    ) in source
+    assert (
+        "COPY --from=source-cli --chmod=0555 /tmp/capsem-install-current ${FRESH_CLI}"
+    ) in source
+    assert (
+        "COPY --from=source-cli --chmod=0555 /tmp/capsem-install-current-cli/debug/capsem"
+    ) not in source
 
 
 def test_install_helper_accepts_a_local_parent_without_repository_digests(
@@ -565,8 +575,8 @@ def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert (hostimage.STEP, "install.capacity") in plan.edges
-    assert ("install.capacity", "install.materialize") in plan.edges
+    assert (hostimage.STEP, "install.cache") in plan.edges
+    assert ("install.cache", "install.materialize") in plan.edges
     assert ("install.materialize", "install.image-build") in plan.edges
     assert ("install.image-build", "install.image-smoke") in plan.edges
 

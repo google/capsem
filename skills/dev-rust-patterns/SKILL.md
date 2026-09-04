@@ -96,6 +96,37 @@ Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-mus
 - Propagate errors up, don't swallow them. If a function returns `Result`, the caller must handle it.
 - Log errors at the point where you have context, then propagate. Don't log AND propagate (causes duplicate log lines).
 
+## Host Unix boundary
+
+Reusable host Unix mechanics belong in the small modules under
+`capsem_foundation::unix`; application crates consume their typed APIs instead
+of calling `nix` or `libc` directly. This keeps ownership, EINTR handling,
+errno classification, CLOEXEC, no-follow behavior, and race checks identical
+across the CLI, service, process, guard, credentials, and core.
+
+- Accept `BorrowedFd` and return `OwnedFd` or `File`. Never return a raw
+  descriptor whose close responsibility is implicit, and never pair
+  `ManuallyDrop<File>` with a manual `close`.
+- Expected races are typed outcomes: a missing process and lock contention are
+  not generic errors. Keep expected disconnects quiet; log unexpected failures
+  once where the caller knows the operation, object identity, and errno.
+- Use `unix::contained::ContainedDir` for guest-influenced paths. Its
+  descriptor-relative traversal, constrained open options, and regular-file
+  checks must remain in the same syscall sequence; do not put a path-based
+  check in front of a separate path-based action.
+- Use `unix::fs` for owner-only directories, no-follow regular-file access,
+  filesystem capacity, and atomic private publication. Use `unix::lock` for
+  advisory locks, including synchronous read-modify-write sections.
+- Put each primitive in its own module with tests in the sibling `tests.rs`.
+  Cover errno preservation, ownership after the source is dropped, symlink and
+  path-replacement races, special files, exact modes, and concurrent callers.
+
+Direct Unix calls remain valid only in modules that implement a kernel or
+platform ABI rather than reusable host policy, such as KVM/FUSE and guest audit
+plumbing. `tests/citadel/test_unix_boundary.py` and its exact domain-ABI
+inventory enforce that distinction; extending the inventory requires explicit
+review, not a convenience exemption.
+
 ## Bidirectional I/O -- thread per direction
 
 When bridging two blocking file descriptors bidirectionally (e.g., TCP socket to vsock in `net_proxy.rs`, or master PTY to vsock in `capsem-pty-agent`), doing both reads and writes in a single thread using `poll(2)` causes deadlocks. If both outgoing buffers fill simultaneously, a single thread blocks on writing and stops reading, creating mutual lockup. Always spawn a dedicated thread for at least one direction (`std::thread::spawn` for `fd_b -> fd_a` while the main thread handles `fd_a -> fd_b`).

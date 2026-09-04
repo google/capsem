@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import time
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from .paths import CachePaths
 
 
-class CacheOutcome(StrEnum):
-    HIT = "hit"
-    MISS = "miss"
+class ReuseScope(StrEnum):
+    """Whether bytes belong to one exact generation or a shared pool."""
+
+    GENERATION = "generation"
+    SHARED = "shared"
+
+
+class CacheTemperature(StrEnum):
+    """Observed pre-run availability, without claiming an eventual tool hit."""
+
+    COLD = "cold"
+    WARM = "warm"
 
 
 class CacheUse(BaseModel):
@@ -24,21 +33,24 @@ class CacheUse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    timestamp_ns: StrictInt
+    schema_id: Literal["capsem.cache-use.v2"] = "capsem.cache-use.v2"
+    timestamp_ns: Annotated[StrictInt, Field(ge=0)]
     stage_id: str
     tool: str
     key: str
-    outcome: CacheOutcome
-    logical_bytes: StrictInt
+    scope: ReuseScope
+    temperature: CacheTemperature
+    observed_bytes: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
-def _size(path: Path) -> int:
-    if not path.exists():
-        return 0
-    result = subprocess.run(
-        ("du", "-sk", str(path)), check=True, capture_output=True, text=True
-    )
-    return int(result.stdout.split()[0]) * 1024
+def _populated(path: Path, ignored_names: tuple[str, ...]) -> bool:
+    if path.is_symlink():
+        return False
+    if path.is_file():
+        return path.stat().st_size > 0
+    if not path.is_dir():
+        return False
+    return any(child.name not in ignored_names for child in path.iterdir())
 
 
 def record_use(
@@ -47,18 +59,25 @@ def record_use(
     *,
     tool: str,
     key: str,
-    logical_bytes: int | None = None,
+    scope: ReuseScope,
+    observed_bytes: int | None = None,
+    probe: Path | None = None,
+    ignored_names: tuple[str, ...] = (),
 ) -> CacheUse:
-    """Record whether a keyed invocation found reusable bytes in its stage."""
+    """Record pre-run cache temperature without recursively measuring the stage."""
     stage = paths.stage(stage_id)
-    size = _size(stage) if logical_bytes is None else logical_bytes
+    subject = stage if probe is None else probe.absolute()
+    if subject != stage and stage not in subject.parents:
+        raise ValueError(f"cache telemetry probe {subject} is outside stage {stage}")
+    warm = observed_bytes > 0 if observed_bytes is not None else _populated(subject, ignored_names)
     event = CacheUse(
         timestamp_ns=time.time_ns(),
         stage_id=stage_id,
         tool=tool,
         key=key,
-        outcome=CacheOutcome.HIT if size else CacheOutcome.MISS,
-        logical_bytes=size,
+        scope=scope,
+        temperature=CacheTemperature.WARM if warm else CacheTemperature.COLD,
+        observed_bytes=observed_bytes,
     )
     journal = paths.stage("state") / "usage.jsonl"
     journal.parent.mkdir(parents=True, exist_ok=True)

@@ -91,7 +91,7 @@ MATCH_GUARDS = (
     (
         "installed update test bypasses manifest-metadata provenance",
         r"['\"]CAPSEM_RELEASE_(?:MANIFEST|HEALTH)_URL['\"]\s*:",
-        ("tests/capsem-install",),
+        ("tests/capsem_install",),
     ),
     (
         "legacy split manifest/update sidecar was reintroduced",

@@ -1,9 +1,6 @@
-"""Pure retention planning for Docker, BuildKit, and Tart resources."""
-
 from __future__ import annotations
 
-from collections import defaultdict
-
+from .dockerimages import plan_docker_images
 from .models import CachePolicy
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -12,7 +9,6 @@ from .runtimemodels import (
     RuntimeOperation,
     RuntimePruneAction,
     RuntimePrunePlan,
-    RuntimeResource,
     RuntimeSnapshot,
     TartRuntimePolicy,
 )
@@ -20,84 +16,101 @@ from .runtimemodels import (
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
 
 
-def _repository(name: str) -> str:
-    without_digest = name.split("@", 1)[0]
-    tag = without_digest.rfind(":")
-    return without_digest[:tag] if tag > without_digest.rfind("/") else without_digest
-
-
 def _docker_actions(
     inventory: RuntimeInventory, policy: DockerRuntimePolicy, cache_policy: CachePolicy
-) -> tuple[RuntimePruneAction, ...]:
+) -> tuple[tuple[RuntimePruneAction, ...], tuple[str, ...]]:
     actions: list[RuntimePruneAction] = []
-    groups: dict[str, list[RuntimeResource]] = defaultdict(list)
     for resource in inventory.resources:
-        if resource.kind is ResourceKind.IMAGE:
-            groups[_repository(resource.names[0])].append(resource)
-        elif resource.kind is ResourceKind.CONTAINER:
+        if resource.kind in {ResourceKind.CONTAINER, ResourceKind.VOLUME}:
             expired = (
                 resource.created_ns > 0
                 and inventory.generated_ns
                 >= resource.created_ns + policy.maximum_age_hours * NANOSECONDS_PER_HOUR
             )
             if resource.owned and expired and not resource.protected:
+                operation = (
+                    RuntimeOperation.REMOVE_CONTAINER
+                    if resource.kind is ResourceKind.CONTAINER
+                    else RuntimeOperation.REMOVE_VOLUME
+                )
                 actions.append(
                     RuntimePruneAction(
                         runtime_id=inventory.runtime_id,
-                        operation=RuntimeOperation.REMOVE_CONTAINER,
+                        operation=operation,
                         target=resource.identity,
                         logical_bytes=resource.logical_bytes,
                         reason=f"stopped owned container older than {policy.maximum_age_hours}h",
                     )
                 )
-        elif (
-            resource.kind is ResourceKind.BUILD_CACHE
-            and resource.logical_bytes > policy.build_cache_keep_bytes
-        ):
+    image_actions, image_violations = plan_docker_images(
+        inventory, cache_policy, default_keep=policy.keep_image_generations
+    )
+    actions.extend(image_actions)
+    selected = {action.target for action in actions}
+    recovered = sum(action.logical_bytes for action in actions)
+    projected = max(0, inventory.owned_bytes - recovered)
+    if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
+        build = next(
+            (item for item in inventory.resources if item.kind is ResourceKind.BUILD_CACHE), None
+        )
+        if build is not None and build.identity not in selected:
+            reclaim = min(build.logical_bytes, projected - policy.warm_size_bytes)
             actions.append(
                 RuntimePruneAction(
                     runtime_id=inventory.runtime_id,
                     operation=RuntimeOperation.PRUNE_BUILD_CACHE,
-                    target=resource.identity,
-                    logical_bytes=resource.logical_bytes - policy.build_cache_keep_bytes,
+                    target=build.identity,
+                    logical_bytes=reclaim,
                     reason=(
-                        f"retain {policy.build_cache_keep_bytes} bytes of hottest BuildKit data "
-                        f"and evict entries older than {policy.maximum_age_hours}h"
+                        f"Docker cache exceeded max size {policy.max_size_bytes}; "
+                        f"recover to warm size {policy.warm_size_bytes}"
                     ),
-                    keep_bytes=policy.build_cache_keep_bytes,
-                    maximum_age_hours=policy.maximum_age_hours,
+                    keep_bytes=max(0, build.logical_bytes - reclaim),
+                    all_unused=True,
                 )
             )
-    for repository, resources in groups.items():
-        keep_generations = policy.keep_image_generations
-        if cache_policy.control is not None:
-            keep_generations = cache_policy.control.docker.image_generation_limit(
-                repository, default=keep_generations
-            )
-        ordered = sorted(resources, key=lambda item: (item.created_ns, item.identity), reverse=True)
-        for position, resource in enumerate(ordered):
-            if resource.protected or position < keep_generations:
-                continue
+            projected -= reclaim
+    if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
+        volumes = sorted(
+            (
+                item
+                for item in inventory.resources
+                if item.kind is ResourceKind.VOLUME
+                and item.owned
+                and not item.protected
+                and item.identity not in selected
+            ),
+            key=lambda item: (item.last_used_ns, item.identity),
+        )
+        for volume in volumes:
+            if projected <= policy.warm_size_bytes:
+                break
             actions.append(
                 RuntimePruneAction(
                     runtime_id=inventory.runtime_id,
-                    operation=RuntimeOperation.REMOVE_IMAGE,
-                    target=resource.names[0],
-                    logical_bytes=resource.logical_bytes,
+                    operation=RuntimeOperation.REMOVE_VOLUME,
+                    target=volume.identity,
+                    logical_bytes=volume.logical_bytes,
                     reason=(
-                        f"superseded owned image generation; retain newest "
-                        f"{keep_generations} per repository"
+                        f"Docker cache exceeded max size {policy.max_size_bytes}; "
+                        f"recover to warm size {policy.warm_size_bytes}"
                     ),
                 )
             )
-    return tuple(actions)
+            projected -= min(projected, volume.logical_bytes)
+    violations = [*image_violations]
+    if projected > policy.max_size_bytes:
+        violations.append(
+            f"{inventory.runtime_id} remains {projected} owned bytes above max size "
+            f"{policy.max_size_bytes}"
+        )
+    return tuple(actions), tuple(violations)
 
 
 def _tart_actions(
     inventory: RuntimeInventory, policy: TartRuntimePolicy
-) -> tuple[RuntimePruneAction, ...]:
-    del policy
-    return tuple(
+) -> tuple[tuple[RuntimePruneAction, ...], tuple[str, ...]]:
+    actions = tuple(
         RuntimePruneAction(
             runtime_id=inventory.runtime_id,
             operation=RuntimeOperation.DELETE_VM,
@@ -108,6 +121,15 @@ def _tart_actions(
         for resource in inventory.resources
         if resource.kind is ResourceKind.VM and resource.owned and not resource.protected
     )
+    projected = max(0, inventory.owned_bytes - sum(item.logical_bytes for item in actions))
+    violations = (
+        (
+            f"{inventory.runtime_id} remains {projected} owned bytes above max size {policy.max_size_bytes}",
+        )
+        if projected > policy.max_size_bytes
+        else ()
+    )
+    return actions, violations
 
 
 def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> RuntimePrunePlan:
@@ -116,11 +138,16 @@ def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
     for inventory in snapshot.runtimes:
         runtime = policy.runtimes[inventory.runtime_id]
         if not inventory.available:
-            violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
+            if runtime.required:
+                violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
         elif isinstance(runtime, DockerRuntimePolicy):
-            actions.extend(_docker_actions(inventory, runtime, policy))
+            selected, errors = _docker_actions(inventory, runtime, policy)
+            actions.extend(selected)
+            violations.extend(errors)
         elif isinstance(runtime, TartRuntimePolicy):
-            actions.extend(_tart_actions(inventory, runtime))
+            selected, errors = _tart_actions(inventory, runtime)
+            actions.extend(selected)
+            violations.extend(errors)
     actions.sort(key=lambda item: (item.runtime_id, item.operation, item.target))
     selected = tuple(actions)
     return RuntimePrunePlan(
@@ -131,138 +158,13 @@ def plan_runtime_prune(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
     )
 
 
-def _runtime(snapshot: RuntimeSnapshot, runtime_id: str) -> RuntimeInventory:
-    try:
-        return next(item for item in snapshot.runtimes if item.runtime_id == runtime_id)
-    except StopIteration:
-        raise ValueError(f"runtime snapshot omits {runtime_id!r}") from None
-
-
-def plan_repository_reclaim(
-    snapshot: RuntimeSnapshot,
-    policy: CachePolicy,
-    resource_id: str,
-    *,
-    keep: str,
-    protect: tuple[str, ...] = (),
-) -> RuntimePrunePlan:
-    """Retire superseded tags around an exact caller-owned anchor."""
-    if policy.control is None:
-        raise ValueError("cache policy has no runtime control section")
-    control = policy.control.docker
-    try:
-        image_policy = control.images[resource_id]
-    except KeyError:
-        raise ValueError(f"unknown image cache resource {resource_id!r}") from None
-    if _repository(keep) != image_policy.repository:
-        raise ValueError(f"{keep!r} is not a tag of {image_policy.repository!r}")
-    invalid = sorted(tag for tag in protect if _repository(tag) != image_policy.repository)
-    if invalid:
-        raise ValueError(f"protected images are outside {image_policy.repository!r}: {invalid}")
-    inventory = _runtime(snapshot, control.runtime_id)
-    if not inventory.available:
-        return RuntimePrunePlan(
-            generated_ns=snapshot.generated_ns,
-            reclaim_bytes=0,
-            actions=(),
-            violations=(f"{control.runtime_id} unavailable: {inventory.error}",),
-        )
-    resources = sorted(
-        (
-            item
-            for item in inventory.resources
-            if item.kind is ResourceKind.IMAGE
-            and any(_repository(name) == image_policy.repository for name in item.names)
-        ),
-        key=lambda item: (item.created_ns, item.identity),
-        reverse=True,
-    )
-    names = {name for item in resources for name in item.names}
-    if keep not in names:
-        raise ValueError(f"anchor image {keep!r} is absent; refusing unanchored reclaim")
-    pinned = {keep, *protect}
-    previous = 0
-    actions = []
-    for item in resources:
-        repository_names = tuple(
-            name for name in item.names if _repository(name) == image_policy.repository
-        )
-        if any(name in pinned for name in repository_names):
-            continue
-        if previous < image_policy.keep_previous:
-            previous += 1
-            continue
-        if item.protected:
-            continue
-        actions.extend(
-            RuntimePruneAction(
-                runtime_id=control.runtime_id,
-                operation=RuntimeOperation.REMOVE_IMAGE,
-                target=name,
-                logical_bytes=item.logical_bytes,
-                reason=f"superseded generation of {image_policy.repository}",
-            )
-            for name in repository_names
-        )
-    selected = tuple(sorted(actions, key=lambda item: item.target))
-    return RuntimePrunePlan(
-        generated_ns=snapshot.generated_ns,
-        reclaim_bytes=sum(item.logical_bytes for item in selected),
-        actions=selected,
-        violations=(),
-    )
-
-
-def plan_release(snapshot: RuntimeSnapshot, policy: CachePolicy, boundary: str) -> RuntimePrunePlan:
-    """Release exact working images after their configured final consumer."""
-    if policy.control is None:
-        raise ValueError("cache policy has no runtime control section")
-    control = policy.control.docker
-    try:
-        release = control.releases[boundary]
-    except KeyError:
-        raise ValueError(f"unknown cache release boundary {boundary!r}") from None
-    inventory = _runtime(snapshot, control.runtime_id)
-    actions = []
-    violations = []
-    for target in release.images:
-        found = next(
-            (
-                item
-                for item in inventory.resources
-                if item.kind is ResourceKind.IMAGE and target in item.names
-            ),
-            None,
-        )
-        if found is None:
-            continue
-        if found.protected:
-            violations.append(f"working image {target} still has an active container")
-            continue
-        actions.append(
-            RuntimePruneAction(
-                runtime_id=control.runtime_id,
-                operation=RuntimeOperation.REMOVE_IMAGE,
-                target=target,
-                logical_bytes=found.logical_bytes,
-                reason=f"final consumer completed at {boundary}",
-            )
-        )
-    values = tuple(actions)
-    return RuntimePrunePlan(
-        generated_ns=snapshot.generated_ns,
-        reclaim_bytes=sum(item.logical_bytes for item in values),
-        actions=values,
-        violations=tuple(violations),
-    )
-
-
 def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> RuntimePrunePlan:
-    """Select every inactive, explicitly owned native cache resource."""
     actions, violations = [], []
     for inventory in snapshot.runtimes:
+        runtime = policy.runtimes[inventory.runtime_id]
         if not inventory.available:
-            violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
+            if runtime.required:
+                violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
             continue
         for item in inventory.resources:
             if not item.owned or item.protected:
@@ -272,6 +174,9 @@ def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
                 targets = item.names
             elif item.kind is ResourceKind.CONTAINER:
                 operation = RuntimeOperation.REMOVE_CONTAINER
+                targets = (item.identity,)
+            elif item.kind is ResourceKind.VOLUME:
+                operation = RuntimeOperation.REMOVE_VOLUME
                 targets = (item.identity,)
             elif item.kind is ResourceKind.BUILD_CACHE:
                 operation = RuntimeOperation.CLEAR_BUILD_CACHE

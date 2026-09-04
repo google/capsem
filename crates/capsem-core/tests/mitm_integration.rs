@@ -7,7 +7,6 @@
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 use std::collections::BTreeMap;
-use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
@@ -237,11 +236,8 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<(
     let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let std_stream = stream.into_std().unwrap();
-        let fd = std_stream.into_raw_fd();
+        let fd = std_stream.into();
         mitm_proxy::handle_connection(fd, config).await;
-        // fd ownership: ManuallyDrop inside handle_connection prevents double-close.
-        // We own the original fd, close it here.
-        unsafe { libc::close(fd) };
     });
 
     (handle, addr)
@@ -575,11 +571,17 @@ async fn mitm_proxy_plain_http_port_outside_allowlist_is_refused_before_dialing(
     tcp.write_all(request.as_bytes()).await.unwrap();
 
     let mut buf = Vec::new();
-    let _ = tcp.read_to_end(&mut buf).await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), tcp.read_to_end(&mut buf))
+        .await
+        .expect("plain HTTP response must not wait forever for EOF")
+        .unwrap();
     drop(tcp);
 
     let dialed = upstream_task.await.unwrap();
-    proxy_task.await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), proxy_task)
+        .await
+        .expect("plain HTTP proxy task must stop after the client closes")
+        .unwrap();
     db.flush().await;
 
     assert!(!dialed, "the host must not dial a port outside the allowlist");

@@ -18,6 +18,7 @@ a gate measures the sharing.
 
 from __future__ import annotations
 
+from . import runtimeprepare
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
@@ -123,7 +124,14 @@ class BenchCommand(GateCommand, name="bench", help="measure performance and reco
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        built = plan.add(_build(self._config))
+        prepared = runtimeprepare.prepare(
+            plan,
+            self._config,
+            after=(),
+            guest=not bool(self._args.quick),
+            build_label="bench.build",
+            sign_label="bench.sign",
+        )
         plan.add(
             _measure(
                 self._config,
@@ -131,7 +139,7 @@ class BenchCommand(GateCommand, name="bench", help="measure performance and reco
                 dimensions=tuple(self._args.dimensions.split()),
                 commit=self._args.commit,
             ),
-            after=(built,),
+            after=(prepared.ready,),
         )
         return plan
 

@@ -18,7 +18,7 @@ def uv_run(config: GateConfig, *arguments: object) -> list[str]:
 
 
 def uv_run_installed(config: GateConfig, *arguments: object) -> list[str]:
-    """Run against a conventional locked install, never an editable finder."""
+    """Run against a conventional locked install, warming the shared UV store."""
     return [
         "uv",
         "run",
@@ -28,7 +28,6 @@ def uv_run_installed(config: GateConfig, *arguments: object) -> list[str]:
         config.suites.pytest.project_distribution,
         "--no-build-isolation-package",
         config.suites.pytest.project_distribution,
-        "--offline",
         "--project",
         config.suites.pytest.build_system_project,
         "--frozen",

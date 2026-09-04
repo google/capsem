@@ -10,6 +10,7 @@ from . import (
     hostpackage,
     profiles,
     pytestsuite,
+    runtimeprepare,
     toolchain,
     vmproofs,
 )
@@ -45,7 +46,17 @@ class FunctionalModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        functional(plan, self._config, qualification=self.qualification)
+        if self.qualification.pulled:
+            functional(plan, self._config, qualification=self.qualification)
+        else:
+            prepared = runtimeprepare.prepare(plan, self._config, after=())
+            functional(
+                plan,
+                self._config,
+                qualification=self.qualification,
+                after=(prepared.ready,),
+                signed=prepared.ready,
+            )
         return plan
 
 

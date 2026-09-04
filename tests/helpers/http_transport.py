@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import http.client
 import socket
+import threading
 
 
 class UdsConnection(http.client.HTTPConnection):
@@ -31,41 +32,66 @@ class UdsConnection(http.client.HTTPConnection):
         self.sock.connect(self.socket_path)
 
 
+class TcpConnection(http.client.HTTPConnection):
+    """Low-latency HTTP/1.1 over TCP."""
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+
 _RETRIABLE = (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError, http.client.CannotSendRequest)
 
 
 class Transport:
-    """A kept-alive connection to one server.
+    """One kept-alive connection per caller thread to one server.
 
     A server may close an idle kept-alive connection at any time; the next
-    request then fails before anything reached the server, and is sent once
-    more on a fresh connection. A request that failed after being sent is
-    not retried: the server may have acted on it.
+    GET or HEAD is sent once more on a fresh connection. Mutating requests are
+    never replayed because a transport error cannot prove the server did not
+    act. Per-thread connections let concurrency tests exercise the server
+    concurrently without sharing Python's non-thread-safe ``HTTPConnection``.
     """
 
     def __init__(self, *, socket_path: str | None = None, host: str | None = None, port: int | None = None):
         self._socket_path = socket_path
         self._host = host
         self._port = port
-        self._conn: http.client.HTTPConnection | None = None
+        self._connections: dict[int, http.client.HTTPConnection] = {}
+        self._connections_lock = threading.Lock()
+
+    def _new_connection(self, timeout: float) -> http.client.HTTPConnection:
+        if self._socket_path is not None:
+            return UdsConnection(self._socket_path, timeout)
+        if self._host is None or self._port is None:
+            raise ValueError("a TCP transport needs both host and port")
+        return TcpConnection(self._host, self._port, timeout=timeout)
 
     def _connection(self, timeout: float) -> http.client.HTTPConnection:
-        if self._conn is None:
-            if self._socket_path is not None:
-                self._conn = UdsConnection(self._socket_path, timeout)
-            else:
-                if self._host is None or self._port is None:
-                    raise ValueError("a TCP transport needs both host and port")
-                self._conn = http.client.HTTPConnection(self._host, self._port, timeout=timeout)
-        self._conn.timeout = timeout
-        if self._conn.sock is not None:
-            self._conn.sock.settimeout(timeout)
-        return self._conn
+        thread_id = threading.get_ident()
+        with self._connections_lock:
+            conn = self._connections.get(thread_id)
+            if conn is None:
+                conn = self._new_connection(timeout)
+                self._connections[thread_id] = conn
+        conn.timeout = timeout
+        if conn.sock is not None:
+            conn.sock.settimeout(timeout)
+        return conn
+
+    def _close_current(self) -> None:
+        with self._connections_lock:
+            conn = self._connections.pop(threading.get_ident(), None)
+        if conn is not None:
+            conn.close()
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._connections_lock:
+            connections = list(self._connections.values())
+            self._connections.clear()
+        for conn in connections:
+            conn.close()
 
     def __del__(self) -> None:
         # Tests create clients ad hoc and drop them; closing here keeps a
@@ -82,9 +108,9 @@ class Transport:
         timeout: float = 60,
     ) -> tuple[int, dict[str, str], bytes]:
         """One request; returns (status, lower-cased response headers, body bytes)."""
+        retryable = method.upper() in {"GET", "HEAD"}
         for attempt in (0, 1):
             conn = self._connection(timeout)
-            sent = False
             try:
                 try:
                     conn.request(method, path, body=body, headers=headers or {})
@@ -93,22 +119,21 @@ class Transport:
                     # before the client finished sending; the answer is there.
                     response = conn.getresponse()
                 else:
-                    sent = True
                     response = conn.getresponse()
                 data = response.read()
                 result = (response.status, {k.lower(): v for k, v in response.getheaders()}, data)
                 if response.will_close:
-                    self.close()
+                    self._close_current()
                 return result
             except _RETRIABLE as error:
-                self.close()
-                if attempt == 1 or (sent and method not in {"GET", "HEAD"}):
+                self._close_current()
+                if attempt == 1 or not retryable:
                     raise ConnectionError(f"{method} {path} failed: {error}") from error
             except TimeoutError as error:
-                self.close()
+                self._close_current()
                 raise ConnectionError(f"{method} {path} timed out after {timeout}s") from error
             except OSError as error:
-                self.close()
+                self._close_current()
                 raise ConnectionError(f"{method} {path} failed: {error}") from error
         raise ConnectionError(f"{method} {path} failed after retry")
 
@@ -124,7 +149,10 @@ class Transport:
             target = self._socket_path
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target = (self._host, self._port)
+            host = self._host
+            if host is None:
+                raise ValueError("TCP transport requires a host")
+            target = (host, self._port)
         sock.settimeout(timeout)
         try:
             sock.connect(target)

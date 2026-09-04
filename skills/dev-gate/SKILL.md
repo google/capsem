@@ -43,12 +43,19 @@ was still outstanding.
 ## The interpreter comes first
 
 `capsem-gate` is `capsem.gatelaunch:main`, not `capsem.gate.cli:main`. It
-re-execs under a per-invocation `pycache_prefix` **before importing any of
+re-execs under a source-keyed `pycache_prefix` **before importing any of
 `capsem.gate`**, and exports `PYTHONPYCACHEPREFIX` so pytest and every other
 child inherits it. CPython validates a `.pyc` by mtime and size, so two
 same-length edits inside one timestamp tick leave stale bytecode that still
 looks current — which produced 74 false failures during one review, and which
 would otherwise let a release qualify code that is not in the tree.
+
+The marker is an exact generation identity, not a boolean. A private
+exact-commit checkout inherits the parent process environment, so the launcher
+must recompute its source key and re-exec when that marker, the exported
+prefix, or the interpreter's live prefix differs. Its generation remains under
+the outer checkout's repository cache; never trade source isolation for a
+prefix-local cache that disappears with the worktree.
 
 The complete gate refuses in `source.record` if `CAPSEM_GATE_PYCACHE` is
 absent. If you drive a full plan from a test, set it.
@@ -231,11 +238,11 @@ uv run --project build_system --frozen capsem-gate runs digest            # the 
 uv run --project build_system --frozen capsem-gate runs trend --step <label>   # one step, run by run
 ```
 ```bash
-uv run --project build_system --frozen capsem-gate gc --dry-run           # what disk the gate holds, per tree
+just cache stats --offline                                                # every disk cache owner and contract
 ```
 
-`runs` and `gc` do not record themselves: `runs last` used to open a run and
-repoint `latest` at the question.
+Inspection does not record a gate run: `runs last` used to open a run and
+repoint `latest` at the question. Read `/dev-cache` for cache mutation commands.
 
 ## The private copy is cloned, not copied
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import sys
 import uuid
@@ -32,8 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT  # noqa: E402
-from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.service import ServiceInstance, wait_exec_ready
 
 # Units the guest reports, by the suffix its key carries.
 UNITS = {
@@ -43,6 +44,22 @@ UNITS = {
     "iops": "operations",
     "rps": "requests_per_second",
 }
+
+FORWARDED_ENV = (
+    "CAPSEM_BENCH_CONCURRENCY",
+    "CAPSEM_BENCH_DURATION_S",
+    "CAPSEM_BENCH_MITM_TARGET",
+)
+
+
+def guest_command(mode: str) -> str:
+    """One safely quoted command with only documented benchmark controls."""
+    assignments = [
+        f"{name}={value}"
+        for name in FORWARDED_ENV
+        if (value := os.environ.get(name)) is not None
+    ]
+    return shlex.join(["env", *assignments, "capsem-bench", mode])
 
 
 def unit_for(key: str) -> str | None:
@@ -70,6 +87,9 @@ def flatten(node, prefix: str = "") -> dict[str, float]:
     if isinstance(node, dict):
         for key, value in node.items():
             found.update(flatten(value, f"{prefix}.{key}" if prefix else str(key)))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.update(flatten(value, f"{prefix}.{index}" if prefix else str(index)))
     elif isinstance(node, bool):
         pass  # a flag is not a measurement
     elif isinstance(node, (int, float)):
@@ -99,24 +119,30 @@ def main() -> int:
             raise RuntimeError(f"{name} never became exec-ready")
 
         print(f"running capsem-bench {mode}", file=sys.stderr)
-        result = client.post(
+        benchmark_result = client.post(
             f"/vms/{name}/exec",
-            {"command": shlex.join(["capsem-bench", mode]), "timeout_secs": args.timeout},
+            {"command": guest_command(mode), "timeout_secs": args.timeout},
             timeout=args.timeout + 10,
         )
-        if not result or result.get("exit_code") != 0:
+        if not benchmark_result or benchmark_result.get("exit_code") != 0:
             raise RuntimeError(
                 f"capsem-bench {mode} failed: "
-                f"exit={None if not result else result.get('exit_code')}\n"
-                f"{(result or {}).get('stderr', '')[:500]}"
+                f"exit={None if not benchmark_result else benchmark_result.get('exit_code')}\n"
+                f"{(benchmark_result or {}).get('stderr', '')[:500]}"
             )
 
-        result = client.post(
+        artifact_result = client.post(
             f"/vms/{name}/exec",
             {"command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
             timeout=25,
         )
-        document = json.loads((result or {}).get("stdout", ""))
+        if not artifact_result or artifact_result.get("exit_code") != 0:
+            raise RuntimeError(
+                f"read capsem-bench {mode} artifact failed: "
+                f"exit={None if not artifact_result else artifact_result.get('exit_code')}\n"
+                f"{(artifact_result or {}).get('stderr', '')[:500]}"
+            )
+        document = json.loads(artifact_result.get("stdout", ""))
     finally:
         with __import__("contextlib").suppress(Exception):
             client.delete(f"/vms/{name}/delete")
@@ -127,7 +153,11 @@ def main() -> int:
     section = document.get(mode.replace("-", "_"), document)
     numbers = flatten(section)
     if not numbers:
-        raise RuntimeError(f"capsem-bench {mode} reported no numbers")
+        raise RuntimeError(
+            f"capsem-bench {mode} reported no numbers: "
+            f"artifact={json.dumps(document, sort_keys=True)[:1000]!r}; "
+            f"stderr={(benchmark_result or {}).get('stderr', '')[:1000]!r}"
+        )
 
     measured = {
         key: {"unit": unit, "samples": [value]}
