@@ -15,10 +15,45 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import digestreport, runledger
+from . import auditfs, digestreport, runledger
 from .config import GateConfig
-from .filesystem import copy_tree, make_dir, remove
+from .errors import GateError
+from .filesystem import copy_tree, digest_of, make_dir, remove
 from .runhistory import finished, history_locked, point_latest, runs
+
+
+def _export_source_archives(source: GateConfig, target: GateConfig) -> int:
+    """Merge immutable exact-source journals into host-owned evidence."""
+    source_root = source.path(source.runlog.root) / source.runlog.source_archive_dir
+    target_root = target.path(target.runlog.root) / target.runlog.source_archive_dir
+    if not source_root.exists():
+        return 0
+    if source_root.is_symlink() or target_root.is_symlink():
+        raise GateError("qualification journal archive roots must not be symlinks")
+
+    imported = 0
+    for source_commit in sorted(source_root.iterdir()):
+        if source_commit.is_symlink() or not source_commit.is_dir():
+            raise GateError(f"invalid qualification archive directory: {source_commit}")
+        target_commit = target_root / source_commit.name
+        if target_commit.is_symlink():
+            raise GateError(f"qualification archive directory is a symlink: {target_commit}")
+        make_dir(target_commit)
+        for journal in sorted(source_commit.glob("*.jsonl")):
+            if journal.is_symlink() or not journal.is_file():
+                raise GateError(f"invalid qualification journal: {journal}")
+            destination = target_commit / journal.name
+            if destination.exists():
+                if destination.is_symlink() or not destination.is_file():
+                    raise GateError(f"invalid host qualification journal: {destination}")
+                source_digest = digest_of(journal, algorithm=source.runlog.artifact_digest)
+                target_digest = digest_of(destination, algorithm=target.runlog.artifact_digest)
+                if source_digest != target_digest:
+                    raise GateError(f"qualification journal collision at {destination}")
+                continue
+            auditfs.stage(journal, destination)
+            imported += 1
+    return imported
 
 
 def export(prefix: Path, destination: Path, config: GateConfig) -> tuple[Path, ...]:
@@ -41,8 +76,9 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> tuple[Path, .
             imported.append(target)
         if imported:
             point_latest(imported[-1], host_config.runlog)
+        archived = _export_source_archives(source_config, host_config)
 
-    if imported:
+    if imported or archived:
         runledger.sync(host_config, host_config.runlog)
         digestreport.write(host_config)
     return tuple(imported)

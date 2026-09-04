@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
@@ -65,12 +66,29 @@ def test_export_imports_journal_but_reconciles_host_ledger(tmp_path: Path) -> No
     prefix_config = config.model_copy(update={"root": prefix})
     runledger.sync(prefix_config, prefix_config.runlog)
     (new / config.runlog.active_marker).touch()
+    source_archive = (
+        prefix
+        / config.runlog.root
+        / config.runlog.source_archive_dir
+        / ("0" * 40)
+        / f"{new_id}.jsonl"
+    )
+    source_archive.parent.mkdir(parents=True)
+    os.link(new / config.runlog.events, source_archive)
 
     assert [path.name for path in runtransfer.export(prefix, host, config)] == [new_id]
     assert [row.run_id for row in runledger.rows(config)] == [new_id, old_id]
     assert (old / config.runlog.events).read_bytes() == old_bytes
     assert not (host / config.runlog.root / new_id / config.runlog.active_marker).exists()
     assert (host / config.runlog.root / config.runlog.latest_link).readlink() == Path(new_id)
+    host_archive = (
+        host
+        / config.runlog.root
+        / config.runlog.source_archive_dir
+        / ("0" * 40)
+        / f"{new_id}.jsonl"
+    )
+    assert host_archive.read_bytes() == (new / config.runlog.events).read_bytes()
 
 
 def test_incomplete_terminal_event_is_not_ledger_evidence(tmp_path: Path) -> None:
