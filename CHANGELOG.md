@@ -117,6 +117,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Identical DNS lookups in flight at the same time now share one upstream
+  round trip: the first query for a name leads and the rest wait for its
+  checked answer, each getting its own transaction id and its own ledger
+  row. A query only joins after its own security evaluation, local
+  fixtures, redirect check and cache lookup have all passed, so a blocked
+  name is never merged with an allowed one, and a leader that fails gives
+  every follower its own SERVFAIL. An upstream NXDOMAIN is now remembered
+  for the SOA minimum, at most a minute, so a client retrying a dead name
+  stops costing an upstream lookup each time; SERVFAIL is still never
+  cached. Two hundred concurrent lookups of one dead name used to be two
+  hundred upstream datagrams and, on a slow upstream, two hundred timeouts.
+- The DNS forwarder's per-upstream timeout is two seconds instead of five,
+  so trying both default upstreams fits inside the guest resolver's own
+  five-second timeout and the client sees a SERVFAIL rather than
+  retransmitting the same query into the backlog.
 - Guest DNS no longer serializes on eight lock-step worker threads. The
   forwarder now multiplexes queries over two persistent vsock sessions with a
   correlation id per query, so answers arrive in any order and a slow lookup

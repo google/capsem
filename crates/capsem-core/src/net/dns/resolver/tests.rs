@@ -123,3 +123,53 @@ async fn a_truncated_datagram_is_discarded() {
         .expect("the full answer arrives after the runt");
     assert!(answer.len() > 12);
 }
+
+#[tokio::test]
+async fn an_upstream_that_never_answers_times_out_within_the_attempt_budget() {
+    // A socket that swallows every query.
+    let sink = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = sink.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        while sink.recv_from(&mut buf).await.is_ok() {}
+    });
+    let resolver = DnsResolver::with_upstreams(vec![addr]).with_timeout(Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    let error = resolver.resolve(&query_bytes(1, "slow.example.")).await.unwrap_err();
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_millis(200) && took < Duration::from_secs(2),
+        "{took:?}: {error:#}"
+    );
+}
+
+#[test]
+fn the_default_attempt_budget_fits_two_upstreams_inside_the_guest_resolver_timeout() {
+    // glibc's RES_TIMEOUT is 5 s. Two sequential attempts must finish
+    // inside it or the client retransmits while we are still waiting.
+    assert!(DEFAULT_TIMEOUT * DEFAULT_UPSTREAMS.len() as u32 <= Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn a_hundred_concurrent_resolves_complete_against_one_upstream() {
+    let upstream = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        let name = Message::from_vec(query).unwrap().queries[0].name().to_string();
+        vec![answer_for(query, id, &name)]
+    })
+    .await;
+    let resolver = std::sync::Arc::new(resolver(upstream));
+    let mut tasks = Vec::new();
+    for i in 0..100u16 {
+        let resolver = std::sync::Arc::clone(&resolver);
+        tasks.push(tokio::spawn(async move {
+            let name = format!("h{i}.example.");
+            let (answer, _) = resolver.resolve(&query_bytes(i, &name)).await.unwrap();
+            assert_eq!(u16::from_be_bytes([answer[0], answer[1]]), i);
+            assert_eq!(Message::from_vec(&answer).unwrap().queries[0].name().to_string(), name);
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+}

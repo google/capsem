@@ -30,11 +30,12 @@ use tracing::{debug, warn};
 /// owners override via [`DnsResolver::with_upstreams`].
 pub const DEFAULT_UPSTREAMS: &[&str] = &["1.1.1.1:53", "8.8.8.8:53"];
 
-/// Default per-attempt timeout. Recursive resolution is interactive at
-/// human scale; anything over a second is already a bad UX, so 5s is
-/// generous-enough to cover one upstream that's slow without making the
-/// guest hang on a dead upstream.
-const DEFAULT_TIMEOUT: Duration = Duration::from_millis(5000);
+/// Default per-attempt timeout. Two seconds covers a slow upstream, and
+/// with two default upstreams the whole `resolve()` fits inside glibc's
+/// five-second resolver timeout in the guest: the client gets our SERVFAIL
+/// and moves on instead of retransmitting a second copy of the same query
+/// into the backlog while we are still waiting on the first.
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(2000);
 
 /// UDP DNS forwarder. Iterates the upstream list per query; first
 /// successful response wins.
