@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine-inspection code. Its stripped musl payload is 32% smaller, reducing
   every fresh VM overlay and keeping fork images within their size ratchet
   without weakening the benchmark baseline.
+- Bounded direct diagnostics now reap descendants that create their own process
+  sessions, so a timed-out Bubblewrap or focused-gate command cannot keep VMs,
+  locks, or output pipes alive after its wrapper exits.
 - VM kernels, root filesystems, initrds, guest binaries, host packages, and
   release staging views now reuse digest-verified immutable objects through
   component-specific input identities. Hardlinks avoid duplicate multi-gigabyte

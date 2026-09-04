@@ -12,9 +12,10 @@ import os
 import signal
 import subprocess
 import sys
-import time
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, cast
+
+from capsem_builder.gate import processgroup
 
 TIMEOUT_EXIT = 124
 
@@ -68,30 +69,16 @@ def _nonnegative_seconds(value: str) -> float:
     return seconds
 
 
-def _terminate_group(process: _ProcessGroup, grace_seconds: float) -> None:
-    """Terminate every descendant in the command's dedicated process group."""
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        return
-
-    deadline = time.monotonic() + grace_seconds
-    while True:
-        process.poll()  # reap the process-group leader as soon as it exits
-        try:
-            os.killpg(process.pid, 0)
-        except (ProcessLookupError, PermissionError):
-            return
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
-
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        return
-    if process.poll() is None:
-        process.wait()
+def _terminate_tree(process: _ProcessGroup, grace_seconds: float) -> None:
+    """Terminate the command group and descendant-created sessions."""
+    policy = processgroup.StopPolicy(
+        grace_seconds=max(grace_seconds, 0.001),
+        poll_seconds=0.02,
+    )
+    processgroup.terminate(
+        cast(processgroup.ForegroundProcess, process),
+        policy,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -138,15 +125,15 @@ def run(argv: Sequence[str]) -> int:
                 f"terminating process group {process.pid}",
                 file=sys.stderr,
             )
-            _terminate_group(process, args.grace_seconds)
+            _terminate_tree(process, args.grace_seconds)
             return TIMEOUT_EXIT
         except _ForwardedSignal as caught:
-            _terminate_group(process, args.grace_seconds)
+            _terminate_tree(process, args.grace_seconds)
             return 128 + caught.signum
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
-        _terminate_group(process, args.grace_seconds)
+        _terminate_tree(process, args.grace_seconds)
 
 
 def main() -> int:

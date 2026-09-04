@@ -91,7 +91,7 @@ def test_bounded_cleanup_tolerates_macos_permission_denied_after_signal(
 
     monkeypatch.setattr(BOUNDED_MODULE.os, "killpg", killpg)
 
-    BOUNDED_MODULE._terminate_group(FinishedProcess(), grace_seconds=0)
+    BOUNDED_MODULE._terminate_tree(FinishedProcess(), grace_seconds=0)
 
 
 @pytest.mark.skipif(
