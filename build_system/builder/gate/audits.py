@@ -100,6 +100,12 @@ def live(config: GateConfig) -> list[Step]:
         step(
             label,
             action,
+            # pnpm list traverses the installed graph. Reading it while the
+            # toolchain rewrites node_modules produced a clean audit of one
+            # package where the settled tree contained hundreds.
+            contends=(config.exclusive("node_modules"),)
+            if label == "audit.pnpm"
+            else (),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.NETWORK}),
             speed=Speed.FAST,

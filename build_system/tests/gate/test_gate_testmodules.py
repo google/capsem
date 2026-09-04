@@ -145,6 +145,14 @@ def test_candidate_hands_one_frontend_bundle_to_every_consumer() -> None:
     assert plan.after_of("artifacts.build-chain") >= {"fast.web.frontend-build"}
 
 
+def test_pnpm_audit_reads_only_a_settled_node_tree() -> None:
+    plan = _plan(FastModule)
+
+    assert plan.step_named("fast.audit.pnpm").contends == plan.step_named(
+        "fast.toolchain.node"
+    ).contends
+
+
 @pytest.mark.parametrize(
     ("module", "materializer", "consumer"),
     [
