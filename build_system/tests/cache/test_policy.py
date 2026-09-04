@@ -85,18 +85,28 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["python-pycache"].lease_template == ".{key}.lock"
     assert policy.stages["test-temp"].external
     assert policy.stages["test-temp"].path == Path("/var/tmp/capsem-tests")
+    assert policy.stages["test-temp"].warm_size_bytes == 8 * 1024**3
+    assert policy.stages["test-temp"].max_size_bytes == 200 * 1024**3
+    assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
+    assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
     assert policy.control is not None
     assert policy.runtimes["docker"].warm_size_bytes == 72 * 1024**3
-    assert policy.runtimes["docker"].max_size_bytes == 200 * 1024**3
+    assert policy.runtimes["docker"].max_size_bytes == 96 * 1024**3
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())
+    contracts = (
+        *policy.stages.values(),
+        *policy.runtimes.values(),
+        *policy.control.docker.images.values(),
+    )
+    assert all(contract.max_size_bytes > contract.warm_size_bytes for contract in contracts)
     host_builder = policy.control.docker.images["capsem-host-builder"]
     assert host_builder.repository == "capsem-host-builder"
     assert host_builder.warm_size_bytes == 8 * 1024**3
-    assert host_builder.max_size_bytes == 200 * 1024**3
+    assert host_builder.max_size_bytes == 16 * 1024**3
 
 
 def test_cache_authority_environment_is_required_and_canonical() -> None:
