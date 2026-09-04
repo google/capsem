@@ -23,6 +23,7 @@ use crate::net::policy_config::{
     SecurityPluginMode, SecurityRuleAction, SecurityRuleSet,
 };
 
+mod builtin_actions;
 mod forensics;
 use forensics::{
     compiled_rule_forensic_json, logged_detection_level, logged_rule_action, logger_write_credential_ref,
@@ -2504,7 +2505,7 @@ pub trait SecurityPlugin: Send + Sync {
     ) -> Result<SecurityPluginResult, SecurityActionError>;
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SecurityActionRegistry {
     plugins: BTreeMap<String, Arc<dyn SecurityPlugin>>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
@@ -2516,15 +2517,7 @@ impl SecurityActionRegistry {
     }
 
     pub fn with_builtin_actions() -> Self {
-        Self::new()
-            .register_plugin(CredentialBrokerPlugin)
-            .expect("built-in security plugin ids are unique")
-            .register_plugin(DummyPreEicarPlugin)
-            .expect("built-in security plugin ids are unique")
-            .register_plugin(DummyPostAllowPlugin)
-            .expect("built-in security plugin ids are unique")
-            .register_plugin(LogSanitizerPlugin)
-            .expect("built-in security plugin ids are unique")
+        builtin_actions::registry().clone()
     }
 
     pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
