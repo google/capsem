@@ -1,8 +1,25 @@
 use super::*;
 use std::process::{Child, Command};
 
+fn kill_hangup_default() -> nix::Result<nix::sys::signal::SigHandler> {
+    unsafe { nix::sys::signal::signal(Signal::SIGHUP, nix::sys::signal::SigHandler::SigDfl) }
+}
+
+/// Spawn with SIGHUP at its default disposition, as the agent does for its
+/// shell: a harness started under `nohup` would otherwise hand the child an
+/// ignored SIGHUP and no shell here would ever exit on hangup.
 fn spawn(cmd: &str) -> (Child, Pid) {
-    let child = Command::new("sh").arg("-c").arg(cmd).spawn().expect("spawn sh");
+    use std::os::unix::process::CommandExt;
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(cmd);
+    // SAFETY: only async-signal-safe work before exec, a single signal(2).
+    unsafe {
+        command.pre_exec(|| {
+            let _ = kill_hangup_default();
+            Ok(())
+        });
+    }
+    let child = command.spawn().expect("spawn sh");
     let pid = Pid::from_raw(child.id() as i32);
     (child, pid)
 }

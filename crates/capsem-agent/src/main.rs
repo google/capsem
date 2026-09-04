@@ -467,6 +467,11 @@ fn main() {
         Ok(ForkResult::Child) => {
             // Close master in child.
             drop(pty.master);
+            // The shell must take the hangup that ends it at shutdown even if
+            // whatever started this agent left SIGHUP ignored: an ignored
+            // disposition survives exec, and bash would then only die at the
+            // end of the grace period, killed.
+            unsafe { signal(Signal::SIGHUP, SigHandler::SigDfl) }.ok();
 
             // Create a new session so the slave PTY becomes the controlling terminal.
             setsid().expect("setsid failed");
