@@ -73,7 +73,7 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
     mechanics.http_upstream_ports = vec![80, upstream_port];
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(mechanics)));
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(DbWriter::open(&dir.path().join("bench.db"), 256).unwrap());
+    let db = Arc::new(DbWriter::open(&dir.path().join("bench.db"), 1024).unwrap());
     std::mem::forget(dir);
     let security_rules = capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new());
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
@@ -172,6 +172,30 @@ fn mitm_request(c: &mut Criterion) {
     });
     c.bench_function("plain_http_get_keepalive_x100_through_mitm", |b| {
         b.iter(|| rt.block_on(get_keepalive(proxy, &host, 100)));
+    });
+    // Two hundred guest connections at once, twenty requests each: does the
+    // proxy's throughput grow with concurrency or queue behind one thing?
+    // Divide the iteration time by 4,000 for the per-request cost at load.
+    // The direct case bounds what the harness itself can do.
+    let fan_out = |target: SocketAddr, host: &str| {
+        let host = host.to_string();
+        rt.block_on(async move {
+            let tasks: Vec<_> = (0..200)
+                .map(|_| {
+                    let host = host.clone();
+                    tokio::spawn(async move { get_keepalive(target, &host, 20).await })
+                })
+                .collect();
+            for task in tasks {
+                task.await.unwrap();
+            }
+        })
+    };
+    c.bench_function("plain_http_keepalive_200_connections_x20_direct", |b| {
+        b.iter(|| fan_out(upstream, &host));
+    });
+    c.bench_function("plain_http_keepalive_200_connections_x20_through_mitm", |b| {
+        b.iter(|| fan_out(proxy, &host));
     });
 }
 
