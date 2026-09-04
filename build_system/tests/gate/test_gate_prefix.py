@@ -650,12 +650,10 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/assets",
         "cache/target/config",
         "cache/target/coverage",
+        "cache/target/gate-runs",
         "cache/target/packages",
         "cache/target/tests/evidence",
     } <= exports
-    assert not any(export.startswith("cache/target/gate-runs") for export in exports), (
-        "runtransfer owns journals and aggregate history must not be merged as build output"
-    )
 
 
 def test_the_built_binaries_are_every_host_binary() -> None:

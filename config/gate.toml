@@ -1907,6 +1907,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_resume.py",
     "build_system/tests/gate/test_gate_release_isolation.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
+    "build_system/tests/gate/test_gate_run_transfer.py",
     "build_system/tests/gate/test_gate_qualification_evidence.py",
     "build_system/tests/gate/test_gate_qualification_flow.py",
     "build_system/tests/gate/test_gate_qualification_reuse.py",
@@ -2418,7 +2419,7 @@ resumable = ["cache/target/build/install-image"]
 # Run directories cross the prefix through `runtransfer`; its ledger, digest,
 # latest link and active marker are collection state and must never be merged
 # as ordinary build output.
-exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
+exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for

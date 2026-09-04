@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::Unit;
+use crate::{schema::Unit, Thresholds};
 
 /// The distribution of one metric, as recorded.
 ///
@@ -165,20 +165,17 @@ pub struct Comparison {
 
 /// Compare one metric against its evidence.
 ///
-/// `maximum_factor` is the config-owned relative ceiling
-/// (`[benchmark_regression] maximum_factor`). `noise_factor` scales the
-/// evidence's own coefficient of variation into the band a move must clear
-/// before it counts: a metric whose baseline wobbles by 8% cannot report an
-/// 8% move as a discovery.
+/// `thresholds.maximum_factor` is the config-owned relative ceiling.
+/// `thresholds.noise_factor` scales the evidence's own coefficient of
+/// variation into the band a move must clear before it counts: a metric whose
+/// baseline wobbles by 8% cannot report an 8% move as a discovery.
 pub fn compare(
     key: &str,
     statistic: Statistic,
     baseline: &Summary,
     current: &Summary,
     unit: Unit,
-    maximum_factor: f64,
-    noise_factor: f64,
-    minimum_time_resolution_ms: f64,
+    thresholds: Thresholds,
 ) -> Comparison {
     let before = baseline.at(statistic);
     let after = current.at(statistic);
@@ -198,9 +195,9 @@ pub fn compare(
     };
     let delta_pct = if before == 0.0 { 0.0 } else { delta_abs / before * 100.0 };
 
-    let regressed = ratio > maximum_factor;
-    let noise_band = baseline.cv * noise_factor;
-    let material = delta_abs >= minimum_delta(unit, minimum_time_resolution_ms);
+    let regressed = ratio > thresholds.maximum_factor;
+    let noise_band = baseline.cv * thresholds.noise_factor;
+    let material = delta_abs >= minimum_delta(unit, thresholds.minimum_time_resolution_ms);
     let significant = regressed && material && (ratio - 1.0) > noise_band;
 
     Comparison {

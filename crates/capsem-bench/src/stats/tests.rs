@@ -1,9 +1,11 @@
 use super::{compare, Statistic, Summary};
-use crate::schema::Unit;
+use crate::{schema::Unit, Thresholds};
 
-const MAXIMUM_FACTOR: f64 = 1.1;
-const NOISE_FACTOR: f64 = 1.0;
-const MINIMUM_TIME_RESOLUTION_MS: f64 = 1.0;
+const THRESHOLDS: Thresholds = Thresholds {
+    maximum_factor: 1.1,
+    noise_factor: 1.0,
+    minimum_time_resolution_ms: 1.0,
+};
 
 fn compare_ms(baseline: &Summary, current: &Summary) -> super::Comparison {
     compare(
@@ -12,9 +14,7 @@ fn compare_ms(baseline: &Summary, current: &Summary) -> super::Comparison {
         baseline,
         current,
         Unit::Milliseconds,
-        MAXIMUM_FACTOR,
-        NOISE_FACTOR,
-        MINIMUM_TIME_RESOLUTION_MS,
+        THRESHOLDS,
     )
 }
 
@@ -147,9 +147,7 @@ fn a_zero_baseline_reports_infinity_rather_than_no_change() {
         &steady(0.0),
         &steady(5.0),
         Unit::Nanoseconds,
-        MAXIMUM_FACTOR,
-        NOISE_FACTOR,
-        MINIMUM_TIME_RESOLUTION_MS,
+        THRESHOLDS,
     );
     assert!(verdict.ratio.is_infinite());
     assert!(verdict.regressed);
@@ -163,9 +161,7 @@ fn two_zeroes_are_unchanged() {
         &steady(0.0),
         &steady(0.0),
         Unit::Count,
-        MAXIMUM_FACTOR,
-        NOISE_FACTOR,
-        MINIMUM_TIME_RESOLUTION_MS,
+        THRESHOLDS,
     );
     assert_eq!(verdict.ratio, 1.0);
     assert!(!verdict.regressed);
@@ -179,9 +175,7 @@ fn an_improvement_is_never_a_regression() {
         &steady(900.0),
         &steady(450.0),
         Unit::Milliseconds,
-        MAXIMUM_FACTOR,
-        NOISE_FACTOR,
-        MINIMUM_TIME_RESOLUTION_MS,
+        THRESHOLDS,
     );
     assert!(!verdict.regressed);
     assert!(verdict.delta_abs < 0.0);
@@ -196,9 +190,7 @@ fn nanosecond_percentages_have_no_release_authority() {
         &steady(300.0),
         &steady(900.0),
         Unit::Nanoseconds,
-        MAXIMUM_FACTOR,
-        NOISE_FACTOR,
-        MINIMUM_TIME_RESOLUTION_MS,
+        THRESHOLDS,
     );
     assert!(verdict.regressed, "the threefold movement remains visible");
     assert!(!verdict.material, "600 ns has no product-level meaning");

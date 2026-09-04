@@ -7,8 +7,11 @@ import runpy
 import shlex
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-COLLECTOR = PROJECT_ROOT / "benchmarks" / "collectors" / "_guest"
+CONFIG = gate_config.load(PROJECT_ROOT)
+COLLECTOR = CONFIG.path(CONFIG.benchmark.run.collectors) / "_guest"
 
 
 def collector() -> dict:

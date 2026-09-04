@@ -6,10 +6,10 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,

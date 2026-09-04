@@ -150,6 +150,7 @@ def compose_modules(
         qualification=qualification,
         after=static,
         node=node,
+        bundled=bundled,
     )
     functional = vmmodules.functional(
         plan,

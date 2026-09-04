@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.module_artifacts import ArtifactsModule
 from capsem_builder.gate.staticmodule import StaticModule
 from capsem_builder.gate.testmodules import FastModule
@@ -127,6 +128,21 @@ def test_artifacts_owns_the_frontend_bundle_before_build_chain() -> None:
     assert plan.after_of(consumer) >= {bundle}
     workspace = CONFIG.path(CONFIG.frontend.workspace).name
     assert f"(in {workspace})" in "\n".join(plan.step_named(node).render())
+
+
+def test_candidate_hands_one_frontend_bundle_to_every_consumer() -> None:
+    plan = CandidateCommand(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+    rendered = "bash build_system/scripts/web/check-web-surface.sh frontend-build"
+
+    assert [
+        step.label
+        for step in plan.steps
+        if rendered in step.render()
+    ] == ["fast.web.frontend-build"]
+    assert plan.after_of("artifacts.build-chain") >= {"fast.web.frontend-build"}
 
 
 @pytest.mark.parametrize(

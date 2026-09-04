@@ -85,6 +85,7 @@ def artifacts(
     qualification: Qualification,
     after: tuple[Step, ...] = (),
     node: Step | None = None,
+    bundled: Step | None = None,
 ) -> Step:
     """Build every profile's VM assets, or verify the pulled ones."""
     phase = plan.phase("artifacts")
@@ -104,7 +105,7 @@ def artifacts(
         toolchain.node(config, (config.frontend.workspace,)), after=after
     )
     prerequisites = (*after, installed) if node is not None else (installed,)
-    bundled = phase.add(audits.frontend_bundle(config), after=prerequisites)
+    frontend = bundled or phase.add(audits.frontend_bundle(config), after=prerequisites)
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",
@@ -115,7 +116,7 @@ def artifacts(
             # same one every other build locks.
             contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
-        after=(built, bundled),
+        after=(built, frontend),
     )
 
 

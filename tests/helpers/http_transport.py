@@ -64,6 +64,8 @@ class Transport:
     def _new_connection(self, timeout: float) -> http.client.HTTPConnection:
         if self._socket_path is not None:
             return UdsConnection(self._socket_path, timeout)
+        if self._host is None:
+            raise ValueError("TCP transport requires a host")
         return TcpConnection(self._host, self._port, timeout=timeout)
 
     def _connection(self, timeout: float) -> http.client.HTTPConnection:

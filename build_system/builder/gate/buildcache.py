@@ -72,6 +72,10 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
     runtransfer.export(prefix, destination, config)
     exact_trees = {config.functional.assets_dir, config.functional.config_root}
     for relative in config.prefix.exports:
+        # Inventoried as produced output, but transferred above by the owner
+        # that understands immutable journals versus host aggregate state.
+        if relative == config.runlog.root:
+            continue
         origin = prefix / relative
         if not origin.exists():
             continue

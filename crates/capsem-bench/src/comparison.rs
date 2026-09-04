@@ -69,9 +69,7 @@ fn judge(baseline: &schema::Record, current: &schema::Record, thresholds: Thresh
                 &before.summary,
                 &metric.summary,
                 metric.unit,
-                thresholds.maximum_factor,
-                thresholds.noise_factor,
-                thresholds.minimum_time_resolution_ms,
+                thresholds,
             ))
         })
         .collect()
