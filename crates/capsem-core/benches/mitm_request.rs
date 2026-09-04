@@ -85,6 +85,7 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
     });
     let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
     Arc::new(MitmProxyConfig {
+        server_tls: mitm_proxy::make_server_tls_config(&ca),
         ca,
         policy,
         model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(

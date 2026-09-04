@@ -26,6 +26,8 @@ pub mod protocol;
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
+pub mod tls_server;
+pub use tls_server::make_server_tls_config;
 mod upgrade;
 mod util;
 
@@ -39,7 +41,6 @@ use capsem_logger::{DbWriter, Decision, McpCall, NetEvent, WriteOp};
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use rustls::ServerConfig;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
@@ -52,7 +53,7 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
-use super::cert_authority::{CertAuthority, MitmCertResolver};
+use super::cert_authority::CertAuthority;
 use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
@@ -85,6 +86,8 @@ static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
+    /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
+    pub server_tls: Arc<rustls::ServerConfig>,
     /// Live policy, swappable via RwLock so settings changes take effect
     /// without restarting the VM. Each HTTP request snapshots the Arc so
     /// that disabling a provider blocks the next request even on an
@@ -623,15 +626,7 @@ async fn serve_tls(
     config: &Arc<MitmProxyConfig>,
     process_name: Arc<Option<String>>,
 ) -> Result<String, (String, Decision, String)> {
-    let resolver = Arc::new(MitmCertResolver::new(Arc::clone(&config.ca)));
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let mut tls_config = ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| (String::new(), Decision::Error, format!("TLS config: {e}")))?
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::clone(&resolver) as _);
-    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let acceptor = TlsAcceptor::from(Arc::clone(&config.server_tls));
 
     // Chain buffered ClientHello bytes with the remaining vsock stream.
     let replay = ReplayReader::new(initial_buf, vsock_stream);
@@ -658,14 +653,19 @@ async fn serve_tls(
             tls_span.record("status", "error");
             tls_span.record("error_kind", "guest_tls_handshake");
             ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
-            let domain = resolver.domain().unwrap_or_default();
-            (domain, Decision::Error, format!("TLS handshake: {e}"))
+            (String::new(), Decision::Error, format!("TLS handshake: {e}"))
         })?;
     tls_span.record("status", "ok");
     ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
 
-    let domain = resolver
-        .domain()
+    // The SNI is guest-controlled; normalize it so policy, dial and
+    // telemetry all see the identity the leaf was minted for.
+    let domain = tls_stream
+        .get_ref()
+        .1
+        .server_name()
+        .map(crate::net::hostname::normalize_host)
+        .filter(|domain| !domain.is_empty())
         .ok_or_else(|| (String::new(), Decision::Denied, "no SNI in ClientHello".into()))?;
 
     let io = TokioIo::new(tls_stream);

@@ -62,6 +62,11 @@ impl CertAuthority {
         Ok(arc)
     }
 
+    /// The CA certificate in DER, for a client that must trust minted leaves.
+    pub fn ca_cert_der(&self) -> &CertificateDer<'static> {
+        &self.ca_cert_der
+    }
+
     /// Number of cached certificates.
     pub fn cache_size(&self) -> usize {
         self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
@@ -99,28 +104,19 @@ impl CertAuthority {
 
 /// rustls SNI-based certificate resolver that mints certs on demand.
 ///
-/// Also captures the resolved domain name for use after the TLS handshake
-/// (replaces the old separate SNI parser). Always mints certs even for
+/// Stateless, so one `ServerConfig` (and its session cache) can serve every
+/// connection; the proxy reads the negotiated SNI back from the
+/// `ServerConnection` after the handshake. Always mints certs even for
 /// blocked domains so we can complete the TLS handshake, read the HTTP
 /// request (capturing method/path), and return a proper 403 response.
 pub struct MitmCertResolver {
     pub ca: Arc<CertAuthority>,
-    /// Domain captured during TLS handshake from ClientHello SNI.
-    pub resolved_domain: std::sync::Mutex<Option<String>>,
 }
 
 impl MitmCertResolver {
     /// Create a new resolver wrapping the given CA.
     pub fn new(ca: Arc<CertAuthority>) -> Self {
-        Self {
-            ca,
-            resolved_domain: std::sync::Mutex::new(None),
-        }
-    }
-
-    /// Get the domain captured during the last TLS handshake.
-    pub fn domain(&self) -> Option<String> {
-        self.resolved_domain.lock().unwrap().clone()
+        Self { ca }
     }
 }
 
@@ -142,7 +138,6 @@ impl rustls::server::ResolvesServerCert for MitmCertResolver {
         if domain.is_empty() {
             return None;
         }
-        *self.resolved_domain.lock().unwrap_or_else(|e| e.into_inner()) = Some(domain.clone());
 
         // Always mint a cert, even for blocked domains. This lets us complete
         // the TLS handshake, read the HTTP request (method, path), and return

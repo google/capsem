@@ -531,6 +531,7 @@ async fn run_async_main_loop(
     );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
+        server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
         policy: Arc::clone(&net_state.policy),
         model_endpoints,
         db: Arc::clone(&db),
