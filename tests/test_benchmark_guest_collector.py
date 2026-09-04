@@ -51,3 +51,32 @@ def test_flatten_preserves_indexed_load_rows() -> None:
         "concurrency_levels.1.rps": 120.0,
         "concurrency_levels.1.p99_ms": 80.0,
     }
+
+
+def test_mitm_fixture_corp_config_routes_dns_and_the_fixture_host_to_the_mock_server() -> (
+    None
+):
+    module = collector()
+    toml = module["mitm_fixture_corp_toml"](
+        {"dns_udp_addr": "127.0.0.1:41000", "http_addr": "127.0.0.1:3713"}
+    )
+    assert 'upstreams = ["127.0.0.1:41000"]' in toml
+    assert '[network.upstream_overrides."fixture.capsem.test:443"]' in toml
+    assert 'dial = "127.0.0.1:3713"' in toml
+    assert 'protocol = "http"' in toml
+    assert module["MITM_FIXTURE_TARGET"] == "https://fixture.capsem.test/tiny"
+
+
+def test_a_level_where_every_request_failed_is_not_a_measurement() -> None:
+    failed = collector()["failed_load_levels"]
+    section = {
+        "concurrency_levels": [
+            {"concurrency": 1, "total_requests": 700, "errors": 700},
+            {"concurrency": 10, "total_requests": 6000, "errors": 12},
+            {"concurrency": 50, "total_requests": 0, "errors": 0},
+            {"concurrency": 200, "total_requests": 100, "errors": 250},
+        ]
+    }
+    assert failed(section) == [1, 200]
+    assert failed({"concurrency_levels": []}) == []
+    assert failed({}) == []
