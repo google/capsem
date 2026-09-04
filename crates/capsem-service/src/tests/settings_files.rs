@@ -477,6 +477,15 @@ fn classify_still_booting_timeout_succeeds_with_uds() {
 }
 
 #[test]
+fn classify_launched_succeeds_with_uds() {
+    let uds = PathBuf::from("/tmp/z.sock");
+    match classify_attempt_decision(ProvisionAttemptOutcome::Launched { uds_path: uds.clone() }, "vm-9") {
+        AttemptDecision::Succeed(p) => assert_eq!(p, uds),
+        other => panic!("expected Succeed for a launched VM, got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_launchd_transient_routes_to_retry() {
     // The core of the Bug A fix: LaunchdTransient must trigger a retry,
     // not bail with the misleading entitlement error.

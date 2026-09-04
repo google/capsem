@@ -1041,6 +1041,7 @@ impl ServiceState {
         }
         let _ = std::fs::remove_file(&info.uds_path);
         let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
+        let _ = std::fs::remove_file(info.uds_path.with_extension("launched"));
     }
 
     fn cleanup_stale_instances(&self) {
@@ -1443,6 +1444,7 @@ impl ServiceState {
         // callers race ahead before the resumed agent has reconnected.
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        let _ = std::fs::remove_file(uds_path.with_extension("launched"));
 
         self.validate_persistent_profile_authority(&entry)?;
         let active_profile_path = self.persistent_active_profile_path(&entry)?;

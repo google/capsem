@@ -675,6 +675,17 @@ async fn run_async_main_loop(
         std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
     }
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
+    // The launch signal: the hypervisor has started the VM and this process
+    // is answering IPC. `create` returns on it instead of waiting out a timer
+    // (`.ready`, written after the guest handshake, comes much later). A
+    // separate file rather than the socket's existence, because a stale
+    // socket from an earlier run at this path was just deleted above.
+    let launched_path = uds_path.with_extension("launched");
+    std::fs::File::create(&launched_path)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
+    }
 
     // Through `capsem_foundation::uds`, which owns the length rule -- the gateway
     // derives this same path independently, so both must apply it identically

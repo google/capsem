@@ -117,6 +117,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem create` returns as soon as the VM is launched instead of after a
+  fixed half-second. The VM process now writes a launch sentinel the
+  moment the hypervisor has started the VM and it is answering IPC (about
+  100 ms in on Linux); create returns on that, on guest readiness, or on a
+  crash, with the old half second kept only as the ceiling. Exec and file
+  routes still own the full readiness wait.
+- The guest's boot stage timings reach the host again. The agent has always
+  sent them after the boot handshake; the process logged them as an
+  unknown message and dropped them. They are now recorded per stage in the
+  process log, the guest also reports the kernel's own boot time as a
+  stage, and the lifecycle benchmark records every stage plus the graceful
+  stop and one-shot run times.
 - Concurrent `/status` polls no longer queue behind one another at the
   gateway. A poll that finds a service read in flight waits for it and
   then shares the next read, which by construction began after the poll

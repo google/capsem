@@ -575,6 +575,7 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
         }
         let _ = std::fs::remove_file(uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        let _ = std::fs::remove_file(uds_path.with_extension("launched"));
         if !persistent {
             let _ = std::fs::remove_dir_all(session_dir);
         }
