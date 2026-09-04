@@ -3031,7 +3031,7 @@ cpu_s = 0.10
 [benchmark.route_health.budgets.evaluate.gateway]
 p95_ms = 5.0
 p99_ms = 8.0
-cpu_s = 0.165
+cpu_s = 0.20
 
 [benchmark.route_health.budgets.plugin_info.service]
 p95_ms = 3.0

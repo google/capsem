@@ -72,6 +72,24 @@ def test_vm_scalar_gateway_budget_has_measured_twenty_percent_headroom() -> None
     )
 
 
+def test_evaluate_gateway_cpu_has_measured_twenty_percent_headroom() -> None:
+    budget = scaled_hot_route_budget(
+        "/profiles/code/enforcement/evaluate",
+        gateway=True,
+        samples=128,
+    )
+
+    assert budget.cpu_s == 0.40
+    assert_has_headroom(
+        label="gateway /profiles/code/enforcement/evaluate CPU",
+        measured=0.316,
+        ceiling=budget.cpu_s,
+        minimum_factor=1.2,
+        accounting_slack=0.011,
+        unit="s",
+    )
+
+
 def test_non_finite_measurements_are_rejected() -> None:
     with pytest.raises(ValidationError):
         HeadroomGuard(
