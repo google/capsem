@@ -574,8 +574,7 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
             signaled_any_vm = true;
         }
         let _ = std::fs::remove_file(uds_path);
-        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-        let _ = std::fs::remove_file(uds_path.with_extension("launched"));
+        remove_instance_sentinels(uds_path);
         if !persistent {
             let _ = std::fs::remove_dir_all(session_dir);
         }
@@ -788,4 +787,11 @@ pub(super) async fn spawn_companions(
     }
 
     children
+}
+
+/// Remove the sentinels capsem-process writes beside its socket: `.launched`
+/// once the VM is running and `.ready` once the guest handshake completed.
+pub(crate) fn remove_instance_sentinels(uds_path: &std::path::Path) {
+    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+    let _ = std::fs::remove_file(uds_path.with_extension("launched"));
 }

@@ -8,7 +8,9 @@
 //   - Port 5005: exec output (direct child process stdout, on demand)
 
 mod audit;
+mod boot_timing;
 mod control_writer;
+use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
 mod shutdown;
 mod terminal_bridge;
 use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
@@ -27,8 +29,8 @@ use std::thread;
 
 use capsem_proto::{
     decode_host_msg, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path,
-    validate_file_path_safe, BootStage, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
-    MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
+    validate_file_path_safe, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+    MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
 };
 use nix::libc;
 use nix::pty::openpty;
@@ -708,9 +710,6 @@ fn main() {
     }
 }
 
-/// Path to the boot timing JSONL file written by capsem-init.
-const BOOT_TIMING_PATH: &str = "/run/capsem-boot-timing";
-
 /// After resume, the VirtioFS mount capsem-init set up in its pre-chroot
 /// namespace (host path: /mnt/shared) is connected to a dead virtiofsd from
 /// the previous capsem-process. /root was bind-mounted from that share, so
@@ -783,25 +782,6 @@ fn rebind_workspace_after_resume() {
     } else {
         eprintln!("[capsem-agent] rebind: /root reconnected to host workspace");
     }
-}
-
-/// Parse boot timing JSONL file. Each line: {"name":"...","duration_ms":...}
-/// Rejects entries with non-alphanumeric names (defense against injection).
-fn parse_boot_timing(path: &str) -> Vec<BootStage> {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    contents
-        .lines()
-        .filter_map(|line| serde_json::from_str::<BootStage>(line).ok())
-        .filter(|s| {
-            s.name.len() <= 64
-                && !s.name.is_empty()
-                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && s.duration_ms <= 600_000
-        })
-        .take(32)
-        .collect()
 }
 
 fn run_bridge(
