@@ -48,10 +48,11 @@ class Transport:
     """One kept-alive connection per caller thread to one server.
 
     A server may close an idle kept-alive connection at any time; the next
-    GET or HEAD is sent once more on a fresh connection. Mutating requests are
-    never replayed because a transport error cannot prove the server did not
-    act. Per-thread connections let concurrency tests exercise the server
-    concurrently without sharing Python's non-thread-safe ``HTTPConnection``.
+    GET or HEAD is sent once more on a fresh connection. A mutating request
+    starts on a fresh connection and is never replayed because a transport
+    error cannot prove the server did not act. Per-thread connections let
+    concurrency tests exercise the server concurrently without sharing
+    Python's non-thread-safe ``HTTPConnection``.
     """
 
     def __init__(self, *, socket_path: str | None = None, host: str | None = None, port: int | None = None):
@@ -109,6 +110,11 @@ class Transport:
     ) -> tuple[int, dict[str, str], bytes]:
         """One request; returns (status, lower-cased response headers, body bytes)."""
         retryable = method.upper() in {"GET", "HEAD"}
+        if not retryable:
+            # Never risk beginning a mutation on an idle kept-alive socket the
+            # server closed between requests. Starting fresh preserves the
+            # no-replay guarantee if this request itself fails ambiguously.
+            self._close_current()
         for attempt in (0, 1):
             conn = self._connection(timeout)
             try:
