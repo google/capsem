@@ -68,9 +68,8 @@ unnested_only = pytest.mark.skipif(
 )
 
 ONLINE_FAST = {
+    "fast.audit.dependencies",
     "fast.audit.cargo",
-    "fast.audit.pnpm",
-    "fast.audit.python-lock",
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
     "fast.toolchain.node",

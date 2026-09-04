@@ -846,8 +846,8 @@ target = "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py"
 
 [[owned]]
 owner = "scripts"
-source = "tests/test_pnpm_bulk_audit.py"
-target = "build_system/tests/scripts/test_pnpm_bulk_audit.py"
+source = "tests/test_dependency_audit.py"
+target = "build_system/tests/scripts/test_dependency_audit.py"
 
 [[owned]]
 owner = "scripts"

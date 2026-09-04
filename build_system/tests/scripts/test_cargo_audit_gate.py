@@ -67,7 +67,7 @@ def test_all_shared_rust_audit_callers_use_the_strict_wrapper() -> None:
     assert _gate_issues().count("check-cargo-audit.py") >= 1
     assert "cargo audit &" not in justfile
     assert "capsem-gate test-fast" in justfile
-    assert "run: python3 build_system/scripts/audit/check-cargo-audit.py" in security
+    assert "python build_system/scripts/audit/check-cargo-audit.py" in security
 
 
 def test_cargo_audit_uses_owned_config_and_root_lockfile(

@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy-owned cache stages. Python and uv reuse whole ABI/source or lockfile
   generations, pnpm workspaces share one content store, Cargo internals are
   never selectively pruned, and gate attempts record typed hit/miss/size data.
+- Python and Node advisory checks now run once through checksum-pinned
+  OSV-Scanner before the stricter RustSec policy. Exact clean lockfile verdicts
+  are cached for one hour, while failures are never cached; the bespoke npm
+  registry client, pip-audit exporter, and their redundant dependency installs
+  are removed.
 - VM kernels, root filesystems, initrds, guest binaries, host packages, and
   release staging views now reuse digest-verified immutable objects through
   component-specific input identities. Hardlinks avoid duplicate multi-gigabyte

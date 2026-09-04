@@ -362,9 +362,8 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
 
     for required in (
         "build_system/scripts/audit/check-source-syntax.py",
+        "build_system/scripts/audit/audit-dependencies.py",
         "build_system/scripts/audit/check-cargo-audit.py",
-        "build_system/scripts/audit/audit-pnpm-bulk.py",
-        "build_system/scripts/audit/audit-python-lock.py",
         # Ruff over the whole tree, and Ty over the strict builder package -- as
         # three steps, so a ruff failure no longer hides what ty would have
         # said. The explicit all-platform surface keeps the exact diagnostic
@@ -435,7 +434,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
 
     for required in (
         "build_system/scripts/audit/check-cargo-audit.py",
-        "build_system/scripts/audit/audit-pnpm-bulk.py",
+        "build_system/scripts/audit/audit-dependencies.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash build_system/scripts/web/check-web-surface.sh frontend",
         "cargo llvm-cov nextest --workspace --bins --lib --tests",
@@ -626,12 +625,11 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
 
 
-def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
-    """The Python dependency audit runs, and runs early.
+def test_static_module_audits_locked_python_and_node_graphs_fail_closed() -> None:
+    """The unified dependency audit runs before the Rust-specific policy.
 
-    It used to be a backgrounded job whose exit status came back through a
-    `wait` into a FAIL bit; now it is a step, so "did it run" and "did it
-    pass" are the same question.
+    OSV reads lockfiles directly, so the security proof does not install four
+    Node trees or export an intermediate Python requirements file.
     """
     fast = _planned("test-fast")
     static = _planned("test-static")
@@ -639,25 +637,25 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
         encoding="utf-8"
     )
     audit_owner = (
-        PROJECT_ROOT / "build_system/builder/gate/tools/audit/python_lock.py"
+        PROJECT_ROOT / "build_system/builder/gate/tools/audit/dependencies.py"
     ).read_text(encoding="utf-8")
     gate_config = (PROJECT_ROOT / "config/gate.toml").read_text(encoding="utf-8")
 
-    assert "build_system/scripts/audit/audit-python-lock.py" in fast
+    assert "build_system/scripts/audit/audit-dependencies.py" in fast
+    assert fast.index("audit-dependencies.py") < fast.index("check-cargo-audit.py")
     assert "build the network-denied install qualification image" in static
-    assert '"pip-audit>=' in pyproject
-    for required in (
-        '"uv",\n            "export"',
-        "--locked",
-        "--no-emit-project",
-        '"-m",\n        "pip_audit"',
-        "--require-hashes",
-        "--disable-pip",
-        "--cache-dir",
-    ):
+    assert '"pip-audit>=' not in pyproject
+    for required in ("materialize", "reusable", "record_clean", '"--lockfile"'):
         assert required in audit_owner
-    assert 'service = "pypi"' in gate_config
-    assert "attempts = 3" in gate_config
+    for lockfile in (
+        "build_system/uv.lock",
+        "web/app/pnpm-lock.yaml",
+        "web/docs/pnpm-lock.yaml",
+        "web/marketing/pnpm-lock.yaml",
+        "build_system/release_site/pnpm-lock.yaml",
+    ):
+        assert lockfile in gate_config
+    assert 'version = "2.5.1"' in gate_config
 
 
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:

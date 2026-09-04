@@ -205,7 +205,7 @@ path = "target/tests/home"
 warm_size_bytes = 268435456 # 256 MiB
 max_size_bytes = 214748364800 # 200 GiB
 prune_strategy = "ephemeral"
-maximum_age_hours = 24
+maximum_age_hours = 1
 maximum_count = 8
 
 [stages.web-parity]
@@ -349,6 +349,16 @@ warm_size_bytes = 134217728 # 128 MiB
 max_size_bytes = 214748364800 # 200 GiB
 prune_strategy = "lru"
 maximum_age_hours = 4320
+
+[stages.audit-results]
+description = "Content-keyed clean verdicts from live dependency advisory services."
+scope = "disk"
+path = "tools/audits"
+warm_size_bytes = 67108864 # 64 MiB
+max_size_bytes = 214748364800 # 200 GiB
+prune_strategy = "lru"
+maximum_age_hours = 24
+maximum_count = 1000
 
 [stages.temporary]
 description = "Short-lived cache-library scratch space safe to discard."

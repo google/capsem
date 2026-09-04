@@ -47,9 +47,8 @@ INSPECTS_THE_EDITED_TREE = ("source.worktree-clean",)
 # genuinely need the network.
 NETWORKED = {
     "release-binaries": (
+        "audit.dependencies",
         "audit.cargo",
-        "audit.pnpm",
-        "audit.python-lock",
         "channel-source",
         "precheck",
         "source.remote-main",
@@ -57,16 +56,15 @@ NETWORKED = {
         "release",
     ),
     "release-profile": (
+        "audit.dependencies",
         "audit.cargo",
-        "audit.pnpm",
-        "audit.python-lock",
         "source.remote-main",
         "source.publish-ref",
         "release",
     ),
 }
 
-LIVE_ADVISORIES = ("audit.cargo", "audit.pnpm", "audit.python-lock")
+LIVE_ADVISORIES = ("audit.dependencies", "audit.cargo")
 
 
 def _plan(name: str, **args):

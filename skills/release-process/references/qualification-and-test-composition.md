@@ -98,7 +98,7 @@ resource. Report-mode measurement remains available only on directly invoked
 incomplete modules, so permissive evidence cannot be mistaken for complete
 qualification.
 An authenticated helper created immediately before sandbox re-exec serves only
-the explicitly marked RustSec, npm bulk, and OSV advisory queries plus
+the explicitly marked OSV dependency and strict RustSec advisory queries plus
 manifest resolution, fresh remote-main validation, immutable source-ref
 publication, and final dispatch actions.
 Its one-time mode-0600 metadata is deleted before plan work; every brokered

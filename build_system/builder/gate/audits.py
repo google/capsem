@@ -13,6 +13,8 @@ exactly the runs where the most had changed. It is an edge.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import toolchain
 from .actions import Run, Script
 from .config import GateConfig
@@ -20,11 +22,10 @@ from .execution import SATURATES, Kind, Needs, Speed, Step, step
 
 
 def all_of(config: GateConfig) -> list[Step]:
-    """Every audit, in no particular order because there is none."""
+    """Every source audit independent of live advisory ordering."""
     audits = config.audits
     project = config.suites.pytest.build_system_project
     return [
-        *live(config),
         # Sandboxed, and deliberately: it reads `cargo metadata --locked`,
         # resolving from the materialized cache and compiling nothing.
         step(
@@ -88,30 +89,33 @@ def all_of(config: GateConfig) -> list[Step]:
     ]
 
 
-def live(config: GateConfig) -> list[Step]:
-    """The three audit answers that can change while source stays unchanged."""
+@dataclass(frozen=True)
+class LiveAudits:
+    """Ordered live proof: broad OSV coverage before strict Rust policy."""
+
+    dependencies: Step
+    rust_policy: Step
+
+
+def live(config: GateConfig) -> LiveAudits:
+    """Return the live dependency proofs in their required order."""
     audits = config.audits
-    actions = (
-        ("audit.cargo", Script(config, audits.cargo, outside_sandbox=True)),
-        ("audit.pnpm", Script(config, audits.pnpm, outside_sandbox=True)),
-        ("audit.python-lock", Script(config, audits.python_lock, outside_sandbox=True)),
-    )
-    return [
-        step(
-            label,
-            action,
-            # pnpm list traverses the installed graph. Reading it while the
-            # toolchain rewrites node_modules produced a clean audit of one
-            # package where the settled tree contained hundreds.
-            contends=(config.exclusive("node_modules"),)
-            if label == "audit.pnpm"
-            else (),
+    return LiveAudits(
+        dependencies=step(
+            "audit.dependencies",
+            Script(config, audits.dependencies, outside_sandbox=True),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.NETWORK}),
             speed=Speed.FAST,
-        )
-        for label, action in actions
-    ]
+        ),
+        rust_policy=step(
+            "audit.cargo",
+            Script(config, audits.cargo, outside_sandbox=True),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.NETWORK}),
+            speed=Speed.FAST,
+        ),
+    )
 
 
 def _surface(config: GateConfig, name: str, exclude: str) -> list[str]:

@@ -43,6 +43,18 @@ path from repository literals, environment variables, or a backend name. A
 consumer that only inspects or controls a cache uses `CacheRegistry` and never
 receives its path.
 
+Pinned external executables use `CachedToolPolicy` and `materialize()`. The
+policy declares one HTTPS URL and SHA-256 per host platform; the primitive
+downloads once, verifies before atomic publication, installs mode 0555, and
+returns a typed hit/miss result. A subsystem must not invent its own downloader
+or tool directory.
+
+Short-lived results from mutable services use `CleanVerdict`, `reusable()`, and
+`record_clean()`. The subject digest covers the complete typed policy and exact
+input bytes. Only success is recorded; malformed, future-dated, expired, or
+non-matching receipts are misses. The owning cache stage supplies the maximum
+age, count, warm size, and maximum size.
+
 `CachePaths` is loaded through `load_paths()`. The loader resolves the
 policy-owned `authority_environment`; a gate prefix exports that variable once
 so every producer sees the outer shared cache even when its output path crosses

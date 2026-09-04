@@ -1694,13 +1694,12 @@ doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
 # these were seven `&` and seven `wait` aggregating into a single FAIL bit,
 # which told you something broke but not what.
 cargo = "build_system/scripts/audit/check-cargo-audit.py"
+dependencies = "build_system/scripts/audit/audit-dependencies.py"
 # Reports, never refuses. A supply-chain signal that fails a build is one people
 # learn to route around, and the containment is elsewhere: every compiling step
 # runs in a loopback-only namespace, so a build script cannot reach a C2 host.
 # This says which package changed shape, before anything is built.
 dependency_drift = "build_system/scripts/audit/check-dependency-drift.py"
-pnpm = "build_system/scripts/audit/audit-pnpm-bulk.py"
-python_lock = "build_system/scripts/audit/audit-python-lock.py"
 public_surface = "build_system/scripts/audit/check_public_surface.py"
 source_syntax = "build_system/scripts/audit/check-source-syntax.py"
 hardcoded_selections = "build_system/scripts/audit/check-hardcoded-release-selections.sh"
@@ -1740,14 +1739,47 @@ max_skill_description_chars = 200
 # not a mandate to rewrite anything.
 max_skill_body_lines = 600
 
-[audits.python_lock_policy]
-requirements = "cache/state/python-audit-requirements.txt"
-cache_stage = "python-uv"
-cache_subdirectory = "pip-audit"
-service = "pypi"
-attempts = 3
-retry_seconds = 2
-socket_timeout_seconds = 15
+[audits.dependency_policy]
+cache_stage = "audit-results"
+lockfiles = [
+    "build_system/uv.lock",
+    "web/app/pnpm-lock.yaml",
+    "web/docs/pnpm-lock.yaml",
+    "web/marketing/pnpm-lock.yaml",
+    "build_system/release_site/pnpm-lock.yaml",
+]
+scanner_args = ["scan", "source", "--format=json", "--verbosity=error"]
+timeout_seconds = 120
+
+[audits.dependency_policy.tool]
+name = "osv-scanner"
+version = "2.5.1"
+cache_stage = "toolchain"
+download_timeout_seconds = 120
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Linux"
+machine = "x86_64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64"
+sha256 = "f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Linux"
+machine = "aarch64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_arm64"
+sha256 = "3d0f5aa5a6baa8eb32bcef247388e149ef6030a6634ccae6fa0d62681fb27a6d"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Darwin"
+machine = "x86_64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_darwin_amd64"
+sha256 = "9f89beb6c3d784893cb1cae0a3d56c529bfe91075418c2f9440c45b79654198b"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Darwin"
+machine = "arm64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_darwin_arm64"
+sha256 = "75c44d6332f892a1e56286f4105a98ed751ae28d215ca0a8b65cc00d84103054"
 
 # A shell body is a sequence of simple commands. Control flow, multi-line
 # string building and here-documents inside a YAML `run:` or a Dockerfile `RUN`
@@ -2010,7 +2042,7 @@ source_contract = [
     "build_system/tests/gate/test_orphan_process_gate.py",
     "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py",
     "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py",
-    "build_system/tests/scripts/test_pnpm_bulk_audit.py",
+    "build_system/tests/scripts/test_dependency_audit.py",
     "build_system/tests/release/test_profile_revision_semver.py",
     "build_system/tests/packaging/test_prove_installed_shell.py",
     "build_system/tests/release/test_release_gate_integrity.py",

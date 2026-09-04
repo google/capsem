@@ -304,7 +304,7 @@ def test_an_ordinary_program_is_not_mistaken_for_re_entry(journal) -> None:
                 ),
                 Run(["cargo", "build", "--workspace"]),
                 Run(["docker", "run", "--label", "just", "alpine"]),
-                Script(CONFIG, "build_system/scripts/audit/audit-python-lock.py"),
+                Script(CONFIG, "build_system/scripts/audit/audit-dependencies.py"),
             ),
         ),
     )

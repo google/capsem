@@ -121,7 +121,7 @@ through the already-declared Docker-daemon container-fetch boundary before the
 sealed asset lanes consume them.
 
 The allowed edges are exact and contract-tested: the shared fast module's
-RustSec, npm bulk, and OSV actions; binary `channel-source`; both
+OSV dependency and strict RustSec actions; binary `channel-source`; both
 binary `precheck`; `source.remote-main` and `source.publish-ref`; and each final
 `release` step. The advisory authorities
 are mutable security inputs and therefore cannot be replaced by locked package
