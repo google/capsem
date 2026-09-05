@@ -28,6 +28,44 @@ fn test_profile_cache() -> BTreeMap<String, Profile> {
     build_profile_cache().expect("test profile cache should build")
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn overlay_prewarm_with_no_profiles_creates_no_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    prewarm_system_overlay_templates(dir.path(), &BTreeMap::new());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn overlay_prewarm_creates_only_configured_sizes_and_reuses_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiles = test_profile_cache();
+    assert!(!profiles.is_empty());
+    let expected: HashSet<PathBuf> = profiles
+        .values()
+        .map(|profile| capsem_core::system_overlay_template_path(dir.path(), profile.config().vm.scratch_disk_size_gb))
+        .collect();
+    prewarm_system_overlay_templates(dir.path(), &profiles);
+    let template_dir = expected.iter().next().unwrap().parent().unwrap();
+    let found: HashSet<PathBuf> = std::fs::read_dir(template_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(
+        found, expected,
+        "prewarm must not allocate unrequested legacy disk sizes"
+    );
+    let before: HashMap<PathBuf, std::time::SystemTime> = expected
+        .iter()
+        .map(|path| (path.clone(), std::fs::metadata(path).unwrap().modified().unwrap()))
+        .collect();
+    prewarm_system_overlay_templates(dir.path(), &profiles);
+    for (path, modified) in before {
+        assert_eq!(std::fs::metadata(path).unwrap().modified().unwrap(), modified);
+    }
+}
+
 fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>> {
     Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
 }

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Service startup prewarms only profile-requested overlay sizes, eliminating
+  an unused 16 GiB sparse template from the installation cache footprint while
+  preserving warm reuse of the configured VM disks.
 - Cache enforcement failures retain the live native-resource breakdown before
   test containers are torn down, without hiding the original limit violation.
   Failed installation proofs also retain allocated and logical directory sizes
