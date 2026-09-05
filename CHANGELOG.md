@@ -143,7 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   close with their owner, response backpressure retains host capacity limits,
   and guest resolver timeouts allow both upstream attempts to finish.
 - DNS reuse preserves query flags, options, and question spelling, honors
-  zero and absent authoritative TTLs, and ages cached record TTLs. Messages
+  zero, absent and alias-limited authoritative TTLs, and ages cached record TTLs. Messages
   with unchecked extra questions or unsupported operations never reach an
   upstream, and response matching preserves DNS label boundaries.
 - DNS, HTTP, model, and MCP request completion now includes derived security

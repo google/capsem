@@ -384,6 +384,26 @@ fn negative_ttl_follows_the_soa_minimum_and_requires_a_lifetime() {
 }
 
 #[test]
+fn negative_answers_with_aliases_honor_both_the_alias_and_soa_lifetimes() {
+    for (alias_ttl, minimum) in [(5, 60), (300, 5)] {
+        let mut message = Message::from_vec(&build_nxdomain_answer("alias.example.", Some(minimum))).unwrap();
+        message.add_answer(Record::from_rdata(
+            Name::from_ascii("alias.example.").unwrap(),
+            alias_ttl,
+            RData::CNAME(rdata::CNAME(Name::from_ascii("missing.example.").unwrap())),
+        ));
+        let expected = Duration::from_secs(u64::from(alias_ttl.min(minimum)));
+        assert_eq!(negative_ttl_from_answer(&message.to_vec().unwrap()), expected);
+        message.metadata.response_code = ResponseCode::NoError;
+        assert_eq!(
+            ttl_from_answer(&message.to_vec().unwrap(), Duration::from_secs(300)),
+            expected,
+            "NODATA after an alias is still bounded by its authoritative negative lifetime"
+        );
+    }
+}
+
+#[test]
 fn a_negative_entry_yields_to_a_redirect_change_like_any_other() {
     let cache = DnsAnswerCache::default();
     insert_negative(

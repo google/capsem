@@ -240,8 +240,7 @@ fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
             .iter()
             .chain(m.authorities.iter())
             .chain(m.additionals.iter())
-            .filter(|r| !matches!(r.data, RData::OPT(_)))
-            .map(|r| r.ttl)
+            .filter_map(record_cache_ttl)
             .min()
             .unwrap_or(0),
         Ok(m) if !m.metadata.truncation => return negative_ttl_from_answer(answer_bytes).min(max_ttl),
@@ -259,17 +258,34 @@ fn negative_ttl_from_answer(answer_bytes: &[u8]) -> Duration {
         if message.metadata.truncation {
             return None;
         }
-        message
+        let soa_minimum = message
             .authorities
             .iter()
             .filter_map(|record| match &record.data {
                 RData::SOA(soa) => Some(record.ttl.min(soa.minimum)),
                 _ => None,
             })
+            .min()?;
+        let shortest_record = message
+            .answers
+            .iter()
+            .chain(message.authorities.iter())
+            .chain(message.additionals.iter())
+            .filter_map(record_cache_ttl)
             .min()
+            .unwrap_or(0);
+        Some(soa_minimum.min(shortest_record))
     });
     let secs = soa_minimum.unwrap_or(0).min(NEGATIVE_MAX_TTL_SECS);
     Duration::from_secs(u64::from(secs))
+}
+
+fn record_cache_ttl(record: &hickory_proto::rr::Record) -> Option<u32> {
+    match &record.data {
+        RData::OPT(_) => None,
+        RData::SOA(soa) => Some(record.ttl.min(soa.minimum)),
+        _ => Some(record.ttl),
+    }
 }
 
 #[cfg(test)]
