@@ -23,15 +23,13 @@ import asyncio
 import os
 import time
 
-from fastmcp import Client
-from fastmcp.client.transports import StdioTransport
-
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
     render_load_table,
     summarize_load_level,
 )
+from .mcp_transport import Client, StdioTransport
 
 MCP_SERVER = "/run/capsem-mcp-server"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
