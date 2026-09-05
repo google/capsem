@@ -182,6 +182,7 @@ fn make_proxy_config_with_mechanics(
     });
     let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
     let config = Arc::new(MitmProxyConfig {
+        server_tls: mitm_proxy::make_server_tls_config(&ca),
         ca,
         policy,
         model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
@@ -242,7 +243,6 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<(
 
     (handle, addr)
 }
-
 #[tokio::test]
 async fn mitm_proxy_allows_hermetic_upstream() {
     let (upstream_port, upstream_task) = spawn_fake_upstream(|mut sock| {

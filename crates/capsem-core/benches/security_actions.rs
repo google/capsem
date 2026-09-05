@@ -423,6 +423,7 @@ fn bench_runtime_event_handoff(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_builtin_registry,
     bench_rule_match,
     bench_action_chain,
     bench_broker_substitute,
@@ -430,3 +431,9 @@ criterion_group!(
     bench_runtime_event_handoff
 );
 criterion_main!(benches);
+
+fn bench_builtin_registry(c: &mut Criterion) {
+    c.bench_function("security_registry_builtin_clone", |b| {
+        b.iter(|| black_box(SecurityActionRegistry::with_builtin_actions()));
+    });
+}

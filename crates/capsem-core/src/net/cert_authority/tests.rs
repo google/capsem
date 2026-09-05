@@ -180,8 +180,9 @@ fn client_hello_with_sni(name: &str) -> Vec<u8> {
 }
 
 /// Drive a rustls server backed by the MITM resolver with one raw
-/// ClientHello and return what the resolver recorded.
-fn resolve_raw_sni(sni: &str) -> (Arc<CertAuthority>, Arc<MitmCertResolver>) {
+/// ClientHello and return the CA and the connection, whose `server_name`
+/// is what the proxy reads after the handshake.
+fn resolve_raw_sni(sni: &str) -> (Arc<CertAuthority>, rustls::ServerConnection) {
     let ca = Arc::new(load_ca());
     let resolver = Arc::new(MitmCertResolver::new(Arc::clone(&ca)));
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
@@ -195,15 +196,15 @@ fn resolve_raw_sni(sni: &str) -> (Arc<CertAuthority>, Arc<MitmCertResolver>) {
     conn.read_tls(&mut &hello[..]).unwrap();
     conn.process_new_packets()
         .expect("rustls accepts the spliced ClientHello");
-    (ca, resolver)
+    (ca, conn)
 }
 
 #[test]
-fn resolver_records_the_normalized_sni_from_a_raw_client_hello() {
-    let (ca, resolver) = resolve_raw_sni("Example.COM.");
+fn resolver_mints_the_canonical_leaf_for_a_raw_client_hello() {
+    let (ca, conn) = resolve_raw_sni("Example.COM.");
     assert_eq!(
-        resolver.domain().as_deref(),
-        Some("example.com"),
+        crate::net::hostname::normalize_host(conn.server_name().unwrap()),
+        "example.com",
         "the domain handed to policy, dial, and telemetry is the normalized SNI"
     );
     assert_eq!(ca.cache_size(), 1);
@@ -219,6 +220,6 @@ fn resolver_records_the_normalized_sni_from_a_raw_client_hello() {
 fn raw_client_hello_splicer_round_trips_an_unchanged_name() {
     // Guard the test fixture itself: a ClientHello for the placeholder name
     // must resolve to the placeholder when the splice is a no-op.
-    let (_ca, resolver) = resolve_raw_sni("placeholder.test");
-    assert_eq!(resolver.domain().as_deref(), Some("placeholder.test"));
+    let (_ca, conn) = resolve_raw_sni("placeholder.test");
+    assert_eq!(conn.server_name(), Some("placeholder.test"));
 }

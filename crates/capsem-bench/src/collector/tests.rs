@@ -188,3 +188,39 @@ fn a_grandchild_holding_stdout_open_after_exit_is_bounded_by_the_deadline() {
     assert!(error.to_string().contains("stdout stayed open"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
 }
+
+#[test]
+fn collector_completion_cancels_background_work_on_every_exit_path() {
+    for (ending, redirect, succeeds) in [
+        ("wait", "", false),
+        ("exit 0", "", false),
+        ("exit 0", ">/dev/null 2>&1", true),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("unowned-work");
+        let trigger = directory.path().join("collector-returned");
+        let script = format!(
+            "(while [ ! -e \"$3\" ]; do sleep 0.01; done; printf leaked > \"$1\") {redirect} & printf '%s\\n' \"$2\"; {ending}"
+        );
+        let result = run(
+            Path::new("sh"),
+            &[
+                "-c".into(),
+                script,
+                "sh".into(),
+                marker.to_str().unwrap().into(),
+                SAMPLE.into(),
+                trigger.to_str().unwrap().into(),
+            ],
+            if succeeds {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(100)
+            },
+        );
+        assert_eq!(result.is_ok(), succeeds, "{ending}: {result:?}");
+        std::fs::write(trigger, "returned").unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        assert!(!marker.exists(), "collector left background work after {ending}");
+    }
+}

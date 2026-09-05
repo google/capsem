@@ -83,7 +83,7 @@ impl DnsRedirect {
     /// `qtype = None` means the redirect applies to any qtype.
     pub fn new(pattern: &str, qtype: Option<u16>, answers: Vec<IpAddr>, ttl: u32) -> Self {
         Self {
-            matcher: DomainMatcher::parse(pattern),
+            matcher: DomainMatcher::parse(pattern.trim_end_matches('.')),
             qtype,
             answers,
             ttl,
@@ -170,7 +170,7 @@ impl NetworkMechanics {
     pub fn find_dns_redirect(&self, qname: &str, qtype: u16) -> Option<&DnsRedirect> {
         self.dns_redirects
             .iter()
-            .find(|r| r.matcher.matches(qname) && r.qtype.is_none_or(|t| t == qtype))
+            .find(|r| r.matcher.matches(qname.trim_end_matches('.')) && r.qtype.is_none_or(|t| t == qtype))
     }
 
     /// Find an exact upstream override for `(domain, port)`.

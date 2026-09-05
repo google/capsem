@@ -254,8 +254,8 @@ tmpfs_paths = ["/run:rw,exec,mode=755", "/tmp:rw,exec,mode=1777"]
 # Preserve allocated and logical directory sizes before a failed proof's
 # writable container disappears. Stay on its root filesystem, off host mounts.
 failure_storage_commands = [
-    ["du", "--one-file-system", "--block-size=1", "--max-depth=3", "/"],
-    ["du", "--one-file-system", "--apparent-size", "--block-size=1", "--max-depth=3", "/"],
+    ["timeout", "30", "du", "--one-file-system", "--all", "--block-size=1", "--max-depth=4", "--threshold=100000000", "/"],
+    ["timeout", "30", "du", "--one-file-system", "--all", "--apparent-size", "--block-size=1", "--max-depth=4", "--threshold=100000000", "/"],
 ]
 
 # Where an installed package puts things, and what the runtime calls them.
@@ -1072,8 +1072,8 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/profile_images.rs" = 2207
 "crates/capsem-admin/src/release_graph.rs" = 1089
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
-"crates/capsem-agent/src/main.rs" = 1529
-"crates/capsem-agent/src/tests.rs" = 1713
+"crates/capsem-agent/src/main.rs" = 1423
+"crates/capsem-agent/src/tests.rs" = 1710
 "crates/capsem-assets/src/asset_manager.rs" = 1355
 "crates/capsem-core/src/auto_snapshot.rs" = 1011
 "crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
@@ -1087,19 +1087,19 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/net/policy_config/profile_contract.rs" = 2163
 "crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1264
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
-"crates/capsem-core/src/security_engine/mod.rs" = 2784
+"crates/capsem-core/src/security_engine/mod.rs" = 2775
 "crates/capsem-core/tests/mitm_integration.rs" = 2161
 "crates/capsem-logger/src/db/handle_tests.rs" = 1410
-"crates/capsem-logger/src/reader.rs" = 1838
-"crates/capsem-logger/src/schema.rs" = 1665
+"crates/capsem-logger/src/reader.rs" = 1779
+"crates/capsem-logger/src/schema.rs" = 1504
 "crates/capsem-logger/src/schema/tests.rs" = 1099
 "crates/capsem-logger/src/session_index.rs" = 1270
 "crates/capsem-logger/src/session_index/tests.rs" = 1205
-"crates/capsem-logger/src/writer.rs" = 1496
+"crates/capsem-logger/src/writer.rs" = 1283
 "crates/capsem-logger/src/writer/tests.rs" = 2002
 "crates/capsem-mock-server/src/main.rs" = 1565
-"crates/capsem-process/src/vsock.rs" = 1690
-"crates/capsem-proto/src/tests.rs" = 1591
+"crates/capsem-process/src/vsock.rs" = 1672
+"crates/capsem-proto/src/tests.rs" = 1505
 "crates/capsem-service/src/ledger_routes.rs" = 2920
 "crates/capsem-service/src/main.rs" = 2111
 "crates/capsem-service/src/profile_routes.rs" = 2319

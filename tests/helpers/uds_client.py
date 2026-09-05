@@ -67,7 +67,7 @@ class UdsHttpClient:
             timeout=timeout,
         )
 
-    def call_json(self, method, path, body=None, *, timeout=60):
+    def call_json(self, method, path, body: object = None, *, timeout=60):
         """(status, payload): JSON when the body parses, the text when it does
         not, None when it is empty."""
         payload = None if body is None else json.dumps(body).encode()

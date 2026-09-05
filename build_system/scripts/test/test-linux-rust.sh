@@ -50,6 +50,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 cargo llvm-cov nextest \
     --no-cfg-coverage \
+    --lib \
     --bins \
     --profile ci \
     --codecov \

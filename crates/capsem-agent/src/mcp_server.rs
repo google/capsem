@@ -84,6 +84,9 @@ enum JsonRpcLineKind {
     Request {
         json_id: Option<Value>,
         method: Option<String>,
+        /// The `path` argument of a `snapshots_revert` tool call, which the
+        /// relay needs for its guest-side effect once the host answers.
+        snapshot_revert_path: Option<String>,
     },
     Notification,
 }
@@ -122,7 +125,11 @@ fn main() {
         let kind = classify_jsonrpc_line(&line);
         let (stream_id, flags, pending_request) = match kind {
             JsonRpcLineKind::Notification => (0, MCP_FRAME_FLAG_NOTIFICATION, None),
-            JsonRpcLineKind::Request { json_id, method } => {
+            JsonRpcLineKind::Request {
+                json_id,
+                method,
+                snapshot_revert_path,
+            } => {
                 let id = next_stream_id;
                 if id == u32::MAX {
                     eprintln!("[capsem-mcp-server] framed stream id exhausted; reconnecting before next request");
@@ -132,7 +139,6 @@ fn main() {
                 }
                 let id = next_stream_id;
                 next_stream_id += 1;
-                let snapshot_revert_path = extract_snapshot_revert_path(&line);
                 (
                     id,
                     0,
@@ -279,9 +285,10 @@ fn framed_vsock_to_stdout(fd: RawFd, pending: PendingRequests, stdout: Arc<Mutex
     }
 }
 
-fn extract_snapshot_revert_path(line: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(line).ok()?;
-    let object = value.as_object()?;
+/// The `path` of a `snapshots_revert` tool call, read from the already
+/// parsed request object. Every line used to be parsed twice: once to
+/// classify it and once here.
+fn snapshot_revert_path(object: &serde_json::Map<String, Value>) -> Option<String> {
     if object.get("method")?.as_str()? != "tools/call" {
         return None;
     }
@@ -370,17 +377,16 @@ fn apply_guest_snapshot_revert_side_effect(request: &PendingRequest, payload: &[
     }
 }
 
+/// Classify one stdin line with a single parse. Anything that is not a
+/// JSON object is forwarded as a request so the host answers with the
+/// parse error the client expects.
 fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
+    let value = serde_json::from_str::<Value>(line).ok();
+    let Some(object) = value.as_ref().and_then(Value::as_object) else {
         return JsonRpcLineKind::Request {
             json_id: None,
             method: None,
-        };
-    };
-    let Some(object) = value.as_object() else {
-        return JsonRpcLineKind::Request {
-            json_id: None,
-            method: None,
+            snapshot_revert_path: None,
         };
     };
     let method = object
@@ -391,6 +397,7 @@ fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
         Some(json_id) => JsonRpcLineKind::Request {
             json_id: Some(json_id.clone()),
             method,
+            snapshot_revert_path: snapshot_revert_path(object),
         },
         None => JsonRpcLineKind::Notification,
     }

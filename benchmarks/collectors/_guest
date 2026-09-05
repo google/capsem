@@ -26,14 +26,18 @@ import sys
 import uuid
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
 # Both, because the test helpers import each other as `helpers.*` and the
 # repository scripts as `scripts.*`; pytest puts the rootdir on the path and a
 # collector run outside pytest has to do the same.
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+)
 from helpers.service import ServiceInstance, wait_exec_ready
 
 # Units the guest reports, by the suffix its key carries.
@@ -50,6 +54,59 @@ FORWARDED_ENV = (
     "CAPSEM_BENCH_DURATION_S",
     "CAPSEM_BENCH_MITM_TARGET",
 )
+
+# The mitm-load target: a name the mock server's DNS answers (with 127.0.0.1,
+# which the guest's NAT sends through capsem-net-proxy like any other address)
+# and an upstream override that lands the proxied request on the mock server's
+# plain-HTTP listener. Every request therefore traverses guest DNS, the
+# net-proxy, the host MITM (TLS termination, policy, telemetry) and a real
+# upstream. The previous target was a non-existent public domain: the guest's
+# resolver returned NXDOMAIN and the client failed before opening a socket,
+# so the "MITM" numbers were DNS-failure numbers and the proxy never ran.
+# The load dimensions run their generator inside the guest: two hundred
+# Python threads doing TLS, plus the guest proxies, on the default two vCPUs
+# measured the generator's starvation, not the host rails. Give those guests
+# half the host's cores, at least the default and at most eight.
+LOAD_MODES = ("dns-load", "mitm-load", "mcp-load")
+LOAD_GUEST_CPUS_MAX = 8
+
+
+def guest_cpus(mode: str, host_cpus: int | None = None) -> int:
+    """vCPUs for the guest that runs `mode`."""
+    if mode not in LOAD_MODES:
+        return DEFAULT_CPUS
+    host = host_cpus if host_cpus is not None else (os.cpu_count() or DEFAULT_CPUS)
+    return max(DEFAULT_CPUS, min(LOAD_GUEST_CPUS_MAX, host // 2))
+
+
+MITM_FIXTURE_HOST = "fixture.capsem.test"
+MITM_FIXTURE_TARGET = f"https://{MITM_FIXTURE_HOST}/tiny"
+
+
+def mitm_fixture_corp_toml(ready: dict) -> str:
+    """Corp config routing guest DNS and the fixture host to the mock server."""
+    return (
+        "[network.dns]\n"
+        f"upstreams = [{json.dumps(ready['dns_udp_addr'])}]\n"
+        "\n"
+        f'[network.upstream_overrides."{MITM_FIXTURE_HOST}:443"]\n'
+        f"dial = {json.dumps(ready['http_addr'])}\n"
+        'protocol = "http"\n'
+    )
+
+
+def failed_load_levels(section: dict) -> list[int]:
+    """Concurrency levels whose every request failed.
+
+    A level where nothing succeeded measured the failure path, not the rail
+    under test; recording it would ratchet the wrong number.
+    """
+    return [
+        int(row.get("concurrency", -1))
+        for row in section.get("concurrency_levels", [])
+        if int(row.get("total_requests", 0)) > 0
+        and int(row.get("errors", 0)) >= int(row.get("total_requests", 0))
+    ]
 
 
 def guest_command(mode: str) -> str:
@@ -100,20 +157,30 @@ def flatten(node, prefix: str = "") -> dict[str, float]:
 def main() -> int:
     mode = Path(sys.argv[0]).name
     parser = argparse.ArgumentParser(description=f"measure {mode} inside a VM")
-    parser.add_argument("--quick", action="store_true", help="unused; guest modes are fixed")
+    parser.add_argument(
+        "--quick", action="store_true", help="unused; guest modes are fixed"
+    )
     parser.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
 
     name = f"bench-{mode}-{uuid.uuid4().hex[:8]}"
     service = ServiceInstance()
-    service.start()
+    mock_proc = None
     client = service.client()
-
     try:
+        if mode == "mitm-load":
+            from helpers.mock_server import start_mock_server
+
+            mock_proc, ready = start_mock_server()
+            corp_path = service.tmp_dir / "bench-corp.toml"
+            corp_path.write_text(mitm_fixture_corp_toml(ready), encoding="utf-8")
+            os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+            os.environ.setdefault("CAPSEM_BENCH_MITM_TARGET", MITM_FIXTURE_TARGET)
+        service.start()
         print(f"provisioning {name}", file=sys.stderr)
         client.post(
             "/vms/create",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
         )
         if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{name} never became exec-ready")
@@ -147,10 +214,19 @@ def main() -> int:
         with __import__("contextlib").suppress(Exception):
             client.delete(f"/vms/{name}/delete")
         service.stop()
+        if mock_proc is not None:
+            from helpers.mock_server import stop_process
+
+            stop_process(mock_proc)
 
     # The guest writes one document per run keyed by mode; take that section
     # when present so keys are not prefixed with the mode twice.
     section = document.get(mode.replace("-", "_"), document)
+    if failed := failed_load_levels(section):
+        raise RuntimeError(
+            f"capsem-bench {mode}: every request failed at concurrency {failed}; "
+            "the rail under test was never reached, so nothing here is a measurement"
+        )
     numbers = flatten(section)
     if not numbers:
         raise RuntimeError(
@@ -173,7 +249,8 @@ def main() -> int:
         f"{len(measured)} measurements from {len(numbers)} numbers",
         file=sys.stderr,
     )
-    json.dump({"metrics": measured}, sys.stdout)
+    # Retain counts, concurrency and errors without ratcheting them as timings.
+    json.dump({"metrics": measured, "sidecar": json.dumps(document)}, sys.stdout)
     return 0
 
 

@@ -42,8 +42,8 @@ use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, Mod
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::{snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write, HttpSecurityEvent, IpSecurityEvent,
-    ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
+    emit_evaluated_security_rules, emit_security_write, HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent,
+    RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -144,7 +144,7 @@ impl PendingTelemetryCompletion {
         } = self;
 
         if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
-            delegate_matching_security_rules_for_evaluated_event(
+            emit_evaluated_security_rules(
                 Arc::clone(&db),
                 event_id,
                 RuntimeSecurityEventType::HttpRequest,
@@ -153,12 +153,13 @@ impl PendingTelemetryCompletion {
                 net_security_event,
                 current_unix_ms(),
                 "http",
-            );
+            )
+            .await;
         }
         if let Some(model_call) = model_call {
             let model_security_event = security_event_from_model_call(&model_call);
             if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(model_call)).await {
-                delegate_matching_security_rules_for_evaluated_event(
+                emit_evaluated_security_rules(
                     Arc::clone(&db),
                     event_id,
                     RuntimeSecurityEventType::ModelCall,
@@ -167,15 +168,14 @@ impl PendingTelemetryCompletion {
                     model_security_event,
                     current_unix_ms(),
                     "model",
-                );
+                )
+                .await;
             }
         }
 
         if !credential_observations.is_empty() || !credential_injections.is_empty() {
-            tokio::spawn(async move {
-                log_brokered_injections(&db, &rules, credential_injections).await;
-                broker_and_log_observations(&db, &rules, credential_observations).await;
-            });
+            log_brokered_injections(&db, &rules, credential_injections).await;
+            broker_and_log_observations(&db, &rules, credential_observations).await;
         }
     }
 }

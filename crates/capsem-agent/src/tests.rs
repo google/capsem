@@ -1,24 +1,17 @@
 use super::vsock_io::{SockaddrVm, AF_VSOCK};
 use super::*;
 use std::io::Write;
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, IntoRawFd};
 
 use super::audit::{extract_audit_id, extract_audit_timestamp_us, extract_execve_argv, extract_field};
 
 mod control_loop;
 
+/// Use the standard library's portable close-on-exec pipe construction so
+/// children launched by other tests cannot keep these endpoints alive.
 fn make_pipe() -> (RawFd, RawFd) {
-    let mut fds = [0 as RawFd; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-    // Set CLOEXEC so child processes (e.g., sleep in control_loop tests)
-    // don't inherit these fds and prevent EOF detection.
-    for &fd in &fds {
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFD);
-            libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-        }
-    }
-    (fds[0], fds[1])
+    let (reader, writer) = std::io::pipe().unwrap();
+    (reader.into_raw_fd(), writer.into_raw_fd())
 }
 
 // Wire format compatibility: new disjoint types over pipes
@@ -467,7 +460,7 @@ fn bridge_loop_transfers_multi_chunk_data_both_directions() {
     let vsock_fd = vsock_guest.into_raw_fd();
 
     let _bridge_thread = std::thread::spawn(move || {
-        bridge_loop(master_fd, vsock_fd);
+        bridge_loop(master_fd, vsock_fd, &HostShutdown::default());
     });
 
     // 16 KiB is twice the bridge copy buffer, so this still forces
@@ -507,7 +500,7 @@ fn bridge_loop_shuts_down_vsock_before_returning() {
     let vsock_fd = vsock_guest.into_raw_fd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let bridge = std::thread::spawn(move || {
-        bridge_loop(master_fd, vsock_fd);
+        bridge_loop(master_fd, vsock_fd, &HostShutdown::default());
         done_tx.send(()).unwrap();
     });
 
@@ -1684,7 +1677,11 @@ fn a_message_the_dying_writer_consumed_is_delivered_by_the_next_one() {
     let (sender, rx) = test_ctrl_channel();
 
     let first = spawn_writer_conn(&sender, &rx);
-    // The host dies without anyone telling the writer.
+    // The host dies without anyone telling the writer. Shut the socket down
+    // rather than only dropping it: a child another test is spawning at this
+    // instant briefly holds a copy of this end, and a plain close would let
+    // the writer's next write land in that copy's buffer and succeed.
+    first.host.shutdown(std::net::Shutdown::Both).unwrap();
     drop(first.host);
     // The writer consumes this, fails to write it, and must hand it on.
     sender.send(GuestToHost::ExecDone { id: 9, exit_code: 0 }).unwrap();

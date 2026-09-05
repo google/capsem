@@ -17,7 +17,7 @@ CACHE_POLICY = load_policy(ROOT)
 
 
 def test_environment_selects_uv_generation_and_shared_pnpm_store(monkeypatch) -> None:
-    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(ROOT))
     monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
     observed: list[tuple[str, ReuseScope, Path | None, tuple[str, ...]]] = []
 

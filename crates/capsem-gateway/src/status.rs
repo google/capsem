@@ -5,33 +5,35 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
-use hyper_util::rt::TokioIo;
+use http_body_util::{BodyExt, Limited};
 use serde::{Deserialize, Serialize};
-use tokio::net::UnixStream;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
+use crate::service_client::ServiceClient;
 use crate::AppState;
+
+mod refresh;
 
 const STATUS_RESPONSE_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 const STATUS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const STATUS_CONN_DRIVER_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct StatusCache {
-    /// Previous response retained only to diff VM lifecycle events. It must
-    /// never be served as the answer to a later `/status` request: capsem
-    /// mutates VM state over the service UDS, outside the gateway, so the
-    /// gateway cannot safely know that a cached response is still current.
-    inner: RwLock<Option<StatusResponse>>,
-    /// Serializes service reads so concurrent UI polls do not stampede UDS.
-    refresh: tokio::sync::Mutex<()>,
+    /// The `(id, state)` pairs of the previous read, retained only to diff
+    /// VM lifecycle events. Nothing here is ever served as the answer to a
+    /// later `/status` request: capsem mutates VM state over the service
+    /// UDS, outside the gateway, so the gateway cannot know a cached
+    /// response is still current.
+    last_states: Mutex<Vec<(String, VmLifecycleState)>>,
+    /// Coalesces concurrent polls onto at most two service reads while
+    /// keeping every answer a read that began after its request arrived.
+    gate: refresh::RefreshGate<StatusResponse>,
 }
 
 impl StatusCache {
     pub fn new() -> Self {
         Self {
-            inner: RwLock::new(None),
-            refresh: tokio::sync::Mutex::new(()),
+            last_states: Mutex::new(Vec::new()),
+            gate: refresh::RefreshGate::new(),
         }
     }
 }
@@ -47,7 +49,7 @@ pub struct StatusResponse {
     pub profiles: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VmLifecycleState {
     Running,
     Stopped,
@@ -127,23 +129,27 @@ pub struct ResourceSummary {
 /// and make the TUI reject a session that is already running. The retained
 /// snapshot below is event-diff state only and is never returned to callers.
 pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
-    // Serialize refreshes, but never substitute the previous response for a
-    // current service read.
-    let _refresh_guard = state.status_cache.refresh.lock().await;
+    let read = state
+        .status_cache
+        .gate
+        .read(|| async {
+            let response = fetch_status(&state).await;
+            // Publish while this fetch still owns the gate so a later fetch
+            // cannot publish newer lifecycle state before this one.
+            broadcast_transitions(&state, &response).await;
+            response
+        })
+        .await;
+    (StatusCode::OK, axum::Json(read.as_ref())).into_response()
+}
 
-    let old_vms: Vec<(String, VmLifecycleState)> = {
-        let cache = state.status_cache.inner.read().await;
-        cache
-            .as_ref()
-            .map(|r| r.vms.iter().map(|v| (v.id.clone(), v.status)).collect())
-            .unwrap_or_default()
-    };
-
-    let resp = fetch_status(&state).await;
-
-    // Detect VM state changes and broadcast events.
+/// Compare the read against the previous one and broadcast a
+/// `vm-state-changed` event for every VM whose state changed or that is new.
+async fn broadcast_transitions(state: &AppState, resp: &StatusResponse) {
+    let current: Vec<(String, VmLifecycleState)> = resp.vms.iter().map(|v| (v.id.clone(), v.status)).collect();
+    let previous = std::mem::replace(&mut *state.status_cache.last_states.lock().await, current);
     for vm in &resp.vms {
-        let old_status = old_vms.iter().find(|(id, _)| id == &vm.id).map(|(_, s)| *s);
+        let old_status = previous.iter().find(|(id, _)| id == &vm.id).map(|(_, s)| *s);
         let changed = match old_status {
             Some(prev) => prev != vm.status,
             None => true, // new VM appeared
@@ -160,13 +166,6 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
             let _ = state.events_tx.send(event.to_string());
         }
     }
-
-    {
-        let mut cache = state.status_cache.inner.write().await;
-        *cache = Some(resp.clone());
-    }
-
-    (StatusCode::OK, axum::Json(resp)).into_response()
 }
 
 #[derive(Deserialize)]
@@ -228,7 +227,10 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         profiles: None,
     };
 
-    let (list_body, profiles) = tokio::join!(uds_get(&state.uds_path, "/vms/list"), fetch_profiles_status(state),);
+    let (list_body, profiles) = tokio::join!(
+        uds_get(&state.service_client, "/vms/list"),
+        fetch_profiles_status(state),
+    );
     let list = match list_body {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
@@ -298,38 +300,23 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 }
 
 async fn fetch_profiles_status(state: &AppState) -> Option<serde_json::Value> {
-    let body = uds_get(&state.uds_path, "/profiles/status").await.ok()?;
+    let body = uds_get(&state.service_client, "/profiles/status").await.ok()?;
     serde_json::from_slice::<serde_json::Value>(&body).ok()
 }
 
-/// Simple GET request over UDS.
-async fn uds_get(uds_path: &std::path::Path, path: &str) -> anyhow::Result<Bytes> {
-    tokio::time::timeout(STATUS_REQUEST_TIMEOUT, uds_get_inner(uds_path, path))
+/// One GET to the service over the pooled client, bounded in time and size.
+async fn uds_get(client: &ServiceClient, path: &str) -> anyhow::Result<Bytes> {
+    tokio::time::timeout(STATUS_REQUEST_TIMEOUT, uds_get_inner(client, path))
         .await
         .map_err(|_| anyhow::anyhow!("status request timed out"))?
 }
 
-async fn uds_get_inner(uds_path: &std::path::Path, path: &str) -> anyhow::Result<Bytes> {
-    let stream = UnixStream::connect(uds_path).await?;
-    let io = TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-    tokio::spawn(async move {
-        match tokio::time::timeout(STATUS_CONN_DRIVER_TIMEOUT, conn).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                tracing::error!(error = %e, "UDS connection error in status fetch");
-            }
-            Err(_) => tracing::warn!("UDS connection driver timed out in status fetch"),
-        }
-    });
-
+async fn uds_get_inner(client: &ServiceClient, path: &str) -> anyhow::Result<Bytes> {
     let req = hyper::Request::builder()
         .method("GET")
-        .uri(format!("http://localhost{}", path))
-        .body(Full::new(Bytes::new()))?;
-
-    let res = sender.send_request(req).await?;
-
+        .uri(format!("http://localhost{path}"))
+        .body(axum::body::Body::empty())?;
+    let res = client.request(req).await?;
     Ok(Limited::new(res.into_body(), STATUS_RESPONSE_MAX_BODY_SIZE)
         .collect()
         .await

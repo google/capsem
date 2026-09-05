@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -134,6 +135,25 @@ def test_final_gate_must_need_every_owner() -> None:
 def test_current_ci_workflow_is_owned_and_enforced() -> None:
     problems = _workflow_problems(_workflow())
     assert not problems, CI_SCOPE_RATIONALE + "\n" + "\n".join(problems)
+
+
+def test_unit_coverage_includes_library_and_binary_targets() -> None:
+    macos = next(
+        step["run"]
+        for step in _workflow()["jobs"]["test"]["steps"]
+        if step.get("name") == "Unit tests with coverage"
+    )
+    linux = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
+    for platform, script in (("macOS", macos), ("Linux", linux)):
+        command = next(
+            line for line in script.replace("\\\n", " ").splitlines()
+            if line.strip().startswith("cargo llvm-cov nextest")
+        )
+        targets = set(shlex.split(command))
+        assert {"--lib", "--bins"} <= targets, (
+            f"{platform} must execute both library and binary unit tests; --bins alone "
+            "silently drops DNS, security, logger, and foundation regression coverage"
+        )
 
 
 def test_guest_musl_builds_use_both_native_linux_c_toolchains() -> None:

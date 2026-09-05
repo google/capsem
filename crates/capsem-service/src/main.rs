@@ -1039,7 +1039,7 @@ impl ServiceState {
             let _ = self.preserve_failed_session_dir(&info.session_dir, id);
         }
         let _ = std::fs::remove_file(&info.uds_path);
-        let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
+        service_runtime::remove_instance_sentinels(&info.uds_path);
     }
 
     fn cleanup_stale_instances(&self) {
@@ -1441,7 +1441,7 @@ impl ServiceState {
         // wait_for_vm_ready returns instantly against the old .ready file and
         // callers race ahead before the resumed agent has reconnected.
         let _ = std::fs::remove_file(&uds_path);
-        let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        service_runtime::remove_instance_sentinels(&uds_path);
 
         self.validate_persistent_profile_authority(&entry)?;
         let active_profile_path = self.persistent_active_profile_path(&entry)?;

@@ -28,6 +28,7 @@ from capsem_builder.gate.fileactions import (
     Copy,
     Hash,
     MakeDir,
+    RefreshSourceTimes,
     Remove,
     RequireFile,
     RequireNonEmpty,
@@ -245,6 +246,26 @@ def test_make_dir_creates_parents_and_tolerates_existing(context: Context, tmp_p
     MakeDir(target).perform(context)
 
     assert target.is_dir()
+
+
+def test_compiler_freshness_preserves_source_bytes_modes_and_link_targets(context, tmp_path, monkeypatch):
+    from capsem_builder.gate import snapshot
+
+    source, other, link = (tmp_path / name for name in ("source.rs", "other.txt", "linked.rs"))
+    source.write_text("fn main() {}")
+    other.write_text("outside compiler inputs")
+    source.chmod(0o444)
+    link.symlink_to(other)
+    for path in (source, other):
+        os.utime(path, (1, 1))
+    monkeypatch.setattr(snapshot, "_subject", lambda _: [source.name, other.name, link.name])
+    RefreshSourceTimes(tmp_path, (".rs",)).perform(context)
+    assert source.stat().st_mtime > 1
+    assert source.read_text() == "fn main() {}"
+    assert source.stat().st_mode & 0o777 == 0o444
+    assert other.stat().st_mtime == 1
+    assert other.read_text() == "outside compiler inputs"
+    assert link.is_symlink()
 
 
 def test_remove_takes_a_tree_or_a_file_and_tolerates_absence(

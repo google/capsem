@@ -352,3 +352,39 @@ async fn quiescence_channel_closed_returns_error() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("closed prematurely"));
 }
+
+// -----------------------------------------------------------------------
+// ShutdownComplete wait
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn shutdown_complete_reported_before_the_wait_is_not_lost() {
+    let store = JobStore::new();
+    store.shutdown_complete.notify_one();
+    let started = std::time::Instant::now();
+    assert!(store.wait_shutdown_complete(std::time::Duration::from_secs(5)).await);
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn shutdown_complete_reported_during_the_wait_wakes_it() {
+    let store = Arc::new(JobStore::new());
+    let reporter = Arc::clone(&store);
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        reporter.shutdown_complete.notify_one();
+    });
+    let started = std::time::Instant::now();
+    assert!(store.wait_shutdown_complete(std::time::Duration::from_secs(5)).await);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn silent_guest_only_holds_the_shutdown_for_the_bound() {
+    let store = JobStore::new();
+    let bound = std::time::Duration::from_millis(50);
+    let started = std::time::Instant::now();
+    assert!(!store.wait_shutdown_complete(bound).await);
+    let took = started.elapsed();
+    assert!(took >= bound && took < std::time::Duration::from_secs(1), "{took:?}");
+}

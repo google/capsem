@@ -488,6 +488,7 @@ class ServiceInstance:
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.profiles_dir = None
+        self.gateway_port = 0
         self.proc = None
         self._log_file = None
         self._failure_evidence_preserved = False
@@ -541,7 +542,7 @@ class ServiceInstance:
                 "--gateway-binary",
                 str(GATEWAY_BINARY),
                 "--gateway-port",
-                "0",
+                str(self.gateway_port),
                 "--parent-pid",
                 str(os.getpid()),
                 "--foreground",

@@ -7,10 +7,12 @@
 //
 // Per query lifecycle (UDP):
 //   1. recv_from(udp_sock) -> (raw_dns_bytes, peer_addr)
-//   2. hand query to a persistent vsock worker
-//   3. worker writes [4-byte BE length][rmp DnsRequest{raw, proto="udp"}]
-//   4. worker reads [4-byte BE length][rmp DnsResponse{raw, decision, rcode}]
-//   5. send_to(udp_sock, response.raw, peer_addr)
+//   2. hand query to a persistent vsock session under a correlation id
+//   3. session writes [4-byte BE length][rmp DnsRequest{id, raw, proto="udp"}]
+//   4. session reads [4-byte BE length][rmp DnsResponse{id, raw, decision, rcode}]
+//      and routes it to the query with that id, once the answer is checked
+//      against the query's question
+//   5. send_to(udp_sock, response.raw, peer_addr); SERVFAIL if unanswered
 //
 // Per query lifecycle (TCP):
 //   The DNS-over-TCP wire format uses a 2-byte BE length prefix per
@@ -21,33 +23,33 @@
 //   same socket.
 //
 // DNS is latency-sensitive and high fan-out under agent workloads, so
-// the proxy keeps a small pool of persistent vsock workers. Each worker
-// owns one blocking vsock fd and processes one in-flight DNS request at
-// a time; the pool provides concurrency without opening/closing a vsock
-// connection per packet.
+// the proxy keeps two persistent vsock sessions and multiplexes queries
+// over them by correlation id (see `session.rs`): many queries in flight
+// per connection, answers in any order, each checked against its own
+// question before it is handed back.
 //
 // Launched by `capsem-init` (T3.4) alongside the iptables nat
 // redirect for UDP/TCP port 53 -> 1053. Replaced the dnsmasq fake
 // that resolved every name to 10.0.0.1 pre-T3.
 
+#[path = "dns_proxy/session.rs"]
+mod session;
 #[path = "vsock_io.rs"]
 mod vsock_io;
+#[path = "dns_proxy/wire.rs"]
+mod wire;
 
 use std::io;
 use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
-use std::thread;
+use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::signal;
-use tokio::sync::oneshot;
 
-use capsem_proto::{
-    decode_dns_response, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE, VSOCK_PORT_DNS_PROXY,
-};
-use vsock_io::{read_exact_fd, vsock_connect, write_all_fd, VSOCK_HOST_CID};
+use capsem_proto::VSOCK_PORT_DNS_PROXY;
+use session::{DnsForwarder, DNS_SESSIONS};
+use vsock_io::{vsock_connect, VSOCK_HOST_CID};
 
 /// Loopback bind address. iptables redirects guest-originated DNS
 /// traffic to this port so we can intercept libc's `getaddrinfo`.
@@ -61,117 +63,6 @@ const LISTEN_PORT: u16 = 1053;
 /// EDNS responses at ~4096; standard queries fit in 512. 4096 is what
 /// hickory uses internally.
 const MAX_UDP_DNS_BYTES: usize = 4096;
-const DNS_VSOCK_WORKERS: usize = 8;
-
-struct DnsForwarder {
-    workers: Vec<mpsc::Sender<DnsWork>>,
-    next_worker: AtomicUsize,
-}
-
-struct DnsWork {
-    raw: Vec<u8>,
-    proto: &'static str,
-    reply: oneshot::Sender<io::Result<DnsResponse>>,
-}
-
-impl DnsForwarder {
-    fn new(worker_count: usize) -> Self {
-        assert!(worker_count > 0, "DNS forwarder needs at least one worker");
-        let mut workers = Vec::with_capacity(worker_count);
-        for id in 0..worker_count {
-            let (tx, rx) = mpsc::channel();
-            spawn_dns_worker(id, rx);
-            workers.push(tx);
-        }
-        Self {
-            workers,
-            next_worker: AtomicUsize::new(0),
-        }
-    }
-
-    async fn forward_query(&self, raw: Vec<u8>, proto: &'static str) -> io::Result<DnsResponse> {
-        let (reply, wait) = oneshot::channel();
-        let work = DnsWork { raw, proto, reply };
-        let idx = next_worker_index(&self.next_worker, self.workers.len());
-        self.workers[idx]
-            .send(work)
-            .map_err(|_| io::Error::other("dns forward worker stopped"))?;
-        wait.await
-            .map_err(|_| io::Error::other("dns forward worker dropped response"))?
-    }
-}
-
-fn next_worker_index(next_worker: &AtomicUsize, worker_count: usize) -> usize {
-    next_worker.fetch_add(1, Ordering::Relaxed) % worker_count
-}
-
-fn spawn_dns_worker(id: usize, rx: mpsc::Receiver<DnsWork>) {
-    thread::Builder::new()
-        .name(format!("capsem-dns-vsock-{id}"))
-        .spawn(move || {
-            let mut fd = None;
-            for work in rx {
-                let result = dns_round_trip_with_reconnect(&mut fd, work.raw, work.proto);
-                let _ = work.reply.send(result);
-            }
-            close_fd(fd);
-        })
-        .expect("spawn DNS vsock worker");
-}
-
-/// Round-trip a single DNS query through the host-side handler.
-fn forward_query_on_fd(fd: i32, raw: Vec<u8>, proto: &str) -> io::Result<DnsResponse> {
-    let req = DnsRequest {
-        raw,
-        proto: proto.to_string(),
-        process_name: None,
-    };
-    let frame = encode_dns_request(&req).map_err(|e| io::Error::other(format!("encode_dns_request: {e:#}")))?;
-
-    write_all_fd(fd, &frame)?;
-    let mut len_buf = [0u8; 4];
-    read_exact_fd(fd, &mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf);
-    if len > MAX_FRAME_SIZE {
-        return Err(io::Error::other(format!(
-            "dns response frame too large ({len} > {MAX_FRAME_SIZE})"
-        )));
-    }
-    let mut payload = vec![0u8; len as usize];
-    read_exact_fd(fd, &mut payload)?;
-    decode_dns_response(&payload).map_err(|e| io::Error::other(format!("decode_dns_response: {e:#}")))
-}
-
-fn dns_round_trip_with_reconnect(fd: &mut Option<i32>, raw: Vec<u8>, proto: &'static str) -> io::Result<DnsResponse> {
-    for attempt in 0..2 {
-        let active_fd = match *fd {
-            Some(active_fd) => active_fd,
-            None => {
-                let new_fd = vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_DNS_PROXY)?;
-                *fd = Some(new_fd);
-                new_fd
-            }
-        };
-        match forward_query_on_fd(active_fd, raw.clone(), proto) {
-            Ok(response) => return Ok(response),
-            Err(error) if attempt == 0 => {
-                close_fd(fd.take());
-                eprintln!("[capsem-dns-proxy] vsock worker reconnecting after error: {error}");
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::other("dns forward retry exhausted"))
-}
-
-fn close_fd(fd: Option<i32>) {
-    if let Some(fd) = fd {
-        unsafe {
-            nix::libc::close(fd);
-        }
-    }
-}
-
 /// UDP listener: read one datagram, forward, send the response back.
 async fn run_udp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
     let sock = UdpSocket::bind((LISTEN_BIND, LISTEN_PORT)).await?;
@@ -191,21 +82,11 @@ async fn run_udp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
         let sock_for_response = std::sync::Arc::clone(&sock);
         let forwarder = Arc::clone(&forwarder);
         tokio::spawn(async move {
-            match forwarder.forward_query(buf, "udp").await {
-                Ok(resp) => {
-                    if resp.raw.is_empty() {
-                        // Host returned empty bytes -- usually a parse
-                        // error. Drop the query rather than echo an
-                        // empty packet.
-                        return;
-                    }
-                    if let Err(e) = sock_for_response.send_to(&resp.raw, peer).await {
-                        eprintln!("[capsem-dns-proxy] udp send_to {peer}: {e}");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[capsem-dns-proxy] udp forward error from {peer}: {e}");
-                }
+            let Some(answer) = answer_or_servfail(&forwarder, buf, "udp").await else {
+                return;
+            };
+            if let Err(e) = sock_for_response.send_to(&answer, peer).await {
+                eprintln!("[capsem-dns-proxy] udp send_to {peer}: {e}");
             }
         });
     }
@@ -251,24 +132,33 @@ async fn serve_tcp_connection(
             eprintln!("[capsem-dns-proxy] tcp read body from {peer}: {e}");
             return;
         }
-        match forwarder.forward_query(payload, "tcp").await {
-            Ok(resp) => {
-                if resp.raw.is_empty() {
-                    return;
-                }
-                let resp_len = resp.raw.len() as u16;
-                let mut out = Vec::with_capacity(2 + resp.raw.len());
-                out.extend_from_slice(&resp_len.to_be_bytes());
-                out.extend_from_slice(&resp.raw);
-                if let Err(e) = stream.write_all(&out).await {
-                    eprintln!("[capsem-dns-proxy] tcp write to {peer}: {e}");
-                    return;
-                }
-            }
-            Err(e) => {
-                eprintln!("[capsem-dns-proxy] tcp forward error from {peer}: {e}");
-                return;
-            }
+        let Some(answer) = answer_or_servfail(&forwarder, payload, "tcp").await else {
+            return;
+        };
+        let resp_len = answer.len() as u16;
+        let mut out = Vec::with_capacity(2 + answer.len());
+        out.extend_from_slice(&resp_len.to_be_bytes());
+        out.extend_from_slice(&answer);
+        if let Err(e) = stream.write_all(&out).await {
+            eprintln!("[capsem-dns-proxy] tcp write to {peer}: {e}");
+            return;
+        }
+    }
+}
+
+/// The bytes to send back for `query`: the host's answer, or a SERVFAIL
+/// when the host did not answer in time (deadline, shed, connection
+/// lost). `None` when there is nothing sensible to send: the host could
+/// not parse the query (it answers with empty bytes), or the query is so
+/// malformed that not even a SERVFAIL header can be built from it.
+async fn answer_or_servfail(forwarder: &DnsForwarder, query: Vec<u8>, proto: &'static str) -> Option<Vec<u8>> {
+    let servfail = wire::servfail_for(&query);
+    match forwarder.forward_query(query, proto).await {
+        Ok(resp) if resp.raw.is_empty() => None,
+        Ok(resp) => Some(resp.raw),
+        Err(e) => {
+            eprintln!("[capsem-dns-proxy] {proto} query unanswered ({e}); replying SERVFAIL");
+            servfail
         }
     }
 }
@@ -277,7 +167,10 @@ async fn serve_tcp_connection(
 async fn main() -> io::Result<()> {
     eprintln!("[capsem-dns-proxy] starting (pid {})", process::id());
 
-    let forwarder = Arc::new(DnsForwarder::new(DNS_VSOCK_WORKERS));
+    let forwarder = Arc::new(DnsForwarder::new(
+        DNS_SESSIONS,
+        Arc::new(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_DNS_PROXY)),
+    ));
     let udp_task = tokio::spawn(run_udp_listener(Arc::clone(&forwarder)));
     let tcp_task = tokio::spawn(run_tcp_listener(forwarder));
 

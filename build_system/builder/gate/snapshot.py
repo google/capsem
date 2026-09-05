@@ -79,12 +79,8 @@ def _subject(source: Path) -> list[Path]:
 def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
     """Regular files in batches, symlinks one at a time as links.
 
-    The split is not an optimisation. `git ls-files` lists a symlink like any
-    other entry, and `cp` without `-R` follows it -- which fails outright when
-    it points at a directory (`.agents/skills` in this repository, pointing at
-    the one checked-in skill library) and silently duplicates a tree when it
-    does not. Recreated with `os.symlink`, the copy keeps the same link and
-    therefore the same digest as the tree it came from.
+    Recreate symlinks explicitly: cp follows them, breaking directory links
+    such as `.agents/skills` and changing the source digest.
     """
     grouped: dict[Path, list[Path]] = defaultdict(list)
     links: list[Path] = []
@@ -104,6 +100,10 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
                 ["cp", *flags, *[str(source / name) for name in batch], str(destination)],
                 check=True,
             )
+            # Fresh mtimes invalidate Cargo fingerprints from other prefixes;
+            # preserving old mtimes can silently reuse their different binaries.
+            for name in batch:
+                os.utime(target / name, None)
 
     for relative in links:
         destination = target / relative

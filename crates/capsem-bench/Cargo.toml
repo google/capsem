@@ -11,7 +11,7 @@ authors.workspace = true
 
 [features]
 default = ["host"]
-host = ["dep:capsem-foundation", "dep:rusqlite"]
+host = ["dep:capsem-foundation", "capsem-foundation/runtime", "dep:rusqlite"]
 guest = []
 
 [[bin]]

@@ -122,3 +122,7 @@ harness = false
 [[bench]]
 name = "dns_handler"
 harness = false
+
+[[bench]]
+name = "mitm_request"
+harness = false

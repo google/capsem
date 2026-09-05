@@ -12,7 +12,8 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     let thinking_content = cap_field(&call.thinking_content);
     let sys_prompt = cap_field(&call.system_prompt_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
-    conn.execute(
+    super::execute_cached(
+        conn,
         &format!("INSERT INTO {} (
             event_id, timestamp, provider, protocol, model, process_name, pid,
             method, path, stream,
@@ -92,7 +93,8 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
         // W6: tool_calls.trace_id falls back to the parent model_call's
         // trace_id (they belong to the same agent turn).
         let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
-        conn.execute(
+        super::execute_cached(
+            conn,
             &format!(
                 "INSERT INTO {} (
                 event_id, timestamp, model_call_id, provider, status, call_index, call_id,
@@ -127,7 +129,8 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     for tr in &call.tool_responses {
         let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
         let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
-        conn.execute(
+        super::execute_cached(
+            conn,
             &format!(
                 "INSERT INTO {} (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -175,7 +178,8 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
-        conn.execute(
+        super::execute_cached(
+            conn,
             &format!(
                 "INSERT OR IGNORE INTO {table} (
                 event_id, model_call_id, timestamp, provider, model, path, trace_id,

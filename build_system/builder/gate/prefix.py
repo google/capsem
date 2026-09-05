@@ -228,7 +228,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.repository_root: str(path),
-        cachelayout.cache_paths(config).policy.authority_environment: str(config.root),
+        cachelayout.cache_paths(config).policy.authority_environment: str(cachelayout.authority(config)),
         config.environment.cargo_target: str(cargotarget.path(config)),
         **cachetooling.environment(config, key=str(commit or path.name), source_root=path),
     }

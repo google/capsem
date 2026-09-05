@@ -14,6 +14,9 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 mod dns;
 use dns::serve_dns_session;
+mod guest_report;
+use guest_report::is_guest_liveness_message;
+mod shutdown;
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
@@ -718,24 +721,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 ServiceToProcess::Shutdown => {
                     capsem_core::try_send!("hub_shutdown", hub_tx.send(HostToGuest::Shutdown).await);
-                    let v_m = Arc::clone(&vm_handle_for_cmd);
-                    let shutdown = Arc::clone(&shutdown_for_cmd);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        // channel-closed-ok: spawn_blocking JoinHandle and stop()'s
-                        // Result are best-effort cleanup tails; nothing waits on them.
-                        let _ = tokio::task::spawn_blocking(move || {
-                            #[cfg(target_os = "macos")]
-                            let _ = capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
-                                v_m.blocking_lock().stop()
-                            });
-                            #[cfg(not(target_os = "macos"))]
-                            let _ = v_m.blocking_lock().stop();
-                        })
-                        .await;
-                        crate::drain_background_owners(&shutdown).await;
-                        std::process::exit(0);
-                    });
+                    shutdown::spawn_stop_after_guest(
+                        Arc::clone(&js_for_cmd),
+                        Arc::clone(&vm_handle_for_cmd),
+                        Arc::clone(&shutdown_for_cmd),
+                    );
                 }
                 ServiceToProcess::Ping => {
                     let epoch_secs = std::time::SystemTime::now()
@@ -1189,16 +1179,6 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     }
 }
 
-/// Replies produced by the periodic control-channel liveness probe.
-///
-/// These messages carry no job result and need no replay acknowledgement. A
-/// healthy VM sends one every few seconds, so treating them as an unknown wire
-/// variant turns normal uptime into warning spam and hides the first useful
-/// fault in a preserved process log.
-fn is_guest_liveness_message(msg: &GuestToHost) -> bool {
-    matches!(msg, GuestToHost::Pong)
-}
-
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 struct FileSecurityBoundary {
@@ -1343,6 +1323,8 @@ async fn handle_guest_msg(
     plugin_policy: &PluginPolicyHandle,
 ) {
     match msg {
+        GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
+        GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
         GuestToHost::ExecDone { id, exit_code } => {
             // The guest closes the EXEC socket before sending ExecDone, and
             // the host's EXEC-port reader thread may still be finishing its

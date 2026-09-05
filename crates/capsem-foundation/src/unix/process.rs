@@ -4,7 +4,7 @@ use std::io;
 use std::num::NonZeroI32;
 
 use nix::errno::Errno;
-use nix::sys::signal::{kill, Signal as NixSignal};
+use nix::sys::signal::{kill, killpg, Signal as NixSignal};
 use nix::unistd::Pid;
 
 use super::errno;
@@ -97,6 +97,66 @@ fn classify_probe(result: Result<(), Errno>) -> io::Result<ProcessState> {
 /// Deliver a lifecycle signal without hiding a concurrent process exit.
 pub fn send_signal(pid: ProcessId, signal: Signal) -> io::Result<SignalOutcome> {
     classify_signal(kill(pid.as_nix(), signal.as_nix()))
+}
+
+/// Signal a process group created and owned by the caller, named by its leader.
+pub fn send_process_group_signal(leader: ProcessId, signal: Signal) -> io::Result<SignalOutcome> {
+    let result = killpg(leader.as_nix(), signal.as_nix());
+    // Darwin's killpg1 skips zombies and returns EPERM when none remain
+    // signalable. Only excuse that error if the sole member is our exited,
+    // unreaped child; another member or an unreadable table keeps the error.
+    #[cfg(target_os = "macos")]
+    if result == Err(Errno::EPERM) && lone_exited_child_group(leader) {
+        return Ok(SignalOutcome::Gone);
+    }
+    classify_signal(result)
+}
+
+#[cfg(target_os = "macos")]
+fn lone_exited_child_group(leader: ProcessId) -> bool {
+    if !child_has_exited(leader).unwrap_or(false) {
+        return false;
+    }
+    // Two slots distinguish one member from a truncated multi-member list.
+    // libproc includes zombies and returns a count of PIDs, not bytes.
+    let mut members: [libc::pid_t; 2] = [0; 2];
+    // SAFETY: the buffer holds the specified number of bytes, and the group
+    // ID belongs to the child whose unreaped status still reserves its PID.
+    let count = unsafe {
+        libc::proc_listpgrppids(
+            leader.as_nix().as_raw(),
+            members.as_mut_ptr().cast(),
+            std::mem::size_of_val(&members) as libc::c_int,
+        )
+    };
+    count == 1 && members[0] == leader.as_nix().as_raw()
+}
+
+/// Observe an owned child's exit without reaping it. Keeping the zombie until
+/// group cleanup reserves its PID even if its descendants change groups.
+pub fn child_has_exited(pid: ProcessId) -> io::Result<bool> {
+    loop {
+        // SAFETY: zero is a valid initial siginfo_t; waitid writes this owned
+        // buffer, and P_PID names only the validated positive child identifier.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid.get() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            // SAFETY: waitid initialized the child-status fields; an unchanged
+            // zero PID means no status was available with WNOHANG.
+            return Ok(unsafe { info.si_pid() } != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 fn classify_signal(result: Result<(), Errno>) -> io::Result<SignalOutcome> {

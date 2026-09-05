@@ -622,66 +622,40 @@ class TestServiceRestartSequenceKeepsGatewayHealthy:
     ENSURE_SERVICE_SLEEP_SECS = 0.5
 
     def test_restart_with_same_run_dir_and_port(self):
-        # Use the same tmp_dir so companion log paths and gateway.* files
-        # overlap exactly like a real `_ensure-service` restart.
-        svc_a = ServiceInstance()
-        svc_a.start()
-        gw_port = (svc_a.tmp_dir / "gateway.port").read_text().strip()
-        assert gw_port and int(gw_port) > 0, (
-            f"gateway.port must be written during startup; got {gw_port!r}"
-        )
-        time.sleep(1.0)  # let companions settle
-        children_a = _list_direct_children(svc_a.proc.pid)
-        assert children_a, "svc_a must have companion children before restart"
-
-        # `_ensure-service`'s exact sequence: SIGTERM, sleep, spawn new.
-        os.kill(svc_a.proc.pid, signal.SIGTERM)
-        time.sleep(self.ENSURE_SERVICE_SLEEP_SECS)
-        # Wait briefly for the previous PID to actually go away so we get a
-        # clean handle (terminate already sent above). Don't exceed what
-        # the user would tolerate.
-        svc_a.proc.wait(timeout=5)
-        # All of svc_a's direct children must be dead now; otherwise the
-        # new gateway cannot bind.
-        survivors = [pid for pid in children_a if _pid_alive(pid)]
-        assert not survivors, (
-            f"companions of svc_a survived past the `_ensure-service` "
-            f"budget ({self.ENSURE_SERVICE_SLEEP_SECS}s): {survivors}"
-        )
-
-        # svc_a.proc is reaped; close its log fd before svc_b reuses the
-        # tmp_dir. svc_a.stop() would also shutil.rmtree the dir, which
-        # would wipe svc_b's workspace -- close the log manually instead.
-        if svc_a._log_file is not None:
-            svc_a._log_file.close()
-            svc_a._log_file = None
-
-        # Start svc_b reusing tmp_dir and gateway port. Port reuse is the
-        # whole point of this test -- it would be a no-op on the bug if
-        # we let svc_b pick a fresh port.
-        svc_b = ServiceInstance()
-        svc_b.tmp_dir = svc_a.tmp_dir
-        svc_b.uds_path = svc_a.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
-        # Override the fixed port by editing the spawn args; simplest is to
-        # instantiate with the same port via env or arg. ServiceInstance
-        # hardcodes --gateway-port 0, so we simulate the fixed-port case by
-        # starting a gateway that must reclaim the port just vacated.
-        # We can't cleanly inject the port with the current helper, so we
-        # assert the weaker but still meaningful invariant: svc_b brings
-        # up its OWN gateway, and svc_a's gateway is gone.
-        svc_b.start()
+        svc = ServiceInstance()
         try:
-            time.sleep(1.0)
-            children_b = _list_direct_children(svc_b.proc.pid)
-            assert children_b, "svc_b must have spawned companion children on restart"
-            for child_pid in children_b:
-                assert child_pid not in children_a, (
-                    f"svc_b appears to have inherited orphan {child_pid} "
-                    "from svc_a -- the new service must spawn fresh "
-                    "companions, not adopt the previous run's"
-                )
+            svc.start()
+            # Service UDS readiness precedes the companion publishing its port.
+            svc.gateway_port = _wait_for_gateway_port_file(
+                svc.tmp_dir, None, timeout=WATCH_DEADLINE_SECS,
+            )
+            children_a = _list_direct_children(svc.proc.pid)
+            assert children_a, "service must have companion children before restart"
+
+            os.kill(svc.proc.pid, signal.SIGTERM)
+            time.sleep(self.ENSURE_SERVICE_SLEEP_SECS)
+            svc.proc.wait(timeout=5)
+            survivors = [pid for pid in children_a if _pid_alive(pid)]
+            assert not survivors, (
+                f"companions survived the restart budget "
+                f"({self.ENSURE_SERVICE_SLEEP_SECS}s): {survivors}"
+            )
+            svc.stop(cleanup=False)
+
+            # Reuse the home, run directory and actual TCP port. A surviving
+            # gateway must fail this restart instead of getting a fresh port.
+            svc.start()
+            _wait_for_gateway_port_file(
+                svc.tmp_dir, svc.gateway_port, timeout=WATCH_DEADLINE_SECS,
+            )
+            children_b = _list_direct_children(svc.proc.pid)
+            assert children_b, "service must spawn companion children on restart"
+            assert not set(children_a).intersection(children_b), (
+                "the restarted service must spawn fresh companions"
+            )
         finally:
-            svc_b.stop()
+            # Startup assertions need the same cleanup as shutdown assertions.
+            svc.stop()
 
 
 class TestRapidServiceRestartIsRobust:
@@ -691,12 +665,8 @@ class TestRapidServiceRestartIsRobust:
     orphan-gateway race under load -- a single flake out of N iterations
     is a bug.
 
-    Unlike the simpler `TestServiceRestartSequenceKeepsGatewayHealthy`,
-    this test:
-      (1) pins the gateway port so a surviving orphan would cause the
-          next iteration's gateway to fail with EADDRINUSE, and
-      (2) iterates enough times that timing-sensitive bugs (poll races,
-          kernel scheduling jitter, ephemeral-port reuse) surface.
+    Repetition exposes poll races, kernel scheduling jitter and port reuse
+    failures that a single fixed-port restart can miss.
     """
 
     ITERATIONS = 6
@@ -858,18 +828,25 @@ def _spawn_service_on_fixed_port(
     raise RuntimeError("service never accepted UDS connections")
 
 
-def _wait_for_gateway_port_file(run_dir: Path, expected_port: int, timeout: float):
-    """Wait until gateway.port exists AND contains expected_port."""
+def _wait_for_gateway_port_file(run_dir: Path, expected_port: int | None, timeout: float) -> int:
+    """Wait for the published port and a healthy gateway, optionally pinning it."""
     path = run_dir / "gateway.port"
-    end = time.time() + timeout
+    end = time.monotonic() + timeout
     last_seen = None
-    while time.time() < end:
+    while time.monotonic() < end:
         if path.exists():
             try:
                 last_seen = path.read_text().strip()
-                if last_seen == str(expected_port):
-                    return
-            except OSError:
+                port = int(last_seen)
+                if 0 < port < 65536 and (expected_port is None or port == expected_port):
+                    probe = Transport(host="127.0.0.1", port=port)
+                    try:
+                        status, _, body = probe.request("GET", "/health", timeout=0.5)
+                        if status == 200 and b"ok" in body.lower():
+                            return port
+                    finally:
+                        probe.close()
+            except (OSError, ValueError):
                 pass
         time.sleep(0.05)
     raise TimeoutError(

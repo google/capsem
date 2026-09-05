@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "db_read_write_micro"
 harness = false
+
+[[bench]]
+name = "db_external_reader_poll"
+harness = false

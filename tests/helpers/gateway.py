@@ -182,7 +182,7 @@ class GatewayInstance:
 class TcpHttpClient:
     """HTTP client for talking to the gateway over TCP with auth."""
 
-    def __init__(self, base_url: str, token: str):
+    def __init__(self, base_url: str, token: str | None):
         self.base_url = base_url
         self.token = token
         host, _, port = base_url.removeprefix("http://").partition(":")
@@ -204,7 +204,7 @@ class TcpHttpClient:
             method, path, headers=self._headers(use_auth, headers), body=body, timeout=timeout
         )
 
-    def call_json(self, method, path, body=None, *, use_auth=True, timeout=30):
+    def call_json(self, method, path, body: object = None, *, use_auth=True, timeout=30):
         """(status, payload): JSON when the body parses, the text when it does
         not, None when it is empty."""
         payload = None if body is None else json.dumps(body).encode()

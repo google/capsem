@@ -139,38 +139,66 @@ fn list_response_rejects_missing_lifecycle_state() {
 }
 
 #[tokio::test]
-async fn snapshot_retains_previous_data_for_event_diffing() {
+async fn previous_states_start_empty_and_only_keep_id_and_state() {
     let cache = StatusCache::new();
-    let resp = StatusResponse {
-        service: "running".into(),
-        gateway_version: "test".into(),
-        vm_count: 1,
-        vms: vec![],
-        resource_summary: None,
-        profiles: None,
-    };
-
-    // Retain the prior response for lifecycle-event comparison only.
-    {
-        let mut guard = cache.inner.write().await;
-        *guard = Some(resp.clone());
-    }
-
-    {
-        let guard = cache.inner.read().await;
-        let cached = guard.as_ref().unwrap();
-        assert_eq!(cached.service, "running");
-        assert_eq!(cached.vm_count, 1);
-        drop(guard);
-    }
+    assert!(cache.last_states.lock().await.is_empty());
+    cache
+        .last_states
+        .lock()
+        .await
+        .push(("vm-1".into(), VmLifecycleState::Running));
+    assert_eq!(
+        cache.last_states.lock().await.as_slice(),
+        &[("vm-1".to_string(), VmLifecycleState::Running)]
+    );
 }
 
-#[tokio::test]
-async fn previous_status_snapshot_starts_empty() {
-    let cache = StatusCache::new();
-    let guard = cache.inner.read().await;
-    assert!(guard.is_none());
-    drop(guard);
+/// Eight polls at once: the service is read at most twice, and each VM's
+/// appearance is reported exactly once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_polls_share_reads_and_report_each_transition_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_mock = Arc::clone(&hits);
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(move || {
+            let hits = Arc::clone(&hits_for_mock);
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                axum::Json(serde_json::json!({
+                    "sandboxes": [
+                        {"id": "vm-a", "profile_id": "code", "pid": 1, "status": "Running", "persistent": true, "available_actions": []},
+                        {"id": "vm-b", "profile_id": "code", "pid": 2, "status": "Stopped", "persistent": true, "available_actions": []}
+                    ]
+                }))
+            }
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let state = Arc::new(test_app_state(&path));
+    let mut events = state.events_tx.subscribe();
+    let polls: Vec<_> = (0..8)
+        .map(|_| {
+            let state = Arc::clone(&state);
+            tokio::spawn(async move { handle_status(State(state)).await.status() })
+        })
+        .collect();
+    for poll in polls {
+        assert_eq!(poll.await.unwrap(), StatusCode::OK);
+    }
+    assert!(
+        hits.load(Ordering::SeqCst) <= 2,
+        "{} service reads for eight polls",
+        hits.load(Ordering::SeqCst)
+    );
+    let mut seen = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        seen.push(event);
+    }
+    assert_eq!(seen.len(), 2, "one vm-state-changed per VM, not per poll: {seen:?}");
+    handle.abort();
 }
 
 // --- fetch_status with mock UDS ---
@@ -257,7 +285,7 @@ async fn uds_get_times_out_while_reading_a_stalled_body() {
 
     let result = tokio::time::timeout(
         Duration::from_secs(6),
-        uds_get(std::path::Path::new(&path), "/vms/list"),
+        uds_get(&test_app_state(&path).service_client, "/vms/list"),
     )
     .await
     .expect("uds_get must enforce its own five-second deadline");
@@ -274,17 +302,17 @@ async fn uds_get_rejects_an_oversized_status_body() {
     );
     let (path, handle, _dir) = mock_uds(mock).await;
 
-    let error = uds_get(std::path::Path::new(&path), "/vms/list").await.unwrap_err();
+    let error = uds_get(&test_app_state(&path).service_client, "/vms/list")
+        .await
+        .unwrap_err();
 
     assert!(error.to_string().contains("length limit"), "{error:#}");
     handle.abort();
 }
 
 #[test]
-fn status_uds_timeouts_bound_the_request_and_connection_driver() {
+fn status_reads_are_bounded_to_five_seconds() {
     assert_eq!(STATUS_REQUEST_TIMEOUT, Duration::from_secs(5));
-    assert!(STATUS_CONN_DRIVER_TIMEOUT > STATUS_REQUEST_TIMEOUT);
-    assert!(STATUS_CONN_DRIVER_TIMEOUT <= Duration::from_secs(300));
 }
 
 #[tokio::test]

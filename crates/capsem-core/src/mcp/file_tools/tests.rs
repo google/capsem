@@ -745,7 +745,8 @@ fn write_regular_file_no_follow_creates_fresh_file_with_mode() {
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 }
 
-#[cfg(unix)]
+// APFS rejects invalid UTF-8 names at creation; Linux filesystems admit them.
+#[cfg(target_os = "linux")]
 #[test]
 fn collect_files_does_not_collapse_distinct_non_utf8_names() {
     use std::ffi::OsStr;

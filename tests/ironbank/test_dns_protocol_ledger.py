@@ -453,10 +453,50 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert by_level["informational"] >= 1
         assert by_level["high"] >= 1
 
+        # A second question must never borrow the first question's allow rule.
+        # Reuse the guest wire helpers, then prove the same forwarder still
+        # serves an ordinary query after discarding the adversarial message.
+        upstream_before = len([row for row in _records(request_log) if row.get("kind") == "dns"])
+        attack = textwrap.dedent(
+            f"""
+            import runpy
+            helpers = runpy.run_path('/root/ironbank-dns.py')
+            packet = bytearray(helpers['query_packet']({json.dumps(allowed_qname)}, 0x1301))
+            packet[5] = 2
+            packet.extend(helpers['query_packet']({json.dumps(blocked_qname)}, 0x1301)[12:])
+            with helpers['socket'].socket(helpers['socket'].AF_INET, helpers['socket'].SOCK_DGRAM) as sock:
+                sock.settimeout(1)
+                sock.sendto(packet, (helpers['nameserver'](), 53))
+                try:
+                    response, _ = sock.recvfrom(4096)
+                except TimeoutError:
+                    pass
+                else:
+                    raise AssertionError(('unchecked DNS question received a response', response.hex()))
+            assert helpers['resolve']({json.dumps(allowed_qname)}, 0x1302)['rcode'] == 0
+            print('IRONBANK_DNS_MULTIQUESTION_REJECTED')
+            """
+        )
+        client.post_bytes(f"/vms/{vm_id}/files/content?path=ironbank-dns-attack.py", attack.encode(), timeout=30)
+        attack_result = client.post(
+            f"/vms/{vm_id}/exec",
+            {"command": "python3 /root/ironbank-dns-attack.py", "timeout_secs": 30},
+            timeout=60,
+        )
+        assert attack_result["exit_code"] == 0, attack_result
+        assert "IRONBANK_DNS_MULTIQUESTION_REJECTED" in attack_result["stdout"]
+        upstream_after = [row for row in _records(request_log) if row.get("kind") == "dns"]
+        assert len(upstream_after) == upstream_before, upstream_after
+        error_rows = _eventually(
+            lambda: _query_rows(client, session_id, "SELECT qname, decision, rcode FROM dns_events WHERE decision = 'error'"),
+            lambda rows: any(row["qname"] == allowed_qname and row["rcode"] == 1 for row in rows),
+        )
+        assert error_rows
+
         service_log = read_log_stream(service.tmp_dir / "service.log")
-        process_log = (
+        process_log = read_log_stream(
             vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
-        ).read_text(encoding="utf-8")
+        )
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "dns" in process_log.lower()

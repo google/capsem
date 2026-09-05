@@ -17,7 +17,7 @@ CACHE_POLICY = load_policy(PROJECT_ROOT)
 def test_checked_in_shared_roots_are_inside_repository_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(PROJECT_ROOT))
     resolved = {
         cachelayout.shared_path(CONFIG, value)
         for value in (
@@ -51,7 +51,7 @@ def test_absolute_test_override_remains_explicit(tmp_path: Path) -> None:
 def test_uv_uses_its_content_addressed_shared_stage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(PROJECT_ROOT))
 
     assert cachelayout.stage_path(CONFIG, "python-uv") == PROJECT_ROOT / "cache/tools/python/uv"
 

@@ -15,6 +15,7 @@ sequence, which is why these tests assert on the sequence.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -663,9 +664,10 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
         r"dpkg -i"
     )
     assert runner.ran(r"capsem-cache .* prune --apply")
-    diagnostic = runner.index_of(r"docker exec capsem-install-test du ")
-    assert runner.index_of(r"dpkg -i") < diagnostic
-    assert diagnostic < runner.last_index_of(r"docker rm -f -v capsem-install-test")
+    for command in INSTALL.failure_storage_commands:
+        diagnostic = runner.index_of(re.escape(f"docker exec {INSTALL.container} {' '.join(command)}"))
+        assert runner.index_of(r"dpkg -i") < diagnostic
+        assert diagnostic < runner.last_index_of(r"docker rm -f -v capsem-install-test")
 
 
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:

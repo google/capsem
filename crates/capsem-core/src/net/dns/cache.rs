@@ -3,16 +3,18 @@
 //! The cache shaves the upstream UDP RTT off repeated queries to the
 //! same allowed name. Cache shape:
 //!
-//! * **Key**: `(qname, qtype, qclass)` -- the operationally relevant
-//!   slice of a DNS question.
+//! * **Key**: the complete wire query except its transaction id, so flags,
+//!   question spelling and EDNS options never borrow another query's answer.
 //! * **Value**: the wire-format answer bytes + an `expires_at`
 //!   `Instant` derived from `min(answer_TTL_seconds, max_cache_ttl)`.
 //!   Expiry is enforced lazily on lookup: an expired entry is
 //!   removed and counted as a miss.
 //! * **Eligibility**: only `Decision::Allowed` answers are cached.
 //!   Security blocks run before the cache. Redirect settings are still
-//!   re-checked on every query, and SERVFAIL responses should not be
-//!   persisted.
+//!   re-checked on every query. An upstream NXDOMAIN is cached briefly
+//!   (`insert_negative`, bounded by the SOA minimum and
+//!   `NEGATIVE_MAX_TTL_SECS`); SERVFAIL is never persisted, since it may
+//!   be a transient upstream fault.
 //! * **Bound**: an LRU on entry count (default 1024). Evictions are
 //!   counted via the `mitm.dns_cache_evictions_total` counter.
 //!
@@ -25,7 +27,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hickory_proto::op::Message;
+use hickory_proto::rr::RData;
 use lru::LruCache;
+
+use super::coalesce::LookupKey;
+use crate::net::parsers::dns_parser::DnsQuery;
 use tracing::trace;
 
 use crate::net::mitm_proxy::metrics as m;
@@ -45,10 +51,10 @@ pub const DEFAULT_CAPACITY: usize = 1024;
 /// agent loop and the existing CDN TTLs (Cloudflare default 5 min).
 pub const DEFAULT_MAX_TTL_SECS: u32 = 300;
 
-/// Minimum cache TTL, in seconds. Some authoritative servers set a
-/// 0-second TTL ("don't cache") which would make the cache useless
-/// on retry storms; clamp to at least 60s so a burst still benefits.
-pub const MIN_TTL_SECS: u32 = 60;
+/// Ceiling on how long an upstream NXDOMAIN is remembered. RFC 2308 lets a
+/// negative answer live for the SOA minimum; a minute is enough to absorb a
+/// client retrying a dead name without amplifying a name that reappears.
+pub const NEGATIVE_MAX_TTL_SECS: u32 = 60;
 
 #[derive(Clone)]
 struct Entry {
@@ -63,15 +69,8 @@ struct Entry {
 /// bottleneck, but the hot-path cost (one HashMap lookup + one
 /// Instant::now()) is sub-microsecond on modern hardware.
 pub struct DnsAnswerCache {
-    inner: Mutex<LruCache<CacheKey, Entry>>,
+    inner: Mutex<LruCache<LookupKey, Entry>>,
     max_ttl: Duration,
-}
-
-#[derive(Hash, PartialEq, Eq, Clone)]
-struct CacheKey {
-    qname: String,
-    qtype: u16,
-    qclass: u16,
 }
 
 impl Default for DnsAnswerCache {
@@ -89,7 +88,7 @@ impl DnsAnswerCache {
         let cap = NonZeroUsize::new(capacity.max(1)).expect("capacity > 0 enforced");
         Self {
             inner: Mutex::new(LruCache::new(cap)),
-            max_ttl: Duration::from_secs(u64::from(max_ttl_secs.max(1))),
+            max_ttl: Duration::from_secs(u64::from(max_ttl_secs)),
         }
     }
 
@@ -111,29 +110,20 @@ impl DnsAnswerCache {
     /// downstream resolvers (which match responses by id) would
     /// reject every hit -- surfaced in the in-VM dns-load bench
     /// during T3 closure as "id mismatch" on 100% of queries.
-    pub fn get(
-        &self,
-        qname: &str,
-        qtype: u16,
-        qclass: u16,
-        query_id: u16,
-        policy: &NetworkMechanics,
-    ) -> Option<Vec<u8>> {
-        let key = CacheKey {
-            qname: qname.to_string(),
-            qtype,
-            qclass,
-        };
+    pub(super) fn get(&self, query: &DnsQuery, key: &LookupKey, policy: &NetworkMechanics) -> Option<Vec<u8>> {
+        let qname = query.qname.as_str();
+        let qtype = query.qtype;
+        let query_id = query.id;
         let now = Instant::now();
         let mut guard = self.inner.lock().unwrap();
-        let Some(entry) = guard.get(&key) else {
+        let Some(entry) = guard.get(key) else {
             drop(guard);
             return None;
         };
         if entry.expires_at <= now {
             // Lazy expiry: drop the stale entry so the next
             // lookup is a clean miss without re-checking expiry.
-            guard.pop(&key);
+            guard.pop(key);
             drop(guard);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(qname, qtype, "dns cache: expired entry evicted");
@@ -143,13 +133,14 @@ impl DnsAnswerCache {
         // enforcement happens before cache lookup in the DNS handler, so this
         // cache layer does not own allow/block decisions.
         if policy.find_dns_redirect(qname, qtype).is_some() {
-            guard.pop(&key);
+            guard.pop(key);
             drop(guard);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(qname, qtype, "dns cache: entry invalidated by redirect change");
             return None;
         }
-        let mut bytes = entry.bytes.clone();
+        let bytes = entry.bytes.clone();
+        let remaining = entry.expires_at.duration_since(now).as_secs_f64().ceil() as u32;
         drop(guard);
         // Patch the current query's transaction id into bytes 0-1
         // (RFC 1035 sec 4.1.1: the ID field is the first 16 bits of
@@ -157,11 +148,20 @@ impl DnsAnswerCache {
         // with the original requesting query's id; subsequent
         // queries to the same name MUST get their own id back or
         // their resolver discards the response.
-        if bytes.len() >= 2 {
-            let id_be = query_id.to_be_bytes();
-            bytes[0] = id_be[0];
-            bytes[1] = id_be[1];
+        let mut message = Message::from_vec(&bytes).ok()?;
+        message.metadata.id = query_id;
+        for record in message
+            .answers
+            .iter_mut()
+            .chain(message.authorities.iter_mut())
+            .chain(message.additionals.iter_mut())
+        {
+            // OPT's TTL-shaped field carries EDNS flags, not a lifetime.
+            if !matches!(record.data, RData::OPT(_)) {
+                record.ttl = record.ttl.min(remaining);
+            }
         }
+        let bytes = message.to_vec().ok()?;
         ::metrics::counter!(m::DNS_CACHE_HITS_TOTAL).increment(1);
         trace!(qname, qtype, query_id, "dns cache: hit");
         Some(bytes)
@@ -169,23 +169,42 @@ impl DnsAnswerCache {
 
     /// Insert an Allowed response for future hits. The TTL is
     /// derived from the answer wire bytes (minimum across all
-    /// answer records, clamped to `[MIN_TTL_SECS, max_ttl]`). On
+    /// answer records, capped by `max_ttl`). Zero prohibits caching. On
     /// LRU eviction, the `mitm.dns_cache_evictions_total` counter
     /// fires.
-    pub fn insert(&self, qname: &str, qtype: u16, qclass: u16, answer_bytes: &[u8]) {
+    pub(super) fn insert(&self, key: &LookupKey, answer_bytes: &[u8]) {
         let ttl = ttl_from_answer(answer_bytes, self.max_ttl);
+        if ttl.is_zero() {
+            return;
+        }
         let entry = Entry {
             bytes: answer_bytes.to_vec(),
             expires_at: Instant::now() + ttl,
         };
-        let key = CacheKey {
-            qname: qname.to_string(),
-            qtype,
-            qclass,
-        };
+        let key = key.clone();
         let mut guard = self.inner.lock().unwrap();
         let evicted = guard.push(key, entry);
         drop(guard);
+        if evicted.is_some() {
+            ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
+        }
+    }
+
+    /// Remember an upstream NXDOMAIN for this exact query. The TTL
+    /// is the smaller of the authority section's SOA minimum (RFC 2308) and
+    /// `NEGATIVE_MAX_TTL_SECS`; zero or absent SOA disables reuse. Only an Allowed
+    /// query reaches the upstream, so a denied name can never land here.
+    pub(super) fn insert_negative(&self, key: &LookupKey, answer_bytes: &[u8]) {
+        let ttl = negative_ttl_from_answer(answer_bytes).min(self.max_ttl);
+        if ttl.is_zero() {
+            return;
+        }
+        let entry = Entry {
+            bytes: answer_bytes.to_vec(),
+            expires_at: Instant::now() + ttl,
+        };
+        let key = key.clone();
+        let evicted = self.inner.lock().unwrap().push(key, entry);
         if evicted.is_some() {
             ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
         }
@@ -209,21 +228,64 @@ impl DnsAnswerCache {
     }
 }
 
-/// Extract the cache TTL from an answer message.
+/// Extract the cache TTL from a positive answer message.
 ///
-/// Logic: take `min(record.ttl)` across every answer record, clamp
-/// to `[MIN_TTL_SECS, max_ttl]`. Empty answer section (NoData) gets
-/// `MIN_TTL_SECS` so we still cache the negative-shape answer
-/// briefly. Decode failure short-circuits to `MIN_TTL_SECS` to
-/// avoid hot-looping on a malformed answer that the resolver
-/// somehow accepted.
+/// Use the shortest record lifetime, never extending it. Empty answers
+/// (NODATA) need the same authoritative SOA lifetime as NXDOMAIN.
+/// Malformed or truncated answers are not cached.
 fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
     let answer_ttl = match Message::from_vec(answer_bytes) {
-        Ok(m) if !m.answers.is_empty() => m.answers.iter().map(|r| r.ttl).min().unwrap_or(MIN_TTL_SECS),
-        _ => MIN_TTL_SECS,
+        Ok(m) if !m.metadata.truncation && !m.answers.is_empty() => m
+            .answers
+            .iter()
+            .chain(m.authorities.iter())
+            .chain(m.additionals.iter())
+            .filter_map(record_cache_ttl)
+            .min()
+            .unwrap_or(0),
+        Ok(m) if !m.metadata.truncation => return negative_ttl_from_answer(answer_bytes).min(max_ttl),
+        _ => 0,
     };
-    let clamped = u64::from(answer_ttl.max(MIN_TTL_SECS));
-    Duration::from_secs(clamped).min(max_ttl)
+    Duration::from_secs(u64::from(answer_ttl)).min(max_ttl)
+}
+
+/// The TTL for a negative answer: the SOA minimum from the authority
+/// section when the upstream sent one, capped at `NEGATIVE_MAX_TTL_SECS`.
+/// Without a SOA (or with undecodable bytes) there is no authoritative
+/// negative lifetime; zero must not be promoted to a cacheable lifetime.
+fn negative_ttl_from_answer(answer_bytes: &[u8]) -> Duration {
+    let soa_minimum = Message::from_vec(answer_bytes).ok().and_then(|message| {
+        if message.metadata.truncation {
+            return None;
+        }
+        let soa_minimum = message
+            .authorities
+            .iter()
+            .filter_map(|record| match &record.data {
+                RData::SOA(soa) => Some(record.ttl.min(soa.minimum)),
+                _ => None,
+            })
+            .min()?;
+        let shortest_record = message
+            .answers
+            .iter()
+            .chain(message.authorities.iter())
+            .chain(message.additionals.iter())
+            .filter_map(record_cache_ttl)
+            .min()
+            .unwrap_or(0);
+        Some(soa_minimum.min(shortest_record))
+    });
+    let secs = soa_minimum.unwrap_or(0).min(NEGATIVE_MAX_TTL_SECS);
+    Duration::from_secs(u64::from(secs))
+}
+
+fn record_cache_ttl(record: &hickory_proto::rr::Record) -> Option<u32> {
+    match &record.data {
+        RData::OPT(_) => None,
+        RData::SOA(soa) => Some(record.ttl.min(soa.minimum)),
+        _ => Some(record.ttl),
+    }
 }
 
 #[cfg(test)]

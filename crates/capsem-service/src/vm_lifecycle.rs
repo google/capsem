@@ -258,12 +258,13 @@ pub(super) async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
 /// `ShutdownMode::Retain` sends `ServiceToProcess::Shutdown` via IPC so
-/// the guest agent can `sync()` and bash can run traps / save history, then
-/// waits up to 5s for natural exit. The in-process 2.5s self-timer in
-/// capsem-process (capsem-process/src/vsock.rs, ServiceToProcess::Shutdown
-/// branch) sets the floor at ~2.5s. Required for `handle_stop` on
-/// persistent VMs (preserves workspace state) and `handle_run` (session DB
-/// rollup reads main.db after exit).
+/// the guest agent can `sync()` and bash can save history, then waits for
+/// natural exit. capsem-process stops the VM as soon as the guest reports
+/// `ShutdownComplete` (capsem-process/src/vsock/shutdown.rs), so a clean
+/// stop costs the shell's exit, not a timer; `SHUTDOWN_COMPLETE_TIMEOUT_SECS`
+/// bounds a silent guest. Required for `handle_stop` on persistent VMs
+/// (preserves workspace state) and `handle_run` (session DB rollup reads
+/// main.db after exit).
 ///
 /// `ShutdownMode::Discard` means the caller is permanently deleting the session,
 /// so its guest state and per-session ledger are explicitly disposable. Kill

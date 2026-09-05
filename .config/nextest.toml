@@ -12,6 +12,8 @@ store-failure-output = true
 
 [profile.ci-unit]
 inherits = "ci"
+# Report all platform failures in one run; any failure still fails the job.
+fail-fast = false
 
 [profile.ci-unit.junit]
 path = "junit.xml"
