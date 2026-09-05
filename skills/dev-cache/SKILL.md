@@ -139,6 +139,13 @@ rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
 resource teardown. Do not manage its daemon in shell or disable Cargo
 incremental compilation without a measured workload-specific reason.
 
+Keep the checkout-local `build.rustc-workspace-wrapper` configured in Cargo.
+Cargo includes its resolved path in workspace artifact keys, separating source
+trees while third-party dependencies stay shared. Without it, an older snapshot
+can be incorrectly considered fresh after a newer worktree compiled into the
+shared target, even with sccache disabled. Test both output correctness across
+trees and warm reuse on return; clearing the cache would hide this failure.
+
 Never make normal cache reuse opt-in. Do not clean caches to diagnose a product
 failure unless cold-state behavior is itself the subject under test.
 

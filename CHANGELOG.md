@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktrees instead of reusing binaries for different source contents.
   Compiler inputs are refreshed again under the machine lock, so a build that
   finishes while another checkout queues cannot supply that checkout's binary.
+- Shared Cargo caches isolate workspace outputs by checkout, preventing an older
+  release snapshot from silently reusing another worktree's compiled code while
+  retaining warm third-party dependencies and exact-checkout reuse.
 - Resuming a persistent VM protects its socket and session state from delayed
   cleanup of the previous process, preventing intermittent execution failures
   while still reporting crashed restores immediately.

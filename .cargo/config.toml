@@ -1,6 +1,12 @@
 [build]
 target-dir = "cache/target/cargo"
 dep-info-basedir = "."
+# Cargo hashes this resolved path for workspace crates, but not dependencies.
+rustc-workspace-wrapper = "build_system/scripts/build/rustc-workspace-wrapper.sh"
+
+[env]
+# sccache uses CARGO to recognize nested workspace wrappers during rustc probes.
+CARGO = "cargo"
 
 [target.'cfg(target_os = "macos")']
 runner = "build_system/packaging/macos/run_signed.sh"

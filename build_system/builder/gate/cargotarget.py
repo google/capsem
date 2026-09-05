@@ -11,8 +11,10 @@ Sharing is sound for the reason lending is not. Cargo records `OUT_DIR` under
 whatever target directory it was given, so a build script's generated paths name
 the prefix that produced them and the next run is a different prefix -- Tauri's
 permission files hit exactly that. At one absolute path the baked-in paths stay
-true, and cargo's fingerprints decide what is stale, which is the same judgement
-a developer relies on when switching branches in one checkout.
+true. The checkout-local rustc workspace wrapper salts first-party artifact
+hashes: unlike switching branches in place, an older pre-created snapshot has
+no newer source mtime to invalidate another tree's objects. Dependencies still
+share their keys, and returning to an unchanged checkout reuses its own output.
 
 The immutable object store is also machine-owned. Linking it here lets focused
 builds and exact-source prefixes exchange verified component generations while
