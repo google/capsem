@@ -105,6 +105,12 @@ def enforce(context, cache_id, reason) -> None:
     click.echo(json.dumps([item.model_dump(mode="json") for item in decisions], indent=2))
     violations = tuple(error for item in decisions for error in item.violations)
     if violations:
+        # A caller may tear down its container immediately after this exits.
+        # Preserve the live resource breakdown, not just an unexplained total.
+        try:
+            click.echo(scan_runtimes(policy).model_dump_json(indent=2), err=True)
+        except (OSError, ValueError) as error:
+            click.echo(f"Runtime inventory unavailable: {error}", err=True)
         raise click.ClickException("; ".join(violations))
 
 

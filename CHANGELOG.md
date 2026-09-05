@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cache enforcement failures retain the live native-resource breakdown before
+  test containers are torn down, without hiding the original limit violation.
 - The code and co-work profiles advance independently to 0.6.2, carrying the
   guest reliability and benchmark improvements accompanying binary 0.6.3.
 - Capsem advances to version 0.6.3 for the cache-control, test-performance,

@@ -136,6 +136,35 @@ def test_current_ci_workflow_is_owned_and_enforced() -> None:
     assert not problems, CI_SCOPE_RATIONALE + "\n" + "\n".join(problems)
 
 
+def test_guest_musl_builds_use_both_native_linux_c_toolchains() -> None:
+    jobs = _workflow()["jobs"]
+    linux = jobs["test-linux"]
+    assert linux["runs-on"] == "${{ matrix.runner }}"
+    assert linux["strategy"]["fail-fast"] is False
+    assert linux["strategy"]["matrix"]["include"] == [
+        {"runner": "ubuntu-24.04-arm", "architecture": "arm64", "guest_target": "aarch64-unknown-linux-musl"},
+        {"runner": "ubuntu-24.04", "architecture": "x86_64", "guest_target": "x86_64-unknown-linux-musl"},
+    ]
+    steps = linux["steps"]
+    build = next(step for step in steps if step.get("name") == "Build native musl guest binaries")
+    assert build["run"] == 'cargo build --locked --release --target "$GUEST_TARGET" -p capsem-agent'
+    assert build["env"] == {
+        "GUEST_TARGET": "${{ matrix.guest_target }}",
+        "CC_aarch64_unknown_linux_musl": "musl-gcc",
+        "CC_x86_64_unknown_linux_musl": "musl-gcc",
+    }
+    provisioning = next(
+        step for step in steps if step.get("name") == "Install Linux workspace lint prerequisites"
+    )
+    assert steps.index(provisioning) < steps.index(build)
+    assert not any(
+        "unknown-linux-musl -p capsem-agent" in step.get("run", "")
+        for step in jobs["test"]["steps"]
+    ), "macOS lacks the native musl C toolchain; both production guest targets belong to Linux"
+    upload = next(step for step in steps if step.get("name") == "Upload test artifacts on failure (Linux)")
+    assert "${{ matrix.architecture }}" in upload["with"]["name"]
+
+
 def test_ci_jobs_are_selected_by_one_fail_closed_owner_stream() -> None:
     workflow = _workflow()
     jobs = workflow["jobs"]

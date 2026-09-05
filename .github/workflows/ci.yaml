@@ -54,7 +54,17 @@ jobs:
   test-linux:
     needs: scope
     if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-linux') }}
-    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            guest_target: aarch64-unknown-linux-musl
+          - runner: ubuntu-24.04
+            architecture: x86_64
+            guest_target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
@@ -116,6 +126,16 @@ jobs:
         timeout-minutes: 45
         run: just test-linux-rust
 
+      # cargo check still runs BLAKE3's native SIMD build. Both guest targets
+      # belong on their native Linux C toolchain, already provisioned above.
+      # Build and link the production feature set, not a pure-Rust substitute.
+      - name: Build native musl guest binaries
+        env:
+          GUEST_TARGET: ${{ matrix.guest_target }}
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo build --locked --release --target "$GUEST_TARGET" -p capsem-agent
+
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -158,7 +178,8 @@ jobs:
 
           | Metric | Result |
           |--------|--------|
-          | Runner | ubuntu-24.04-arm (aarch64) |
+          | Runner | ${{ matrix.runner }} (${{ matrix.architecture }}) |
+          | Guest target | ${{ matrix.guest_target }} |
           | /dev/kvm | $KVM_STATUS |
           | Line coverage | $COV |
           | KVM backend | compiled (real-KVM tests run only when /dev/kvm is present) |
@@ -169,7 +190,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: test-artifacts-linux-${{ github.run_attempt }}
+          name: test-artifacts-linux-${{ matrix.architecture }}-${{ github.run_attempt }}
           path: cache/target/tests/evidence/
           retention-days: 7
           if-no-files-found: ignore
@@ -195,13 +216,6 @@ jobs:
           components: llvm-tools
 
       - uses: ./.github/actions/rust-cache
-
-      # cargo check still compiles native build dependencies such as BLAKE3.
-      - name: Install guest cross C toolchains
-        run: >-
-          brew install
-          messense/macos-cross-toolchains/aarch64-unknown-linux-musl
-          messense/macos-cross-toolchains/x86_64-unknown-linux-musl
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -404,17 +418,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
-      - name: Cross-compile check (guest binaries)
-        env:
-          CC_aarch64_unknown_linux_musl: aarch64-unknown-linux-musl-gcc
-          AR_aarch64_unknown_linux_musl: aarch64-unknown-linux-musl-ar
-          CC_x86_64_unknown_linux_musl: x86_64-unknown-linux-musl-gcc
-          AR_x86_64_unknown_linux_musl: x86_64-unknown-linux-musl-ar
-        run: |
-          cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
-          cargo check --release --target x86_64-unknown-linux-musl -p capsem-agent
-
       - name: Test summary
         if: always()
         run: |
@@ -427,7 +430,7 @@ jobs:
           |--------|--------|
           | Line coverage | $COV |
           | Test results | See Codecov test analytics |
-          | Cross-compile | aarch64-unknown-linux-musl |
+          | Guest compilation | ARM64 and x86_64 musl builds owned by test-linux |
           | Audit | npm bulk advisory API (RustSec runs in security-audit.yaml) |
 
           > Coverage covers library crates + gateway (capsem-core, agent, logger, proto, gateway).

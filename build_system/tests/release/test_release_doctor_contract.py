@@ -704,17 +704,6 @@ def test_macos_ci_installs_release_site_dependencies_before_integration() -> Non
     assert job.index(install) < job.index(integration)
 
 
-def test_macos_guest_cross_checks_have_native_c_toolchains() -> None:
-    steps = _workflow_job("test")["steps"]
-    install = next(step for step in steps if step.get("name") == "Install guest cross C toolchains")
-    check = next(step for step in steps if step.get("name") == "Cross-compile check (guest binaries)")
-    assert steps.index(install) < steps.index(check)
-    for target in re.findall(r"--target (\S+)", check["run"]):
-        assert f"messense/macos-cross-toolchains/{target}" in install["run"]
-        assert check["env"][f"CC_{target.replace('-', '_')}"] == f"{target}-gcc"
-        assert check["env"][f"AR_{target.replace('-', '_')}"] == f"{target}-ar"
-
-
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
     workflow = yaml.safe_load(
         (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text(encoding="utf-8")

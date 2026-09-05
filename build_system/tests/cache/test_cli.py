@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+from capsem_builder.cache import controlcli
 from capsem_builder.cache.cli import main
 from click.testing import CliRunner
 
@@ -166,3 +168,40 @@ def test_stats_reports_maximum_violation(tmp_path: Path) -> None:
     report = json.loads(result.output)
     assert not report["healthy"]
     assert report["caches"][0]["state"] == "above-max"
+
+
+def test_enforcement_failure_reports_live_runtime_inventory(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    policy = root / "config/cache.toml"
+    policy.write_text(policy.read_text().replace('prune_strategy = "lru"', 'prune_strategy = "none"'))
+    payload = root / "cache/target/objects/one/payload"
+    payload.parent.mkdir(parents=True)
+    payload.write_bytes(b"protected-over-max")
+
+    result = invoke(root, "enforce", "objects")
+
+    assert result.exit_code == 1, result.output
+    assert payload.read_bytes() == b"protected-over-max"
+    assert '"runtimes": []' in result.stderr
+    assert "above max" in result.stderr
+
+
+@pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("invalid inventory")])
+def test_enforcement_diagnostics_preserve_primary_failure(tmp_path: Path, monkeypatch, error) -> None:
+    root = repository(tmp_path)
+    policy = root / "config/cache.toml"
+    policy.write_text(policy.read_text().replace('prune_strategy = "lru"', 'prune_strategy = "none"'))
+    payload = root / "cache/target/objects/one/payload"
+    payload.parent.mkdir(parents=True)
+    payload.write_bytes(b"protected-over-max")
+
+    def unavailable(_policy):
+        raise error
+
+    monkeypatch.setattr(controlcli, "scan_runtimes", unavailable)
+    result = invoke(root, "enforce", "objects")
+
+    assert result.exit_code == 1, result.output
+    assert "Runtime inventory unavailable:" in result.stderr
+    assert "Error: objects uses 18 bytes above max size 3" in result.stderr
+    assert payload.read_bytes() == b"protected-over-max"
