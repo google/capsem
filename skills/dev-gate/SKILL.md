@@ -11,8 +11,8 @@ conventions.
 
 `just test` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
-step/action count depend on machine state. Release commands consume its exact
-commit journal at their first edge rather than repeating that plan.
+step/action count depend on machine state. Release commands self-qualify in
+hosted lanes and never require this optional local journal.
 
 ## The rule everything else follows from
 
@@ -102,8 +102,8 @@ the Seatbelt-style attempted-egress ledger.
 ordinary actions through the config-owned environment name. Outside-sandbox
 actions clear it. Host Doctor combines owning-command policy with live kernel
 state; the machine-lock marker proves only lock ownership, never enforcement.
-Candidate produces complete qualification; both release commands require its
-exact journal. All three accept only `enforce`: explicit `off` or `report` is
+Candidate produces optional local qualification; release commands dispatch
+hosted qualification. All three accept only `enforce`: explicit `off` or `report` is
 refused before plan construction, re-exec, or resource acquisition. Measure a
 changing rule through an incomplete module, whose evidence cannot qualify.
 

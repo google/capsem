@@ -44,8 +44,9 @@ when complete local whole-system verification is useful.
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
 and batch adjacent parity fixes before paying for the complete gate. Run it
-once when the forward-fix source state is ready; any later production or gate
-change needs one new complete run.
+only when explicitly requested. Later fixes use focused owners; a gate-policy
+edit is not permission for another full run. Release commands self-qualify and
+do not require a developer-machine complete run.
 
 `just test` deliberately accepts committed or uncommitted developer work. It
 records `HEAD` plus a digest of every tracked and untracked non-ignored source

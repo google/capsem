@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Failed or interrupted complete local tests now block automatic full reruns;
+  retries require an explicitly approved reason, while focused checks and
+  self-qualifying release commands remain available.
 - Shared Cargo caches isolate workspace outputs by checkout, preventing an older
   release snapshot from silently reusing another worktree's compiled code while
   retaining warm third-party dependencies and exact-checkout reuse.

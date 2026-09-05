@@ -110,3 +110,28 @@ def load(config: GateConfig, path: Path) -> Attempt | None:
         return Attempt(reference(config, path), start, shape, end, steps, resumed, complete, reused)
     except (KeyError, OSError, TypeError, ValueError):
         return None
+
+
+def latest_attempt(config: GateConfig) -> Attempt | None:
+    """Newest terminal candidate that actually ran, never a qualification verdict.
+
+    Failed and interrupted runs bound repeat spending too. Read the existing
+    source archives so upgrading the guard also accounts for earlier attempts.
+    """
+    archive = config.path(config.runlog.root) / config.runlog.source_archive_dir
+    if archive.is_symlink() or not archive.is_dir():
+        return None
+    paths = (
+        path for directory in archive.iterdir()
+        if directory.is_dir() and not directory.is_symlink()
+        for path in directory.glob("*.jsonl")
+    )
+    for path in sorted(paths, key=lambda item: item.name, reverse=True):
+        attempt = load(config, path)
+        if (
+            attempt is not None and attempt.steps and attempt.reused is None
+            and attempt.start.command == "candidate"
+            and attempt.start.source_commit == attempt.start.head == path.parent.name
+        ):
+            return attempt
+    return None

@@ -131,6 +131,10 @@ artifact frontiers instead of rebuilding them. Low-impact paths are routed by
 commit distance. Release commands self-qualify and do not consume a local
 `just test` prerequisite.
 
+After a failed or interrupted full attempt, automatic retries are refused.
+Use focused checks; obtain explicit approval for each reasoned full retry.
+The existing run journals supply this guard, not another history store.
+
 Working-tree gates derive their private prefix name from the exact source
 digest. Do not replace it with a random run ID: Cargo fingerprints contain
 absolute source paths, so random prefixes turn an unchanged repeat into a

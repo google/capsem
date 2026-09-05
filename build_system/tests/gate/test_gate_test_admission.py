@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from capsem_builder.cache.gitmodels import GitImpact
@@ -17,6 +18,11 @@ from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 COMMIT = SourceCommit("a" * 40)
+
+
+@pytest.fixture(autouse=True)
+def isolate_attempt_history(monkeypatch) -> None:
+    monkeypatch.setattr(testadmission.qualificationjournal, "latest_attempt", lambda _: None)
 
 
 def arguments(**overrides: object) -> argparse.Namespace:
@@ -117,3 +123,27 @@ def test_recording_runner_never_mutates_admission_state(monkeypatch) -> None:
 
     testadmission.admit(command, COMMIT)
     testadmission.complete(command, COMMIT)
+
+
+def test_failed_attempt_refuses_before_recording_or_any_plan_work(monkeypatch) -> None:
+    from capsem_builder.gate import prefix, qualificationflow
+    from capsem_builder.gate.plan import Plan
+
+    monkeypatch.setattr(testadmission.qualificationevidence, "latest_complete", lambda _: None)
+    monkeypatch.setattr(
+        testadmission.qualificationjournal, "latest_attempt",
+        lambda _: SimpleNamespace(end=SimpleNamespace(status="failed")),
+    )
+    monkeypatch.setattr(testadmission, "last_admission_event", lambda *_: None)
+    monkeypatch.setattr(prefix, "active", lambda *_: True)
+    monkeypatch.setattr(
+        qualificationflow, "decide",
+        lambda *args, **kwargs: qualificationflow.Decision(None, None, frozenset(), None),
+    )
+    command = CandidateCommand(Runner(PROJECT_ROOT), arguments())
+    monkeypatch.setattr(command, "_describe", lambda: Plan("candidate"))
+    monkeypatch.setattr(command, "reexec", lambda: None)
+    monkeypatch.setattr(command, "_recording", lambda **_: pytest.fail("refused run started work"))
+
+    with pytest.raises(GateError, match="explicitly approved retry"):
+        command.execute()

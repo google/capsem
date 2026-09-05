@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from capsem_builder.cache.admission import decide_admission
 from capsem_builder.cache.models import (
     CachePolicy,
@@ -95,3 +96,24 @@ def test_no_prior_complete_proof_allows_a_baseline_run() -> None:
 
     assert decision.allowed is True
     assert "baseline" in decision.explanation
+
+
+@pytest.mark.parametrize("changes", [(), ("config/settings/settings.toml",), ("unknown.rs",)])
+@pytest.mark.parametrize("baseline", [None, "a" * 40])
+def test_failed_full_attempt_blocks_automatic_retries_regardless_of_impact(changes, baseline) -> None:
+    decision = decide(
+        failed_attempt=True, baseline=baseline, changed_paths=changes,
+        commits_since_success=100,
+    )
+    assert not decision.allowed
+    assert "focused checks" in decision.explanation
+
+
+def test_approved_retry_remains_possible_after_a_failed_forced_attempt() -> None:
+    missing = decide(failed_attempt=True, forced=True, prior_forced=True)
+    approved = decide(
+        failed_attempt=True, forced=True, prior_forced=True,
+        force_reason="User approved retry after repairing the failed owner",
+    )
+    assert not missing.allowed
+    assert approved.allowed and approved.forced

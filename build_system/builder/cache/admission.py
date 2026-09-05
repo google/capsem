@@ -28,18 +28,21 @@ def decide_admission(
     forced: bool,
     force_reason: str,
     prior_forced: bool,
+    failed_attempt: bool = False,
 ) -> AdmissionDecision:
     """Admit full proof only when its source impact or cadence justifies it."""
     routed = _groups(policy, changed_paths) if changed_paths else None
     high_impact = routed is None
     if forced and not force_reason.strip():
         allowed, explanation = False, "forced full test requires a non-empty reason"
-    elif forced and prior_forced:
+    elif forced and prior_forced and not failed_attempt:
         allowed, explanation = False, "consecutive forced full-test attempts are refused"
     elif forced:
         allowed, explanation = True, f"forced by operator: {force_reason.strip()}"
+    elif failed_attempt:
+        allowed, explanation = False, "the last full attempt failed or was interrupted; use focused checks or an explicitly approved retry"
     elif baseline is None:
-        allowed, explanation = True, "no complete baseline exists; full proof is required"
+        allowed, explanation = True, "no complete baseline exists; initial local proof is optional"
     elif high_impact:
         allowed, explanation = True, "changed paths are high-impact or unknown"
     elif commits_since_success >= policy.minimum_commits:

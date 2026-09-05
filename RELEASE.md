@@ -547,9 +547,15 @@ runtime. At ten commits the complete proof is eligible again.
 
 The exceptional spelling is
 `just test <source-commit> force "<reason>"`. Its non-empty reason MUST be
-recorded before work starts, and a second consecutive forced attempt MUST be
-refused. Only a successful non-forced complete run resets that rail. Admission
-state is cache control evidence, never a cross-source behavioral verdict.
+recorded before work starts. After a failed or interrupted full attempt,
+automatic full runs MUST be refused regardless of changed paths or commit
+count; agents MUST obtain explicit approval for each reasoned retry. Focused
+checks and the self-qualifying release commands remain available. An approved
+retry after failure MUST remain possible even if the failed attempt was forced.
+Otherwise a second consecutive forced attempt MUST be refused; only successful
+non-forced complete proof resets that rail. Failed attempts are spending
+history, never successful qualification evidence. Exact successful journal
+reuse remains available without running the full plan again.
 
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same
