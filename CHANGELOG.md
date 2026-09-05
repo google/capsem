@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Multiplexed guest DNS remains compatible with older hosts: replies without
+  correlation IDs require an unambiguous match to the original DNS question.
 - Worktree test gates preserve the shared cache authority across re-execution,
   so guest tests launch the host binaries they just built.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,

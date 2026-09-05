@@ -198,7 +198,26 @@ impl DnsSession {
             }
         };
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(entry) = pending.get(&response.id) else {
+        // Pre-multiplexing hosts omit the correlation id. Preserve their
+        // DNS wire identity checks, and never guess between duplicate queries.
+        let id = if response.id == 0 {
+            let mut matches = pending.iter().filter(|(_, entry)| {
+                entry
+                    .expected
+                    .as_ref()
+                    .is_some_and(|question| question.is_answered_by(&response.raw))
+            });
+            let Some((&id, _)) = matches.next() else {
+                return;
+            };
+            if matches.next().is_some() {
+                return;
+            }
+            id
+        } else {
+            response.id
+        };
+        let Some(entry) = pending.get(&id) else {
             eprintln!(
                 "[capsem-dns-proxy] session {}: answer for unknown query id {}; discarded",
                 self.index, response.id
@@ -217,7 +236,7 @@ impl DnsSession {
             );
             return;
         }
-        if let Some(entry) = pending.remove(&response.id) {
+        if let Some(entry) = pending.remove(&id) {
             drop(pending);
             let _ = entry.reply.send(Ok(response));
         }

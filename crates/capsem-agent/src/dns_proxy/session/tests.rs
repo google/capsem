@@ -233,6 +233,82 @@ async fn answers_for_unknown_ids_or_other_questions_are_discarded_and_the_query_
 }
 
 #[tokio::test]
+async fn legacy_host_answers_without_correlation_ids_still_resolve() {
+    let connect = fake_host(|mut host| {
+        while let Some(request) = read_frame(&mut host) {
+            let mut response = answered(&request);
+            response.id = 0; // Older hosts omit the field; serde defaults it.
+            write_response(&mut host, &response);
+        }
+    });
+    let forwarder = DnsForwarder::new(1, connect);
+    let (first, second) = tokio::join!(
+        forwarder.forward_query(query(11, "first.example"), "udp"),
+        forwarder.forward_query(query(12, "second.example"), "udp"),
+    );
+    assert_eq!(first.unwrap().raw, answer_to(&query(11, "first.example")));
+    assert_eq!(second.unwrap().raw, answer_to(&query(12, "second.example")));
+}
+
+#[test]
+fn legacy_reply_cannot_choose_between_identical_pending_questions() {
+    let (session, _frames) = idle_session(4);
+    let raw = query(11, "same.example");
+    let mut receivers = Vec::new();
+    for id in [1, 2] {
+        let (reply, receiver) = oneshot::channel();
+        session.pending.lock().unwrap().insert(
+            id,
+            Pending {
+                expected: parse_question(&raw),
+                reply,
+            },
+        );
+        receivers.push(receiver);
+    }
+    let response = DnsResponse {
+        id: 0,
+        raw: answer_to(&raw),
+        decision: "allowed".into(),
+        rcode: 0,
+    };
+    session.deliver(&capsem_proto::encode_dns_response(&response).unwrap()[4..]);
+    assert_eq!(session.in_flight(), 2);
+    for receiver in &mut receivers {
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+    }
+}
+
+#[test]
+fn legacy_reply_must_match_the_only_pending_question() {
+    let (session, _frames) = idle_session(4);
+    let raw = query(11, "victim.example");
+    let (reply, mut receiver) = oneshot::channel();
+    session.pending.lock().unwrap().insert(
+        1,
+        Pending {
+            expected: parse_question(&raw),
+            reply,
+        },
+    );
+    for wrong in [
+        Vec::new(),
+        answer_to(&query(11, "attacker.example")),
+        answer_to(&query(12, "victim.example")),
+    ] {
+        let response = DnsResponse {
+            id: 0,
+            raw: wrong,
+            decision: "allowed".into(),
+            rcode: 0,
+        };
+        session.deliver(&capsem_proto::encode_dns_response(&response).unwrap()[4..]);
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+    }
+    assert_eq!(session.in_flight(), 1);
+}
+
+#[tokio::test]
 async fn in_flight_cap_sheds_without_blocking() {
     let connect = fake_host(|mut host| {
         // Read everything, answer nothing.
