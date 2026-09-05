@@ -633,8 +633,9 @@ def test_a_local_server_that_never_reports_ready_fails(
         proof.start_local_server()
 
 
+@pytest.mark.parametrize("diagnostics_fail", [False, True])
 def test_the_container_is_torn_down_even_when_the_proof_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostics_fail: bool
 ) -> None:
     """The shell used an EXIT trap; this is the same guarantee without `$?`.
 
@@ -645,10 +646,10 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
     runner = RecordingRunner(
         root,
         replies={"dpkg-deb -f": VERSION, "systemctl is-system-running": "running"},
-        failures=["dpkg -i"],
+        failures=["dpkg -i", *(["du "] if diagnostics_fail else [])],
     )
 
-    with pytest.raises(GateError):
+    with pytest.raises(GateError, match="dpkg -i"):
         InstallGate(
             runner,
             content=LocalInstallContent(_local_content(root)),
@@ -662,6 +663,9 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
         r"dpkg -i"
     )
     assert runner.ran(r"capsem-cache .* prune --apply")
+    diagnostic = runner.index_of(r"docker exec capsem-install-test du ")
+    assert runner.index_of(r"dpkg -i") < diagnostic
+    assert diagnostic < runner.last_index_of(r"docker rm -f -v capsem-install-test")
 
 
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:

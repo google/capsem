@@ -108,6 +108,9 @@ class InstallGate:
             self._cache.enforce("docker", "install")
             self._container.start(options=options)
             self._prove(package)
+        except GateError:
+            self._container.capture_storage_failure()
+            raise
         finally:
             # Ordered: clear the handoff before the container goes, or the next
             # install in this checkout inherits a request pointing at a graph
@@ -177,10 +180,7 @@ class InstallGate:
         # back before invoking the host controller; cleanup restores the rest.
         state = cachelayout.stage_relative_path(self._config, "state")
         self._container.hand_back(f"{self._settings.mount}/{state}")
-        # Package and image assembly can consume the reserve measured at start.
-        # The runtime-only tail needs far less than compilation, but keeps a
-        # cushion so ENOSPC fails here with diagnostics rather than deep inside
-        # a fixture after hours of otherwise-green release work.
+        # Recheck owned usage after package installation, before VM fixtures.
         self._cache.enforce("docker", "install")
 
         self._proof.run_install_suite()

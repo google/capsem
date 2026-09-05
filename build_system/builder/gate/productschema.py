@@ -144,6 +144,7 @@ class InstallConfig(Strict):
     systemd_command: str
     cgroup_path: str
     tmpfs_paths: tuple[str, ...]
+    failure_storage_commands: tuple[tuple[str, ...], ...]
     bin_dir: str
     installed_capsem: str
     capsem_home: str

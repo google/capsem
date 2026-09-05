@@ -237,6 +237,14 @@ class InstallContainer:
     def stop(self) -> None:
         self._docker.remove(self.name)
 
+    def capture_storage_failure(self) -> None:
+        """Keep filesystem attribution in the run log before scratch teardown."""
+        for command in self._settings.failure_storage_commands:
+            try:
+                self._docker.exec(self.name, list(command), check=False)
+            except (GateError, OSError) as error:
+                self._runner.note(f"Install storage diagnostics unavailable: {error}")
+
 
 def await_systemd(
     docker: Docker,
