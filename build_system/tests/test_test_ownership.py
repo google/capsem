@@ -29,6 +29,7 @@ PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/relea
 BOUNDARY_FILES = frozenset(
     {
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
+        "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/cache/test_admission.py",
         "build_system/tests/cache/test_admission_state.py",
         "build_system/tests/cache/test_cli.py",
