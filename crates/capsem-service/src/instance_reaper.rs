@@ -25,10 +25,6 @@ pub(super) fn spawn_exit_reaper(
     let pid = child.id();
     tokio::spawn(async move {
         let exit_status = child.wait().await.ok();
-        // Reap the OS child before waiting: stop/restore can hold this lock
-        // while waiting for process exit. Cleanup, however, must finish before
-        // resume reuses the session's socket and ready sentinel.
-        let _lifecycle_guard = state.save_restore_lock.read().await;
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
 
         // An ephemeral VM's removal from the instances map below is the
@@ -51,6 +47,17 @@ pub(super) fn spawn_exit_reaper(
             }
             instances.remove(&id)
         };
+        // Publish the exit before waiting: restore holds the write guard
+        // while readiness polls this registry to detect a crashed child.
+        // Filesystem/DB cleanup must not overlap the replacement's launch.
+        let _lifecycle_guard = state.save_restore_lock.read().await;
+        if state.instances.lock().unwrap().contains_key(&id) {
+            tracing::debug!(
+                id,
+                "session replaced while exit cleanup waited; leaving replacement intact"
+            );
+            return;
+        }
         state.unregister_session_db_handle(&id);
         // A session persisted while it ran still lives under sessions/; now
         // that nothing holds it by path, move it home. The bookkeeping below
