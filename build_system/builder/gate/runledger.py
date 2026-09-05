@@ -25,68 +25,15 @@ from pathlib import Path
 from typing import TypeVar
 
 from .config import GateConfig
-from .configschema import Strict
 from .digestschema import LedgerConfig
 from .filesystem import write_text
 from .harnessschema import RunLogConfig
 from .runhistory import history_locked, read, runs
+from .runledgerschema import LedgerRow, StepRow
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
 from .timing import measure
 
 Model = TypeVar("Model", RunStart, PlanShape, RunEnd)
-
-
-class StepRow(Strict):
-    """What one step cost, and whether that cost measured anything.
-
-    `status` is kept beside the duration because a skipped step records a
-    duration near zero, and a median taken over those reports a build that
-    never ran as the fastest one on record.
-    """
-
-    duration_ms: float
-    status: str
-    resource_ms: float = 0.0
-    dependency_ms: float = 0.0
-    """When the graph allowed this step to start. See `Timing.dependency_waits`;
-    defaulted so a row written before the field existed still loads."""
-
-
-class LedgerRow(Strict):
-    """One finished run, distilled to what a trend can use."""
-
-    row_schema: str
-    run_id: str
-    command: str
-    head: str
-    status: str
-    total_ms: float
-
-    identity: str
-    """Digest of everything that has to match before two runs are comparable.
-
-    Stored rather than recomputed because the plan graph it summarizes is the
-    largest thing in a run log, and the ledger's whole purpose is to be small
-    enough to keep forever.
-    """
-
-    critical_path: tuple[str, ...]
-    """Computed while the graph was still on disk. After rotation there are no
-    edges left to compute it from, so a row that did not carry it would lose
-    the only measurement worth acting on."""
-
-    steps: dict[str, StepRow]
-
-    def measured(self, label: str) -> float | None:
-        """This step's duration, or nothing if it did not do the work.
-
-        `skipped` and `carried` both record a duration and neither describes
-        work this run performed. Reading them as measurements is the single
-        easiest way to produce a trend that is confidently wrong in the
-        flattering direction.
-        """
-        row = self.steps.get(label)
-        return row.duration_ms if row is not None and row.status == OK else None
 
 
 def identity(start: RunStart, shape: PlanShape) -> tuple:
@@ -130,7 +77,12 @@ def one_event(events: list[dict], model: type[Model]) -> Model | None:
     if len(matches) != 1:
         return None
     payload = {key: matches[0][key] for key in model.model_fields if key in matches[0]}
-    return model.model_validate(payload)
+    try:
+        return model.model_validate(payload)
+    except ValueError:
+        # A killed writer can leave a syntactically valid but incomplete
+        # terminal event. It is no more ledger evidence than a missing one.
+        return None
 
 
 def distill(events: list[dict], settings: LedgerConfig) -> LedgerRow | None:
@@ -198,7 +150,11 @@ def rows(config: GateConfig) -> list[LedgerRow]:
             continue
         if row.row_schema == config.runlog.ledger.row_schema:
             kept.append(row)
-    return list(reversed(kept))
+    # Run ids begin with a sortable UTC timestamp. Do not trust file order:
+    # older prefix exports once copied their private ledger over this one and
+    # could leave the newest row at the front. Every consumer wants newest
+    # first regardless of how legacy bytes happened to be arranged.
+    return sorted(kept, key=lambda row: row.run_id, reverse=True)
 
 
 def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> LedgerRow | None:
@@ -225,10 +181,10 @@ def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> Ledge
         if _already_recorded(target, row.run_id, settings.ledger.row_schema):
             return None
         existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
-        kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id][
-            -(settings.ledger.keep_rows - 1) :
-        ]
+        kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id]
         kept.append(row.model_dump_json())
+        kept.sort(key=lambda line: _raw_run_id(line) or "")
+        kept = kept[-settings.ledger.keep_rows :]
         write_text(target, "\n".join(kept) + "\n")
     return row
 

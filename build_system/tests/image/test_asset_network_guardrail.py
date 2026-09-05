@@ -345,9 +345,7 @@ def test_rootfs_binary_inputs_are_versioned_and_digest_bound_per_architecture() 
 
 
 def test_asset_python_has_no_unclassified_mutable_tool_commands() -> None:
-    inventory = _function_string_inventory(
-        PROJECT_ROOT / "build_system/builder/image/docker.py"
-    )
+    inventory = _function_string_inventory(PROJECT_ROOT / "build_system/builder/image/docker.py")
 
     # `_rootfs_context` declares commands inserted into the network-open rootfs
     # Dockerfile. `container_compile_agent` is the one sealed compiler client.
@@ -446,7 +444,9 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         "config/profiles/co-work/build.sh": Counter({"curl": 3}),
         "config/profiles/code/build.sh": Counter({"curl": 3}),
         "build_system/docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
-        "build_system/docker/Dockerfile.guest-rust-builder": Counter({"rustup": 3, "apk": 1, "cargo": 1}),
+        "build_system/docker/Dockerfile.guest-rust-builder": Counter(
+            {"rustup": 3, "cargo": 2, "apk": 1}
+        ),
     }
     candidates = {
         *PROJECT_ROOT.glob("config/docker/**/*.j2"),

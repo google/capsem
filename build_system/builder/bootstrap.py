@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+
+
+def reexec_project_python(root: Path, script: Path, argv: Sequence[str]) -> None:
+    """Enter the locked builder environment before loading package dependencies."""
+    interpreter = root / "build_system" / ".venv" / "bin" / "python"
+    if interpreter.is_file() and Path(sys.executable).resolve() != interpreter.resolve():
+        os.execv(str(interpreter), [str(interpreter), str(script), *argv])
 
 
 def mount_builder_package(root: Path) -> None:

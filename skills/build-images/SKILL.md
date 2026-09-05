@@ -326,7 +326,10 @@ every host goes through `container_compile_agent()`; native Linux has no second
 ambient Cargo/rustup rail. The asset preflight first materializes the host
 platform's config-selected exact Rust child image plus the checked-in Rust
 toolchain and `Cargo.lock`; a foreign target also materializes its exact
-config-pinned C compiler package. The actual container build runs with
+config-pinned C compiler package and both the foreign-target and host-target
+Cargo dependency sets. The host set covers target-gated build-script and
+proc-macro dependencies that `cargo fetch --target <foreign>` does not select.
+The actual container build runs with
 `--network none` and Cargo `--locked --offline`.
 
 Materialize only helpers the command can consume: every requested architecture

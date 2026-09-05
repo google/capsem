@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache.config import load_policy
-from capsem_builder.image.tools.build import clean_stale, cleanup_tmp
+from capsem_builder.image.tools.build import clean_stale
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 def _make_orphan_socket(path: Path) -> None:
@@ -192,121 +192,6 @@ def test_live_rootfs_artifact_untouched(tmp_path: Path):
     assert other.exists()
 
 
-def test_old_tmp_fixture_removed(tmp_path: Path):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    stale = tmp / "capsem-test-abc"
-    stale.mkdir()
-    old_time = time.time() - 2 * 3600  # 2 hours ago
-    os.utime(stale, (old_time, old_time))
-
-    result = clean_stale.clean_tmp_fixtures(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 1
-    assert not stale.exists()
-
-
-def test_recent_tmp_fixture_kept(tmp_path: Path):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    fresh = tmp / "capsem-e2e-fresh"
-    fresh.mkdir()
-    # mtime is now; should not be removed.
-    result = clean_stale.clean_tmp_fixtures(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 0
-    assert fresh.exists()
-
-
-def test_tmp_fixture_budget_evicts_oldest_recent_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
-
-    oldest = tmp / "capsem-test-old"
-    newest = tmp / "capsem-test-new"
-    unrelated = tmp / "not-capsem-test"
-    for path, age_days in [(oldest, 2), (newest, 0), (unrelated, 20)]:
-        path.mkdir()
-        (path / "blob").write_bytes(b"\x00" * 8192)
-        t = time.time() - age_days * 86400
-        os.utime(path, (t, t))
-
-    # The cleanup contract intentionally uses allocated disk blocks, including
-    # directory blocks. Their size varies by CI filesystem, so derive a budget
-    # that fits exactly the newest fixture instead of assuming ~10 KB does.
-    with os.scandir(tmp) as entries:
-        eligible_sizes = {
-                entry.name: cleanup_tmp._entry_disk_usage_bytes(entry)
-            for entry in entries
-            if entry.name.startswith("capsem-test-")
-        }
-    newest_size = eligible_sizes[newest.name]
-    monkeypatch.setattr(
-        cleanup_tmp,
-        "TEST_TMP_BUDGET_GB",
-        newest_size / (1024**3),
-    )
-
-    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 1
-    assert not oldest.exists()
-    assert newest.exists()
-    assert unrelated.exists()
-
-
-def test_tmp_fixture_budget_uses_allocated_size_for_sparse_images(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
-    monkeypatch.setattr(cleanup_tmp, "TEST_TMP_BUDGET_GB", 0.001)  # ~1 MB
-
-    sparse = tmp / "capsem-test-sparse"
-    sparse.mkdir()
-    rootfs = sparse / "rootfs.img"
-    with rootfs.open("wb") as f:
-        f.truncate(64 * 1024 * 1024 * 1024)
-
-    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 0
-    assert sparse.exists(), "sparse logical size alone must not trigger pruning"
-
-
-def test_tmp_fixture_budget_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    monkeypatch.setenv("CAPSEM_TEST_TMP_BUDGET_GB", "0")
-    fixture = tmp / "capsem-test-big"
-    fixture.mkdir()
-    (fixture / "blob").write_bytes(b"\x00" * 8192)
-
-    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 0
-    assert fixture.exists()
-    assert "disabled" in result.detail
-
-
-def test_tmp_fixture_non_matching_name_kept(tmp_path: Path):
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    other = tmp / "unrelated-junk"
-    other.mkdir()
-    old_time = time.time() - 2 * 3600
-    os.utime(other, (old_time, old_time))
-
-    result = clean_stale.clean_tmp_fixtures(tmp, dry_run=False, verbose=False)
-
-    assert result.removed == 0
-    assert other.exists()
-
-
 def test_target_transient_cleanup_removes_only_old_reproducible_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -377,21 +262,12 @@ def test_dry_run_removes_nothing(tmp_path: Path, short_sock_dir: Path):
     sock = short_sock_dir / "dead.sock"
     _make_orphan_socket(sock)
 
-    tmp = tmp_path / "T"
-    tmp.mkdir()
-    old = tmp / "capsem-test-foo"
-    old.mkdir()
-    old_time = time.time() - 2 * 3600
-    os.utime(old, (old_time, old_time))
-
     # All stages with dry_run=True must keep files intact but still report counts.
     ra = clean_stale.clean_rootfs_scratch(tmp_path, dry_run=True, verbose=False)
     rb = clean_stale.clean_orphan_sockets(short_sock_dir, dry_run=True, verbose=False)
-    rc = clean_stale.clean_tmp_fixtures(tmp, dry_run=True, verbose=False)
 
     assert ra.removed == 1 and rootfs.exists()
     assert rb.removed == 1 and sock.exists()
-    assert rc.removed == 1 and old.exists()
 
 
 def test_sockets_dir_missing(tmp_path: Path):
@@ -414,8 +290,6 @@ def test_main_persists_cleanup_ledger(tmp_path: Path):
         [
             "--root",
             str(tmp_path),
-            "--tmp-dir",
-            str(tmp_path / "tmp"),
             "--sockets-dir",
             str(tmp_path / "sockets"),
             "--report",
@@ -442,8 +316,6 @@ def test_main_places_default_ledger_in_policy_owned_state(
         [
             "--root",
             str(tmp_path),
-            "--tmp-dir",
-            str(tmp_path / "tmp"),
             "--sockets-dir",
             str(tmp_path / "sockets"),
         ]

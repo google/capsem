@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import StringConstraints, model_validator
+from pydantic import NonNegativeInt, StrictBool, StringConstraints, model_validator
 
 from .configschema import SafeToken, Strict
 
@@ -109,7 +109,10 @@ class ToolchainConfig(Strict):
     sync: tuple[str, ...]
     compiler_cache_command: SafeToken
     compiler_cache_socket_name: SafeToken
+    compiler_cache_client_side: StrictBool
+    compiler_cache_idle_timeout_seconds: NonNegativeInt
     node_workspaces: tuple[str, ...]
+    node_fetch: tuple[str, ...]
     node_install: tuple[str, ...]
     node_env: dict[str, str]
     rust_targets: tuple[str, ...]

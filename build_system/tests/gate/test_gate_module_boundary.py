@@ -54,7 +54,7 @@ def test_gate_modules_resolve_from_the_direct_source_tree() -> None:
 
 def test_audit_script_boundaries_are_thin_exit_status_launchers() -> None:
     launchers = {
-        "audit-pnpm-bulk.py": "pnpm_bulk",
+        "audit-dependencies.py": "dependencies",
         "check-cargo-audit.py": "cargo_audit",
         "check-dependency-drift.py": "dependency_drift",
         "check-hardcoded-release-selections.py": "release_selections",
@@ -85,8 +85,7 @@ def test_audit_script_boundaries_are_thin_exit_status_launchers() -> None:
 
 def test_audit_configuration_and_boundaries_have_one_functional_owner() -> None:
     expected = {
-        "audit-pnpm-bulk.py",
-        "audit-python-lock.py",
+        "audit-dependencies.py",
         "audit.toml",
         "check-cargo-audit.py",
         "check-dependency-drift.py",

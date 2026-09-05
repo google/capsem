@@ -879,6 +879,18 @@ impl UdsClient {
         self.request::<(), R>("GET", path, None).await
     }
 
+    /// Resolve a live session's exact route id from either its id or name.
+    /// Preserved failed sessions are absent from the live-session list.
+    pub async fn listed_session_id(&self, typed: &str) -> Result<Option<String>> {
+        let response: ApiResponse<ListResponse> = self.get("/vms/list").await?;
+        let list = response.into_result()?;
+        Ok(list
+            .sessions
+            .iter()
+            .find(|session| session.id == typed || session.name.as_deref() == Some(typed))
+            .map(|session| session.id.clone()))
+    }
+
     /// Like `request` but returns the raw response bytes + content-type
     /// instead of deserializing JSON. Used for the file-download
     /// endpoint which returns arbitrary binary payloads with a

@@ -99,12 +99,13 @@ fail_under = 85
 
 [dependency-groups]
 dev = [
-    "pip-audit>=2.9.0",
     "psutil>=7.2.2",
     "pygments>=2.20.0",
     "pytest>=9.0.3",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.8.0",
+    "requests>=2.34.2",
+    "rich>=15.0.0",
     "shellcheck-py>=0.11.0.1",
     "hadolint-py==2.14.0.1",
     "pyyaml>=6.0.3",

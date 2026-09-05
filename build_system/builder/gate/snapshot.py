@@ -94,7 +94,7 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
         else:
             grouped[relative.parent].append(relative)
 
-    flags = _CLONE if host.on_macos() else ()
+    flags = (*_CLONE, "-p") if host.on_macos() else ("-p",)
     for parent, group in grouped.items():
         destination = target / parent
         destination.mkdir(parents=True, exist_ok=True)

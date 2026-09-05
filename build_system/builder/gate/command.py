@@ -254,8 +254,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
                 checkpoint=None if watch is None else watch.checkpoint,
             )
             acquiring = preflight.holdings(
-                self._config,
-                self.name,
+                self._config, runner, self.name,
                 exclusive=self.exclusive,
                 declared=egress.for_command(self, runner),
             )

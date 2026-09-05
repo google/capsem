@@ -42,9 +42,21 @@ def test_warm_size_cannot_exceed_maximum() -> None:
 
 
 @pytest.mark.parametrize("path", ["/tmp/cache", "../target", "cache/target/../escape", "."])
-def test_stage_paths_are_relative_and_contained(path: str) -> None:
-    with pytest.raises(ValidationError, match="relative descendant"):
+def test_stage_paths_require_an_explicit_safe_storage_class(path: str) -> None:
+    with pytest.raises(ValidationError, match=r"external=true|relative descendant"):
         stage(path=path)
+
+
+def test_external_stage_is_absolute_ephemeral_and_concrete() -> None:
+    external = stage(path="/var/tmp/capsem-tests", external=True, prune_strategy="ephemeral")
+    assert external.external
+
+    with pytest.raises(ValidationError, match="must be absolute"):
+        stage(path="target/tmp", external=True, prune_strategy="ephemeral")
+    with pytest.raises(ValidationError, match="ephemeral"):
+        stage(path="/var/tmp/capsem-tests", external=True)
+    with pytest.raises(ValidationError, match="concrete descendant"):
+        stage(path="/var", external=True, prune_strategy="ephemeral")
 
 
 def test_stage_paths_must_be_unique_non_overlapping_leaves() -> None:
@@ -68,21 +80,37 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.root == Path("cache")
     assert policy.authority_environment == "CAPSEM_CACHE_AUTHORITY"
     assert policy.stages["cargo"].path == Path("target/cargo")
+    assert policy.stages["assets"].path == Path("target/vm-assets")
     assert policy.stages["assets"].entry_root == Path("generations")
     assert policy.stages["python-pycache"].managed_globs == ("cpython-*",)
     assert policy.stages["python-pycache"].lease_template == ".{key}.lock"
+    assert policy.stages["test-temp"].external
+    assert policy.stages["test-temp"].path == Path("/var/tmp/capsem-tests")
+    assert policy.stages["test-temp"].warm_size_bytes == 8 * 1024**3
+    assert policy.stages["test-temp"].max_size_bytes == 200 * 1024**3
+    assert policy.stages["test-temp"].maximum_count is None
+    assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
+    assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
     assert policy.control is not None
     assert policy.runtimes["docker"].warm_size_bytes == 72 * 1024**3
-    assert policy.runtimes["docker"].max_size_bytes == 200 * 1024**3
+    assert policy.runtimes["docker"].max_size_bytes == 96 * 1024**3
+    assert policy.runtimes["docker"].inventory_retry_attempts == 20
+    assert policy.runtimes["docker"].inventory_retry_delay_milliseconds == 500
     assert all(stage.description.strip() for stage in policy.stages.values())
     assert all(runtime.description.strip() for runtime in policy.runtimes.values())
     assert all(image.description.strip() for image in policy.control.docker.images.values())
+    contracts = (
+        *policy.stages.values(),
+        *policy.runtimes.values(),
+        *policy.control.docker.images.values(),
+    )
+    assert all(contract.max_size_bytes > contract.warm_size_bytes for contract in contracts)
     host_builder = policy.control.docker.images["capsem-host-builder"]
     assert host_builder.repository == "capsem-host-builder"
     assert host_builder.warm_size_bytes == 8 * 1024**3
-    assert host_builder.max_size_bytes == 200 * 1024**3
+    assert host_builder.max_size_bytes == 16 * 1024**3
 
 
 def test_cache_authority_environment_is_required_and_canonical() -> None:

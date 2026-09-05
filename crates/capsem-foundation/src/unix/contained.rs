@@ -97,6 +97,19 @@ fn dir_flags() -> OFlag {
     OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
 }
 
+fn permission_mode(mode: u32) -> Mode {
+    let bits = mode & 0o7777;
+    Mode::from_bits_truncate(permission_bits(bits))
+}
+
+fn permission_bits<T>(bits: u32) -> T
+where
+    T: TryFrom<u32>,
+    T::Error: std::fmt::Debug,
+{
+    bits.try_into().expect("Unix permission bits fit mode_t")
+}
+
 fn check_component(name: &OsStr) -> io::Result<()> {
     let bytes = name.as_bytes();
     if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') || bytes.contains(&0) {
@@ -150,7 +163,7 @@ impl ContainedDir {
     /// Descend into a child, creating it first when absent.
     pub fn descend_or_create(&self, name: &OsStr, mode: u32) -> io::Result<Self> {
         check_component(name)?;
-        match mkdirat(Some(self.fd.as_raw_fd()), name, Mode::from_bits_truncate(mode)) {
+        match mkdirat(Some(self.fd.as_raw_fd()), name, permission_mode(mode)) {
             Ok(()) | Err(Errno::EEXIST) => {}
             Err(error) => return Err(error.into()),
         }
@@ -204,12 +217,7 @@ impl ContainedDir {
     pub fn open_file(&self, name: &OsStr, options: ContainedOpenOptions) -> io::Result<File> {
         check_component(name)?;
         let flags = options.flags() | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK;
-        let fd = openat(
-            Some(self.fd.as_raw_fd()),
-            name,
-            flags,
-            Mode::from_bits_truncate(options.mode),
-        )?;
+        let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(options.mode))?;
         let file = File::from(owned(fd));
         if !file.metadata()?.is_file() {
             return Err(io::Error::new(

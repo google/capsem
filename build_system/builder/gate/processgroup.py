@@ -1,9 +1,8 @@
 """One foreground command, its descendants, and how they stop together.
 
-Foreground work belongs to the gate for exactly as long as the action which
-started it. A command that needs to outlive that action uses ``Runner.launch``;
-everything else gets a fresh process group so cancellation never has to guess
-at executable names or touch another developer's process.
+Foreground work belongs to the gate for exactly as long as its action. A command
+that needs to outlive that action uses ``Runner.launch``; everything else gets a
+fresh process group so cancellation never guesses at names or touches other work.
 """
 
 from __future__ import annotations
@@ -90,7 +89,7 @@ def run(
         _refuse_descendants(process, policy, owned)
     except BaseException:
         try:
-            _terminate(process, policy, owned)
+            terminate(process, policy, owned)
         finally:
             _close_pipes(process)
         raise
@@ -138,7 +137,7 @@ def tee(
         _wait(process, policy, owned)
         _refuse_descendants(process, policy, owned)
     except BaseException:
-        _terminate(process, policy, owned)
+        terminate(process, policy, owned)
         raise
     finally:
         process.stdout.close()
@@ -189,7 +188,7 @@ def _refuse_descendants(process: ForegroundProcess, policy: StopPolicy, owned: O
     # This fired in a release lane saying only that *something* survived, while
     # holding the process objects the whole time.
     surviving = _surviving(descendants)
-    _terminate(process, policy, owned)
+    terminate(process, policy, owned)
     if not policy.refuse_survivors:
         print(
             f"warning: {process.pid} exited leaving "
@@ -224,9 +223,10 @@ def _surviving(descendants: tuple[SystemProcess, ...]) -> list[str]:
     return alive
 
 
-def _terminate(
+def terminate(
     process: ForegroundProcess, policy: StopPolicy, owned: OwnedTree | None = None
 ) -> None:
+    """Stop a process group and every remembered descendant session."""
     tracked = {} if owned is None else owned
     _remember_descendants(process.pid, tracked)
     descendants = tuple(tracked.values())

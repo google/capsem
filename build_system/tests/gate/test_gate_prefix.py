@@ -141,7 +141,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
     at a relative path and this goes red.
     """
-    from capsem_builder.gate import prefix
+    from capsem_builder.gate import prefix, prefixidentity
 
     config = _config()
     root = prefix.socket_root(config)
@@ -150,7 +150,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
         f"{root} is relative, so it resolves inside the prefix and every "
         "terminal socket grows by the length of the prefix"
     )
-    assert prefix.example(config) not in root.parents
+    assert prefixidentity.example(config) not in root.parents
 
     longest = len(str(root / "capsem-a.XXXXXX")) + 1 + GATEWAY_SUFFIX
     assert longest <= SUN_LEN, (
@@ -160,10 +160,26 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
 def test_the_prefix_example_reserves_the_full_release_commit() -> None:
     """The longest identity is one full commit, not a random abbreviation."""
+    from capsem_builder.gate import prefixidentity
+
+    config = _config()
+    assert prefixidentity.example(config).name == "0" * 40
+
+
+def test_working_tree_prefix_is_stable_for_exact_source_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from capsem_builder.gate import prefix
 
     config = _config()
-    assert prefix.example(config).name == "0" * 40
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *_: "a" * 64)
+
+    first = prefix.for_working_tree(config)
+    second = prefix.for_working_tree(config)
+
+    assert first == second
+    assert first.parent == prefix.parent_dir(config)
+    assert first.name == "a" * config.prefix.name_length
 
     from capsem_builder.gate.workspace import Workspace
 
@@ -306,9 +322,9 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
-
     config = _config()
     assert snapshot.digest(target, config) == snapshot.digest(source, config)
+    assert os.stat(target / "tracked.txt").st_mtime_ns == os.stat(source / "tracked.txt").st_mtime_ns
 
 
 def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:
@@ -650,12 +666,10 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/assets",
         "cache/target/config",
         "cache/target/coverage",
+        "cache/target/gate-runs",
         "cache/target/packages",
         "cache/target/tests/evidence",
     } <= exports
-    assert any(export.startswith("cache/target/gate-runs") for export in exports), (
-        "the run log is the evidence a failure is argued from, and it is written inside the prefix"
-    )
 
 
 def test_the_built_binaries_are_every_host_binary() -> None:
@@ -839,6 +853,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 
     monkeypatch.setattr(prefix, "allocate", lambda *args: failed)
     monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *args: "a" * 64)
     monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: failed.mkdir())
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
 
@@ -873,6 +888,7 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix, "allocate", lambda *args: fresh)
     monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "digest", lambda *args: "b" * 64)
     monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: fresh.mkdir())
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
@@ -1025,23 +1041,29 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
 
     private = tmp_path / "prefix"
     (private / runs / "run-new").mkdir(parents=True)
-    (private / runs / "run-new" / "run.jsonl").write_text("the run that just finished\n")
+    (private / runs / "run-new" / "run.jsonl").write_text(
+        '{"event":"run.end"}\n', encoding="utf-8"
+    )
+    (private / runs / "run-new" / config.runlog.active_marker).touch()
     (private / runs / "latest").symlink_to("run-new")
 
     host = tmp_path / "host"
     (host / runs / "run-old").mkdir(parents=True)
-    (host / runs / "run-old" / "run.jsonl").write_text("an older, unrelated run\n")
+    (host / runs / "run-old" / "run.jsonl").write_text(
+        '{"event":"run.end"}\n', encoding="utf-8"
+    )
     (host / runs / "latest").symlink_to("run-old")
 
     from capsem_builder.gate import buildcache
 
     buildcache.export(private, host, config)
 
-    assert (host / runs / "run-old" / "run.jsonl").read_text() == "an older, unrelated run\n", (
+    assert (host / runs / "run-old" / "run.jsonl").read_text() == '{"event":"run.end"}\n', (
         "the export wrote through the destination `latest` symlink and "
         "destroyed the unrelated run it pointed at"
     )
-    assert (host / runs / "run-new" / "run.jsonl").read_text() == "the run that just finished\n"
+    assert (host / runs / "run-new" / "run.jsonl").read_text() == '{"event":"run.end"}\n'
+    assert not (host / runs / "run-new" / config.runlog.active_marker).exists()
     # Replaced as a link, not materialized into a directory of copied files.
     assert (host / runs / "latest").is_symlink()
     assert os.readlink(host / runs / "latest") == "run-new"

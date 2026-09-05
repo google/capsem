@@ -109,28 +109,35 @@ def node(config: GateConfig, workspaces: tuple[str, ...] | None = None) -> Step:
     CI has separate jobs for docs, site and release-site; a local `just test`
     builds all of them in this one checkout, so all of them are installed here.
 
-    A caller that needs one workspace says so. `pnpm install` reaches the
-    registry for anything its store does not already hold, and a release lane
-    runs inside a network namespace with only loopback -- so installing a
-    workspace nobody warmed is not a slow no-op, it is a failure.
+    A caller that needs one workspace says so. Fetch fills the shared content
+    store outside the kernel sandbox; install is then offline inside it. This
+    makes a new lockfile an explicit cache miss without making a hermetic build
+    depend on whether another command happened to warm the machine first.
     """
     settings = config.toolchain
+    actions: list[Action] = []
+    for workspace in workspaces or settings.node_workspaces:
+        root = config.path(workspace)
+        actions.extend(
+            (
+                Run(
+                    settings.node_fetch,
+                    cwd=root,
+                    env=dict(settings.node_env),
+                    outside_sandbox=True,
+                ),
+                Run(settings.node_install, cwd=root, env=dict(settings.node_env)),
+            )
+        )
     return step(
         "toolchain.node",
-        *[
-            Run(
-                settings.node_install,
-                cwd=config.path(workspace),
-                env=dict(settings.node_env),
-            )
-            for workspace in (workspaces or settings.node_workspaces)
-        ],
+        *actions,
         # `pnpm install` rewrites a workspace's node_modules in place, and
         # every web build reads it. Two installs overlapping, or an install
         # overlapping a build, is a torn tree either way.
         contends=(config.exclusive("node_modules"),),
         kind=Kind.COMPILE,
-        needs=frozenset({Needs.DISK}),
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
         speed=Speed.FAST,
     )
 

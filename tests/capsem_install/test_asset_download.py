@@ -1080,7 +1080,9 @@ def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
     release_dir.mkdir(parents=True)
     for name, blob in new_declared_files.items():
-        served = b"corrupt-kernel-bytes" if name == "vmlinuz" else blob
+        # Keep the corrupt body at the declared size so this reaches the hash
+        # check rather than the earlier bounded-download size guard.
+        served = b"bad-declared-kernel" if name == "vmlinuz" else blob
         (release_dir / f"{arch}-{name}").write_bytes(served)
 
     capsem_home = tmp_path / ".capsem"

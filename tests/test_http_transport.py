@@ -104,6 +104,17 @@ def test_ambiguous_post_failure_is_never_replayed() -> None:
     assert len(transport.created) == 1
 
 
+def test_mutation_starts_fresh_instead_of_reusing_a_read_connection() -> None:
+    transport = ScriptedTransport(Connection)
+
+    transport.request("GET", "/status")
+    first = transport.created[0]
+    transport.request("POST", "/mutation", body=b"{}")
+
+    assert first.closed
+    assert len(transport.created) == 2
+
+
 def test_idempotent_get_reconnects_once_after_stale_keep_alive() -> None:
     connections = iter(
         [

@@ -1,5 +1,6 @@
 [build]
 target-dir = "cache/target/cargo"
+dep-info-basedir = "."
 
 [target.'cfg(target_os = "macos")']
 runner = "build_system/packaging/macos/run_signed.sh"

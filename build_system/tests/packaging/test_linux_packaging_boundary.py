@@ -12,6 +12,7 @@ LINUX = ROOT / "build_system" / "packaging" / "linux"
 LEGACY = ROOT / ("scr" + "ipts")
 
 EXPECTED_MODES = {
+    "99-capsem-vm-devices.rules": 0o644,
     "build-linux-package.sh": 0o644,
     "deb-postinst.sh": 0o755,
     "deb-preinst.sh": 0o755,
@@ -95,3 +96,30 @@ def test_release_workflow_selects_owned_runtime_dependency_helper() -> None:
 
     assert source.count(owned) == 2
     assert legacy not in source
+
+
+def test_debian_package_owns_immediate_vm_device_access() -> None:
+    repack = (LINUX / "repack-deb.sh").read_text(encoding="utf-8")
+    postinstall = (LINUX / "deb-postinst.sh").read_text(encoding="utf-8")
+    helper = (
+        ROOT / "build_system/packaging/shared/install-vm-device-access"
+    ).read_text(encoding="utf-8")
+    rules = (LINUX / "99-capsem-vm-devices.rules").read_text(encoding="utf-8")
+
+    assert 'embed_pkg_script install-vm-device-access "$WORK_DIR/deb/DEBIAN/postinst"' in repack
+    assert 'for dependency in libxdo3 acl kmod udev; do' in repack
+    assert 'capsem_install_vm_device_access "$TARGET_USER"' in postinstall
+    assert 'MODE="0666"' not in helper
+    assert 'target_uid=$(id -u "$target_user")' in helper
+    assert 'RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"' in helper
+    assert 'rule_target=/run/udev/rules.d/99-capsem-vm-devices.rules' in helper
+    assert 'rm -f /etc/udev/rules.d/99-capsem-vm-devices.rules' in helper
+    assert 'install -Dm0644 "$rule_temp" "$rule_target"' in helper
+    assert helper.index("udevadm settle --timeout=10") < helper.index(
+        'setfacl -m "u:$target_user:rw"'
+    )
+    assert 'setfacl -m "u:$target_user:rw" "$device"' in helper
+    assert "runuser -u \"$target_user\" -- sh -c" in helper
+    assert '\'test -r "$1" && test -w "$1"\'' in helper
+    assert 'KERNEL=="kvm", GROUP="kvm", MODE="0660", TAG-="uaccess"' in rules
+    assert 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"' in rules

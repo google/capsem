@@ -695,7 +695,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
 def test_profile_selection_creates_clean_runner_output_parent() -> None:
     resolve = _job_block(_workflow("release-assets.yaml"), "resolve-current-binary")
 
-    create_parent = resolve.index("mkdir -p target")
+    create_parent = resolve.index("mkdir -p cache/target")
     validate = resolve.index("cargo run -p capsem-admin -- validate")
     redirect = resolve.index("> cache/target/profile-release-selection.json")
 

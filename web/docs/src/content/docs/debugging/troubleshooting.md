@@ -44,13 +44,14 @@ sidebar:
 
 Docker builds (kernel, rootfs, cross-compile, install tests) accumulate images and build cache inside the Colima VM. The VM disk only grows -- freed space isn't returned to macOS without `fstrim`.
 
-The release gate reads `config/cache.toml`: it retains 80 GiB of hot BuildKit
-data, keeps 40 GiB free for the active rail, requires 160 GiB Docker disks,
-and recommends 200 GiB for new runtimes. Cache/image release
-happens only after the declared last consumer. `just test` preserves a bounded
-runtime report and IronBank logs under `cache/target/tests/evidence/` on failure.
+The release gate reads `config/cache.toml`, where every disk, Docker, and Tart
+cache declares its description, scope, maximum size, warm size, and prune
+strategy. Cache/image release happens only after the declared last consumer.
+`just test` preserves a bounded runtime report and IronBank logs under
+`cache/target/tests/evidence/` on failure.
 
-If an existing Colima disk is below 160 GiB, expand it before the complete gate:
+If an existing Colima disk cannot hold the configured Docker maximum plus the
+active build, expand it before the complete gate:
 
 ```bash
 colima stop
@@ -59,15 +60,14 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 200
 # Check current state
 du -sh ~/.colima                            # host disk usage
 docker system df
-just cache status
-just cache 'health --offline'
+just cache stats
+just cache stats --offline
 just cache prune # exact preview; no mutation
 ```
 
-`status` inventories repository and native-runtime storage. `health` interprets
-that inventory against the warning, soft, hard, generation-count, and free-space
-limits in `config/cache.toml`; `--offline` avoids Docker and Tart probes. Pruning
-only selects policy-managed generations and preserves active leases and
+`stats` inventories repository and native-runtime storage against each cache's
+warm and maximum usage contract; `--offline` avoids Docker and Tart probes.
+Pruning only selects policy-managed generations and preserves active leases and
 structural files. Applied plans require an explicit reason and are journaled.
 
 Gate-owned Rust builds share the stable Cargo target and use the pinned sccache

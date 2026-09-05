@@ -114,7 +114,12 @@ retry after failure; postinstall removes both only after success.
   For ordinary installs, `build_system/packaging/linux/deb-postinst.sh` symlinks the packaged
   binaries into `~/.capsem/bin`, hydrates assets, and invokes `capsem install`
   to register or enable the user service without restarting an already active
-  unit mid-transaction.
+  unit mid-transaction. Adding the user to `kvm` is not immediate access for an
+  already-running `systemd --user` manager: postinstall must apply the shared
+  narrow ACL helper after the packaged udev rule, and the Docker/systemd proof
+  deliberately starts its manager before installation to preserve that test.
+  Never make `/dev/kvm` or `/dev/vhost-vsock` world-writable in CI; doing so
+  hides the installed-package permission boundary.
 
 ## Self-update (update.rs)
 

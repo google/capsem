@@ -90,16 +90,17 @@ class QualifiedRelease:
             return after
         from . import module_contracts, pytestsuite
 
-        guards = plan.add(
-            pytestsuite.citadel(self._config).as_step(self._config), after=after
-        )
+        guards = plan.add(pytestsuite.citadel(self._config).as_step(self._config), after=after)
         return (module_contracts.release_contracts(plan, self._config, after=(guards,)),)
 
     def _live_advisory_proof(self, plan: Plan, *, after: tuple) -> tuple:
         """Fail known-live dependency drift before spending a hosted dispatch."""
         from . import audits
 
-        return tuple(plan.add(check, after=after) for check in audits.live(self._config))
+        live = audits.live(self._config)
+        dependencies = plan.add(live.dependencies, after=after)
+        rust_policy = plan.add(live.rust_policy, after=(dependencies,))
+        return (rust_policy,)
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return (

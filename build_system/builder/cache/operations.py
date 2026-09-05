@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .models import AdmissionEvent, ApplyResult, PrunePlan
+from .paths import CachePaths
 
 JOURNAL_PATH = Path("state/events/cache.jsonl")
 
@@ -29,11 +30,11 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def apply_prune(root: Path, plan: PrunePlan, *, reason: str) -> ApplyResult:
+def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResult:
     """Apply one reviewed plan and append its exact outcome to the journal."""
     if not reason.strip():
         raise ValueError("cache mutation reason must be non-empty")
-    targets = tuple(_contained(root, action.path) for action in plan.actions)
+    targets = tuple(paths.contained_entry(action.stage_id, action.path) for action in plan.actions)
     removed: list[Path] = []
     missing: list[Path] = []
     for target in targets:
@@ -42,7 +43,7 @@ def apply_prune(root: Path, plan: PrunePlan, *, reason: str) -> ApplyResult:
             removed.append(target)
         else:
             missing.append(target)
-    journal = root / JOURNAL_PATH
+    journal = paths.root / JOURNAL_PATH
     journal.parent.mkdir(parents=True, exist_ok=True)
     event = {
         "version": 1,

@@ -19,19 +19,8 @@ jobs:
         with:
           toolchain: 1.97.1
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
-        with:
-          version: 10.34.5
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: |
-            web/app/pnpm-lock.yaml
-            web/docs/pnpm-lock.yaml
-            web/marketing/pnpm-lock.yaml
-            build_system/release_site/pnpm-lock.yaml
+      - name: Materialize the locked audit environment
+        run: uv sync --project build_system --frozen
 
       - name: Select the declared tool set
         id: gate_tools
@@ -46,17 +35,8 @@ jobs:
       - name: Resolve the current Rust dependency graph
         run: cargo generate-lockfile
 
-      - name: Strict RustSec audit (blocking vulnerabilities, unsoundness, and yanks)
-        run: python3 build_system/scripts/audit/check-cargo-audit.py
+      - name: Locked Python and Node OSV audit (blocking security signal)
+        run: uv run --project build_system --frozen python build_system/scripts/audit/audit-dependencies.py
 
-      - name: Locked Python dependency audit (blocking security signal)
-        run: bash build_system/scripts/audit/audit-python-lock.sh
-
-      - name: Install all web dependencies
-        run: |
-          for project in web/app web/docs web/marketing build_system/release_site; do
-            pnpm --dir "$project" install --frozen-lockfile
-          done
-
-      - name: npm bulk advisory audit (blocking security signal)
-        run: python3 build_system/scripts/audit/audit-pnpm-bulk.py
+      - name: Strict RustSec audit (runs only after OSV is clean)
+        run: uv run --project build_system --frozen python build_system/scripts/audit/check-cargo-audit.py

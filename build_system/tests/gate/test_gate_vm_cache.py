@@ -244,7 +244,7 @@ def test_common_registry_evicts_old_asset_generation_but_preserves_selector(
         payload = path / "code" / "build-x86_64" / "rootfs.erofs"
         payload.parent.mkdir(parents=True)
         payload.write_bytes(b"vm")
-    selector = paths.root / "target" / "assets" / "code" / "build-x86_64"
+    selector = paths.root / "target" / "tests" / "ironbank" / "code" / "build-x86_64"
     selector.parent.mkdir(parents=True)
     selector.symlink_to(current / "code" / "build-x86_64")
 
@@ -447,7 +447,7 @@ def test_vm_and_asset_cache_contracts_are_declared_through_common_api() -> None:
     policy = load_policy(PROJECT_ROOT)
     registry = CacheRegistry(CachePaths(repository_root=PROJECT_ROOT, policy=policy), policy)
     assets = registry.contract("assets")
-    assert assets.max_size_bytes == 200 * 1024**3
+    assert assets.max_size_bytes == 16 * 1024**3
     assert assets.warm_size_bytes == 8 * 1024**3
     cache = CacheControl(RecordingRunner(PROJECT_ROOT))
     source_limits = cache.image_policy("capsem-install-test")
@@ -456,6 +456,6 @@ def test_vm_and_asset_cache_contracts_are_declared_through_common_api() -> None:
     assert source_limits.maximum_count == ordinary_receipt_lineages
     assert helper_limits.maximum_count == ordinary_receipt_lineages
     assert source_limits.maximum_age_seconds == 336 * 3600
-    assert source_limits.max_size_bytes == 200 * 1024**3
+    assert source_limits.max_size_bytes == 12 * 1024**3
     assert helper_limits.maximum_age_seconds > 0
     assert helper_limits.max_size_bytes > 0

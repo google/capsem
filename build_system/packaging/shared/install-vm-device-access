@@ -1,0 +1,82 @@
+#!/bin/bash
+# Give an installed user's existing systemd manager immediate, narrow access
+# to Capsem's Linux VM devices while group membership becomes durable.
+
+capsem_install_vm_device_access() {
+    local target_user="${1:?capsem_install_vm_device_access <user>}"
+    local rule_source="${2:-/usr/lib/udev/rules.d/99-capsem-vm-devices.rules}"
+    local rule_target=/run/udev/rules.d/99-capsem-vm-devices.rules
+    local rule_temp
+    local target_uid
+    local device
+    local module
+
+    id "$target_user" >/dev/null
+    if [ ! -f "$rule_source" ]; then
+        echo "capsem: VM-device udev rule is missing: $rule_source" >&2
+        return 1
+    fi
+    target_uid=$(id -u "$target_user")
+    rule_temp=$(mktemp)
+    if ! {
+        sed '/RUN+="\/usr\/bin\/setfacl -m u:[0-9][0-9]*:rw \/dev\/%k"/d' "$rule_source"
+        printf 'KERNEL=="kvm", RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
+        printf 'KERNEL=="vhost-vsock", RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
+    } > "$rule_temp"; then
+        rm -f "$rule_temp"
+        return 1
+    fi
+    rm -f /etc/udev/rules.d/99-capsem-vm-devices.rules
+    install -Dm0644 "$rule_temp" "$rule_target"
+    rm -f "$rule_temp"
+    if command -v modprobe >/dev/null 2>&1; then
+        for module in kvm vhost_vsock; do
+            if ! modprobe "$module"; then
+                echo "capsem: $module module is unavailable; its VM device may remain disabled" >&2
+            fi
+        done
+    fi
+
+    if ! getent group kvm >/dev/null 2>&1; then
+        groupadd --system kvm
+    fi
+    usermod --append --groups kvm "$target_user"
+
+    if command -v udevadm >/dev/null 2>&1; then
+        if ! udevadm control --reload-rules; then
+            echo "capsem: udev is not active; applying VM-device access directly" >&2
+        else
+            for device in /dev/kvm /dev/vhost-vsock; do
+                if [ -e "$device" ] && ! udevadm trigger --name-match="${device##*/}"; then
+                    echo "capsem: could not retrigger $device; applying access directly" >&2
+                fi
+            done
+            if ! udevadm settle --timeout=10; then
+                echo "capsem: udev did not settle before VM-device access was applied" >&2
+                return 1
+            fi
+        fi
+    fi
+
+    for device in /dev/kvm /dev/vhost-vsock; do
+        [ -e "$device" ] || continue
+        if [ ! -c "$device" ]; then
+            echo "capsem: VM device is not a character device: $device" >&2
+            return 1
+        fi
+        setfacl -m "u:$target_user:rw" "$device"
+        if ! runuser -u "$target_user" -- sh -c \
+            'test -r "$1" && test -w "$1"' sh "$device"; then
+            echo "capsem: failed to grant $target_user read/write access to $device" >&2
+            return 1
+        fi
+    done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" && "${0##*/}" == "install-vm-device-access" ]]; then
+    if (( EUID != 0 )); then
+        echo "usage: sudo $0 USER" >&2
+        exit 2
+    fi
+    capsem_install_vm_device_access "${1:?usage: $0 USER [UDEV_RULE]}" "${2:-}"
+fi

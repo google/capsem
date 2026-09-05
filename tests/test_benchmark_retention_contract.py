@@ -128,22 +128,22 @@ def test_the_policy_tracks_the_workspace_version() -> None:
     assert PRUNE.current_version(PROJECT_ROOT) == expected
 
 
-def test_benchmark_regression_policy_is_relative_and_config_owned() -> None:
+def test_benchmark_regression_policy_is_config_owned() -> None:
     factor = maximum_factor(PROJECT_ROOT)
-    assert factor == 1.2
+    assert factor == 1.1
 
     baseline = {"fork": {"fork_ms": {"min": 100.0}}}
     assert_within_evidence(
         metric=BenchmarkMetric.FORK_DURATION,
-        current=120.0,
+        current=110.0,
         baseline=baseline,
         factor=factor,
     )
 
-    with pytest.raises(AssertionError, match=r"fork\.fork_ms\.min regressed 1\.21x"):
+    with pytest.raises(AssertionError, match=r"fork\.fork_ms\.min regressed 1\.11x"):
         assert_within_evidence(
             metric=BenchmarkMetric.FORK_DURATION,
-            current=121.0,
+            current=111.0,
             baseline=baseline,
             factor=factor,
         )
@@ -405,4 +405,8 @@ def test_evidence_tolerance_and_route_budgets_are_separate_knobs() -> None:
     assert "benchmark.route_health" in source, (
         "the route-health budget library does not read its own typed config"
     )
-    assert set(config["benchmark_regression"]) == {"maximum_factor"}
+    assert config["benchmark_regression"]["minimum_time_resolution_ms"] == 1.0
+    assert set(config["benchmark_regression"]) == {
+        "maximum_factor",
+        "minimum_time_resolution_ms",
+    }

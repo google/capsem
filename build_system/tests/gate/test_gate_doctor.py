@@ -144,7 +144,7 @@ def test_an_invalid_cache_control_is_reported(tmp_path: Path) -> None:
     policy = root / "config/cache.toml"
     policy.write_text(
         policy.read_text(encoding="utf-8").replace(
-            "max_size_bytes = 214748364800 # 200 GiB",
+            "max_size_bytes = 193273528320 # 180 GiB",
             "max_size_bytes = 0 # invalid",
             1,
         ),

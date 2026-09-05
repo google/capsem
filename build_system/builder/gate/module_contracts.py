@@ -9,7 +9,7 @@ different reasons, and this one has a lifecycle rule none of the others share.
 
 from __future__ import annotations
 
-from . import pytestsuite, sandbox, toolchain
+from . import audits, pytestsuite, sandbox, toolchain
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
@@ -41,6 +41,7 @@ class ReleaseContractsModule(
     """
 
     sandboxed = sandbox.ENFORCE
+    outside_egress = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -67,6 +68,7 @@ def release_contracts(
     *,
     after: tuple[Step, ...] = (),
     node: Step | None = None,
+    generated: Step | None = None,
     seed_coverage: bool = False,
 ) -> Step:
     """The release and composition contracts, without artifacts."""
@@ -96,6 +98,9 @@ def release_contracts(
     # standalone command still owns this prerequisite, so independence does
     # not require paying for the same workspace install twice in one plan.
     installed = node or phase.add(toolchain.node(config), after=after)
+    generated = generated or phase.add(
+        audits.generated_settings(config), after=(*after, installed)
+    )
 
     build_root = config.suites.pytest.build_system_root.rstrip("/") + "/"
     root_contracts = tuple(
@@ -155,5 +160,5 @@ def release_contracts(
                 config.exclusive("node_modules"),
             ),
         ).as_step(config),
-        after=(*prerequisites, root),
+        after=(*prerequisites, root, generated),
     )

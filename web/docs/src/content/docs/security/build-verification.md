@@ -276,8 +276,7 @@ corporate channels use `https://` or `http://`.
 | Control | Implementation |
 |---------|---------------|
 | Rust toolchain | Rust 1.97.1, pinned consistently in the workspace, workflows, bootstrap, and host builder |
-| Dependency audit | Blocking `cargo audit` in local smoke/test, ordinary CI, both release lanes, and the scheduled/manual security workflow |
-| npm audit | Blocking npm bulk advisory API check in local smoke/test, ordinary CI, both release lanes, and the scheduled/manual security workflow |
+| Dependency audit | Pinned OSV-Scanner checks every Python and Node lockfile first; only a clean result unlocks the stricter RustSec vulnerability, unsoundness, and yank policy. Exact clean OSV verdicts are reused for one hour when every lockfile and policy byte still matches. |
 | Docker base images | Resolved by the profile-derived Docker template rail |
 | Compiler warnings | Treated as errors, with workspace `dbg_macro` and `todo` lints denied |
 | Auditable builds | `cargo-auditable` embeds dependency info in binaries |

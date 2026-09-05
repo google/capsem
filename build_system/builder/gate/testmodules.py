@@ -24,6 +24,7 @@ from . import (
     sandbox,
     sourcechecks,
     toolchain,
+    webaudits,
 )
 from .command import GateCommand
 from .config import GateConfig
@@ -104,11 +105,16 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     """
     phase = plan.phase("fast")
     # Readable before the next run finishes; it needs no build output.
-    digest = phase.add(step("digest", digestreport.RefreshDigest(),
-        kind=Kind.STATIC_TEST,
-        needs=frozenset({Needs.DISK}),
-        speed=Speed.FAST,
-    ), after=after)
+    digest = phase.add(
+        step(
+            "digest",
+            digestreport.RefreshDigest(),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=after,
+    )
     # The environment first: everything below runs through uv or pnpm, and a
     # gate that assumes the lockfile is already installed is a gate that works
     # on the machine it was written on.
@@ -121,7 +127,14 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     syntax = phase.add(audits.source_syntax(config), after=(python,))
     formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
-    audited = tuple(phase.add(check, after=(syntax,)) for check in audits.all_of(config))
+    live = audits.live(config)
+    dependencies = phase.add(live.dependencies, after=(syntax,))
+    rust_policy = phase.add(live.rust_policy, after=(dependencies,))
+    audited = (
+        dependencies,
+        rust_policy,
+        *(phase.add(check, after=(syntax,)) for check in audits.all_of(config)),
+    )
     # The same fragment the `lint` command composes: Ruff and both Ty passes as
     # independent steps, so a Ruff failure no longer hides what Ty would have
     # said and each is timed under its own name.
@@ -163,14 +176,14 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
             surface,
             after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
         )
-        for surface in audits.web_surfaces(config)
+        for surface in webaudits.surfaces(config)
     ]
     # The release-channel parity proof used to be the `release-site` surface's
     # tail. It claims no Astro build, so it no longer stalls the queue.
-    channel = phase.add(audits.release_channel(config), after=(syntax, node))
+    channel = phase.add(webaudits.release_channel(config), after=(syntax, node))
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
-    blocking = audits.blocking_surface(config, surfaces)
-    clippy = phase.add(audits.clippy(config), after=(blocking, rust, ort))
+    blocking = webaudits.blocking_surface(config, surfaces)
+    clippy = phase.add(webaudits.clippy(config), after=(blocking, rust, ort))
     return (
         *audited,
         *checked,

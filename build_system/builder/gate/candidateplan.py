@@ -28,9 +28,11 @@ from . import (
     testmodules,
     toolchain,
     vmmodules,
+    webaudits,
 )
 from .actions import Run
 from .config import GateConfig
+from .content import ProfileContent
 from .execution import Kind, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
@@ -93,11 +95,13 @@ def compose(
     # contracts suite is no longer the step that discovers the environment.
     fast = testmodules.fast(plan, config, after=(recorded,))
     node = _already_issuing(plan, toolchain.node(config))
+    generated = _already_issuing(plan, audits.generated_settings(config))
     contracts = module_contracts.release_contracts(
         plan,
         config,
         after=fast,
         node=node,
+        generated=generated,
         seed_coverage=True,
     )
     modules = compose_modules(
@@ -133,7 +137,7 @@ def compose_modules(
     # `test-candidate` runs this composition alone, where there was not, so each
     # module still makes its own.
     generated = _already_issuing(plan, audits.generated_settings(config))
-    bundled = _already_issuing(plan, audits.frontend_bundle(config))
+    bundled = _already_issuing(plan, webaudits.frontend_bundle(config))
     node = _already_issuing(plan, toolchain.node(config))
     static = staticmodule.static(
         plan,
@@ -144,7 +148,14 @@ def compose_modules(
         node=node,
     )
     signed = next(step for step in static if step.label == "static.sign")
-    artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
+    artifacts = vmmodules.artifacts(
+        plan,
+        config,
+        qualification=qualification,
+        after=static,
+        node=node,
+        bundled=bundled,
+    )
     functional = vmmodules.functional(
         plan,
         config,
@@ -161,6 +172,10 @@ def compose_modules(
         config,
         qualification=qualification,
         after=(functional,),
+        local_content=ProfileContent.built_profile(
+            config,
+            config.suites.pytest.base_profile,
+        ),
         materialized=prepared.profile_content,
     )
     # After the glow-up, not instead of it. The local lane's install proof runs

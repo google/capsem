@@ -24,10 +24,14 @@ pub fn filesystem_space(path: &Path) -> io::Result<FilesystemSpace> {
     let stat = nix::sys::statvfs::statvfs(path).map_err(super::errno::io)?;
     let block_size = stat.block_size();
     Ok(FilesystemSpace {
-        total_bytes: stat.blocks().saturating_mul(block_size),
-        free_bytes: stat.blocks_free().saturating_mul(block_size),
-        available_bytes: stat.blocks_available().saturating_mul(block_size),
+        total_bytes: bytes_for_blocks(stat.blocks(), block_size),
+        free_bytes: bytes_for_blocks(stat.blocks_free(), block_size),
+        available_bytes: bytes_for_blocks(stat.blocks_available(), block_size),
     })
+}
+
+fn bytes_for_blocks<T: Into<u64>>(blocks: T, block_size: u64) -> u64 {
+    blocks.into().saturating_mul(block_size)
 }
 
 /// Read a regular file without following a link or blocking on a special file.

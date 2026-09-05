@@ -169,6 +169,7 @@ class InstallGate:
 
         # The manifest handed over, read back from what the postinst recorded.
         self._proof.install(package, expected=self.version, manifest=self._graph.handed_off)
+        self._container.verify_vm_device_access()
         self._graph.clear_handoff()
 
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so

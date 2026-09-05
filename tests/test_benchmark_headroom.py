@@ -45,7 +45,6 @@ def test_concurrent_stats_budget_has_measured_twenty_percent_headroom() -> None:
 
     assert budget.p95_ms == 15.0
     assert budget.p99_ms == 40.0
-    assert budget.cpu_s == 0.6
     assert_has_headroom(
         label="service /stats during profile-mutation writes CPU",
         measured=0.442,
@@ -73,6 +72,24 @@ def test_vm_scalar_gateway_budget_has_measured_twenty_percent_headroom() -> None
     )
 
 
+def test_evaluate_gateway_cpu_has_measured_twenty_percent_headroom() -> None:
+    budget = scaled_hot_route_budget(
+        "/profiles/code/enforcement/evaluate",
+        gateway=True,
+        samples=128,
+    )
+
+    assert budget.cpu_s == 0.40
+    assert_has_headroom(
+        label="gateway /profiles/code/enforcement/evaluate CPU",
+        measured=0.316,
+        ceiling=budget.cpu_s,
+        minimum_factor=1.2,
+        accounting_slack=0.011,
+        unit="s",
+    )
+
+
 def test_non_finite_measurements_are_rejected() -> None:
     with pytest.raises(ValidationError):
         HeadroomGuard(
@@ -82,6 +99,13 @@ def test_non_finite_measurements_are_rejected() -> None:
             minimum_factor=1.2,
             unit="ms",
         )
+
+
+def test_route_ceilings_use_human_time_increments() -> None:
+    with pytest.raises(ValidationError, match="5ms increment"):
+        from capsem_builder.gate.benchmarkschema import RouteBudgetConfig
+
+        RouteBudgetConfig(p95_ms=16.0, p99_ms=45.0, cpu_s=0.5)
 
 
 def test_route_ceiling_scales_cpu_but_not_latency() -> None:

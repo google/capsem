@@ -594,11 +594,10 @@ def test_a_failing_sealed_smoke_check_is_not_repaired_by_a_second_build() -> Non
     assert not runner.ran(r"--no-cache")
 
 
-def test_the_virtualisation_devices_are_reachable_from_inside(
+def test_the_package_makes_virtualisation_devices_reachable_from_inside(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Passing `--device` is not proof the container can use it; a container
-    that starts without working KVM fails much later, inside a VM boot."""
+    """The manager starts stale; postinstall owns current-session access."""
     _on(monkeypatch, "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     container, runner = _container()
@@ -606,33 +605,23 @@ def test_the_virtualisation_devices_are_reachable_from_inside(
     container.start(options=container.runtime_options())
 
     user = CONFIG.install.guest_user.name
+    assert not runner.ran(rf"docker exec -u {user} .*test -r /dev/kvm -a -w /dev/kvm")
+    container.verify_vm_device_access()
     assert runner.ran(rf"docker exec -u {user} .*test -r /dev/kvm -a -w /dev/kvm")
     assert runner.ran(rf"docker exec -u {user} .*test -r /dev/vhost-vsock -a -w /dev/vhost-vsock")
-    runner.assert_order(
-        r"systemctl is-system-running --wait",
-        rf"docker exec -u {user} .*test -r /dev/vhost-vsock",
-    )
+    runner.assert_order(r"systemctl is-system-running --wait", rf"docker exec -u {user} .*test -r /dev/vhost-vsock")
 
 
-def test_missing_device_group_is_created_before_systemd(
+def test_systemd_starts_before_package_grants_device_access(
     tmp_path: Path,
 ) -> None:
-    """An unknown host gid is the ordinary Docker/Colima case, not an error.
-
-    Keep the test outside a container by replacing only the account tools; the
-    checked-in wrapper still owns validation, ordering, and the final exec.
-    """
+    """Pre-granting the group would hide stale user-manager credentials."""
     commands = tmp_path / "bin"
     commands.mkdir()
     log = tmp_path / "calls.log"
     for name, body in {
         "id": "exit 0",
-        "runuser": (
-            'count=$(cat "$STATE" 2>/dev/null || printf 0); '
-            'if [[ "$count" = 0 ]]; then printf 1 > "$STATE"; exit 1; fi'
-        ),
-        "stat": 'if [[ "$*" = *"%g"* ]]; then printf "4242\\n"; else printf "660\\n"; fi',
-        "getent": "exit 2",
+        "runuser": 'printf "runuser %s\\n" "$*" >> "$CALL_LOG"; exit 1',
         "groupadd": 'printf "groupadd %s\\n" "$*" >> "$CALL_LOG"',
         "usermod": 'printf "usermod %s\\n" "$*" >> "$CALL_LOG"',
         "systemd": 'printf "systemd\\n" >> "$CALL_LOG"',
@@ -645,7 +634,6 @@ def test_missing_device_group_is_created_before_systemd(
         **os.environ,
         "PATH": f"{commands}:{os.environ['PATH']}",
         "CALL_LOG": str(log),
-        "STATE": str(tmp_path / "runuser-state"),
     }
     subprocess.run(
         [
@@ -659,11 +647,7 @@ def test_missing_device_group_is_created_before_systemd(
         env=env,
     )
 
-    assert log.read_text(encoding="utf-8").splitlines() == [
-        "groupadd --gid 4242 capsem-vm-4242",
-        f"usermod --append --groups capsem-vm-4242 {CONFIG.install.guest_user.name}",
-        "systemd",
-    ]
+    assert log.read_text(encoding="utf-8").splitlines() == ["systemd"]
 
 
 def test_the_install_containers_tmpfs_can_execute_what_is_unpacked_into_it() -> None:

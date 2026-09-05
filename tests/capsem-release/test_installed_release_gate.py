@@ -44,6 +44,10 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     capsem = tmp_path / "capsem"
     capsem.write_text(
         "#!/bin/sh\n"
+        "if [ \"${1:-}\" = logs ]; then\n"
+        "  cat \"$CAPSEM_RUN_DIR/sessions/$2\"-failed-*/process.log\n"
+        "  exit\n"
+        "fi\n"
         "cat <<'EOF'\n"
         "Version:   1.5.9\n"
         "Installed: true\n"

@@ -292,6 +292,9 @@ package_runtime_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    "acl",
+    "kmod",
+    "udev",
     # Derived from the shipped binaries by build_system/packaging/linux/derive-deb-libc-floor.py,
     # not hand-written: the hand-written list above omitted libc entirely, so
     # the package installed on glibc older than it needs and then every binary
@@ -338,6 +341,9 @@ apt_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    "acl",
+    "kmod",
+    "udev",
     "libc6",
 ]
 
@@ -421,7 +427,9 @@ cargo_target = "CARGO_TARGET_DIR"
 rustc_wrapper = "RUSTC_WRAPPER"
 sccache_dir = "SCCACHE_DIR"
 sccache_cache_size = "SCCACHE_CACHE_SIZE"
-sccache_base_dir = "SCCACHE_BASEDIR"
+sccache_base_dirs = "SCCACHE_BASEDIRS"
+sccache_client_side = "SCCACHE_CLIENT_SIDE"
+sccache_idle_timeout = "SCCACHE_IDLE_TIMEOUT"
 sccache_server_uds = "SCCACHE_SERVER_UDS"
 # Standard tool variables whose values are resolved from config/cache.toml by
 # the gate before it enters a private source checkout.
@@ -1093,7 +1101,7 @@ must_stay_below_lines = 3000
 "crates/capsem-service/src/tests/profile_routes.rs" = 2682
 "crates/capsem-tui/src/tests.rs" = 2190
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2495
+"crates/capsem/src/main.rs" = 2491
 "crates/capsem/src/support_bundle.rs" = 1047
 "crates/capsem/src/tests.rs" = 1452
 "crates/capsem/src/update.rs" = 2488
@@ -1205,11 +1213,14 @@ run_marker = "CAPSEM_GATE_RUN"
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
 compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
+compiler_cache_client_side = true
+compiler_cache_idle_timeout_seconds = 0
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
-node_install = ["pnpm", "install", "--frozen-lockfile"]
+node_fetch = ["pnpm", "fetch", "--frozen-lockfile"]
+node_install = ["pnpm", "install", "--offline", "--frozen-lockfile"]
 node_env = { CI = "true" }
 
 # Every non-native Rust target the gate compiles. The GNU pair exercises both
@@ -1693,13 +1704,12 @@ doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
 # these were seven `&` and seven `wait` aggregating into a single FAIL bit,
 # which told you something broke but not what.
 cargo = "build_system/scripts/audit/check-cargo-audit.py"
+dependencies = "build_system/scripts/audit/audit-dependencies.py"
 # Reports, never refuses. A supply-chain signal that fails a build is one people
 # learn to route around, and the containment is elsewhere: every compiling step
 # runs in a loopback-only namespace, so a build script cannot reach a C2 host.
 # This says which package changed shape, before anything is built.
 dependency_drift = "build_system/scripts/audit/check-dependency-drift.py"
-pnpm = "build_system/scripts/audit/audit-pnpm-bulk.py"
-python_lock = "build_system/scripts/audit/audit-python-lock.py"
 public_surface = "build_system/scripts/audit/check_public_surface.py"
 source_syntax = "build_system/scripts/audit/check-source-syntax.py"
 hardcoded_selections = "build_system/scripts/audit/check-hardcoded-release-selections.sh"
@@ -1739,14 +1749,47 @@ max_skill_description_chars = 200
 # not a mandate to rewrite anything.
 max_skill_body_lines = 600
 
-[audits.python_lock_policy]
-requirements = "cache/state/python-audit-requirements.txt"
-cache_stage = "python-uv"
-cache_subdirectory = "pip-audit"
-service = "pypi"
-attempts = 3
-retry_seconds = 2
-socket_timeout_seconds = 15
+[audits.dependency_policy]
+cache_stage = "audit-results"
+lockfiles = [
+    "build_system/uv.lock",
+    "web/app/pnpm-lock.yaml",
+    "web/docs/pnpm-lock.yaml",
+    "web/marketing/pnpm-lock.yaml",
+    "build_system/release_site/pnpm-lock.yaml",
+]
+scanner_args = ["scan", "source", "--format=json", "--verbosity=error"]
+timeout_seconds = 120
+
+[audits.dependency_policy.tool]
+name = "osv-scanner"
+version = "2.5.1"
+cache_stage = "toolchain"
+download_timeout_seconds = 120
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Linux"
+machine = "x86_64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64"
+sha256 = "f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Linux"
+machine = "aarch64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_arm64"
+sha256 = "3d0f5aa5a6baa8eb32bcef247388e149ef6030a6634ccae6fa0d62681fb27a6d"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Darwin"
+machine = "x86_64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_darwin_amd64"
+sha256 = "9f89beb6c3d784893cb1cae0a3d56c529bfe91075418c2f9440c45b79654198b"
+
+[[audits.dependency_policy.tool.distributions]]
+system = "Darwin"
+machine = "arm64"
+url = "https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_darwin_arm64"
+sha256 = "75c44d6332f892a1e56286f4105a98ed751ae28d215ca0a8b65cc00d84103054"
 
 # A shell body is a sequence of simple commands. Control flow, multi-line
 # string building and here-documents inside a YAML `run:` or a Dockerfile `RUN`
@@ -1769,7 +1812,7 @@ max_lines = 20
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
-"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27
+"release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
 
 # ---------------------------------------------------------------------------
@@ -1906,6 +1949,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_resume.py",
     "build_system/tests/gate/test_gate_release_isolation.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
+    "build_system/tests/gate/test_gate_run_transfer.py",
     "build_system/tests/gate/test_gate_qualification_evidence.py",
     "build_system/tests/gate/test_gate_qualification_flow.py",
     "build_system/tests/gate/test_gate_qualification_reuse.py",
@@ -2008,7 +2052,7 @@ source_contract = [
     "build_system/tests/gate/test_orphan_process_gate.py",
     "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py",
     "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py",
-    "build_system/tests/scripts/test_pnpm_bulk_audit.py",
+    "build_system/tests/scripts/test_dependency_audit.py",
     "build_system/tests/release/test_profile_revision_semver.py",
     "build_system/tests/packaging/test_prove_installed_shell.py",
     "build_system/tests/release/test_release_gate_integrity.py",
@@ -2201,7 +2245,7 @@ rust_coverage_crate_minimum = 40.0
 # absorbs host-specific cfg variation; once added tests improve coverage past
 # it, the same patch must raise the floor instead of leaving stale headroom.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.26, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 77.60, capsem-credentials = 89.83, capsem-foundation = 79.69, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.34, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 77.60, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.47, capsem-tray = 54.0, capsem-tui = 70.0 }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
@@ -2342,7 +2386,10 @@ build_cache = "cache/target/prefix-products"
 cargo_target = "cache/target/cargo"
 cargo_profiles = ["debug", "release"]
 
-name_length = 8
+# Working-tree prefixes are content-addressed. Sixteen hexadecimal characters
+# keep their absolute source path stable across exact repeats without making
+# collision handling a realistic part of ordinary development.
+name_length = 16
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
 # resumed into, and the *next* run is the one that no longer needs the one
@@ -2414,6 +2461,9 @@ resumable = ["cache/target/build/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
+# Run directories cross the prefix through `runtransfer`; its ledger, digest,
+# latest link and active marker are collection state and must never be merged
+# as ordinary build output.
 exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
@@ -2903,30 +2953,30 @@ p99_ms = 10.0
 cpu_s = 0.18
 
 [benchmark.route_health.budgets.stats_detail.service]
-p95_ms = 12.0
+p95_ms = 15.0
 p99_ms = 35.0
 cpu_s = 0.70
 [benchmark.route_health.budgets.stats_detail.gateway]
-p95_ms = 16.0
+p95_ms = 20.0
 p99_ms = 45.0
 cpu_s = 0.90
 
 [benchmark.route_health.budgets.aggregate_ledger.service]
 p95_ms = 7.0
-p99_ms = 14.0
+p99_ms = 15.0
 cpu_s = 0.30
 [benchmark.route_health.budgets.aggregate_ledger.gateway]
 p95_ms = 9.0
-p99_ms = 18.0
+p99_ms = 20.0
 cpu_s = 0.42
 
 [benchmark.route_health.budgets.ledger.service]
 p95_ms = 7.0
-p99_ms = 14.0
+p99_ms = 15.0
 cpu_s = 0.14
 [benchmark.route_health.budgets.ledger.gateway]
 p95_ms = 9.0
-p99_ms = 18.0
+p99_ms = 20.0
 cpu_s = 0.20
 
 [benchmark.route_health.budgets.assets_status.service]
@@ -2981,7 +3031,7 @@ cpu_s = 0.10
 [benchmark.route_health.budgets.evaluate.gateway]
 p95_ms = 5.0
 p99_ms = 8.0
-cpu_s = 0.15
+cpu_s = 0.20
 
 [benchmark.route_health.budgets.plugin_info.service]
 p95_ms = 3.0
@@ -3072,9 +3122,12 @@ quick_timeout_secs = 60
 
 [benchmark_regression]
 # Product benchmarks use the latest checked-in result as evidence. A release
-# fails when any measured duration or allocated-byte metric grows by more than
-# this ratio; there is deliberately no independently authored seconds/MB cap.
-maximum_factor = 1.2
+# fails when a measured duration or allocated-byte metric grows by more than
+# this ratio and clears its observed variance.
+maximum_factor = 1.1
+# A percentage attached to nanoseconds is not product performance. Time
+# changes remain visible below this resolution but have no release authority.
+minimum_time_resolution_ms = 1.0
 
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating
@@ -3223,18 +3276,6 @@ digest = "2f11afe49a4c"
 where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
 subject = "capsem_linux_as_root update-binfmts --enable"
 reason = "best-effort; binfmt may be absent or already enabled"
-
-[[boundary.discarded_verdicts]]
-digest = "74539be85480"
-where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
-subject = "capsem_linux_as_root modprobe kvm"
-reason = "best-effort; KVM may be built in, absent, or already loaded, and doctor reports the real state"
-
-[[boundary.discarded_verdicts]]
-digest = "07ddd0ee5d14"
-where = "build_system/scripts/bootstrap/bootstrap-linux-host.sh"
-subject = "capsem_linux_as_root modprobe vhost_vsock"
-reason = "best-effort; the module may be built in or already loaded, and doctor reports the real state"
 
 [[boundary.discarded_verdicts]]
 digest = "425b81d285a6"

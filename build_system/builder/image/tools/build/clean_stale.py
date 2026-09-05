@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove stale Capsem build artifacts, test fixtures, and orphan UDS sockets.
+"""Remove stale build transients and orphan UDS sockets.
 
 Replaces the bash body of `just _clean-stale`. The bash version called
 `lsof -tU` once per socket, which on macOS costs ~200 ms each and made the
@@ -28,11 +28,6 @@ from .cleanup_common import (
     human_bytes,
 )
 from .cleanup_common import remove_path as _rm
-from .cleanup_tmp import (
-    clean_tmp_fixtures,
-    clean_tmp_fixtures_to_budget,
-    tmp_fixture_roots,
-)
 
 SOCKET_CONNECT_TIMEOUT_S = 0.05
 TARGET_TRANSIENT_MAX_AGE_S = 6 * 60 * 60
@@ -199,14 +194,12 @@ def clean_target_transients(root: Path, dry_run: bool, verbose: bool) -> StageRe
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=os.getcwd(), help="Project root (default: cwd)")
-    parser.add_argument("--tmp-dir", default=os.environ.get("TMPDIR", "/tmp"))
     parser.add_argument("--sockets-dir", default="/tmp/capsem")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--skip-target-transients", action="store_true")
     parser.add_argument("--skip-sockets", action="store_true")
     parser.add_argument("--skip-rootfs", action="store_true")
-    parser.add_argument("--skip-tmp", action="store_true")
     parser.add_argument(
         "--report",
         help="JSONL cleanup ledger (default: policy-owned cache state)",
@@ -214,7 +207,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
-    tmp_dir = Path(args.tmp_dir)
     sockets_dir = Path(args.sockets_dir)
 
     print("=== Pruning stale build artifacts ===")
@@ -227,10 +219,6 @@ def main(argv: list[str] | None = None) -> int:
         results.append(clean_rootfs_scratch(root, args.dry_run, args.verbose))
     if not args.skip_sockets:
         results.append(clean_orphan_sockets(sockets_dir, args.dry_run, args.verbose))
-    if not args.skip_tmp:
-        for root_dir in tmp_fixture_roots(tmp_dir):
-            results.append(clean_tmp_fixtures(root_dir, args.dry_run, args.verbose))
-            results.append(clean_tmp_fixtures_to_budget(root_dir, args.dry_run, args.verbose))
     if not args.skip_target_transients:
         results.append(clean_target_transients(root, args.dry_run, args.verbose))
 

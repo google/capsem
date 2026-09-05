@@ -81,7 +81,7 @@ jobs:
           components: llvm-tools
           targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
 
       - name: Install Linux workspace lint prerequisites
         run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
@@ -94,9 +94,7 @@ jobs:
       - name: Enable KVM (best-effort)
         continue-on-error: true
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules
 
       - name: Select the declared tool set
         id: gate_tools
@@ -196,7 +194,7 @@ jobs:
           targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           components: llvm-tools
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -447,9 +445,8 @@ jobs:
         run: |
           sudo modprobe kvm
           sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/kvm /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+          test -c /dev/kvm
+          test -c /dev/vhost-vsock
 
       - name: Classify the stable install graph
         id: install-channel
@@ -608,7 +605,7 @@ jobs:
         with:
           toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
         with:
           key: release-site-build
 

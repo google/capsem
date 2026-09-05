@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import fcntl
 import os
 from pathlib import Path
@@ -45,6 +46,14 @@ def release_path(path: Path) -> None:
         descriptor.close()
 
 
+def release_all() -> None:
+    """Close every process lease before interpreter resource accounting runs."""
+    descriptors = tuple(_HELD.values())
+    _HELD.clear()
+    for descriptor in descriptors:
+        descriptor.close()
+
+
 def active_path(path: Path) -> bool:
     """Return whether another process holds a shared lease at this path."""
     lease = path.absolute()
@@ -57,3 +66,6 @@ def active_path(path: Path) -> bool:
             return True
         fcntl.flock(descriptor, fcntl.LOCK_UN)
     return False
+
+
+atexit.register(release_all)

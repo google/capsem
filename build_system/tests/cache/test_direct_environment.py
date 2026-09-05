@@ -31,6 +31,9 @@ def test_cache_authority():
     assert Path(os.environ["RUFF_CACHE_DIR"]) == root / "tools/python/ruff"
     assert Path(os.environ["npm_config_store_dir"]).is_relative_to(root)
     assert Path(os.environ["CARGO_TARGET_DIR"]).is_relative_to(root)
+    test_tmp = Path(os.environ["TMPDIR"])
+    assert test_tmp.parent.parent == Path({str(CACHE_POLICY.stages["test-temp"].path)!r})
+    assert f"--basetemp={{test_tmp / 'pytest'}}" in os.environ["PYTEST_ADDOPTS"]
 """.strip(),
         encoding="utf-8",
     )

@@ -703,6 +703,8 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
             continue
         if rel == "usr/share/capsem-fixture/marker.txt":
             continue
+        if rel == "usr/lib/udev/rules.d/99-capsem-vm-devices.rules":
+            continue
         unexpected.append(rel)
 
     assert unexpected == []

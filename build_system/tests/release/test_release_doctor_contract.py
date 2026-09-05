@@ -2065,9 +2065,9 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'grep -F "Service:   ok" /tmp/capsem-status.txt' in linux
     assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in linux
     assert "build_system/scripts/release/verify-installed-release.py" in linux
-    assert "Enable KVM for exact-package VM proof" in linux
-    assert linux.count("if: matrix.arch == 'x86_64'") == 2
-    assert "test -r /dev/kvm -a -w /dev/kvm" in linux
+    assert "Enable KVM for exact-package VM proof" not in linux
+    assert linux.count("if: matrix.arch == 'x86_64'") == 1
+    assert "chmod 0666" not in linux
     assert "build_system/scripts/test/prove-installed-shell.py" in linux
     assert "--session-name release-exact-shell-x86_64" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
@@ -2744,7 +2744,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
     assert "--docker-linux-install" not in verify_downloads
-    assert "Enable KVM for live public-install VM proof" in verify_downloads
+    assert "Enable KVM for live public-install VM proof" not in verify_downloads
     assert "Install live public Linux release and prove guest shell execution" in verify_downloads
     assert "build_system/scripts/build/prove-live-public-install.sh" in verify_downloads
     live_proof = (
@@ -3200,8 +3200,9 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "runs-on: ubuntu-24.04" in install_job
     assert "sudo modprobe kvm" in install_job
     assert "sudo modprobe vhost_vsock" in install_job
-    assert "test -r /dev/kvm -a -w /dev/kvm" in install_job
-    assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in install_job
+    assert "test -c /dev/kvm" in install_job
+    assert "test -c /dev/vhost-vsock" in install_job
+    assert "chmod 0666" not in install_job
 
     for shared_script in (
         "build_system/packaging/macos/build-pkg.sh",

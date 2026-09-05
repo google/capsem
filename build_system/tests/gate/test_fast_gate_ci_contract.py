@@ -86,9 +86,8 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
     )
     for required in (
         "build_system/scripts/audit/check-source-syntax.py",
+        "build_system/scripts/audit/audit-dependencies.py",
         "build_system/scripts/audit/check-cargo-audit.py",
-        "build_system/scripts/audit/audit-pnpm-bulk.py",
-        "build_system/scripts/audit/audit-python-lock.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
         # Both halves of what was one `frontend` target, named in full. The
         # bare prefix would have gone on passing against `frontend-build`

@@ -34,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy-owned cache stages. Python and uv reuse whole ABI/source or lockfile
   generations, pnpm workspaces share one content store, Cargo internals are
   never selectively pruned, and gate attempts record typed hit/miss/size data.
+  Working-tree gates use a stable content-addressed private source path, and a
+  scoped sccache resource normalizes changed paths without leaking its daemon;
+  exact fast-test repeats therefore retain Cargo fingerprints across isolation.
+- Python and Node advisory checks now run once through checksum-pinned
+  OSV-Scanner before the stricter RustSec policy. Exact clean lockfile verdicts
+  are cached for one hour, while failures are never cached; the bespoke npm
+  registry client, pip-audit exporter, and their redundant dependency installs
+  are removed.
+- The in-VM benchmark helper now excludes host-only storage, reporting, and
+  machine-inspection code. Its stripped musl payload is 32% smaller, reducing
+  every fresh VM overlay and keeping fork images within their size ratchet
+  without weakening the benchmark baseline.
+- Bounded direct diagnostics now reap descendants that create their own process
+  sessions, so a timed-out Bubblewrap or focused-gate command cannot keep VMs,
+  locks, or output pipes alive after its wrapper exits.
 - VM kernels, root filesystems, initrds, guest binaries, host packages, and
   release staging views now reuse digest-verified immutable objects through
   component-specific input identities. Hardlinks avoid duplicate multi-gigabyte
@@ -221,6 +236,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a poll with nothing new went from 8 ms to 56 µs and a poll right after a
   write from 10 ms to 1.7 ms; at 200,000 rows, 90 ms to 3 ms and 110 ms to
   4 ms. A new criterion bench keeps both numbers measured.
+- Debian installation now gives the existing user service immediate ACL-based
+  access to `/dev/kvm` and `/dev/vhost-vsock`, while a packaged udev rule and
+  `kvm` membership preserve restricted access across future logins and device
+  events. Release proofs no longer mask installer failures with world-writable
+  VM devices.
+- `capsem logs <id>` now reaches logs preserved after an ephemeral VM fails
+  before entering the live-session list. Installed-package verification checks
+  this post-mortem path on Linux and macOS, and KVM reports distinguish device
+  permission failures from a missing `vhost_vsock` module.
 - Invalid or empty built-in HTTP grep patterns are now rejected before DNS or
   network authorization, returning the intended validation error without an
   unnecessary outbound lookup.

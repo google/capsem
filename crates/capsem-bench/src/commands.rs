@@ -7,14 +7,13 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::collector;
 use crate::machine;
 use crate::schema;
 use crate::stats;
 use crate::store;
-use crate::{Artifact, Thresholds};
 
 /// What can be measured, and what a quick run leaves out.
 pub(crate) fn list_dimensions() {
@@ -169,170 +168,10 @@ pub(crate) fn run_dimensions(
     Ok(())
 }
 
-/// Compare one subject in two stores, metric by metric.
-///
-/// A metric present in only one is skipped rather than guessed at; `verify` is
-/// what reports a whole run.
-pub(crate) fn compare(
-    baseline_db: &Path,
-    current_db: &Path,
-    dimension: schema::Dimension,
-    arch: &str,
-    profile: &str,
-    thresholds: Thresholds,
-) -> Result<()> {
-    let baseline_store = store::open(baseline_db)?;
-    let current_store = store::open(current_db)?;
-    let baseline = store::latest(&baseline_store, dimension, arch, profile)?
-        .with_context(|| format!("no {} evidence for {arch} {profile}", dimension.as_str()))?;
-    let current = store::latest(&current_store, dimension, arch, profile)?
-        .with_context(|| format!("no {} run for {arch} {profile}", dimension.as_str()))?;
-    let verdicts = judge(&baseline, &current, thresholds);
-    report_comparisons(&baseline, &verdicts);
-    Ok(())
-}
-
-/// Ratchet this run's records against the evidence.
-///
-/// Exits non-zero only on a `significant` move. A ratio breach inside the
-/// baseline's own noise is printed and forgiven -- the 0.6.0 release was held
-/// for two hours by exactly such a reading, which then did not reproduce.
-pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds) -> Result<()> {
-    let evidence = store::open(evidence_dir)?;
-    let measured = store::open(records)?;
-    let subjects = store::subjects(&measured)?;
-    if subjects.is_empty() {
-        bail!("no records to verify in {}", records.display());
-    }
-
-    let mut significant = 0usize;
-    for (dimension, arch, profile) in subjects {
-        let Some(record) = store::latest(&measured, dimension, &arch, &profile)? else {
-            continue;
-        };
-        let Some(baseline) = store::latest(&evidence, dimension, &arch, &profile)? else {
-            // Seeding, not failing: a dimension measured for the first time
-            // has nothing to regress against.
-            println!(
-                "{}: no evidence yet for {arch} {profile} -- seeding",
-                dimension.as_str()
-            );
-            continue;
-        };
-        let verdicts = judge(&baseline, &record, thresholds);
-        significant += verdicts.iter().filter(|v| v.significant).count();
-        report_comparisons(&baseline, &verdicts);
-    }
-
-    if significant == 0 {
-        Ok(())
-    } else {
-        bail!("{significant} metric(s) regressed beyond their own noise")
-    }
-}
-
-/// Compare two records on the statistic that describes each metric.
-fn judge(baseline: &schema::Record, current: &schema::Record, thresholds: Thresholds) -> Vec<stats::Comparison> {
-    let mut verdicts = Vec::new();
-    for metric in &current.metrics {
-        let Some(before) = baseline.metric(&metric.key) else {
-            continue;
-        };
-        // The median describes a distribution's centre without the tail that
-        // one scheduler stall writes into a mean.
-        verdicts.push(stats::compare(
-            &metric.key,
-            stats::Statistic::Median,
-            &before.summary,
-            &metric.summary,
-            thresholds.maximum_factor,
-            thresholds.noise_factor,
-        ));
-    }
-    verdicts
-}
-
-fn report_comparisons(baseline: &schema::Record, verdicts: &[stats::Comparison]) {
-    for verdict in verdicts {
-        let verdict_label = if verdict.significant {
-            "REGRESSED"
-        } else if verdict.regressed {
-            "noisy"
-        } else {
-            "ok"
-        };
-        println!(
-            "{verdict_label:>9}  {:<48} {:>10.4} -> {:>10.4}  {:+.1}%  (baseline cv {:.3})",
-            verdict.key,
-            verdict.baseline,
-            verdict.current,
-            verdict.delta_pct,
-            baseline
-                .metric(&verdict.key)
-                .map(|metric| metric.summary.cv)
-                .unwrap_or_default()
-        );
-    }
-}
-
-/// Turn a protocol run into a `capsem.bench.v1` record.
-///
-/// Every statistic is recomputed here from the raw latencies rather than
-/// copied from the artifact's own `latency_ms`, so `p99` means what it means
-/// everywhere else. Throughput and error counts are single observations of a
-/// whole run, so they summarize as one sample and say so through `n`.
-pub(crate) fn protocol_record(
-    artifact: &Artifact,
-    channel: &str,
-    commit: &str,
-    profile: &str,
-    strays: Vec<String>,
-) -> schema::Record {
-    let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
-    let report = &artifact.mock_server_protocol;
-
-    let mut metrics = Vec::new();
-    for scenario in &report.scenarios {
-        let mut push = |suffix: &str, unit: schema::Unit, samples: &[f64]| {
-            if let Some(summary) = stats::Summary::of(samples) {
-                metrics.push(schema::Metric {
-                    key: format!("protocol.{}.{}.{suffix}", report.lane, scenario.name),
-                    unit,
-                    summary,
-                });
-            }
-        };
-        push("latency_ms", schema::Unit::Milliseconds, &scenario.latency_samples);
-        push(
-            "requests_per_sec",
-            schema::Unit::RequestsPerSecond,
-            &[scenario.requests_per_sec],
-        );
-        push("bytes_per_sec", schema::Unit::Bytes, &[scenario.bytes_per_sec]);
-        push("failed", schema::Unit::Count, &[scenario.failed as f64]);
-    }
-
-    schema::Record {
-        schema: schema::SCHEMA.to_string(),
-        dimension: schema::Dimension::Protocol,
-        recorded_at: rfc3339_now(),
-        release: schema::Release {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            channel: channel.to_string(),
-            commit: commit.to_string(),
-        },
-        host: fitness.host,
-        profile: profile.to_string(),
-        quick: false,
-        metrics,
-        sidecar: None,
-    }
-}
-
 /// UTC, to the second. One clock for every record, host and guest alike: the
 /// old artifacts carried a guest `timestamp`, a host `host_recorded_at`, or
 /// neither, and could not be ordered against each other.
-fn rfc3339_now() -> String {
+pub(crate) fn rfc3339_now() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())

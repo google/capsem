@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.module_artifacts import ArtifactsModule
 from capsem_builder.gate.staticmodule import StaticModule
 from capsem_builder.gate.testmodules import FastModule
@@ -129,6 +130,27 @@ def test_artifacts_owns_the_frontend_bundle_before_build_chain() -> None:
     assert f"(in {workspace})" in "\n".join(plan.step_named(node).render())
 
 
+def test_candidate_hands_one_frontend_bundle_to_every_consumer() -> None:
+    plan = CandidateCommand(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+    rendered = "bash build_system/scripts/web/check-web-surface.sh frontend-build"
+
+    assert [
+        step.label
+        for step in plan.steps
+        if rendered in step.render()
+    ] == ["fast.web.frontend-build"]
+    assert plan.after_of("artifacts.build-chain") >= {"fast.web.frontend-build"}
+
+
+def test_dependency_audit_reads_lockfiles_without_materializing_node_modules() -> None:
+    plan = _plan(FastModule)
+
+    assert plan.after_of("fast.audit.dependencies") == {"fast.audit.source-syntax"}
+
+
 @pytest.mark.parametrize(
     ("module", "materializer", "consumer"),
     [
@@ -206,21 +228,17 @@ def test_the_environment_is_installed_before_anything_uses_it() -> None:
     assert _wave_of(FastModule, "fast.web.frontend-verify") > node
 
 
-def test_the_audits_are_independent_of_each_other() -> None:
-    """None reads what another writes, so they land in one wave and every
-    failure comes back named rather than as a single FAIL bit."""
-    waves = _waves(FastModule)
-    audits = {
-        "fast.audit.cargo",
-        "fast.audit.pnpm",
-        "fast.audit.python-lock",
+def test_osv_must_pass_before_the_strict_rust_audit() -> None:
+    """A broad advisory failure stops the redundant network work immediately."""
+    plan = _plan(FastModule)
+    assert plan.after_of("fast.audit.cargo") == {"fast.audit.dependencies"}
+
+    independent = {
         "fast.audit.public-surface",
         "fast.audit.skills",
         "fast.audit.release-selections",
     }
-
-    together = next(wave for wave in waves if "fast.audit.cargo" in wave)
-    assert audits <= together
+    assert all("fast.audit.dependencies" not in plan.after_of(label) for label in independent)
 
 
 def test_every_web_surface_is_its_own_step() -> None:

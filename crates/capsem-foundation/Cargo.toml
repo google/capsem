@@ -9,18 +9,33 @@ homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["runtime"]
+runtime = [
+    "dep:blake3",
+    "dep:capsem-proto",
+    "dep:nix",
+    "dep:rmp-serde",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:tracing-appender",
+    "dep:tracing-subscriber",
+]
+
 [dependencies]
-blake3 = "1"
-capsem-proto = { path = "../capsem-proto" }
+blake3 = { version = "1", optional = true }
+capsem-proto = { path = "../capsem-proto", optional = true }
 libc = "0.2"
-nix = { version = "0.29", features = ["dir", "fs", "process", "signal", "socket", "user"] }
-rmp-serde = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
+nix = { version = "0.29", features = ["dir", "fs", "process", "signal", "socket", "user"], optional = true }
+rmp-serde = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-appender = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [lints]
 workspace = true

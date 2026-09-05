@@ -13,8 +13,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import audits, rustchecks
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import rustchecks, webaudits
 from helpers.gate import gate_plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -137,7 +137,7 @@ def test_doctests_are_run_by_something() -> None:
 
 def test_clippy_covers_every_target() -> None:
     """`--all-targets`, or tests and benches are linted by nothing."""
-    rendered = " ".join(audits.clippy(CONFIG).render())
+    rendered = " ".join(webaudits.clippy(CONFIG).render())
     for flag in ("--workspace", "--all-targets"):
         assert flag in rendered, (
             RUST_COVERAGE_RATIONALE + f"\nclippy runs without {flag}: {rendered}"

@@ -16,6 +16,9 @@ fi
 if ! declare -F capsem_install_runs_inside_service >/dev/null; then
     source "$(dirname "$0")/../shared/service-owned-update"
 fi
+if ! declare -F capsem_install_vm_device_access >/dev/null; then
+    source "$(dirname "$0")/../shared/install-vm-device-access"
+fi
 
 CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
 CAPSEM_INSTALL_MANIFEST_PAYLOAD="/var/run/capsem/install-manifest.json"
@@ -101,6 +104,9 @@ done
 
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
+
+CAPSEM_INSTALL_PHASE="prepare_vm_device_access"
+capsem_install_vm_device_access "$TARGET_USER"
 
 CAPSEM_INSTALL_PHASE="install_manifest"
 if capsem_install_runs_inside_service /proc/self/cgroup; then

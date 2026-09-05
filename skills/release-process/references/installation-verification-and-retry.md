@@ -47,7 +47,9 @@ Native installation is a functional outcome, not a file-existence check:
 - publication depends on both platform rails;
 - skipped, optional, source-layout-only, or inspect-only checks do not count;
 - `build_system/scripts/release/verify-installed-release.py` verifies the exact installed manifest,
-  metadata sidecar, profile readiness, package version, and update state;
+  metadata sidecar, profile readiness, package version, update state, and
+  post-mortem retrieval of a preserved failed-session log through the installed
+  CLI. The same verifier runs in Linux, native macOS, and Tart package lanes;
 - the stateful glow-up proves binary-only, profile-only,
   profile-then-binary, channel switching, tamper rejection, and preservation
   of the previous working state, with Winterfell and full doctor after

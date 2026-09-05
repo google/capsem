@@ -36,6 +36,6 @@ bootstrap_linux() {
         capsem_linux_verify_vm_devices
     else
         capsem_linux_prepare_docker
-        capsem_linux_prepare_vm_devices
+        capsem_linux_prepare_vm_devices "$CAPSEM_LINUX_PROJECT_ROOT"
     fi
 }

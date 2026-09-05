@@ -173,11 +173,17 @@ def test_staging_workflows_keep_mutable_outputs_outside_cargo_cache() -> None:
         name: (PROJECT_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
         for name in ("release-channel-staging.yaml", "release-binary-staging.yaml")
     }
+    cache_action = (
+        PROJECT_ROOT / ".github" / "actions" / "rust-cache" / "action.yaml"
+    ).read_text(encoding="utf-8")
 
     for name, workflow in workflows.items():
-        assert "Swatinem/rust-cache" in workflow
+        assert "./.github/actions/rust-cache" in workflow
         assert "$RUNNER_TEMP/" in workflow
         assert "cache/target/release/distribution" not in workflow, f"{name} stages into Cargo's cache"
+
+    assert "Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32" in cache_action
+    assert "workspaces: . -> cache/target/cargo" in cache_action
 
     binary = workflows["release-binary-staging.yaml"]
     assert "cache/target/binary-staging-packages" not in binary

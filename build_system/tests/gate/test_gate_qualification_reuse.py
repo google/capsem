@@ -6,9 +6,10 @@ import argparse
 from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import module_qualify, qualification
+from capsem_builder.gate import module_qualify, qualification, toolchain
 from capsem_builder.gate.candidate import CandidateCommand
 from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.execution import Needs
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.resume import ancestors
 from helpers.gate import RecordingRunner
@@ -45,12 +46,22 @@ def test_composed_gate_installs_each_node_workspace_once() -> None:
     owners = {
         step.label
         for step in plan.steps
-        if any("pnpm install --frozen-lockfile" in line for line in step.render())
+        if any("pnpm install --offline --frozen-lockfile" in line for line in step.render())
     }
 
     assert owners == {"fast.toolchain.node"}
     assert "contracts.toolchain.node" not in plan.labels
     assert "static.toolchain.node" not in plan.labels
+
+
+def test_node_cache_is_hydrated_before_the_hermetic_offline_install() -> None:
+    prepared = toolchain.node(CONFIG, (CONFIG.frontend.workspace,))
+
+    assert prepared.needs == frozenset({Needs.DISK, Needs.NETWORK})
+    assert prepared.render() == [
+        "(in app) CI=true pnpm fetch --frozen-lockfile [outside kernel sandbox]",
+        "(in app) CI=true pnpm install --offline --frozen-lockfile",
+    ]
 
 
 def test_source_contract_coverage_is_handed_to_the_fresh_vm_cohort() -> None:

@@ -386,7 +386,9 @@ def test_vm_devices_are_granted_and_probed_as_the_runtime_user(
     ) in started
     user = CONFIG.install.guest_user.name
     for device in CONFIG.install.vm_devices:
-        assert runner.ran(rf"docker exec -u {user} .*test -r {device} -a -w {device}")
+        probe = rf"docker exec -u {user} .*test -r {device} -a -w {device}"
+        assert runner.ran(probe)
+        runner.assert_order(r"dpkg -i", probe)
 
 
 def test_the_container_is_removed_even_when_the_proof_fails(

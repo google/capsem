@@ -43,6 +43,24 @@ path from repository literals, environment variables, or a backend name. A
 consumer that only inspects or controls a cache uses `CacheRegistry` and never
 receives its path.
 
+A shared cache stage must not contain or be contained by a prefix export.
+Exports are replaceable product views; shared stages are retained authorities.
+Overlapping them makes a successful export erase its own receipts and traps an
+exact-source run in a repair loop. VM generations live in the `assets` cache
+stage, while `cache/target/assets` remains only the assembled runtime view.
+
+Pinned external executables use `CachedToolPolicy` and `materialize()`. The
+policy declares one HTTPS URL and SHA-256 per host platform; the primitive
+downloads once, verifies before atomic publication, installs mode 0555, and
+returns a typed hit/miss result. A subsystem must not invent its own downloader
+or tool directory.
+
+Short-lived results from mutable services use `CleanVerdict`, `reusable()`, and
+`record_clean()`. The subject digest covers the complete typed policy and exact
+input bytes. Only success is recorded; malformed, future-dated, expired, or
+non-matching receipts are misses. The owning cache stage supplies the maximum
+age, count, warm size, and maximum size.
+
 `CachePaths` is loaded through `load_paths()`. The loader resolves the
 policy-owned `authority_environment`; a gate prefix exports that variable once
 so every producer sees the outer shared cache even when its output path crosses
@@ -91,6 +109,12 @@ broad `docker system prune`, direct Tart deletion, `rm` over cache roots, or
 backend-specific cache CLI commands. Foreign Docker/Tart resources are visible
 only as native totals and are never deleted by Capsem.
 
+Repository-generation reclaim is anchored by an exact current tag. Docker's
+bulk image listing can briefly lag a completed BuildKit import, so the Docker
+adapter verifies that exact tag directly and supplies a protected typed
+resource to the planner. Never turn this into an unanchored retry or allow a
+missing exact inspection to prune older generations.
+
 ## Test efficiency
 
 Start with the cheapest evidence that owns the change:
@@ -106,6 +130,14 @@ artifact frontiers instead of rebuilding them. Low-impact paths are routed by
 `[test_admission]`; forcing complete proof repeatedly is rate-limited by
 commit distance. Release commands self-qualify and do not consume a local
 `just test` prerequisite.
+
+Working-tree gates derive their private prefix name from the exact source
+digest. Do not replace it with a random run ID: Cargo fingerprints contain
+absolute source paths, so random prefixes turn an unchanged repeat into a
+rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
+`SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
+resource teardown. Do not manage its daemon in shell or disable Cargo
+incremental compilation without a measured workload-specific reason.
 
 Never make normal cache reuse opt-in. Do not clean caches to diagnose a product
 failure unless cold-state behavior is itself the subject under test.

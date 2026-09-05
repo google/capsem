@@ -1,7 +1,7 @@
 use std::io::Read;
-use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 #[cfg(test)]
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 
 use anyhow::{Context, Result};
 use objc2::rc::Retained;

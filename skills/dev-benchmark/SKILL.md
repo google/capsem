@@ -89,10 +89,13 @@ manifests and reads raw per-iteration nanoseconds out of Criterion's
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and
-`significant`. A bare `ratio > 1.2` cannot tell a regression from a jittery
+`significant`. A bare `ratio > 1.1` cannot tell a regression from a jittery
 machine, which is exactly what happened: 0.6.0 qualification failed on
 `gateway /vms/list CPU=0.160s > 0.140s`, and a rerun showed it was a one-off.
-`significant` requires the breach to also exceed the baseline's own `cv`.
+`significant` requires the breach to also exceed the baseline's own `cv` and
+the config-owned minimum time resolution. A percentage on nanoseconds is not
+product performance: those deltas remain visible as `tiny`, but never hold a
+release.
 
 Treat low-single-digit route-latency movement, including 3-5 ms, as host and
 scheduler noise rather than a product speedup or regression. Route-health
@@ -101,9 +104,11 @@ margin; they are not comparative performance claims. A real comparative claim
 comes from repeated stored evidence and must clear its observed variance.
 
 `[benchmark_regression] maximum_factor` is the ratio, config-owned and
-relative to checked-in evidence. There is deliberately no absolute
-seconds-or-megabytes cap: one would be a number somebody authored rather than
-measured.
+relative to checked-in evidence. `minimum_time_resolution_ms` is a resolution
+floor, not a performance budget: the ratio still catches meaningful drift
+without pretending sub-millisecond product precision exists. Comparative
+performance gets a 10% envelope; separately authored health ceilings retain
+20% operating headroom and are rounded to human millisecond/second increments.
 
 ## Route coverage
 

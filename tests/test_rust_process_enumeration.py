@@ -19,7 +19,7 @@ copy; this was the third. Duplicated knowledge diverges, and the copy is
 always the one nobody rechecks -- so the invariant is a test rather than three
 fixed call sites.
 
-The syscall-backed `capsem_core::proctable` is the replacement. It uses
+The syscall-backed `capsem_foundation::proctable` is the replacement. It uses
 `libproc` plus `KERN_PROCARGS2` on macOS and `/proc` on Linux, and returns one
 typed process snapshot shared by the service and benchmark harness.
 """
@@ -27,6 +27,7 @@ typed process snapshot shared by the service and benchmark harness.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import rust_sources
@@ -65,5 +66,22 @@ def test_no_rust_source_shells_out_to_ps() -> None:
         "these spawn setuid `ps`, which macOS refuses to exec from a sandboxed "
         "process, so they silently find nothing under the release gate: "
         f"{offenders}. Read the shared process table instead -- see "
-        "`capsem_core::proctable`."
+        "`capsem_foundation::proctable`."
     )
+
+
+def test_guest_benchmark_uses_only_the_foundation_process_table() -> None:
+    """One process-table reader must not pull the host runtime into the guest."""
+    foundation = tomllib.loads(
+        (PROJECT_ROOT / "crates/capsem-foundation/Cargo.toml").read_text()
+    )
+    benchmark = tomllib.loads(
+        (PROJECT_ROOT / "crates/capsem-bench/Cargo.toml").read_text()
+    )
+
+    dependency = benchmark["dependencies"]["capsem-foundation"]
+    assert dependency["default-features"] is False
+    assert dependency["optional"] is True
+    assert benchmark["dependencies"]["rusqlite"]["optional"] is True
+    assert benchmark["features"]["guest"] == []
+    assert foundation["features"]["default"] == ["runtime"]

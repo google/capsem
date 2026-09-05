@@ -92,6 +92,7 @@ class StagePolicy(CacheContract):
     """One independently accounted leaf in the cache tree."""
 
     path: Path
+    external: StrictBool = False
     entry_root: Path = Path(".")
     selector_globs: tuple[str, ...] = ()
     maximum_age_hours: PositiveStrictInt
@@ -101,7 +102,17 @@ class StagePolicy(CacheContract):
 
     @model_validator(mode="after")
     def validate_stage(self) -> StagePolicy:
-        object.__setattr__(self, "path", _relative_descendant(self.path, field="stage path"))
+        if self.path.is_absolute():
+            if not self.external:
+                raise ValueError("absolute stage path requires external=true")
+            if self.prune_strategy is not PruneStrategy.EPHEMERAL:
+                raise ValueError("external stage requires the ephemeral prune strategy")
+            if len(self.path.parts) < 4:
+                raise ValueError("external stage path must name a concrete descendant")
+        else:
+            if self.external:
+                raise ValueError("external stage path must be absolute")
+            object.__setattr__(self, "path", _relative_descendant(self.path, field="stage path"))
         entry_root = PurePosixPath(self.entry_root.as_posix())
         if self.entry_root.is_absolute() or ".." in entry_root.parts:
             raise ValueError("stage entry_root must stay inside the stage path")

@@ -122,7 +122,7 @@ def test_docker_inventory_retries_only_transient_snapshot_accounting() -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
+        if attempts < 3:
             return RuntimeCommandResult(
                 argv=argv,
                 returncode=1,
@@ -140,7 +140,7 @@ def test_docker_inventory_retries_only_transient_snapshot_accounting() -> None:
 
     storage = dockeradapter.categories(docker_policy(), runner=runner)
 
-    assert attempts == 2
+    assert attempts == 3
     assert storage[0].name == "Build Cache"
 
 

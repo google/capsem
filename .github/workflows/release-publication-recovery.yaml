@@ -82,7 +82,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
         with:
           key: release-channel-recovery
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
@@ -190,15 +190,6 @@ jobs:
             --site-url https://capsem.org/ \
             --docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json" \
             --work-dir /tmp/public-binary-release
-
-      - name: Enable KVM for live public-install VM proof
-        run: |
-          sudo modprobe kvm
-          sudo chmod 0666 /dev/kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
       - name: Install live public Linux release and prove guest shell execution
         run: >

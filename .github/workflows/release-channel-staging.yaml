@@ -50,7 +50,7 @@ jobs:
       - name: Install locked Python dependencies
         run: uv sync --project build_system --frozen
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
         with:
           key: release-channel-staging
 

@@ -43,6 +43,7 @@ class FunctionalModule(
     """
 
     uses_qualification = True
+    outside_egress = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

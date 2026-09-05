@@ -170,7 +170,9 @@ class EnvironmentConfig(Strict):
     rustc_wrapper: str
     sccache_dir: str
     sccache_cache_size: str
-    sccache_base_dir: str
+    sccache_base_dirs: str
+    sccache_client_side: str
+    sccache_idle_timeout: str
     sccache_server_uds: str
     uv_cache: str
     pnpm_store: str

@@ -87,7 +87,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
         with:
           key: profile-release-selection
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
@@ -103,7 +103,7 @@ jobs:
 
       - name: Validate selected channel profile through capsem-admin
         run: |
-          mkdir -p target
+          mkdir -p cache/target
           cargo run -p capsem-admin -- validate \
             --channel "${{ inputs.channel }}" \
             --profile "${{ inputs.profile }}" \
@@ -357,7 +357,7 @@ jobs:
       - name: Install Linux sandbox runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo apt-get install -y --no-install-recommends acl bubblewrap kmod udev
 
       - name: Prove Linux sandbox boundary
         run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
@@ -386,12 +386,7 @@ jobs:
       - name: Enable KVM for complete functional proof
         run: |
           set -euo pipefail
-          sudo modprobe kvm
-          sudo chmod 0666 /dev/kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+          sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules
 
       - name: Prepare exact profile and pulled binary pairing
         env:
@@ -470,7 +465,7 @@ jobs:
         with:
           toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -647,7 +642,7 @@ jobs:
         with:
           toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: ./.github/actions/rust-cache
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

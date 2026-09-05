@@ -114,9 +114,10 @@ class DigestConfig(Strict):
 class BenchmarkRegressionConfig(Strict):
     """How recorded product benchmarks become release guards.
 
-    The limit is relative to checked-in evidence, never an authored duration
-    or size. One policy covers time and bytes because both are regression
-    ratios, and the benchmark still reports their native units.
+    The relative limit detects drift; observed spread handles scheduler jitter;
+    the absolute resolution keeps nanosecond percentages from gaining release
+    authority. The benchmark still reports every movement.
     """
 
     maximum_factor: PositiveFloat
+    minimum_time_resolution_ms: PositiveFloat

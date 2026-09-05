@@ -11,9 +11,9 @@ from pathlib import Path
 
 from . import (
     assetplan,
-    audits,
     pytestsuite,
     toolchain,
+    webaudits,
 )
 from .actions import Script
 from .command import GateCommand
@@ -39,6 +39,7 @@ class ArtifactsModule(
     """
 
     uses_qualification = True
+    outside_egress = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -83,6 +84,8 @@ def artifacts(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    node: Step | None = None,
+    bundled: Step | None = None,
 ) -> Step:
     """Build every profile's VM assets, or verify the pulled ones."""
     phase = plan.phase("artifacts")
@@ -98,11 +101,11 @@ def artifacts(
         )
 
     built = assetplan.fragment(plan, config, after=after)
-    node = phase.add(
-        toolchain.node(config, (config.frontend.workspace,)),
-        after=after,
+    installed = node or phase.add(
+        toolchain.node(config, (config.frontend.workspace,)), after=after
     )
-    bundled = phase.add(audits.frontend_bundle(config), after=(node,))
+    prerequisites = (*after, installed) if node is not None else (installed,)
+    frontend = bundled or phase.add(webaudits.frontend_bundle(config), after=prerequisites)
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",
@@ -113,7 +116,7 @@ def artifacts(
             # same one every other build locks.
             contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
-        after=(built, bundled),
+        after=(built, frontend),
     )
 
 

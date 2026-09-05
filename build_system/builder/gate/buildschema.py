@@ -12,13 +12,13 @@ from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import (
-    NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
     StringConstraints,
     model_validator,
 )
 
+from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
 from .releaseschema import ReleasePairingEnvironment
@@ -187,28 +187,32 @@ class ImageBuildConfig(Strict):
         return self
 
 
-class PythonLockAuditConfig(Strict):
-    requirements: str
+class DependencyAuditConfig(Strict):
+    """One maintained scanner over the configured dependency lockfiles."""
+
     cache_stage: SafeToken
-    cache_subdirectory: SafeToken
-    service: Literal["osv", "pypi"]
-    attempts: PositiveInt
-    retry_seconds: NonNegativeFloat
-    socket_timeout_seconds: PositiveInt
+    lockfiles: tuple[str, ...]
+    scanner_args: tuple[str, ...]
+    timeout_seconds: PositiveInt
+    tool: CachedToolPolicy
 
     @model_validator(mode="after")
-    def requirements_stays_in_cache(self) -> PythonLockAuditConfig:
-        path = PurePosixPath(self.requirements)
-        if path.is_absolute() or ".." in path.parts or path.parts[:2] != ("cache", "state"):
-            raise ValueError("Python audit requirements must stay under cache/state/")
+    def lockfiles_are_explicit_source_inputs(self) -> DependencyAuditConfig:
+        if not self.lockfiles or len(self.lockfiles) != len(set(self.lockfiles)):
+            raise ValueError("dependency audit lockfiles must be non-empty and unique")
+        for configured in self.lockfiles:
+            path = PurePosixPath(configured)
+            if path.is_absolute() or ".." in path.parts or path.name == "":
+                raise ValueError("dependency audit lockfiles must be repository-relative")
+        if self.scanner_args[:2] != ("scan", "source"):
+            raise ValueError("dependency audit scanner must use the source scan command")
         return self
 
 
 class AuditsConfig(Strict):
     cargo: str
+    dependencies: str
     dependency_drift: str
-    pnpm: str
-    python_lock: str
     public_surface: str
     source_syntax: str
     hardcoded_selections: str
@@ -219,7 +223,7 @@ class AuditsConfig(Strict):
     skills_dir: str
     max_skill_description_chars: PositiveInt
     max_skill_body_lines: PositiveInt
-    python_lock_policy: PythonLockAuditConfig
+    dependency_policy: DependencyAuditConfig
 
 
 class WebSurfacesConfig(Strict):

@@ -6,9 +6,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import NoReturn
 
@@ -28,6 +30,7 @@ LEGACY_STATE_PATHS = (
     "assets/update-checks",
     "assets/update-cache",
 )
+FAILED_LOG_MARKER = "capsem installed post-mortem log proof"
 
 
 def fail(message: str) -> NoReturn:
@@ -45,6 +48,34 @@ def positive_integer(metadata: dict[str, object], field: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         fail(f"manifest-metadata {field} must be a positive integer")
     return value
+
+
+def verify_failed_session_logs(capsem: Path, capsem_home: Path) -> None:
+    """Prove the installed CLI can read service-preserved boot evidence."""
+    session_id = str(uuid.uuid4())
+    failed_dir = capsem_home / "run" / "sessions" / f"{session_id}-failed-installed-proof"
+    failed_dir.mkdir(parents=True)
+    (failed_dir / "process.log").write_text(f"{FAILED_LOG_MARKER}\n", encoding="utf-8")
+    try:
+        result = subprocess.run(
+            [str(capsem), "logs", session_id],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+            },
+        )
+        output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0:
+            fail(f"capsem logs exited {result.returncode}: {output.strip()}")
+        if FAILED_LOG_MARKER not in output:
+            fail("capsem logs did not return preserved boot evidence")
+    finally:
+        shutil.rmtree(failed_dir, ignore_errors=True)
 
 
 def main() -> int:
@@ -211,6 +242,7 @@ def main() -> int:
             f"status reports {total} profiles but selected manifest declares "
             f"{len(manifest_profiles)}"
         )
+    verify_failed_session_logs(args.capsem, args.capsem_home)
     if args.evidence_out is not None:
         args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
         args.evidence_out.write_text(

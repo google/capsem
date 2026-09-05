@@ -4,6 +4,7 @@ import fcntl
 import os
 from pathlib import Path
 
+from capsem_builder.cache import leases
 from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
@@ -132,3 +133,14 @@ def test_retention_inventory_skips_policy_protected_stages(tmp_path: Path) -> No
 
     assert [stage.stage_id for stage in report.stages] == ["reclaimable"]
     assert report.stages[0].logical_bytes == len(b"reclaimable")
+
+
+def test_process_exit_releases_every_cache_lease(monkeypatch, tmp_path: Path) -> None:
+    held = {}
+    monkeypatch.setattr(leases, "_HELD", held)
+    descriptor = leases.retain_path(tmp_path / "stage/.generation.lock")
+
+    leases.release_all()
+
+    assert descriptor.closed
+    assert held == {}

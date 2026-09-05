@@ -7,7 +7,9 @@ a distinct subject from building and releasing.
 
 from __future__ import annotations
 
-from pydantic import Field, PositiveFloat, PositiveInt
+import math
+
+from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
 from .configschema import Strict
 
@@ -33,6 +35,26 @@ class RouteBudgetConfig(Strict):
     p95_ms: PositiveFloat
     p99_ms: PositiveFloat
     cpu_s: PositiveFloat
+
+    @field_validator("p95_ms", "p99_ms")
+    @classmethod
+    def latency_uses_human_increment(cls, value: float) -> float:
+        """Keep ceilings honest at the precision their duration supports."""
+        if value <= 10:
+            increment = 1
+        elif value <= 100:
+            increment = 5
+        elif value <= 1_000:
+            increment = 10
+        elif value <= 10_000:
+            increment = 1_000
+        elif value <= 100_000:
+            increment = 5_000
+        else:
+            increment = 10_000
+        if not math.isclose(value % increment, 0.0, abs_tol=1e-9):
+            raise ValueError(f"latency must use a {increment}ms increment at this scale")
+        return value
 
 
 class RouteBudgetPairConfig(Strict):
