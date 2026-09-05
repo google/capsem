@@ -520,7 +520,12 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     assert {coverage, evidence} <= set(config["prefix"]["exports"]), RATIONALE
     assert config["hostimage"]["extract_to"] == f"{coverage}/linux", RATIONALE
     assert config["workspace"]["coverage_file"] == f"{coverage}/.coverage", RATIONALE
-    assert config["workspace"]["evidence_dir"] == evidence, RATIONALE
+    workspace_evidence = Path(config["workspace"]["evidence_dir"])
+    assert workspace_evidence != Path(evidence), (
+        "Workspace preservation replaces its own directory; sharing pytest's "
+        "root erased the diagnostics of the failure that triggered teardown."
+    )
+    assert workspace_evidence.parent == Path(evidence), RATIONALE
     assert config["suites"]["pytest"]["coverage_flags"] == [
         "--cov=build_system/builder",
         f"--cov-report=xml:{coverage}/python/codecov.xml",
