@@ -3034,7 +3034,9 @@ p99_ms = 10.0
 cpu_s = 0.15
 
 [benchmark.route_health.budgets.evaluate.service]
-p95_ms = 2.0
+# Same-handler Linux p95 samples reached 1.767/1.905ms; 20% margin needs
+# 2.286ms, rounded to the next whole millisecond for this health ceiling.
+p95_ms = 3.0
 p99_ms = 5.0
 cpu_s = 0.10
 [benchmark.route_health.budgets.evaluate.gateway]
