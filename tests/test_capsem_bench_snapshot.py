@@ -7,40 +7,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
 
 
-class _StubTable:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def add_column(self, *args, **kwargs):
-        pass
-
-    def add_row(self, *args, **kwargs):
-        pass
-
-    def add_section(self, *args, **kwargs):
-        pass
-
-
-class _StubConsole:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def print(self, *args, **kwargs):
-        pass
-
-
-rich_module = types.ModuleType("rich")
-rich_table = types.ModuleType("rich.table")
-rich_text = types.ModuleType("rich.text")
-rich_console = types.ModuleType("rich.console")
-rich_table.Table = _StubTable
-rich_text.Text = str
-rich_console.Console = _StubConsole
-sys.modules.setdefault("rich", rich_module)
-sys.modules.setdefault("rich.table", rich_table)
-sys.modules.setdefault("rich.text", rich_text)
-sys.modules.setdefault("rich.console", rich_console)
-
 fastmcp_module = types.ModuleType("fastmcp")
 fastmcp_transports = types.ModuleType("fastmcp.client.transports")
 fastmcp_module.__dict__["Client"] = object
@@ -48,7 +14,7 @@ fastmcp_transports.__dict__["StdioTransport"] = object
 sys.modules.setdefault("fastmcp", fastmcp_module)
 sys.modules.setdefault("fastmcp.client.transports", fastmcp_transports)
 
-from capsem_bench import snapshot  # noqa: E402
+from capsem_bench import snapshot
 
 
 def test_snapshot_cleanup_unlinks_symlinked_directories(tmp_path, monkeypatch):
