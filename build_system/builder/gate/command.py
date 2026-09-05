@@ -242,6 +242,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
         self.admit(commit)
         with (
             self._recording(source_commit=None if commit is None else str(commit)) as log,
+            preflight.locked(self._config, self._runner, self.name, exclusive=self.exclusive) as locked,
             observing(self._config, log, plan, publishes=self.publishes) as watch,
         ):
             qualificationflow.begin(log, decision, commit, self.qualification_policy)
@@ -275,7 +276,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
                         outside_runner=outside_runner,
                         env=command_environment(
                             self._config,
-                            environment_of(acquired),
+                            environment_of((*locked, *acquired)),
                             self._sandbox_mode,
                             source_commit=qualified_commit(self._config.root, commit),
                         ),

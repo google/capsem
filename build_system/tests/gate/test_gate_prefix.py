@@ -124,7 +124,8 @@ def source(tmp_path: Path) -> Path:
 # -- the budget --------------------------------------------------------------
 
 
-def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path) -> None:
+@pytest.mark.parametrize("queued", [False, True])
+def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path, monkeypatch, queued) -> None:
     """Cargo compares source mtimes against shared fingerprints across prefixes."""
     from capsem_builder.gate import snapshot
 
@@ -145,9 +146,67 @@ def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path
             capture_output=True, text=True, check=True,
         ).stdout.strip()
 
+    paths = [Path("Cargo.toml"), Path("src/main.rs")]
+    if queued:
+        snapshot._copy_files(older, copied, paths)
     assert run(newer) == "2"
-    snapshot._copy_files(older, copied, [Path("Cargo.toml"), Path("src/main.rs")])
-    assert run(copied) == "1", "the snapshot must rebuild instead of executing the other tree's binary"
+    if not queued:
+        snapshot._copy_files(older, copied, paths)
+        assert run(copied) == "1", "the snapshot must execute its own source"
+        return
+
+    from capsem_builder.gate import preflight
+
+    subprocess.run(["git", "init", "-q"], cwd=copied, check=True)
+    config = _config()
+    gate_lock = config.locks.gate.model_copy(update={
+        "path": str(tmp_path / "machine.lock"),
+        "holder_record": str(tmp_path / "holder.json"),
+    })
+    config = config.model_copy(update={
+        "root": copied, "locks": config.locks.model_copy(update={"gate": gate_lock}),
+    })
+    runner = RecordingRunner(copied)
+    runner.observing = False
+    monkeypatch.setattr(snapshot, "digest", lambda root, _: (root / "src/main.rs").read_text())
+    acquire = preflight.ExclusiveLock.acquire
+
+    def build_before_lock_returns(lock):
+        acquire(lock)
+        os.utime(newer / "src/main.rs", None)
+        assert run(newer) == "2"
+
+    monkeypatch.setattr(preflight.ExclusiveLock, "acquire", build_before_lock_returns)
+    with preflight.locked(config, runner, "test", exclusive=True):
+        assert run(copied) == "1", "a build while this snapshot queued must not supply its binary"
+
+
+def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path, monkeypatch) -> None:
+    from capsem_builder.gate import preflight, snapshot
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.lifecycle import Resource
+
+    source = tmp_path / "input.rs"
+    source.write_text("original")
+    released = []
+
+    class Changed(Resource, name="changed-source-test"):
+        def acquire(self):
+            source.write_text("changed")
+
+        def release(self):
+            released.append(True)
+
+    monkeypatch.setattr(preflight.ExclusiveLock, "for_gate", lambda *args, **kwargs: Changed())
+    monkeypatch.setattr(snapshot, "digest", lambda *args: source.read_text())
+    runner = RecordingRunner(tmp_path)
+    runner.observing = False
+    with (
+        pytest.raises(GateError, match="source changed while waiting"),
+        preflight.locked(_config().model_copy(update={"root": tmp_path}), runner, "test", exclusive=True),
+    ):
+        pytest.fail("changed source reached the plan")
+    assert released == [True]
 
 
 def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so guest tests launch the host binaries they just built.
   Copied source timestamps also invalidate stale Cargo fingerprints from other
   worktrees instead of reusing binaries for different source contents.
+  Compiler inputs are refreshed again under the machine lock, so a build that
+  finishes while another checkout queues cannot supply that checkout's binary.
 - Resuming a persistent VM protects its socket and session state from delayed
   cleanup of the previous process, preventing intermittent execution failures
   while still reporting crashed restores immediately.
