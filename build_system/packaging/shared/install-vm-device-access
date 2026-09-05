@@ -19,9 +19,11 @@ capsem_install_vm_device_access() {
     target_uid=$(id -u "$target_user")
     rule_temp=$(mktemp)
     if ! {
-        sed '/RUN+="\/usr\/bin\/setfacl -m u:[0-9][0-9]*:rw \/dev\/%k"/d' "$rule_source"
-        printf 'KERNEL=="kvm", RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
-        printf 'KERNEL=="vhost-vsock", RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
+        sed '/RUN[+:]="\/usr\/bin\/setfacl -m u:[0-9][0-9]*:rw \/dev\/%k"/d' "$rule_source"
+        # Replace the queued seat ACL reset, not just its tag: udev retains
+        # historical uaccess tags across every KVM create/destroy change event.
+        printf 'KERNEL=="kvm", RUN:="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
+        printf 'KERNEL=="vhost-vsock", RUN:="/usr/bin/setfacl -m u:%s:rw /dev/%%k"\n' "$target_uid"
     } > "$rule_temp"; then
         rm -f "$rule_temp"
         return 1
