@@ -1,20 +1,17 @@
 use super::vsock_io::{SockaddrVm, AF_VSOCK};
 use super::*;
 use std::io::Write;
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, IntoRawFd};
 
 use super::audit::{extract_audit_id, extract_audit_timestamp_us, extract_execve_argv, extract_field};
 
 mod control_loop;
 
-/// CLOEXEC is set atomically by `pipe2`: with `pipe` followed by `fcntl`,
-/// a child another test thread forks in between (`sleep`, `sh`) inherits
-/// both ends, the read end outlives the test's `drop`, and a writer that
-/// must see EPIPE writes into the child's copy forever instead.
+/// Use the standard library's portable close-on-exec pipe construction so
+/// children launched by other tests cannot keep these endpoints alive.
 fn make_pipe() -> (RawFd, RawFd) {
-    let mut fds = [0 as RawFd; 2];
-    assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
-    (fds[0], fds[1])
+    let (reader, writer) = std::io::pipe().unwrap();
+    (reader.into_raw_fd(), writer.into_raw_fd())
 }
 
 // Wire format compatibility: new disjoint types over pipes

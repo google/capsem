@@ -52,7 +52,7 @@ from .load_harness import (
 )
 
 # Served by capsem-mock-server through the benchmark collector's corp config
-# (DNS fixture + upstream override); see benchmarks/collectors/_guest.
+# (DNS fixture + upstream override), configured by the shared guest collector.
 DEFAULT_TARGET = "https://fixture.capsem.test/tiny"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
