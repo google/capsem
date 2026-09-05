@@ -4,7 +4,7 @@ use std::io;
 use std::num::NonZeroI32;
 
 use nix::errno::Errno;
-use nix::sys::signal::{kill, Signal as NixSignal};
+use nix::sys::signal::{kill, killpg, Signal as NixSignal};
 use nix::unistd::Pid;
 
 use super::errno;
@@ -97,6 +97,38 @@ fn classify_probe(result: Result<(), Errno>) -> io::Result<ProcessState> {
 /// Deliver a lifecycle signal without hiding a concurrent process exit.
 pub fn send_signal(pid: ProcessId, signal: Signal) -> io::Result<SignalOutcome> {
     classify_signal(kill(pid.as_nix(), signal.as_nix()))
+}
+
+/// Signal a process group created and owned by the caller, named by its leader.
+pub fn send_process_group_signal(leader: ProcessId, signal: Signal) -> io::Result<SignalOutcome> {
+    classify_signal(killpg(leader.as_nix(), signal.as_nix()))
+}
+
+/// Observe an owned child's exit without reaping it. Keeping the zombie until
+/// group cleanup reserves its PID even if its descendants change groups.
+pub fn child_has_exited(pid: ProcessId) -> io::Result<bool> {
+    loop {
+        // SAFETY: zero is a valid initial siginfo_t; waitid writes this owned
+        // buffer, and P_PID names only the validated positive child identifier.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid.get() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            // SAFETY: waitid initialized the child-status fields; an unchanged
+            // zero PID means no status was available with WNOHANG.
+            return Ok(unsafe { info.si_pid() } != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 fn classify_signal(result: Result<(), Errno>) -> io::Result<SignalOutcome> {

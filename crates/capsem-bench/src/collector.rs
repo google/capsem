@@ -10,11 +10,13 @@
 //! and that is the convention every collector follows.
 
 use std::collections::BTreeMap;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use capsem_foundation::unix::process::{child_has_exited, send_process_group_signal, ProcessId, Signal};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::Unit;
@@ -84,13 +86,18 @@ pub fn parse(stdout: &str) -> Result<Collected> {
 /// blocks on write until someone reads, and reading only after exit turned
 /// every chatty collector into a reported timeout.
 pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collected> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("cannot start collector {}", program.display()))?;
+    let mut owned = CollectorProcess(Some(
+        Command::new(program)
+            .args(args)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("cannot start collector {}", program.display()))?,
+    ));
+    let child = owned.0.as_mut().expect("collector is owned until cleanup");
+    let pid = ProcessId::try_from(child.id())?;
     let mut stdout = child.stdout.take().context("collector stdout was not piped")?;
     let (drained_tx, drained_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -101,8 +108,8 @@ pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collect
 
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        match child.try_wait()? {
-            Some(status) => {
+        match child_has_exited(pid)? {
+            true => {
                 // The pipe closes when its last writer exits. A grandchild the
                 // collector left behind keeps it open, so the wait for EOF is
                 // bounded by the same deadline rather than by that grandchild.
@@ -116,6 +123,7 @@ pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collect
                         )
                     })?
                     .context("read collector stdout")?;
+                let status = owned.reap()?;
                 if !status.success() {
                     bail!(
                         "collector {} exited with {}",
@@ -126,18 +134,42 @@ pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collect
                 return parse(&String::from_utf8_lossy(&output))
                     .with_context(|| format!("collector {}", program.display()));
             }
-            None if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // The reader thread ends by itself once the last writer
-                // closes the pipe; nothing waits on it here.
+            false if std::time::Instant::now() >= deadline => {
                 bail!(
                     "collector {} did not finish within {}s",
                     program.display(),
                     timeout.as_secs()
                 );
             }
-            None => std::thread::sleep(Duration::from_millis(50)),
+            false => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
+/// A collector may leave descendants even after its direct child exits.
+/// Always release its group before another dimension starts measuring.
+struct CollectorProcess(Option<Child>);
+
+impl CollectorProcess {
+    fn reap(&mut self) -> std::io::Result<ExitStatus> {
+        let mut child = self.0.take().expect("collector is reaped once");
+        let signalled =
+            ProcessId::try_from(child.id()).and_then(|leader| send_process_group_signal(leader, Signal::Kill));
+        if signalled.is_err() {
+            let _ = child.kill();
+        }
+        let waited = child.wait();
+        signalled?;
+        waited
+    }
+}
+
+impl Drop for CollectorProcess {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            if let Err(error) = self.reap() {
+                eprintln!("failed to clean up collector process group: {error}");
+            }
         }
     }
 }
