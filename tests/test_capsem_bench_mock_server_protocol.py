@@ -18,31 +18,8 @@ class _StubConsole:
         self.messages.append(" ".join(str(arg) for arg in args))
 
 
-class _StubTable:
-    def __init__(self, *args, **kwargs):
-        self.rows = []
-
-    def add_column(self, *args, **kwargs):
-        pass
-
-    def add_row(self, *args, **kwargs):
-        self.rows.append(args)
-
-
-rich_module = types.ModuleType("rich")
-rich_console = types.ModuleType("rich.console")
-rich_table = types.ModuleType("rich.table")
-rich_text = types.ModuleType("rich.text")
-rich_console.Console = _StubConsole
-rich_table.Table = _StubTable
-rich_text.Text = str
-sys.modules.setdefault("rich", rich_module)
-sys.modules.setdefault("rich.console", rich_console)
-sys.modules.setdefault("rich.table", rich_table)
-sys.modules.setdefault("rich.text", rich_text)
-
-from capsem_bench import __main__ as bench_main  # noqa: E402
-from capsem_bench import load_harness  # noqa: E402
+from capsem_bench import __main__ as bench_main
+from capsem_bench import load_harness
 
 
 def test_python_capsem_bench_has_no_http_protocol_or_throughput_modes():
