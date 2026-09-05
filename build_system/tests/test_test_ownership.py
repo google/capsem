@@ -90,6 +90,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/scripts/test_dependency_audit.py",
         "build_system/tests/scripts/test_rust_affected.py",
         "build_system/tests/conftest.py",
+        "build_system/tests/test_bootstrap.py",
         "build_system/tests/test_ownership.toml",
         "build_system/tests/test_project_boundary.py",
         "build_system/tests/test_reproducible_sdist.py",
