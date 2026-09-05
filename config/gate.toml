@@ -2628,8 +2628,9 @@ seeded_dirs = ["run", "sessions", "logs"]
 benchmark_root = "cache/target/tests/benchmarks"
 coverage_file = "cache/target/coverage/.coverage"
 
-# What a failing run leaves behind, copied out before the run directory goes.
-evidence_dir = "cache/target/tests/evidence"
+# Workspace-owned logs only: replacing the shared evidence root erased the
+# pytest service logs needed to diagnose the failure that triggered teardown.
+evidence_dir = "cache/target/tests/evidence/workspace"
 
 # ---------------------------------------------------------------------------
 # The step attribute migration

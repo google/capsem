@@ -139,6 +139,22 @@ def test_evidence_is_copied_out_before_anything_removes_it(tmp_path: Path) -> No
     assert not workspace.run_dir.exists()
 
 
+def test_workspace_failure_preserves_sibling_pytest_evidence(tmp_path: Path) -> None:
+    config = _checkout(tmp_path)
+    pytest_log = config.path(config.outputs.test_artifacts) / "pytest-failure" / "service.log"
+    pytest_log.parent.mkdir(parents=True)
+    pytest_log.write_text("five-VM provision failure")
+    workspace = Workspace(config)
+
+    with pytest.raises(GateError, match="functional failed"), held(workspace):
+        (workspace.run_dir / "serial.log").write_text("workspace boot log")
+        raise GateError("functional failed")
+
+    assert pytest_log.read_text() == "five-VM provision failure"
+    assert (workspace.preserved / "serial.log").read_text() == "workspace boot log"
+    assert not workspace.run_dir.exists()
+
+
 def test_evidence_collection_skips_what_is_not_a_log(tmp_path: Path) -> None:
     """A run directory holds rootfs overlays; copying those out fills a disk
     the failure already strained."""

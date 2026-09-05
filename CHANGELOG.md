@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Failed test gates retain pytest diagnostics when collecting workspace logs,
+  instead of erasing the original failure evidence during teardown.
 - Service startup prewarms only profile-requested overlay sizes, eliminating
   an unused 16 GiB sparse template from the installation cache footprint while
   preserving warm reuse of the configured VM disks.

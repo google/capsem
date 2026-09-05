@@ -1,23 +1,35 @@
+import importlib.util
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
 
 
-fastmcp_module = types.ModuleType("fastmcp")
-fastmcp_transports = types.ModuleType("fastmcp.client.transports")
-fastmcp_module.__dict__["Client"] = object
-fastmcp_transports.__dict__["StdioTransport"] = object
-sys.modules.setdefault("fastmcp", fastmcp_module)
-sys.modules.setdefault("fastmcp.client.transports", fastmcp_transports)
+@pytest.fixture
+def snapshot(monkeypatch):
+    """Load the guest-only MCP dependency without polluting other test imports."""
+    fastmcp = types.ModuleType("fastmcp")
+    transports = types.ModuleType("fastmcp.client.transports")
+    fastmcp.Client = object
+    transports.StdioTransport = object
+    spec = importlib.util.spec_from_file_location(
+        "capsem_bench.snapshot_under_test",
+        PROJECT_ROOT / "guest/artifacts/capsem_bench/snapshot.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as imports:
+        imports.setitem(sys.modules, "fastmcp", fastmcp)
+        imports.setitem(sys.modules, "fastmcp.client.transports", transports)
+        spec.loader.exec_module(module)
+    return module
 
-from capsem_bench import snapshot
 
-
-def test_snapshot_cleanup_unlinks_symlinked_directories(tmp_path, monkeypatch):
+def test_snapshot_cleanup_unlinks_symlinked_directories(tmp_path, monkeypatch, snapshot):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     target = tmp_path / "venv-target"
@@ -37,7 +49,7 @@ def test_snapshot_cleanup_unlinks_symlinked_directories(tmp_path, monkeypatch):
     assert (target / "keep.txt").read_text() == "still here"
 
 
-def test_snapshot_benchmark_reuses_one_mcp_connection(tmp_path, monkeypatch):
+def test_snapshot_benchmark_reuses_one_mcp_connection(tmp_path, monkeypatch, snapshot):
     calls = []
     clients = []
 
