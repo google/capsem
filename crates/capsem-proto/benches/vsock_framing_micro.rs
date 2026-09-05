@@ -42,6 +42,7 @@ fn main() {
     let guest_payload = &guest_frame[4..];
 
     let dns_request = DnsRequest {
+        id: 0,
         raw: vec![0xab; 96],
         proto: "udp".to_string(),
         process_name: Some("bench".to_string()),

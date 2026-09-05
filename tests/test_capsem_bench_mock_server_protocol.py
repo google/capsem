@@ -8,10 +8,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
 
 from capsem_bench import __main__ as bench_main
-from capsem_bench import load_harness
+from capsem_bench import load_harness, mitm_load
 
-PROJECT_ROOT = Path(__file__).parent.parent
-ARTIFACTS = PROJECT_ROOT / "guest" / "artifacts"
+
+@pytest.mark.parametrize("status", [200, 204, 302, 403, 500])
+def test_mitm_load_counts_http_failures(status):
+    session = types.SimpleNamespace(
+        get=lambda *args, **kwargs: types.SimpleNamespace(status_code=status),
+    )
+    elapsed, observed_status, error = mitm_load._do_request("https://fixture.test/tiny", session)
+    assert elapsed >= 0
+    assert observed_status == status
+    assert error == (None if 200 <= status < 300 else f"HTTP {status}")
 
 
 class _StubConsole:

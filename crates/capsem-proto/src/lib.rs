@@ -58,9 +58,16 @@ pub const SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/schema_hash.txt
 /// Maximum cumulative file bytes allowed during boot handshake (10MB).
 pub const MAX_BOOT_FILE_BYTES: usize = 10_485_760;
 
-/// Grace period (seconds) between SIGTERM and SIGKILL during shutdown.
-/// capsem-sysutil derives its countdown from this (SHUTDOWN_GRACE_SECS + 1).
+/// Grace period (seconds) the guest agent gives its terminal shell to exit
+/// after SIGHUP before SIGKILL during shutdown. The agent reports
+/// `GuestToHost::ShutdownComplete` as soon as the shell is gone, so this is
+/// a ceiling, not the usual cost. capsem-sysutil derives its countdown from
+/// this (SHUTDOWN_GRACE_SECS + 1).
 pub const SHUTDOWN_GRACE_SECS: u64 = 2;
+/// How long the host waits for `GuestToHost::ShutdownComplete` after sending
+/// `HostToGuest::Shutdown` before stopping the VM anyway. One second past the
+/// guest's grace covers its final `sync()` and the message round trip.
+pub const SHUTDOWN_COMPLETE_TIMEOUT_SECS: u64 = SHUTDOWN_GRACE_SECS + 1;
 
 /// Maximum length of an env var key.
 pub const MAX_ENV_KEY_LEN: usize = 256;
@@ -483,6 +490,12 @@ pub fn decode_audit_record(payload: &[u8]) -> Result<AuditRecord> {
 /// reliable enough to bother.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsRequest {
+    /// Correlation id chosen by the guest. The host echoes it in the
+    /// matching `DnsResponse` so many queries can be in flight on one
+    /// vsock connection and be answered out of order. Peers that predate
+    /// the field decode it as 0 and still speak in lock-step.
+    #[serde(default)]
+    pub id: u32,
     pub raw: Vec<u8>,
     /// "udp" or "tcp" -- the source-side transport, NOT the path used
     /// to reach the upstream nameserver (which is always UDP today).
@@ -502,6 +515,9 @@ pub struct DnsRequest {
 /// NXDOMAIN-from-upstream without re-parsing the wire bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsResponse {
+    /// The `DnsRequest::id` this answers.
+    #[serde(default)]
+    pub id: u32,
     pub raw: Vec<u8>,
     pub decision: String,
     pub rcode: u16,
@@ -586,6 +602,12 @@ pub enum GuestToHost {
     ShutdownRequest,
     /// Guest requests suspend.
     SuspendRequest,
+    /// The guest finished its shutdown work: the terminal shell has exited
+    /// (or was killed at the end of `SHUTDOWN_GRACE_SECS`) and dirty pages
+    /// are synced. The host stops the VM on receipt instead of waiting out a
+    /// fixed timer; `SHUTDOWN_COMPLETE_TIMEOUT_SECS` bounds a guest that
+    /// never answers.
+    ShutdownComplete,
     /// Quiescence ack: filesystem frozen, safe to snapshot.
     SnapshotReady,
 }

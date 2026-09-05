@@ -13,11 +13,16 @@ under a private bytecode cache before this package is imported at all.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 
+from . import snapshot
 from .cachetooling import CompilerCache
 from .config import GateConfig
+from .context import Context
 from .errors import GateError
-from .lifecycle import Resource
+from .fileactions import RefreshSourceTimes
+from .lifecycle import Resource, held
 from .locks import ExclusiveLock
 from .proc import Runner
 
@@ -47,6 +52,22 @@ def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> No
     )
 
 
+@contextmanager
+def locked(config: GateConfig, runner: Runner, name: str, *, exclusive: bool) -> Iterator[tuple[Resource, ...]]:
+    """Refresh compiler inputs after queueing, before observing immutable source."""
+    if not exclusive:
+        yield ()
+        return
+    before = None if runner.observing else snapshot.digest(config.root, config)
+    with held(ExclusiveLock.for_gate(config, purpose=purpose(name))) as acquired:
+        if before is not None and snapshot.digest(config.root, config) != before:
+            raise GateError("source changed while waiting for the machine lock; start a fresh run")
+        RefreshSourceTimes(config.root, config.boundary.rust.suffixes).perform(
+            Context(runner, config, observing=runner.observing)
+        )
+        yield acquired
+
+
 def holdings(
     config: GateConfig,
     runner: Runner,
@@ -55,16 +76,10 @@ def holdings(
     exclusive: bool,
     declared: tuple[Resource, ...],
 ) -> tuple[Resource, ...]:
-    """The machine lock first, then whatever the command declared.
-
-    First because it is released last, and because the resources a command
-    declares are the ones that wipe trees -- taking the lock after one of
-    those has started is taking it too late.
-    """
+    """Tooling and declared resources, inside the machine lock's outer scope."""
     if not exclusive:
         return declared
     return (
-        ExclusiveLock.for_gate(config, purpose=purpose(name)),
         CompilerCache(config, runner),
         *declared,
     )

@@ -10,10 +10,9 @@ fn invalid_pid_is_not_mistaken_for_a_gone_process() {
 
 #[test]
 fn real_child_is_observed_alive_then_gone() {
-    let mut child = std::process::Command::new("sh")
-        .args(["-c", "sleep 30"])
-        .spawn()
-        .unwrap();
+    // Own the sleeper directly: killing a shell can leave its child holding
+    // the test runner's output pipe after this test returns.
+    let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
     let pid = child.id();
     let mut probe = ProcessProbe::new("test-real-child");
     assert_eq!(probe.state(pid), ProcessState::Alive);

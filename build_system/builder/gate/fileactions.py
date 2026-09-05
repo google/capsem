@@ -75,6 +75,26 @@ class MakeDir(Action, name="make-dir"):
         self._path.mkdir(parents=True, exist_ok=True)
 
 
+class RefreshSourceTimes(Action, name="refresh-source-times"):
+    """Make owned compiler inputs newer than another checkout's build."""
+
+    def __init__(self, root: Path, suffixes: tuple[str, ...]) -> None:
+        self._root, self._suffixes = root, suffixes
+
+    def render(self) -> str:
+        return f"refresh compiler input timestamps under {self._root}"
+
+    def perform(self, context: Context) -> None:
+        if context.observing:
+            return
+        from .snapshot import _subject
+
+        for relative in _subject(self._root):
+            path = self._root / relative
+            if path.suffix in self._suffixes and path.is_file() and not path.is_symlink():
+                os.utime(path, None)
+
+
 class Remove(Action, name="remove"):
     """Delete a file or a whole tree, tolerating its absence and nothing else.
 

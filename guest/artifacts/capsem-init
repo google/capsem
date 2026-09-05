@@ -52,6 +52,9 @@ fi
 # Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
 TIMING_FILE=/tmp/capsem-boot-timing
 boot_ms() { awk '{printf "%d", $1 * 1000}' /proc/uptime; }
+# Everything before this script's first mark is the kernel and early
+# userspace; without this line it was the one boot cost nobody could see.
+printf '{"name":"kernel","duration_ms":%d}\n' "$(boot_ms)" >> "$TIMING_FILE"
 _LAST_MARK=$(boot_ms)
 boot_mark() {
     local now=$(boot_ms)
@@ -349,7 +352,9 @@ chroot /newroot ip route add default dev dummy0
 # T3.4: point libc at 127.0.0.1 (the iptables nat rule below redirects
 # UDP/TCP :53 to the capsem-dns-proxy listener on :1053). dnsmasq is
 # gone -- the host hickory handler returns the real wire bytes.
-echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
+# The forwarder allows five seconds for both upstream attempts and queueing.
+# libc waits longer so it receives that answer before retransmitting.
+printf 'nameserver 127.0.0.1\noptions timeout:6 attempts:2\n' > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 
 # iptables-nft REDIRECT: use the nftables backend, not legacy xtables.

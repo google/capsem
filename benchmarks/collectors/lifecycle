@@ -23,15 +23,46 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT  # noqa: E402
-from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+)
+from helpers.service import ServiceInstance, wait_exec_ready
+from log_streams import read_log_stream
 
 
-def one_cycle(client) -> dict[str, float]:
+def boot_stages(run_dir: Path, vm_id: str) -> dict[str, float]:
+    """The guest's boot stages as capsem-process recorded them.
+
+    Read before the session is deleted; an ephemeral session's log goes with
+    it. Keys are `boot.<stage>_ms` plus `boot.total_ms`.
+    """
+    logs = list(run_dir.glob(f"**/{vm_id}/process.log"))
+    if not logs:
+        return {}
+    found: dict[str, float] = {}
+    for line in read_log_stream(logs[0]).splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        fields = record.get("fields", {})
+        if fields.get("message") == "boot stage":
+            found[f"boot.{fields['stage']}_ms"] = float(fields["duration_ms"])
+        elif fields.get("message") == "boot timing total":
+            found["boot.total_ms"] = float(fields["total_ms"])
+    return found
+
+
+def one_cycle(client, run_dir: Path) -> dict[str, float]:
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     started = time.monotonic()
-    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    created = client.post(
+        "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+    )
     provision_ms = (time.monotonic() - started) * 1000
 
     started = time.monotonic()
@@ -39,6 +70,7 @@ def one_cycle(client) -> dict[str, float]:
     exec_ready_ms = (time.monotonic() - started) * 1000
     if not ready:
         raise RuntimeError(f"{name} never became exec-ready")
+    stages = boot_stages(run_dir, str((created or {}).get("id", "")))
 
     started = time.monotonic()
     result = client.post(
@@ -48,34 +80,56 @@ def one_cycle(client) -> dict[str, float]:
     if result is None or "ok" not in result.get("stdout", ""):
         raise RuntimeError(f"exec in {name} returned {result}")
 
+    # The graceful stop: the guest is told to shut down and the VM is
+    # stopped when it reports back. `capsem stop` and one-shot `capsem run`
+    # both pay this.
+    started = time.monotonic()
+    client.post(f"/vms/{name}/stop", {}, timeout=120)
+    stop_ms = (time.monotonic() - started) * 1000
+
     started = time.monotonic()
     client.delete(f"/vms/{name}/delete")
     delete_ms = (time.monotonic() - started) * 1000
+
+    # One-shot run: create, boot, exec, graceful stop, as `capsem run` does.
+    started = time.monotonic()
+    run = client.post(
+        "/run",
+        {"command": "echo ok", "profile_id": CODE_PROFILE_ID, "timeout_secs": 60},
+        timeout=180,
+    )
+    run_ms = (time.monotonic() - started) * 1000
+    if run is None or "ok" not in (run.get("stdout") or ""):
+        raise RuntimeError(f"/run returned {run}")
 
     return {
         "provision_ms": provision_ms,
         "exec_ready_ms": exec_ready_ms,
         "exec_ms": exec_ms,
+        "stop_ms": stop_ms,
         "delete_ms": delete_ms,
+        "run_ms": run_ms,
+        **stages,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--quick", action="store_true", help="one cycle instead of three")
+    parser.add_argument(
+        "--quick", action="store_true", help="one cycle instead of three"
+    )
     parser.add_argument("--runs", type=int, default=None)
     args = parser.parse_args()
 
     runs = args.runs if args.runs is not None else (1 if args.quick else 3)
     service = ServiceInstance()
-    service.start()
-    client = service.client()
-
     collected: dict[str, list[float]] = {}
     try:
+        service.start()
+        client = service.client()
         for index in range(runs):
             print(f"lifecycle cycle {index + 1}/{runs}", file=sys.stderr)
-            for key, value in one_cycle(client).items():
+            for key, value in one_cycle(client, service.tmp_dir).items():
                 collected.setdefault(key, []).append(value)
     finally:
         service.stop()

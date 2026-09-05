@@ -876,7 +876,11 @@ fn bind_vsock_listener_socket(port: u32) -> std::io::Result<OwnedFd> {
         return Err(std::io::Error::last_os_error());
     }
 
-    let ret = unsafe { libc::listen(sock.as_raw_fd(), 4) };
+    // The accept queue for every guest connection to this port. Four was the
+    // value here for years; a guest opening two hundred connections at once
+    // (a package install, an agent fanning out) overflowed it and the kernel
+    // answered the surplus with a reset instead of queueing them.
+    let ret = unsafe { libc::listen(sock.as_raw_fd(), libc::SOMAXCONN) };
     if ret < 0 {
         return Err(std::io::Error::last_os_error());
     }

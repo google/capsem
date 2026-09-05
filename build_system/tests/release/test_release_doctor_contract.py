@@ -6439,6 +6439,11 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
     assert assessment.total_ms == 1140
     assert assessment.slow_stages == ()
 
+    kernel_only = module.assess_boot_timing(
+        [{"name": "kernel", "duration_ms": module.MAX_BOOT_STAGE_MS * 4}]
+    )
+    assert kernel_only.slow_stages == (), "the kernel is reported, not budgeted"
+    assert kernel_only.total_ms == module.MAX_BOOT_STAGE_MS * 4
     regressed = module.assess_boot_timing(
         [{"name": "network", "duration_ms": module.MAX_BOOT_STAGE_MS + 10}]
     )
@@ -6564,9 +6569,12 @@ def test_create_route_does_not_wait_for_full_guest_readiness() -> None:
         "\n#[cfg(unix)]", maxsplit=1
     )[0]
 
-    assert "std::time::Duration::from_millis(500)" in provision_attempt
-    assert "exec/file routes own the full readiness wait" in provision_attempt
-    assert "std::time::Duration::from_secs(5)" not in provision_attempt
+    launch = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files" / "launch.rs").read_text()
+
+    assert "LAUNCH_CEILING: Duration = Duration::from_millis(500)" in launch
+    assert "launch::LAUNCH_CEILING" in provision_attempt
+    assert "Exec and file routes own the full readiness wait" in provision_attempt
+    assert "Duration::from_secs(5)" not in provision_attempt
 
 
 def test_guest_runtime_doctor_apt_https_trust_probe_is_hermetic_release_gate() -> None:

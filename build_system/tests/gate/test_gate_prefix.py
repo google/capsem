@@ -124,6 +124,91 @@ def source(tmp_path: Path) -> Path:
 # -- the budget --------------------------------------------------------------
 
 
+@pytest.mark.parametrize("queued", [False, True])
+def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path, monkeypatch, queued) -> None:
+    """Cargo compares source mtimes against shared fingerprints across prefixes."""
+    from capsem_builder.gate import snapshot
+
+    older, newer, copied = (tmp_path / name for name in ("older", "newer", "copied"))
+    for directory, value in ((older, 1), (newer, 2)):
+        (directory / "src").mkdir(parents=True)
+        (directory / "Cargo.toml").write_text(
+            '[package]\nname="prefix-probe"\nversion="0.1.0"\nedition="2021"\n'
+        )
+        (directory / "src/main.rs").write_text(f'fn main() {{ println!("{value}"); }}\n')
+        for relative in ("Cargo.toml", "src/main.rs"):
+            os.utime(directory / relative, (1, 1))
+    environment = {**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target"), "RUSTC_WRAPPER": ""}
+
+    def run(directory: Path) -> str:
+        return subprocess.run(
+            ["cargo", "run", "--offline", "--quiet"], cwd=directory, env=environment,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    paths = [Path("Cargo.toml"), Path("src/main.rs")]
+    if queued:
+        snapshot._copy_files(older, copied, paths)
+    assert run(newer) == "2"
+    if not queued:
+        snapshot._copy_files(older, copied, paths)
+        assert run(copied) == "1", "the snapshot must execute its own source"
+        return
+
+    from capsem_builder.gate import preflight
+
+    subprocess.run(["git", "init", "-q"], cwd=copied, check=True)
+    config = _config()
+    gate_lock = config.locks.gate.model_copy(update={
+        "path": str(tmp_path / "machine.lock"),
+        "holder_record": str(tmp_path / "holder.json"),
+    })
+    config = config.model_copy(update={
+        "root": copied, "locks": config.locks.model_copy(update={"gate": gate_lock}),
+    })
+    runner = RecordingRunner(copied)
+    runner.observing = False
+    monkeypatch.setattr(snapshot, "digest", lambda root, _: (root / "src/main.rs").read_text())
+    acquire = preflight.ExclusiveLock.acquire
+
+    def build_before_lock_returns(lock):
+        acquire(lock)
+        os.utime(newer / "src/main.rs", None)
+        assert run(newer) == "2"
+
+    monkeypatch.setattr(preflight.ExclusiveLock, "acquire", build_before_lock_returns)
+    with preflight.locked(config, runner, "test", exclusive=True):
+        assert run(copied) == "1", "a build while this snapshot queued must not supply its binary"
+
+
+def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path, monkeypatch) -> None:
+    from capsem_builder.gate import preflight, snapshot
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.lifecycle import Resource
+
+    source = tmp_path / "input.rs"
+    source.write_text("original")
+    released = []
+
+    class Changed(Resource, name="changed-source-test"):
+        def acquire(self):
+            source.write_text("changed")
+
+        def release(self):
+            released.append(True)
+
+    monkeypatch.setattr(preflight.ExclusiveLock, "for_gate", lambda *args, **kwargs: Changed())
+    monkeypatch.setattr(snapshot, "digest", lambda *args: source.read_text())
+    runner = RecordingRunner(tmp_path)
+    runner.observing = False
+    with (
+        pytest.raises(GateError, match="source changed while waiting"),
+        preflight.locked(_config().model_copy(update={"root": tmp_path}), runner, "test", exclusive=True),
+    ):
+        pytest.fail("changed source reached the plan")
+    assert released == [True]
+
+
 def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     """The gateway's sockets are built somewhere the prefix does not reach.
 
@@ -324,7 +409,6 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
     snapshot.populate(source, target, _config())
     config = _config()
     assert snapshot.digest(target, config) == snapshot.digest(source, config)
-    assert os.stat(target / "tracked.txt").st_mtime_ns == os.stat(source / "tracked.txt").st_mtime_ns
 
 
 def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:
@@ -771,8 +855,9 @@ def _own_checkout(tmp_path: Path) -> Path:
     return checkout
 
 
+@pytest.mark.parametrize("shared_authority", [False, True])
 def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_authority: bool
 ) -> None:
     """A focused diagnostic is not the complete candidate it is helping fix.
 
@@ -799,14 +884,30 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {reused}"
 
         def run(self, *args, **kwargs) -> int:
+            from capsem_builder import gatelaunch
+
             environment = kwargs["env"]
             assert environment[config.environment.repository_root] == str(reused)
             assert environment[config.environment.source_checkout] == str(config.root)
+            # The re-exec recomputes Cargo's destination from cache authority.
+            # It must agree with the profile symlink the tests will execute.
+            with monkeypatch.context() as child:
+                child.setenv("CAPSEM_CACHE_AUTHORITY", environment["CAPSEM_CACHE_AUTHORITY"])
+                actual_target = gatelaunch._policy_stage(
+                    config.root, gatelaunch._cache_authority(config.root), "cargo"
+                )
+            assert actual_target == Path(environment[config.environment.cargo_target])
             return 0
 
     from capsem_builder.gate import buildcache
 
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
+    config = config.model_copy(update={
+        "prefix": config.prefix.model_copy(update={"cargo_target": _config().prefix.cargo_target})
+    })
+    monkeypatch.delenv("CAPSEM_CACHE_AUTHORITY", raising=False)
+    if shared_authority:
+        monkeypatch.setenv("CAPSEM_CACHE_AUTHORITY", str(tmp_path / "shared-authority"))
     monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))

@@ -8,10 +8,17 @@
 //   - Port 5005: exec output (direct child process stdout, on demand)
 
 mod audit;
+mod boot_timing;
 mod control_writer;
+use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
+mod shutdown;
+mod terminal_bridge;
 use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 #[cfg(test)]
 use control_writer::{frame_or_drop, SharedCtrlReceiver};
+#[cfg(test)]
+use shutdown::HostShutdown;
+use terminal_bridge::bridge_loop;
 #[path = "vsock_io.rs"]
 mod vsock_io;
 
@@ -22,11 +29,10 @@ use std::thread;
 
 use capsem_proto::{
     decode_host_msg, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path,
-    validate_file_path_safe, BootStage, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
-    MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
+    validate_file_path_safe, GuestToHost, HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES,
+    MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
 };
 use nix::libc;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::pty::openpty;
 use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
@@ -463,6 +469,11 @@ fn main() {
         Ok(ForkResult::Child) => {
             // Close master in child.
             drop(pty.master);
+            // The shell must take the hangup that ends it at shutdown even if
+            // whatever started this agent left SIGHUP ignored: an ignored
+            // disposition survives exec, and bash would then only die at the
+            // end of the grace period, killed.
+            unsafe { signal(Signal::SIGHUP, SigHandler::SigDfl) }.ok();
 
             // Create a new session so the slave PTY becomes the controlling terminal.
             setsid().expect("setsid failed");
@@ -686,6 +697,10 @@ fn main() {
                     libc::close(t_fd);
                     libc::close(c_fd);
                 }
+                if bridge_shared.ctrl_sender.shutdown.is_requested() {
+                    eprintln!("[capsem-agent] host shutdown reported; not reconnecting");
+                    process::exit(0);
+                }
             }
         }
         Err(e) => {
@@ -694,9 +709,6 @@ fn main() {
         }
     }
 }
-
-/// Path to the boot timing JSONL file written by capsem-init.
-const BOOT_TIMING_PATH: &str = "/run/capsem-boot-timing";
 
 /// After resume, the VirtioFS mount capsem-init set up in its pre-chroot
 /// namespace (host path: /mnt/shared) is connected to a dead virtiofsd from
@@ -772,25 +784,6 @@ fn rebind_workspace_after_resume() {
     }
 }
 
-/// Parse boot timing JSONL file. Each line: {"name":"...","duration_ms":...}
-/// Rejects entries with non-alphanumeric names (defense against injection).
-fn parse_boot_timing(path: &str) -> Vec<BootStage> {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    contents
-        .lines()
-        .filter_map(|line| serde_json::from_str::<BootStage>(line).ok())
-        .filter(|s| {
-            s.name.len() <= 64
-                && !s.name.is_empty()
-                && s.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && s.duration_ms <= 600_000
-        })
-        .take(32)
-        .collect()
-}
-
 fn run_bridge(
     master_fd: RawFd,
     child_pid: Pid,
@@ -832,6 +825,7 @@ fn run_bridge(
     // Spawn control channel handler in a background thread.
     let boot_env_owned = boot_env.to_vec();
     let pending_for_ctrl = std::sync::Arc::clone(&ctrl_sender.pending);
+    let host_shutdown = std::sync::Arc::clone(&ctrl_sender.shutdown);
     let ctrl_tx = ctrl_sender;
     let inflight_for_ctrl = exec_inflight;
     let done_for_ctrl = exec_done;
@@ -849,7 +843,7 @@ fn run_bridge(
     });
 
     // Main I/O bridge: master PTY <-> vsock terminal port.
-    bridge_loop(master_fd, terminal_fd);
+    bridge_loop(master_fd, terminal_fd, &host_shutdown);
 
     // This connection is over. Release the shared receiver, wake the control
     // reader out of its blocking read, and wait for every thread that holds
@@ -871,109 +865,6 @@ fn run_bridge(
     // If bridge exits, we just return. The reconnect loop will handle re-establishing vsock.
     // If it was a genuine Shutdown, control_loop already killed the child, and the process will eventually exit.
     eprintln!("[capsem-agent] bridge exited");
-}
-
-fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
-    let mut buf = [0u8; 8192];
-
-    // Spawn a dedicated thread for vsock -> Master PTY (stdin direction)
-    // This prevents deadlocks when both master_fd and vsock_fd buffers are full.
-    let master_fd_clone = master_fd;
-    let vsock_fd_clone = vsock_fd;
-    std::thread::scope(|scope| {
-        let reader = scope.spawn(move || {
-            let mut local_buf = [0u8; 8192];
-            loop {
-                let mut poll_fds = [PollFd::new(
-                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) },
-                    PollFlags::POLLIN,
-                )];
-
-                match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
-                    Ok(0) => continue,
-                    Ok(_) => {}
-                    Err(nix::errno::Errno::EINTR) => continue,
-                    Err(_) => break,
-                }
-
-                if let Some(revents) = poll_fds[0].revents() {
-                    if revents.contains(PollFlags::POLLIN) {
-                        match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
-                                    break;
-                                }
-                            }
-                            Err(nix::errno::Errno::EAGAIN) => {}
-                            Err(_) => break,
-                        }
-                    }
-                    if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
-                        break;
-                    }
-                }
-            }
-        });
-
-        loop {
-            // Poll vsock_fd too so a local shutdown (triggered by the heartbeat
-            // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
-            // in poll forever waiting for PTY activity that never comes.
-            let mut poll_fds = [
-                PollFd::new(
-                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) },
-                    PollFlags::POLLIN,
-                ),
-                PollFd::new(
-                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) },
-                    PollFlags::empty(),
-                ),
-            ];
-
-            match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
-                Ok(0) => continue,
-                Ok(_) => {}
-                Err(nix::errno::Errno::EINTR) => continue,
-                Err(e) => {
-                    eprintln!("[capsem-agent] poll error: {e}");
-                    break;
-                }
-            }
-
-            if let Some(revents) = poll_fds[1].revents() {
-                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
-                    break;
-                }
-            }
-
-            // Master PTY -> vsock (stdout direction)
-            if let Some(revents) = poll_fds[0].revents() {
-                if revents.contains(PollFlags::POLLIN) {
-                    match nix::unistd::read(master_fd, &mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if write_all_fd(vsock_fd, &buf[..n]).is_err() {
-                                break;
-                            }
-                        }
-                        Err(nix::errno::Errno::EAGAIN) => {}
-                        Err(_) => break,
-                    }
-                }
-                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
-                    break;
-                }
-            }
-        }
-
-        unsafe {
-            libc::shutdown(vsock_fd, libc::SHUT_RDWR);
-        }
-        if reader.join().is_err() {
-            eprintln!("[capsem-agent] terminal reader thread panicked");
-        }
-    });
 }
 
 /// Maximum vsock_connect attempts when the host returns ECONNRESET, e.g.
@@ -1280,16 +1171,19 @@ fn control_loop(
             }
             Ok(HostToGuest::Shutdown) => {
                 eprintln!("[capsem-agent] received Shutdown from host");
-                // Flush dirty pages to disk.
-                unsafe {
-                    libc::sync();
+                // Flag first: the bridge must not end the connection when
+                // the shell exits, or the report below is lost with it.
+                ctrl_tx.shutdown.request();
+                let end = shutdown::end_terminal_shell(child_pid, std::time::Duration::from_secs(SHUTDOWN_GRACE_SECS));
+                eprintln!("[capsem-agent] shutdown: {end}");
+                // Tell the host it can stop the VM now rather than at the
+                // end of its own timer, and wait for the writer to confirm
+                // the bytes went out. A miss means the host is on its timer.
+                if ctrl_tx.send(GuestToHost::ShutdownComplete).is_err()
+                    || !ctrl_tx.shutdown.wait_reported(shutdown::REPORT_WRITE_WAIT)
+                {
+                    eprintln!("[capsem-agent] shutdown report not delivered; host will time out");
                 }
-                // Ask bash to exit gracefully.
-                let _ = nix::sys::signal::kill(child_pid, Signal::SIGTERM);
-                // Give bash time to clean up (save history, run traps).
-                thread::sleep(std::time::Duration::from_secs(SHUTDOWN_GRACE_SECS));
-                // Force-kill if bash ignored SIGTERM (interactive bash does this).
-                let _ = nix::sys::signal::kill(child_pid, Signal::SIGKILL);
                 break;
             }
             Ok(HostToGuest::Exec { id, command }) => {

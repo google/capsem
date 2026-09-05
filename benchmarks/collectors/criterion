@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -45,7 +46,15 @@ def run_bench(crate: str, target: str, *, sample_size: int | None) -> None:
         # which is the trade a dev-loop run is making on purpose.
         command += ["--", "--sample-size", str(sample_size)]
     print(f"running {crate}::{target}", file=sys.stderr)
-    subprocess.run(command, cwd=ROOT, check=True, stdout=sys.stderr)
+    # Criterion otherwise puts cases directly under its shared output root,
+    # without the Cargo target directory that samples_for reads.
+    subprocess.run(
+        command,
+        cwd=ROOT,
+        check=True,
+        stdout=sys.stderr,
+        env={**os.environ, "CRITERION_HOME": str(CRITERION / target)},
+    )
 
 
 def samples_for(target: str) -> dict[str, list[float]]:
@@ -65,7 +74,7 @@ def samples_for(target: str) -> dict[str, list[float]]:
         if not per_iteration:
             continue
         # `<target>/<case>/new/sample.json` -- the case is the parent of `new`.
-        case = sample_path.parent.parent.relative_to(root).as_posix()
+        case = sample_path.parent.parent.relative_to(root).as_posix().removeprefix(f"{target}/")
         measured[case] = per_iteration
     return measured
 

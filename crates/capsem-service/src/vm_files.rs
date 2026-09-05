@@ -1,6 +1,7 @@
 use super::*;
 
 mod diagnostics;
+mod launch;
 mod storage;
 pub(crate) use storage::storage_diagnostics;
 mod fork;
@@ -765,10 +766,22 @@ pub(super) async fn handle_upload_file(
 /// PETRIFIED-cleanup queue was draining. The poll_until loop retries
 /// on this; everything else (incl. `Other`) bubbles up unchanged.
 pub(super) enum ProvisionAttemptOutcome {
-    Ready { uds_path: PathBuf },
-    StillBootingTimedOut { uds_path: PathBuf }, // 5s envelope hit; treat as success per pre-existing contract
+    Ready {
+        uds_path: PathBuf,
+    },
+    /// The VM is running and capsem-process answers IPC; the guest is booting.
+    Launched {
+        uds_path: PathBuf,
+    },
+    /// Nothing within `launch::LAUNCH_CEILING`; treated as success per the
+    /// pre-existing contract (exec and file routes own the readiness wait).
+    StillBootingTimedOut {
+        uds_path: PathBuf,
+    },
     LaunchdTransient,
-    BootCrash { tail: String },
+    BootCrash {
+        tail: String,
+    },
     ProvisionError(anyhow::Error),
 }
 
@@ -788,9 +801,9 @@ pub(super) enum AttemptDecision {
 /// match the pre-refactor handle_provision response shape.
 pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> AttemptDecision {
     match outcome {
-        ProvisionAttemptOutcome::Ready { uds_path } | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
-            AttemptDecision::Succeed(uds_path)
-        }
+        ProvisionAttemptOutcome::Ready { uds_path }
+        | ProvisionAttemptOutcome::Launched { uds_path }
+        | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => AttemptDecision::Succeed(uds_path),
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
         ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1052,39 +1065,26 @@ pub(super) async fn provision_attempt(
         return ProvisionAttemptOutcome::ProvisionError(e);
     }
 
-    // Wait briefly for either the `.ready` sentinel or the child-exit
-    // handler to remove the VM from the instances map (crash). Without
-    // this poll, `capsem create` prints the id and exits 0 while the
-    // guest is already dead. The window is deliberately shorter than a
-    // normal cold boot: create must catch synchronous launch failures, while
-    // exec/file routes own the full readiness wait for valid slow boots.
+    // Wait for the launch signal, readiness, or the child-exit handler
+    // removing the VM from the instances map (crash); see `launch`. Without
+    // this wait, `capsem create` prints the id and exits 0 while the guest
+    // is already dead. Exec and file routes own the full readiness wait.
     let uds_path = match state.instance_socket_path(id) {
         Ok(path) => path,
         Err(e) => return ProvisionAttemptOutcome::ProvisionError(e),
     };
-    let ready_path = uds_path.with_extension("ready");
-    // The shared backoff, like every other wait in this crate: a launch
-    // failure is seen within milliseconds instead of on the next 50 ms tick.
-    let launch = poll_until(
-        capsem_foundation::poll::PollOpts {
-            label: "provision-launch",
-            timeout: std::time::Duration::from_millis(500),
-            initial_delay: std::time::Duration::from_millis(5),
-            max_delay: std::time::Duration::from_millis(50),
-        },
-        || async {
-            if ready_path.exists() {
-                return Some(true);
-            }
-            let still_alive = state.instances.lock().unwrap().contains_key(id);
-            (!still_alive).then_some(false)
-        },
+    let launch = launch::wait_for_launch(
+        &uds_path.with_extension("ready"),
+        &uds_path.with_extension("launched"),
+        || state.instances.lock().unwrap().contains_key(id),
+        launch::LAUNCH_CEILING,
     )
     .await;
     match launch {
-        Ok(true) => ProvisionAttemptOutcome::Ready { uds_path },
-        Err(_) => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
-        Ok(false) => {
+        launch::LaunchWait::Ready => ProvisionAttemptOutcome::Ready { uds_path },
+        launch::LaunchWait::Launched => ProvisionAttemptOutcome::Launched { uds_path },
+        launch::LaunchWait::TimedOut => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
+        launch::LaunchWait::Crashed => {
             // Crash before ready. Prefer the persistent entry's
             // cached last_error (already computed by the child-exit
             // handler) to avoid re-reading the log; fall back to

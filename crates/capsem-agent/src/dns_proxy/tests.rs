@@ -1,4 +1,11 @@
 use super::*;
+use crate::session::Connect;
+use crate::wire::fixtures::{answer_to, query};
+use capsem_proto::{DnsRequest, DnsResponse};
+use std::io::{Read, Write};
+use std::os::fd::IntoRawFd;
+use std::os::unix::net::UnixStream;
+use tokio::net::TcpListener;
 
 #[test]
 fn listen_port_is_above_privileged_range() {
@@ -29,20 +36,11 @@ fn max_udp_dns_bytes_supports_edns() {
 }
 
 #[test]
-fn dns_proxy_uses_persistent_vsock_worker_pool() {
+fn dns_proxy_keeps_more_than_one_persistent_session() {
     const _: () = assert!(
-        DNS_VSOCK_WORKERS >= 2,
-        "DNS must not regress to per-query vsock connect/close; keep a persistent worker pool"
+        DNS_SESSIONS >= 2,
+        "one session would make a reconnect a resolver outage; keep at least two"
     );
-}
-
-#[test]
-fn dns_proxy_round_robins_vsock_workers() {
-    let next = AtomicUsize::new(0);
-    assert_eq!(next_worker_index(&next, 3), 0);
-    assert_eq!(next_worker_index(&next, 3), 1);
-    assert_eq!(next_worker_index(&next, 3), 2);
-    assert_eq!(next_worker_index(&next, 3), 0);
 }
 
 #[test]
@@ -52,12 +50,14 @@ fn dns_request_envelope_uses_string_proto_label() {
     // gets caught at compile-time-of-test rather than as a
     // confused host-side telemetry row.
     let req = DnsRequest {
+        id: 0,
         raw: vec![0u8; 12],
         proto: "udp".into(),
         process_name: None,
     };
     assert_eq!(req.proto, "udp");
     let req = DnsRequest {
+        id: 0,
         raw: vec![0u8; 12],
         proto: "tcp".into(),
         process_name: None,
@@ -65,138 +65,48 @@ fn dns_request_envelope_uses_string_proto_label() {
     assert_eq!(req.proto, "tcp");
 }
 
-#[test]
-fn forward_query_on_fd_round_trips_length_prefixed_frames() {
-    use std::io::{Read, Write};
-    use std::os::fd::IntoRawFd;
-    use std::os::unix::net::UnixStream;
+/// A host that answers every frame with `reply(request)`; `None` hangs up.
+fn host_with(reply: impl Fn(DnsRequest) -> Option<DnsResponse> + Send + Sync + 'static) -> Connect {
+    let reply = Arc::new(reply);
+    Arc::new(move || {
+        let (mut host, guest) = UnixStream::pair()?;
+        let reply = Arc::clone(&reply);
+        std::thread::spawn(move || loop {
+            let mut len_buf = [0u8; 4];
+            if host.read_exact(&mut len_buf).is_err() {
+                return;
+            }
+            let mut payload = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+            if host.read_exact(&mut payload).is_err() {
+                return;
+            }
+            let request = capsem_proto::decode_dns_request(&payload).unwrap();
+            match reply(request) {
+                Some(response) => {
+                    let frame = capsem_proto::encode_dns_response(&response).unwrap();
+                    if host.write_all(&frame).is_err() {
+                        return;
+                    }
+                }
+                None => return,
+            }
+        });
+        Ok(guest.into_raw_fd())
+    })
+}
 
-    let query = vec![0x12, 0x34, 0x01, 0x00];
-    let expected_response = DnsResponse {
-        raw: vec![0x12, 0x34, 0x81, 0x80],
+fn echoing(request: DnsRequest) -> Option<DnsResponse> {
+    assert_eq!(request.proto, "tcp");
+    Some(DnsResponse {
+        id: request.id,
+        raw: answer_to(&request.raw),
         decision: "allowed".into(),
         rcode: 0,
-    };
-    let (mut host, guest) = UnixStream::pair().unwrap();
-    let expected_for_host = expected_response.clone();
-    let responder = std::thread::spawn(move || {
-        let mut len_buf = [0u8; 4];
-        host.read_exact(&mut len_buf).unwrap();
-        let mut payload = vec![0u8; u32::from_be_bytes(len_buf) as usize];
-        host.read_exact(&mut payload).unwrap();
-        let request = capsem_proto::decode_dns_request(&payload).unwrap();
-        assert_eq!(request.raw, query);
-        assert_eq!(request.proto, "udp");
-
-        let frame = capsem_proto::encode_dns_response(&expected_for_host).unwrap();
-        host.write_all(&frame).unwrap();
-    });
-
-    let guest_fd = guest.into_raw_fd();
-    let response = forward_query_on_fd(guest_fd, vec![0x12, 0x34, 0x01, 0x00], "udp").unwrap();
-    close_fd(Some(guest_fd));
-    responder.join().unwrap();
-
-    assert_eq!(response, expected_response);
+    })
 }
 
-fn forward_query_with_host_reply(reply: Vec<u8>) -> io::Result<DnsResponse> {
-    use std::io::Read;
-    use std::os::fd::IntoRawFd;
-    use std::os::unix::net::UnixStream;
-
-    let (mut host, guest) = UnixStream::pair().unwrap();
-    let responder = std::thread::spawn(move || {
-        let mut len_buf = [0u8; 4];
-        host.read_exact(&mut len_buf).unwrap();
-        let mut request = vec![0; u32::from_be_bytes(len_buf) as usize];
-        host.read_exact(&mut request).unwrap();
-        std::io::Write::write_all(&mut host, &reply).unwrap();
-    });
-
-    let guest_fd = guest.into_raw_fd();
-    let result = forward_query_on_fd(guest_fd, vec![1, 2, 3], "udp");
-    close_fd(Some(guest_fd));
-    responder.join().unwrap();
-    result
-}
-
-#[test]
-fn forward_query_rejects_oversized_truncated_and_invalid_responses() {
-    let oversized = (MAX_FRAME_SIZE + 1).to_be_bytes().to_vec();
-    assert!(forward_query_with_host_reply(oversized)
-        .unwrap_err()
-        .to_string()
-        .contains("too large"));
-
-    let mut truncated = 5_u32.to_be_bytes().to_vec();
-    truncated.extend_from_slice(&[1, 2]);
-    assert!(forward_query_with_host_reply(truncated).is_err());
-
-    let mut invalid = 3_u32.to_be_bytes().to_vec();
-    invalid.extend_from_slice(&[1, 2, 3]);
-    assert!(forward_query_with_host_reply(invalid)
-        .unwrap_err()
-        .to_string()
-        .contains("decode_dns_response"));
-}
-
-#[tokio::test]
-async fn forwarder_reports_stopped_worker_and_dropped_response() {
-    let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
-    drop(stopped_rx);
-    let stopped = DnsForwarder {
-        workers: vec![stopped_tx],
-        next_worker: AtomicUsize::new(0),
-    };
-    assert_eq!(
-        stopped.forward_query(Vec::new(), "udp").await.unwrap_err().to_string(),
-        "dns forward worker stopped"
-    );
-
-    let (dropped_tx, dropped_rx) = std::sync::mpsc::channel::<DnsWork>();
-    let worker = std::thread::spawn(move || {
-        let work = dropped_rx.recv().unwrap();
-        drop(work.reply);
-    });
-    let dropped = DnsForwarder {
-        workers: vec![dropped_tx],
-        next_worker: AtomicUsize::new(0),
-    };
-    assert_eq!(
-        dropped.forward_query(Vec::new(), "tcp").await.unwrap_err().to_string(),
-        "dns forward worker dropped response"
-    );
-    worker.join().unwrap();
-}
-
-#[tokio::test]
-async fn spawned_forwarder_worker_surfaces_missing_host_vsock() {
-    let forwarder = DnsForwarder::new(1);
-    let error = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        forwarder.forward_query(vec![0; 12], "udp"),
-    )
-    .await
-    .expect("host-side vsock failure should be immediate")
-    .unwrap_err();
-
-    assert_ne!(error.kind(), io::ErrorKind::InvalidData);
-}
-
-async fn run_tcp_case(result: io::Result<DnsResponse>, request: &[u8]) -> Vec<u8> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let (work_tx, work_rx) = std::sync::mpsc::channel::<DnsWork>();
-    let worker = tokio::task::spawn_blocking(move || {
-        if let Ok(work) = work_rx.recv() {
-            let _ = work.reply.send(result);
-        }
-    });
-    let forwarder = Arc::new(DnsForwarder {
-        workers: vec![work_tx],
-        next_worker: AtomicUsize::new(0),
-    });
+async fn run_tcp_case(connect: Connect, request: &[u8]) -> Vec<u8> {
+    let forwarder = Arc::new(DnsForwarder::new(1, connect));
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -209,59 +119,49 @@ async fn run_tcp_case(result: io::Result<DnsResponse>, request: &[u8]) -> Vec<u8
     let mut response = Vec::new();
     client.read_to_end(&mut response).await.unwrap();
     server.await.unwrap();
-    worker.await.unwrap();
     response
 }
 
-#[tokio::test]
-async fn tcp_connection_closes_on_empty_response_forward_error_and_truncation() {
-    let request = [0, 1, 42];
-    assert!(run_tcp_case(
-        Ok(DnsResponse {
-            raw: Vec::new(),
-            decision: "allowed".into(),
-            rcode: 0,
-        }),
-        &request,
-    )
-    .await
-    .is_empty());
-    assert!(run_tcp_case(Err(io::Error::other("fixture failure")), &request)
-        .await
-        .is_empty());
+fn framed(query: &[u8]) -> Vec<u8> {
+    let mut out = (query.len() as u16).to_be_bytes().to_vec();
+    out.extend_from_slice(query);
+    out
+}
 
-    let truncated = [0, 4, 1, 2];
-    assert!(run_tcp_case(
-        Ok(DnsResponse {
-            raw: vec![1],
-            decision: "allowed".into(),
-            rcode: 0,
-        }),
-        &truncated,
-    )
-    .await
-    .is_empty());
+#[tokio::test]
+async fn tcp_connection_closes_on_empty_response_and_truncation_and_servfails_a_lost_host() {
+    // The host could not parse the query: empty bytes, nothing to send.
+    let empty = host_with(|request| {
+        Some(DnsResponse {
+            id: request.id,
+            raw: Vec::new(),
+            decision: "error".into(),
+            rcode: 2,
+        })
+    });
+    assert!(run_tcp_case(empty, &framed(&[42])).await.is_empty());
+
+    // A truncated length prefix ends the connection.
+    let unused = host_with(echoing);
+    assert!(run_tcp_case(unused, &[0, 4, 1, 2]).await.is_empty());
+
+    // The host hangs up on a well-formed query: the client gets SERVFAIL
+    // rather than silence.
+    let hangs_up = host_with(|_| None);
+    let q = query(0x0BAD, "gone.example");
+    let response = run_tcp_case(hangs_up, &framed(&q)).await;
+    assert_eq!(&response[0..2], &(q.len() as u16).to_be_bytes());
+    assert_eq!(&response[2..4], &[0x0B, 0xAD], "SERVFAIL keeps the transaction id");
+    assert_eq!(response[5] & 0x0F, 2, "rcode SERVFAIL");
+
+    // The host hangs up on a query no SERVFAIL can be built from: close.
+    let hangs_up = host_with(|_| None);
+    assert!(run_tcp_case(hangs_up, &framed(&[0, 1, 42])).await.is_empty());
 }
 
 #[tokio::test]
 async fn tcp_connection_serves_multiple_length_prefixed_queries() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let (work_tx, work_rx) = std::sync::mpsc::channel::<DnsWork>();
-    let worker = tokio::task::spawn_blocking(move || {
-        for work in work_rx {
-            assert_eq!(work.proto, "tcp");
-            let _ = work.reply.send(Ok(DnsResponse {
-                raw: work.raw,
-                decision: "allowed".into(),
-                rcode: 0,
-            }));
-        }
-    });
-    let forwarder = Arc::new(DnsForwarder {
-        workers: vec![work_tx],
-        next_worker: AtomicUsize::new(0),
-    });
+    let forwarder = Arc::new(DnsForwarder::new(1, host_with(echoing)));
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -271,14 +171,14 @@ async fn tcp_connection_serves_multiple_length_prefixed_queries() {
     });
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
 
-    for query in [vec![1, 2, 3], vec![4, 5, 6, 7]] {
-        client.write_all(&(query.len() as u16).to_be_bytes()).await.unwrap();
-        client.write_all(&query).await.unwrap();
+    for (id, name) in [(1u16, "first.example"), (2, "second.example")] {
+        let q = query(id, name);
+        client.write_all(&framed(&q)).await.unwrap();
 
         let response_len = client.read_u16().await.unwrap() as usize;
         let mut response = vec![0u8; response_len];
         client.read_exact(&mut response).await.unwrap();
-        assert_eq!(response, query);
+        assert_eq!(response, answer_to(&q));
     }
 
     drop(client);
@@ -286,5 +186,14 @@ async fn tcp_connection_serves_multiple_length_prefixed_queries() {
         .await
         .expect("TCP connection handler did not stop at clean EOF")
         .unwrap();
-    worker.await.unwrap();
+}
+
+#[tokio::test]
+async fn udp_answer_falls_back_to_servfail_only_for_a_parseable_query() {
+    let forwarder = DnsForwarder::new(1, host_with(|_| None));
+    let q = query(0x1111, "gone.example");
+    let answer = answer_or_servfail(&forwarder, q.clone(), "udp").await.unwrap();
+    assert_eq!(&answer[0..2], &[0x11, 0x11]);
+    assert_eq!(answer[3], 0x02);
+    assert!(answer_or_servfail(&forwarder, vec![1, 2, 3], "udp").await.is_none());
 }

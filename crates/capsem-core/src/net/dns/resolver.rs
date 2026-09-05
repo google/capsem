@@ -30,11 +30,12 @@ use tracing::{debug, warn};
 /// owners override via [`DnsResolver::with_upstreams`].
 pub const DEFAULT_UPSTREAMS: &[&str] = &["1.1.1.1:53", "8.8.8.8:53"];
 
-/// Default per-attempt timeout. Recursive resolution is interactive at
-/// human scale; anything over a second is already a bad UX, so 5s is
-/// generous-enough to cover one upstream that's slow without making the
-/// guest hang on a dead upstream.
-const DEFAULT_TIMEOUT: Duration = Duration::from_millis(5000);
+/// Default per-attempt timeout. Two seconds covers a slow upstream, and
+/// with two default upstreams the whole `resolve()` fits inside glibc's
+/// five-second resolver timeout in the guest: the client gets our SERVFAIL
+/// and moves on instead of retransmitting a second copy of the same query
+/// into the backlog while we are still waiting on the first.
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(2000);
 
 /// UDP DNS forwarder. Iterates the upstream list per query; first
 /// successful response wins.
@@ -112,6 +113,7 @@ impl DnsResolver {
     }
 
     async fn try_one(&self, upstream: SocketAddr, query_bytes: &[u8]) -> Result<Vec<u8>> {
+        let expected = ExpectedAnswer::for_query(query_bytes)?;
         let bind_addr: SocketAddr = if upstream.is_ipv6() {
             "[::]:0".parse().unwrap()
         } else {
@@ -120,14 +122,78 @@ impl DnsResolver {
         let sock = UdpSocket::bind(bind_addr).await?;
         sock.connect(upstream).await?;
         sock.send(query_bytes).await?;
+        let deadline = Instant::now() + self.per_attempt_timeout;
         let mut buf = vec![0u8; 4096];
-        let n = match tokio::time::timeout(self.per_attempt_timeout, sock.recv(&mut buf)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => return Err(e.into()),
-            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, "dns recv timeout").into()),
-        };
-        buf.truncate(n);
-        Ok(buf)
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "dns recv timeout").into());
+            }
+            let n = match tokio::time::timeout(remaining, sock.recv(&mut buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, "dns recv timeout").into()),
+            };
+            match expected.check(&buf[..n]) {
+                Ok(()) => {
+                    buf.truncate(n);
+                    return Ok(buf);
+                }
+                Err(reason) => {
+                    // A connected UDP socket still accepts any datagram whose
+                    // source is spoofed as the upstream, and the id is the
+                    // guest's to choose. Whatever this was, it is not the
+                    // answer to our question; keep waiting for that one.
+                    warn!(upstream = %upstream, reason, bytes = n, "dns upstream: discarding datagram");
+                }
+            }
+        }
+    }
+}
+
+/// What a datagram must carry to be the answer to the query we sent: the
+/// query's transaction id, the response bit, and the same question.
+struct ExpectedAnswer {
+    id: u16,
+    qname: String,
+    qtype: u16,
+    qclass: u16,
+}
+
+impl ExpectedAnswer {
+    fn for_query(query_bytes: &[u8]) -> Result<Self> {
+        let query = crate::net::parsers::dns_parser::parse_query(query_bytes)?;
+        if query.extra_questions != 0 || query_bytes[2] & 0xF8 != 0 {
+            return Err(anyhow!("DNS forwarding requires one standard question"));
+        }
+        Ok(Self {
+            id: query.id,
+            qname: query.qname,
+            qtype: query.qtype,
+            qclass: query.qclass,
+        })
+    }
+
+    fn check(&self, datagram: &[u8]) -> std::result::Result<(), &'static str> {
+        if datagram.len() < 12 {
+            return Err("shorter than a DNS header");
+        }
+        if u16::from_be_bytes([datagram[0], datagram[1]]) != self.id {
+            return Err("transaction id does not match the query");
+        }
+        if datagram[2] & 0xF8 != 0x80 {
+            return Err("not a standard query response");
+        }
+        let answered =
+            crate::net::parsers::dns_parser::parse_query(datagram).map_err(|_| "question does not decode")?;
+        if answered.extra_questions != 0
+            || answered.qname != self.qname
+            || answered.qtype != self.qtype
+            || answered.qclass != self.qclass
+        {
+            return Err("question does not match the query");
+        }
+        Ok(())
     }
 }
 
@@ -136,3 +202,6 @@ impl Default for DnsResolver {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;

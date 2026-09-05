@@ -3,23 +3,28 @@
 Measures rps + tail latency (p50/p95/p99/p99.9) at multiple concurrency
 levels so the T0 -> T5 redesign has a concrete regression baseline for
 "pipeline overhead under load," "lock contention on cert mint," and
-"telemetry path saturation." Only the host MITM is exercised --
-upstream is a single non-routable domain so every request fails fast
-at the upstream-dial stage with the proxy doing all the work
-(SNI parse + policy check + cert mint + connect attempt + telemetry
-emission). That isolates the proxy's cost from upstream variance.
+"telemetry path saturation." The target is a fixture host the benchmark
+collector resolves and serves through capsem-mock-server on the host, so
+every request traverses guest DNS, capsem-net-proxy, the host MITM (TLS
+termination, SNI, policy, cert mint, telemetry) and a real, fast upstream.
+
+It used to target a non-existent public domain "so every request fails at
+the upstream dial". The guest's resolver answered NXDOMAIN and the client
+failed before opening a socket, so the proxy never ran and the recorded
+numbers were DNS-failure numbers. A level where every request fails is now
+an error, not a measurement.
 
 Output schema:
 
   {
     "version": "1.0",
-    "target": "https://thisdomaindoesnotexistforsur3.ai/",
+    "target": "https://fixture.capsem.test/tiny",
     "concurrency_levels": [
       {
         "concurrency": 1,
         "duration_s": 30.0,
         "total_requests": 1234,
-        "errors": 1234,         # all requests "fail" -- non-routable upstream
+        "errors": 0,
         "rps": 41.1,
         "p50_ms": 22.0,
         "p95_ms": 35.0,
@@ -46,21 +51,21 @@ from .load_harness import (
     summarize_load_level,
 )
 
-# Non-routable domain so every request resolves to the upstream-dial
-# failure path -- isolates the proxy's per-request cost from real
-# upstream variance.
-DEFAULT_TARGET = "https://thisdomaindoesnotexistforsur3.ai/"
+# Served by capsem-mock-server through the benchmark collector's corp config
+# (DNS fixture + upstream override), configured by the shared guest collector.
+DEFAULT_TARGET = "https://fixture.capsem.test/tiny"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 
 
 def _do_request(url, session):
-    """Single HTTP GET; latency in ms, no body assertions."""
+    """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
     start = time.monotonic()
     try:
         resp = session.get(url, timeout=30)
         elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, resp.status_code, None)
+        error = None if 200 <= resp.status_code < 300 else f"HTTP {resp.status_code}"
+        return (elapsed_ms, resp.status_code, error)
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
         return (elapsed_ms, 0, str(exc))
@@ -120,7 +125,14 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
         results = _drive_at_concurrency(target, c, config.duration_s)
-        rows.append(_summarize(results, c, config.duration_s))
+        row = _summarize(results, c, config.duration_s)
+        if row["total_requests"] and row["errors"] >= row["total_requests"]:
+            first_error = next((r[2] for r in results if r[2] is not None), "unknown")
+            raise RuntimeError(
+                f"mitm-load: every request at concurrency {c} failed ({first_error}); "
+                "the proxy was not measured"
+            )
+        rows.append(row)
 
     out = {
         "version": "1.0",

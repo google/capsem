@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Benchmark recordings retain guest error counts and concurrency metadata;
+  HTTP error responses count as failed MITM load requests.
+- Multiplexed guest DNS remains compatible with older hosts: replies without
+  correlation IDs require an unambiguous match to the original DNS question.
+- Worktree test gates preserve the shared cache authority across re-execution,
+  so guest tests launch the host binaries they just built.
+  Copied source timestamps also invalidate stale Cargo fingerprints from other
+  worktrees instead of reusing binaries for different source contents.
+  Compiler inputs are refreshed again under the machine lock, so a build that
+  finishes while another checkout queues cannot supply that checkout's binary.
 - Failed or interrupted complete local tests now block automatic full reruns;
   retries require an explicitly approved reason, while focused checks and
   self-qualifying release commands remain available.
@@ -154,6 +164,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Criterion benchmark collection now retains ungrouped cases as well as grouped
+  cases, including the built-in security registry measurement, instead of
+  silently omitting results outside a directory named after the Cargo target.
+- Benchmark collectors clean up their process groups when they finish or time
+  out, preventing surviving background work from affecting later measurements.
+- Concurrent gateway status polls recover when a leading request is cancelled,
+  and lifecycle notifications remain ordered with their service reads.
+- Incremental session-ledger refresh fails explicitly if a required disk table
+  disappears, instead of serving a stale memory view.
+- DNS query deadlines now cover writer queueing, cancellation frees pending
+  capacity, and recovered connections discard expired traffic. DNS workers
+  close with their owner, response backpressure retains host capacity limits,
+  and guest resolver timeouts allow both upstream attempts to finish.
+- DNS reuse preserves query flags, options, and question spelling, honors
+  zero, absent and alias-limited authoritative TTLs, and ages cached record TTLs. Messages
+  with unchecked extra questions or unsupported operations never reach an
+  upstream, and response matching preserves DNS label boundaries.
+- DNS, HTTP, model, and MCP request completion now includes derived security
+  and credential ledger writes, preventing shutdown from losing detached
+  audit work. MCP requests and results are serialized once for the ledger,
+  the guest relay parses each line once, and built-in security plugins share
+  an immutable registry while keeping each evaluation's policy isolated.
+- `capsem create` returns as soon as the VM is launched instead of after a
+  fixed half-second. The VM process now writes a launch sentinel the
+  moment the hypervisor has started the VM and it is answering IPC (about
+  100 ms in on Linux); create returns on that, on guest readiness, or on a
+  crash, with the old half second kept only as the ceiling. Exec and file
+  routes still own the full readiness wait.
+- The guest's boot stage timings reach the host again. The agent has always
+  sent them after the boot handshake; the process logged them as an
+  unknown message and dropped them. They are now recorded per stage in the
+  process log, the guest also reports the kernel's own boot time as a
+  stage, and the lifecycle benchmark records every stage plus the graceful
+  stop and one-shot run times.
+- Concurrent `/status` polls no longer queue behind one another at the
+  gateway. A poll that finds a service read in flight waits for it and
+  then shares the next read, which by construction began after the poll
+  arrived, so any number of simultaneous polls (browser, tray, TUI) cost
+  at most two service reads and none is ever answered from a read that
+  predates it. Status reads also use the gateway's pooled service
+  connection instead of a fresh socket and handshake per read, and the
+  previous response is no longer copied whole just to diff VM states.
+- The proxy's guest-facing TLS configuration is built once per VM instead
+  of once per connection. A configuration owns the TLS session cache, so
+  every guest connection used to start from an empty cache and pay a full
+  handshake; connections from the same client now resume their session.
+  The SNI is read back from the finished handshake rather than captured
+  by the per-connection resolver.
+- The host's vsock listeners accept a real backlog. The queue was four
+  connections deep, so a guest opening more than four connections at once
+  (a package install, an agent fanning out) had the surplus reset by the
+  kernel instead of queued.
+- Identical DNS lookups in flight at the same time now share one upstream
+  round trip: the first query for a name leads and the rest wait for its
+  checked answer, each getting its own transaction id and its own ledger
+  row. A query only joins after its own security evaluation, local
+  fixtures, redirect check and cache lookup have all passed, so a blocked
+  name is never merged with an allowed one, and a leader that fails gives
+  every follower its own SERVFAIL. An upstream NXDOMAIN is now remembered
+  for the SOA minimum, at most a minute, so a client retrying a dead name
+  stops costing an upstream lookup each time; SERVFAIL is still never
+  cached. Two hundred concurrent lookups of one dead name used to be two
+  hundred upstream datagrams and, on a slow upstream, two hundred timeouts.
+- The DNS forwarder's per-upstream timeout is two seconds instead of five,
+  so trying both default upstreams fits inside the guest resolver's own
+  six-second timeout and the client sees a SERVFAIL rather than
+  retransmitting the same query into the backlog.
+- Guest DNS no longer serializes on eight lock-step worker threads. The
+  forwarder now multiplexes queries over two persistent vsock sessions with a
+  correlation id per query, so answers arrive in any order and a slow lookup
+  no longer holds every query queued behind it; the host answers each frame
+  on its own task. Every answer is checked against its query's transaction
+  id and question before it is delivered, a query the host never answers
+  gets a SERVFAIL after five seconds instead of silence, and the forwarder
+  sheds past 128 in-flight queries per session rather than growing a
+  queue. On this KVM host, one client went from 395 to 771 queries per
+  second (p50 2.4 ms to 0.9 ms) and the plateau under 10 to 200 clients
+  from about 2,200 to about 3,600 queries per second.
+- Stopping a VM no longer waits out a fixed timer. The host used to sleep
+  two seconds after telling the guest to shut down, and the guest slept the
+  same two seconds after signalling its shell instead of waiting for it to
+  exit (an interactive bash ignores that signal anyway, so the shell was
+  always killed at the end). The guest now hangs the shell up, waits for it
+  to be reaped, syncs, and reports `ShutdownComplete`; the host stops the VM
+  on that report, with the old timer kept only as a ceiling for a guest that
+  never answers. On a KVM host, `capsem stop` of a persistent VM went from
+  2.3s to 0.3s and a one-shot `capsem run` from 5.2s to 3.1s. Bash also
+  gets the hangup it handles gracefully instead of a kill.
+- The session ledger writer reuses prepared statements instead of parsing
+  the SQL of every insert again. Under load the writer thread's profile was
+  a fifth SQL parsing; write throughput doubled (66,000 to 134,000 events
+  per second at 1,024-event batches), which is CPU the proxy gets back and
+  requests that no longer wait on a full telemetry queue.
+- The guest network proxy no longer serializes the two steps in front of
+  every outbound connection: attributing the connecting process from
+  `/proc` and opening the vsock to the host now run at the same time, so the
+  first byte leaves the guest after the slower of the two rather than their
+  sum.
+- The DNS forwarder accepts only the answer to the question it asked. It
+  used to return the first datagram that arrived on its socket, so a forged
+  reply that guessed the ephemeral port could answer for any name (the
+  transaction id is the guest's to choose) and be cached for five minutes.
+  Every datagram is now checked for the query's id, the response bit and
+  the same question; anything else is discarded and the forwarder keeps
+  waiting for the real answer.
+- The gateway answers 413 for an oversized body whether or not the client
+  declared its length. A chunked upload past 10 MiB used to fail on the
+  connection to the service and come back as 502 "service unavailable".
+  Reading a buffered JSON response from the service is now bounded by the
+  same request timeout as sending the request.
+- Reading a session ledger from the service no longer copies every hot
+  table from disk on every request. The external reader syncs only when
+  SQLite reports that another connection committed, and then pulls only the
+  rows above its high-water mark for the append-only ledgers (exec events,
+  which complete in place, are still copied whole). On a 20,000-row ledger
+  a poll with nothing new went from 8 ms to 56 µs and a poll right after a
+  write from 10 ms to 1.7 ms; at 200,000 rows, 90 ms to 3 ms and 110 ms to
+  4 ms. A new criterion bench keeps both numbers measured.
 - Admin image and manifest commands now select the locked builder project
   explicitly, so they work without an activated Python environment.
 - Debian installation now gives the existing user service immediate ACL-based

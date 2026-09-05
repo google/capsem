@@ -366,7 +366,10 @@ async fn run_async_main_loop(
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 256)?);
+    // 1024 queued events: a guest resolving and fetching in parallel enqueues
+    // several rows per request, and a full queue makes every producer sleep
+    // in 5 ms steps on its reply path (see `DbWriter::send_with_backpressure`).
+    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 1024)?);
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
@@ -528,6 +531,7 @@ async fn run_async_main_loop(
     );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
+        server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
         policy: Arc::clone(&net_state.policy),
         model_endpoints,
         db: Arc::clone(&db),
@@ -671,6 +675,17 @@ async fn run_async_main_loop(
         std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
     }
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
+    // The launch signal: the hypervisor has started the VM and this process
+    // is answering IPC. `create` returns on it instead of waiting out a timer
+    // (`.ready`, written after the guest handshake, comes much later). A
+    // separate file rather than the socket's existence, because a stale
+    // socket from an earlier run at this path was just deleted above.
+    let launched_path = uds_path.with_extension("launched");
+    std::fs::File::create(&launched_path)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
+    }
 
     // Through `capsem_foundation::uds`, which owns the length rule -- the gateway
     // derives this same path independently, so both must apply it identically

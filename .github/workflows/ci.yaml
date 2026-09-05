@@ -232,6 +232,7 @@ jobs:
       - name: macOS release portability preflight
         run: >-
           uv run --project build_system --frozen python -m pytest
+          -c build_system/pyproject.toml --rootdir .
           tests/capsem-release/test_release_channel_contract.py::test_binary_staging_artifacts_are_deterministic_and_recordable
           -q
       - run: bash build_system/scripts/build/generate-settings.sh
@@ -273,7 +274,7 @@ jobs:
       - name: Unit tests with coverage
         run: |
           set -o pipefail
-          cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov nextest --no-cfg-coverage --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
           cargo llvm-cov report --summary-only -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
 
       # Integration tests (tests/ directory, cross-crate)

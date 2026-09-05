@@ -11,6 +11,7 @@ use capsem_proto::{encode_guest_msg, GuestToHost};
 use nix::libc;
 
 use crate::ackable_response_id;
+use crate::shutdown::HostShutdown;
 use crate::vsock_io::write_all_fd;
 
 /// Frame `msg` for the control channel. A message that cannot be framed (over
@@ -51,12 +52,19 @@ pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::
 pub(crate) struct CtrlSender {
     pub(crate) tx: std::sync::mpsc::Sender<GuestToHost>,
     pub(crate) pending: PendingResponses,
+    /// The host-initiated shutdown handshake; see `HostShutdown`.
+    pub(crate) shutdown: std::sync::Arc<HostShutdown>,
 }
 
 impl CtrlSender {
     pub(crate) fn new(pending: PendingResponses) -> (Self, SharedCtrlReceiver) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { tx, pending }, std::sync::Arc::new(std::sync::Mutex::new(rx)))
+        let sender = Self {
+            tx,
+            pending,
+            shutdown: std::sync::Arc::new(HostShutdown::default()),
+        };
+        (sender, std::sync::Arc::new(std::sync::Mutex::new(rx)))
     }
 
     pub(crate) fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
@@ -162,6 +170,9 @@ pub(crate) fn control_writer_loop(
                 let _ = sender.tx.send(msg);
             }
             return;
+        }
+        if matches!(msg, GuestToHost::ShutdownComplete) {
+            sender.shutdown.mark_reported();
         }
     }
 }

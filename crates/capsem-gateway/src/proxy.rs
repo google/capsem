@@ -144,10 +144,31 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (parts, body) = req.into_parts();
 
-    // Wrap body in length limit for chunked requests
+    // A body that declared its length was checked against MAX_BODY_SIZE
+    // before we got here and streams straight through, still capped in case
+    // the declaration lied. A chunked body has no length to check up front:
+    // it is collected here, under the cap, so an oversized upload answers
+    // 413. It used to fail mid-stream on the upstream connection instead and
+    // surface as a 502 "service unavailable", so the client never learned
+    // the body was the problem.
     use http_body_util::Limited;
-    let limited_body = axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE));
-    let upstream_req = hyper::Request::from_parts(parts, limited_body);
+    let body = if parts.headers.contains_key(http::header::CONTENT_LENGTH) {
+        axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE))
+    } else {
+        match tokio::time::timeout(REQUEST_TIMEOUT, Limited::new(body, MAX_BODY_SIZE).collect()).await {
+            Ok(Ok(collected)) => axum::body::Body::from(collected.to_bytes()),
+            Ok(Err(error)) if error.is::<http_body_util::LengthLimitError>() => {
+                return Ok((
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    axum::Json(serde_json::json!({"error": "request body too large"})),
+                )
+                    .into_response());
+            }
+            Ok(Err(error)) => return Err(anyhow::anyhow!("request body read failed: {error}")),
+            Err(_) => return Err(anyhow::anyhow!("request body read timed out")),
+        }
+    };
+    let upstream_req = hyper::Request::from_parts(parts, body);
 
     // Send with timeout
     let res = tokio::time::timeout(REQUEST_TIMEOUT, state.service_client.request(upstream_req))
@@ -156,7 +177,10 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (mut parts, body) = res.into_parts();
     if should_buffer_json_response(should_buffer_json, &parts.headers) {
-        let body = body.collect().await?.to_bytes();
+        let body = tokio::time::timeout(REQUEST_TIMEOUT, body.collect())
+            .await
+            .map_err(|_| anyhow::anyhow!("response body read timed out"))??
+            .to_bytes();
         parts.headers.remove(TRANSFER_ENCODING);
         parts
             .headers

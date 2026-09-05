@@ -9,6 +9,13 @@ fn run_control_loop_with_messages(messages: Vec<HostToGuest>) -> Vec<GuestToHost
     run_control_loop_with_messages_and_pending(messages, None).0
 }
 
+/// Same as `run_control_loop_with_messages` but also returns a clone of the
+/// sender so tests can inspect the shutdown handshake.
+fn run_control_loop_with_messages_and_sender(messages: Vec<HostToGuest>) -> (Vec<GuestToHost>, CtrlSender) {
+    let (responses, _, sender) = run_control_loop_full(messages, None);
+    (responses, sender)
+}
+
 /// Same as `run_control_loop_with_messages` but exposes the
 /// pending_responses map so AckReply tests can inspect it.
 fn run_control_loop_with_messages_and_pending(
@@ -18,6 +25,14 @@ fn run_control_loop_with_messages_and_pending(
     Vec<GuestToHost>,
     std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
 ) {
+    let (responses, pending, _) = run_control_loop_full(messages, seed);
+    (responses, pending)
+}
+
+fn run_control_loop_full(
+    messages: Vec<HostToGuest>,
+    seed: Option<Vec<(u64, GuestToHost)>>,
+) -> (Vec<GuestToHost>, PendingResponses, CtrlSender) {
     let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
     let pty = openpty(None, None).expect("openpty");
     let master_fd = pty.master.as_raw_fd();
@@ -29,6 +44,7 @@ fn run_control_loop_with_messages_and_pending(
     let child_pid = Pid::from_raw(child.id() as i32);
 
     let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
+    let sender = ctrl_tx.clone();
 
     // Write all messages then close the write end so control_loop
     // sees EOF and exits.
@@ -76,7 +92,7 @@ fn run_control_loop_with_messages_and_pending(
     while let Ok(msg) = ctrl_rx.lock().unwrap().try_recv() {
         responses.push(msg);
     }
-    (responses, pending)
+    (responses, pending, sender)
 }
 
 #[test]
@@ -303,4 +319,181 @@ fn heartbeat_thread_ends_promptly_when_the_lease_drops() {
         "the heartbeat must notice the dropped lease within one poll, took {:?}",
         started.elapsed()
     );
+}
+
+/// Shutdown flags the handshake, ends the shell, and reports completion.
+/// Timing is asserted in `shutdown::tests`, where no disk sync is involved:
+/// this path calls sync(2) twice, which on a loaded host takes seconds.
+#[test]
+fn control_loop_shutdown_reports_complete_once_the_shell_exits() {
+    let (responses, ctrl_tx) = run_control_loop_with_messages_and_sender(vec![HostToGuest::Shutdown]);
+    assert!(
+        matches!(responses.last(), Some(GuestToHost::ShutdownComplete)),
+        "expected ShutdownComplete last, got {responses:?}"
+    );
+    assert!(
+        ctrl_tx.shutdown.is_requested(),
+        "the bridge was never told to hold the connection"
+    );
+}
+
+/// With a writer confirming the report, the loop returns without waiting
+/// out `REPORT_WRITE_WAIT`.
+#[test]
+fn control_loop_shutdown_returns_once_the_writer_confirms_the_report() {
+    let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
+    let pty = openpty(None, None).expect("openpty");
+    let master_fd = pty.master.as_raw_fd();
+    let mut child = std::process::Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("spawn sleep");
+    let child_pid = Pid::from_raw(child.id() as i32);
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
+    let frame = capsem_proto::encode_host_msg(&HostToGuest::Shutdown).unwrap();
+    write_all_fd(ctrl_write_fd, &frame).unwrap();
+    unsafe {
+        libc::close(ctrl_write_fd);
+    }
+    // A stand-in for control_writer_loop: mark the report written on receipt
+    // and remember when, so the loop's return can be timed from there rather
+    // than from the shell teardown (whose disk syncs are host-dependent).
+    let confirm = ctrl_tx.clone();
+    let writer = thread::spawn(move || {
+        let msg = ctrl_rx.lock().unwrap().recv().expect("the report");
+        assert!(matches!(msg, GuestToHost::ShutdownComplete), "{msg:?}");
+        confirm.shutdown.mark_reported();
+        std::time::Instant::now()
+    });
+    control_loop(
+        ctrl_read_fd,
+        master_fd,
+        child_pid,
+        &[],
+        ctrl_tx,
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+    );
+    let returned = std::time::Instant::now();
+    let confirmed = writer.join().unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    unsafe {
+        libc::close(ctrl_read_fd);
+    }
+    let after_confirmation = returned.saturating_duration_since(confirmed);
+    assert!(
+        after_confirmation < shutdown::REPORT_WRITE_WAIT / 2,
+        "loop ran {after_confirmation:?} past the confirmation; it should return at once"
+    );
+}
+
+/// The writer marks the report written only after the bytes are on the wire.
+#[test]
+fn control_writer_marks_the_shutdown_report_written_after_the_write() {
+    let (host_fd, guest_fd) = make_pipe();
+    let (sender, rx) = test_ctrl_channel();
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let writer = {
+        let (sender, alive) = (sender.clone(), std::sync::Arc::clone(&alive));
+        std::thread::spawn(move || control_writer_loop(&rx, &sender, guest_fd, -1, &alive))
+    };
+    sender.send(GuestToHost::Pong).unwrap();
+    sender.send(GuestToHost::ShutdownComplete).unwrap();
+    assert!(sender.shutdown.wait_reported(std::time::Duration::from_secs(5)));
+    // Both frames are readable on the host side, in order.
+    let mut file = unsafe { std::fs::File::from_raw_fd(host_fd) };
+    let mut decoded = Vec::new();
+    for _ in 0..2 {
+        let mut len = [0u8; 4];
+        file.read_exact(&mut len).unwrap();
+        let mut payload = vec![0u8; u32::from_be_bytes(len) as usize];
+        file.read_exact(&mut payload).unwrap();
+        decoded.push(capsem_proto::decode_guest_msg(&payload).unwrap());
+    }
+    assert!(matches!(decoded[0], GuestToHost::Pong), "{decoded:?}");
+    assert!(matches!(decoded[1], GuestToHost::ShutdownComplete), "{decoded:?}");
+    alive.store(false, std::sync::atomic::Ordering::SeqCst);
+    writer.join().unwrap();
+    unsafe {
+        libc::close(guest_fd);
+    }
+}
+
+/// Nothing after Shutdown is processed: the loop is over.
+#[test]
+fn control_loop_stops_processing_after_shutdown() {
+    let responses = run_control_loop_with_messages(vec![HostToGuest::Shutdown, HostToGuest::Ping { epoch_secs: 0 }]);
+    assert_eq!(responses.len(), 1, "{responses:?}");
+    assert!(matches!(responses[0], GuestToHost::ShutdownComplete));
+}
+
+/// During a host shutdown the shell's exit must not end the bridge: the
+/// connection stays up until the writer confirms the report, then closes.
+#[test]
+fn bridge_holds_the_connection_after_the_shell_exits_until_the_report_is_written() {
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (master_host, master_guest) = UnixStream::pair().unwrap();
+    let (vsock_host, vsock_guest) = UnixStream::pair().unwrap();
+    let master_fd = master_guest.into_raw_fd();
+    let vsock_fd = vsock_guest.into_raw_fd();
+    let shutdown = std::sync::Arc::new(HostShutdown::default());
+    shutdown.request();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let bridge = {
+        let shutdown = std::sync::Arc::clone(&shutdown);
+        std::thread::spawn(move || {
+            bridge_loop(master_fd, vsock_fd, &shutdown);
+            done_tx.send(()).unwrap();
+        })
+    };
+
+    // The shell exits.
+    drop(master_host);
+    assert!(
+        done_rx.recv_timeout(std::time::Duration::from_millis(300)).is_err(),
+        "the bridge ended the connection before the shutdown report was written"
+    );
+
+    // The writer confirms the report; now the bridge may go.
+    shutdown.mark_reported();
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the bridge did not return once the report was written");
+    bridge.join().unwrap();
+    drop(vsock_host);
+    unsafe {
+        libc::close(master_fd);
+        libc::close(vsock_fd);
+    }
+}
+
+/// Without a shutdown in progress the shell's exit ends the bridge at once,
+/// as it always did; the hold is not a general delay.
+#[test]
+fn bridge_ends_at_once_on_shell_exit_when_no_shutdown_is_in_progress() {
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (master_host, master_guest) = UnixStream::pair().unwrap();
+    let (_vsock_host, vsock_guest) = UnixStream::pair().unwrap();
+    let master_fd = master_guest.into_raw_fd();
+    let vsock_fd = vsock_guest.into_raw_fd();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let bridge = std::thread::spawn(move || {
+        bridge_loop(master_fd, vsock_fd, &HostShutdown::default());
+        done_tx.send(()).unwrap();
+    });
+    drop(master_host);
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the bridge did not return after the shell exited");
+    bridge.join().unwrap();
+    unsafe {
+        libc::close(master_fd);
+        libc::close(vsock_fd);
+    }
 }

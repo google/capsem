@@ -571,6 +571,36 @@ async fn rejects_oversized_body() {
     h.abort();
 }
 
+/// Without a Content-Length the size is only known as the body streams in.
+/// That case used to fail on the upstream connection and come back as a 502
+/// "service unavailable"; it is the same 413 as the declared case.
+#[tokio::test]
+async fn rejects_oversized_chunked_body_with_413() {
+    let mock = axum::Router::new().route("/big", axum::routing::post(|| async { "ok" }));
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let chunk = bytes::Bytes::from(vec![b'x'; 1024 * 1024]);
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> =
+        (0..=(MAX_BODY_SIZE / chunk.len())).map(|_| Ok(chunk.clone())).collect();
+    let app = proxy_app(&path);
+    let resp = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/big")
+                .header("transfer-encoding", "chunked")
+                .body(Body::from_stream(futures::stream::iter(chunks)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "request body too large");
+    h.abort();
+}
+
 #[tokio::test]
 async fn accepts_body_under_limit() {
     let mock = axum::Router::new().route(

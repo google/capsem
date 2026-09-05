@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 MAX_BOOT_STAGE_MS = 500
+# Reported for the total but not budgeted per stage: the kernel is not an
+# init operation anyone can attribute a regression to from inside the guest.
+UNBUDGETED_STAGES = frozenset({"kernel"})
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,7 @@ def assess_boot_timing(stages: list[dict[str, Any]]) -> BootTimingAssessment:
     slow_stages = tuple(
         stage
         for stage in stages
-        if int(stage.get("duration_ms", 0)) > MAX_BOOT_STAGE_MS
+        if stage.get("name") not in UNBUDGETED_STAGES
+        and int(stage.get("duration_ms", 0)) > MAX_BOOT_STAGE_MS
     )
     return BootTimingAssessment(total_ms=total_ms, slow_stages=slow_stages)
