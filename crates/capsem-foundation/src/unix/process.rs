@@ -101,7 +101,35 @@ pub fn send_signal(pid: ProcessId, signal: Signal) -> io::Result<SignalOutcome> 
 
 /// Signal a process group created and owned by the caller, named by its leader.
 pub fn send_process_group_signal(leader: ProcessId, signal: Signal) -> io::Result<SignalOutcome> {
-    classify_signal(killpg(leader.as_nix(), signal.as_nix()))
+    let result = killpg(leader.as_nix(), signal.as_nix());
+    // Darwin's killpg1 skips zombies and returns EPERM when none remain
+    // signalable. Only excuse that error if the sole member is our exited,
+    // unreaped child; another member or an unreadable table keeps the error.
+    #[cfg(target_os = "macos")]
+    if result == Err(Errno::EPERM) && lone_exited_child_group(leader) {
+        return Ok(SignalOutcome::Gone);
+    }
+    classify_signal(result)
+}
+
+#[cfg(target_os = "macos")]
+fn lone_exited_child_group(leader: ProcessId) -> bool {
+    if !child_has_exited(leader).unwrap_or(false) {
+        return false;
+    }
+    // Two slots distinguish one member from a truncated multi-member list.
+    // libproc includes zombies and returns a count of PIDs, not bytes.
+    let mut members: [libc::pid_t; 2] = [0; 2];
+    // SAFETY: the buffer holds the specified number of bytes, and the group
+    // ID belongs to the child whose unreaped status still reserves its PID.
+    let count = unsafe {
+        libc::proc_listpgrppids(
+            leader.as_nix().as_raw(),
+            members.as_mut_ptr().cast(),
+            std::mem::size_of_val(&members) as libc::c_int,
+        )
+    };
+    count == 1 && members[0] == leader.as_nix().as_raw()
 }
 
 /// Observe an owned child's exit without reaping it. Keeping the zombie until

@@ -75,7 +75,13 @@ fn signalling_an_owned_process_group_terminates_its_leader() {
 
 #[test]
 fn exit_observation_keeps_the_child_waitable_and_its_pid_reserved() {
-    let mut child = std::process::Command::new("sh").args(["-c", "exit 7"]).spawn().unwrap();
+    use std::os::unix::process::CommandExt;
+
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "exit 7"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
     let pid = ProcessId::try_from(child.id()).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while !child_has_exited(pid).unwrap() {
@@ -86,5 +92,37 @@ fn exit_observation_keeps_the_child_waitable_and_its_pid_reserved() {
         child_has_exited(pid).unwrap(),
         "observation must not consume the exit status"
     );
+    send_process_group_signal(pid, Signal::Kill).expect("an exited child's group needs no signal");
     assert_eq!(child.wait().unwrap().code(), Some(7));
+}
+
+#[test]
+fn an_exited_group_leader_does_not_hide_a_live_member() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+
+    let mut leader = std::process::Command::new("false").process_group(0).spawn().unwrap();
+    let pid = ProcessId::try_from(leader.id()).unwrap();
+    let mut member = std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(pid.as_nix().as_raw())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !child_has_exited(pid).unwrap() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    #[cfg(target_os = "macos")]
+    let lone = lone_exited_child_group(pid);
+    let signalled = send_process_group_signal(pid, Signal::Kill);
+    if signalled.is_err() {
+        member.kill().unwrap();
+    }
+    let leader_status = leader.wait().unwrap();
+    let member_status = member.wait().unwrap();
+    #[cfg(target_os = "macos")]
+    assert!(!lone);
+    assert_eq!(signalled.unwrap(), SignalOutcome::Delivered);
+    assert_eq!(leader_status.code(), Some(1));
+    assert_eq!(member_status.signal(), Some(libc::SIGKILL));
 }
