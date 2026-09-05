@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so guest tests launch the host binaries they just built.
   Copied source timestamps also invalidate stale Cargo fingerprints from other
   worktrees instead of reusing binaries for different source contents.
+- Resuming a persistent VM protects its socket and session state from delayed
+  cleanup of the previous process, preventing intermittent execution failures.
 - Linux VM-device rules prevent transient permission loss on VM create and
   destroy, including for services with stale supplementary group membership.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,
