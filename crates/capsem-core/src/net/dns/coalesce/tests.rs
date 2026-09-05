@@ -1,11 +1,16 @@
 use super::*;
 
 fn key(name: &str, qtype: u16) -> LookupKey {
-    LookupKey {
-        qname: name.to_string(),
-        qtype,
-        qclass: 1,
-    }
+    let mut message = hickory_proto::op::Message::new(
+        0,
+        hickory_proto::op::MessageType::Query,
+        hickory_proto::op::OpCode::Query,
+    );
+    message.add_query(hickory_proto::op::Query::query(
+        hickory_proto::rr::Name::from_ascii(name).unwrap(),
+        hickory_proto::rr::RecordType::from(qtype),
+    ));
+    LookupKey::new(&message.to_vec().unwrap())
 }
 
 #[tokio::test]
@@ -36,10 +41,10 @@ async fn different_type_or_class_or_name_is_a_different_lookup() {
     let lookups = Arc::new(InFlightLookups::default());
     let leases: Vec<LeaderLease> = [key("a.example", 1), key("a.example", 28), key("b.example", 1)]
         .into_iter()
-        .chain(std::iter::once(LookupKey {
-            qname: "a.example".into(),
-            qtype: 1,
-            qclass: 3,
+        .chain(std::iter::once({
+            let mut other_class = key("a.example", 1);
+            *other_class.0.last_mut().unwrap() = 3;
+            other_class
         }))
         .map(|k| match lookups.join_or_lead(k) {
             Role::Lead(lease) => lease,

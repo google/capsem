@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,10 +33,9 @@ pub(crate) const DNS_SESSIONS: usize = 2;
 /// Queries one session holds in flight before it sheds. Past this the
 /// client gets SERVFAIL at once rather than an unbounded queue.
 pub(crate) const DNS_SESSION_MAX_IN_FLIGHT: usize = 128;
-/// How long a query waits for its answer. Below glibc's 5 s resolver
-/// timeout, so the client sees a SERVFAIL instead of retransmitting a
-/// second copy of the same query into the backlog.
-pub(crate) const DNS_QUERY_DEADLINE: Duration = Duration::from_secs(3);
+/// Covers both two-second upstream attempts and the local queue/ledger
+/// overhead. Guest libc waits six seconds, so it does not race this reply.
+pub(crate) const DNS_QUERY_DEADLINE: Duration = Duration::from_secs(5);
 /// Frames queued for the writer before `forward_query` waits.
 const WRITER_QUEUE: usize = 256;
 const RECONNECT_MIN: Duration = Duration::from_millis(50);
@@ -47,17 +47,19 @@ pub(crate) type Connect = Arc<dyn Fn() -> io::Result<RawFd> + Send + Sync>;
 
 pub(crate) struct DnsForwarder {
     sessions: Vec<Arc<DnsSession>>,
+    workers: Vec<tokio::task::JoinHandle<()>>,
     next: AtomicUsize,
 }
 
 impl DnsForwarder {
     pub(crate) fn new(session_count: usize, connect: Connect) -> Self {
         assert!(session_count > 0, "DNS forwarder needs at least one session");
-        let sessions = (0..session_count)
+        let (sessions, workers) = (0..session_count)
             .map(|index| DnsSession::spawn(index, Arc::clone(&connect)))
-            .collect();
+            .unzip();
         Self {
             sessions,
+            workers,
             next: AtomicUsize::new(0),
         }
     }
@@ -71,6 +73,14 @@ impl DnsForwarder {
     }
 }
 
+impl Drop for DnsForwarder {
+    fn drop(&mut self) {
+        for worker in &self.workers {
+            worker.abort();
+        }
+    }
+}
+
 struct Pending {
     /// `None` when the query itself did not parse; the host answers those
     /// with empty bytes and nothing can be checked.
@@ -80,13 +90,25 @@ struct Pending {
 
 pub(crate) struct DnsSession {
     index: usize,
-    frames: mpsc::Sender<Vec<u8>>,
+    frames: mpsc::Sender<(u32, Vec<u8>)>,
     pending: Mutex<HashMap<u32, Pending>>,
     next_id: AtomicU32,
 }
 
+/// Cancellation owns the same cleanup as a reply, error, or timeout.
+struct PendingQuery<'a> {
+    session: &'a DnsSession,
+    id: u32,
+}
+
+impl Drop for PendingQuery<'_> {
+    fn drop(&mut self) {
+        self.session.take_pending(self.id);
+    }
+}
+
 impl DnsSession {
-    fn spawn(index: usize, connect: Connect) -> Arc<Self> {
+    fn spawn(index: usize, connect: Connect) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
         let (frames, frames_rx) = mpsc::channel(WRITER_QUEUE);
         let session = Arc::new(Self {
             index,
@@ -94,8 +116,8 @@ impl DnsSession {
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
         });
-        tokio::spawn(Arc::clone(&session).run(frames_rx, connect));
-        session
+        let worker = tokio::spawn(Arc::clone(&session).run(frames_rx, connect));
+        (session, worker)
     }
 
     fn alloc_id(&self) -> u32 {
@@ -136,31 +158,26 @@ impl DnsSession {
             }
             pending.insert(id, Pending { expected, reply });
         }
+        let _pending = PendingQuery { session: self, id };
         let request = DnsRequest {
             id,
             raw,
             proto: proto.to_string(),
             process_name: None,
         };
-        let frame = match encode_dns_request(&request) {
-            Ok(frame) => frame,
-            Err(error) => {
-                self.take_pending(id);
-                return Err(io::Error::other(format!("encode_dns_request: {error:#}")));
-            }
-        };
-        if self.frames.send(frame).await.is_err() {
-            self.take_pending(id);
-            return Err(io::Error::other("dns session writer stopped"));
-        }
-        match tokio::time::timeout(deadline, answer).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(io::Error::other("dns session dropped the query")),
-            Err(_) => {
-                self.take_pending(id);
-                Err(io::Error::new(io::ErrorKind::TimedOut, "dns query deadline passed"))
-            }
-        }
+        let frame =
+            encode_dns_request(&request).map_err(|error| io::Error::other(format!("encode_dns_request: {error:#}")))?;
+        tokio::time::timeout(deadline, async {
+            self.frames
+                .send((id, frame))
+                .await
+                .map_err(|_| io::Error::other("dns session writer stopped"))?;
+            answer
+                .await
+                .map_err(|_| io::Error::other("dns session dropped the query"))?
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dns query deadline passed"))?
     }
 
     fn take_pending(&self, id: u32) -> Option<Pending> {
@@ -188,14 +205,17 @@ impl DnsSession {
             );
             return;
         };
-        if let Some(question) = &entry.expected {
-            if !response.raw.is_empty() && !question.is_answered_by(&response.raw) {
-                eprintln!(
-                    "[capsem-dns-proxy] session {}: answer for id {} does not match its question; discarded",
-                    self.index, response.id
-                );
-                return;
-            }
+        if !response.raw.is_empty()
+            && !entry
+                .expected
+                .as_ref()
+                .is_some_and(|question| question.is_answered_by(&response.raw))
+        {
+            eprintln!(
+                "[capsem-dns-proxy] session {}: answer for id {} does not match its question; discarded",
+                self.index, response.id
+            );
+            return;
         }
         if let Some(entry) = pending.remove(&response.id) {
             drop(pending);
@@ -224,11 +244,17 @@ impl DnsSession {
         }
     }
 
-    async fn run(self: Arc<Self>, mut frames: mpsc::Receiver<Vec<u8>>, connect: Connect) {
+    async fn run(self: Arc<Self>, mut frames: mpsc::Receiver<(u32, Vec<u8>)>, connect: Connect) {
         let mut backoff = RECONNECT_MIN;
         loop {
             let connect_once = Arc::clone(&connect);
-            let fd = match tokio::task::spawn_blocking(move || connect_once()).await {
+            let fd = match tokio::task::spawn_blocking(move || {
+                // If the worker is aborted while connecting, the eventual
+                // result still owns and closes the descriptor.
+                connect_once().map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
+            })
+            .await
+            {
                 Ok(Ok(fd)) => fd,
                 Ok(Err(error)) => {
                     eprintln!(
@@ -251,7 +277,7 @@ impl DnsSession {
                     continue;
                 }
             };
-            let stream = match AsyncVsock::new(fd) {
+            let stream = match AsyncVsock::new(fd.into_raw_fd()) {
                 Ok(stream) => stream,
                 Err(error) => {
                     eprintln!(
@@ -276,10 +302,13 @@ impl DnsSession {
 
     /// Write queued frames and deliver answers until either direction
     /// fails. Returns the error that ended the connection.
-    async fn pump(&self, stream: AsyncVsock, frames: &mut mpsc::Receiver<Vec<u8>>) -> io::Error {
+    async fn pump(&self, stream: AsyncVsock, frames: &mut mpsc::Receiver<(u32, Vec<u8>)>) -> io::Error {
         let (mut reader, mut writer) = tokio::io::split(stream);
         let write_side = async {
-            while let Some(frame) = frames.recv().await {
+            while let Some((id, frame)) = frames.recv().await {
+                if !self.pending.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id) {
+                    continue;
+                }
                 writer.write_all(&frame).await?;
             }
             Err::<(), io::Error>(io::Error::other("forwarder dropped"))

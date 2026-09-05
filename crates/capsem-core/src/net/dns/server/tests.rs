@@ -29,6 +29,36 @@ fn plugin_policy() -> SharedPluginPolicy {
 }
 
 #[tokio::test]
+async fn only_a_single_standard_question_can_reach_upstream() {
+    let (addr, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+    let handler = DnsHandler::new(
+        shared_policy(),
+        security_rules(""),
+        plugin_policy(),
+        Arc::new(DnsResolver::with_upstreams(vec![addr])),
+    );
+    let ordinary = build_query_bytes("allowed.example.", RecordType::A, 123);
+    let mut multiple = Message::from_vec(&ordinary).unwrap();
+    multiple.add_query(Query::query(
+        Name::from_ascii("blocked.example.").unwrap(),
+        RecordType::A,
+    ));
+    let mut response = ordinary.clone();
+    response[2] |= 0x80;
+    let mut update = ordinary;
+    update[2] |= 5 << 3;
+    for query in [multiple.to_vec().unwrap(), response, update] {
+        let result = handler.handle(&query).await;
+        assert_eq!(result.decision, Decision::Error);
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            0,
+            "unchecked questions or operations must never be forwarded"
+        );
+    }
+}
+
+#[tokio::test]
 async fn dns_handler_blocks_query_through_security_event_rules() {
     let handler = DnsHandler::new(
         shared_policy(),
@@ -108,6 +138,20 @@ async fn counting_upstream(
                     60,
                     RData::A(rdata::A(std::net::Ipv4Addr::new(192, 0, 2, 7))),
                 ));
+            } else if rcode == hickory_proto::op::ResponseCode::NXDomain {
+                response.add_authority(Record::from_rdata(
+                    Name::from_ascii("example.com.").unwrap(),
+                    60,
+                    RData::SOA(rdata::SOA::new(
+                        Name::from_ascii("ns.example.com.").unwrap(),
+                        Name::from_ascii("hostmaster.example.com.").unwrap(),
+                        1,
+                        3600,
+                        600,
+                        86400,
+                        60,
+                    )),
+                ));
             }
             let bytes = response.to_vec().unwrap();
             let socket_send = socket.send_to(&bytes, peer);
@@ -183,6 +227,42 @@ async fn a_different_record_type_is_its_own_upstream_lookup() {
     a.await.unwrap();
     aaaa.await.unwrap();
     assert_eq!(seen.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn different_dns_flags_do_not_share_an_upstream_answer() {
+    let (upstream, seen) = counting_upstream(
+        hickory_proto::op::ResponseCode::NoError,
+        std::time::Duration::from_millis(20),
+    )
+    .await;
+    let handler = handler_with(upstream, "", None);
+    let first = build_query_bytes("flags.example.", RecordType::A, 1);
+    let mut second = build_query_bytes("flags.example.", RecordType::A, 2);
+    second[3] |= 0x10; // CD: the client requests different validation behavior.
+    let (a, b) = tokio::join!(handler.handle(&first), handler.handle(&second));
+    assert_eq!((a.rcode, b.rcode), (0, 0));
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        2,
+        "different flags need distinct upstream reads"
+    );
+}
+
+#[tokio::test]
+async fn different_dns_flags_do_not_reuse_a_cached_answer() {
+    let (upstream, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+    let handler = handler_with(upstream, "", Some(Arc::new(DnsAnswerCache::default())));
+    let first = build_query_bytes("flags.example.", RecordType::A, 1);
+    let mut second = build_query_bytes("flags.example.", RecordType::A, 2);
+    second[3] |= 0x10;
+    assert_eq!(handler.handle(&first).await.rcode, 0);
+    assert_eq!(handler.handle(&second).await.rcode, 0);
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        2,
+        "a cached validated answer is not an answer to a CD query"
+    );
 }
 
 #[tokio::test]

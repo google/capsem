@@ -323,6 +323,14 @@ impl DnsHandler {
             }
         };
 
+        // Policy evaluates one standard question. Never forward an unchecked
+        // second question, a DNS update, or a reflected response upstream.
+        if query.extra_questions != 0 || query_bytes[2] & 0xF8 != 0 {
+            let mut result = DnsHandlerResult::parse_failed();
+            result.query = Some(query);
+            return result;
+        }
+
         let dns_security_event = SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
             qname: Some(query.qname.clone()),
             qtype: Some(query.qtype.to_string()),
@@ -425,8 +433,9 @@ impl DnsHandler {
         // for coherence -- a domain that becomes blocked or
         // redirected after we cached its answer must not serve
         // from cache. See `dns/cache.rs` for the full invariant.
+        let key = super::coalesce::LookupKey::new(query_bytes);
         if let Some(cache) = &self.cache {
-            if let Some(cached) = cache.get(&query.qname, query.qtype, query.qclass, query.id, &policy) {
+            if let Some(cached) = cache.get(&query, &key, &policy) {
                 let rcode = response_rcode(&cached);
                 debug!(
                     qname = %query.qname,
@@ -443,12 +452,7 @@ impl DnsHandler {
         // Every check that could refuse or redirect this query has passed;
         // only now may it share an upstream lookup with an identical one.
         let t0 = Instant::now();
-        let key = super::coalesce::LookupKey {
-            qname: query.qname.clone(),
-            qtype: query.qtype,
-            qclass: query.qclass,
-        };
-        let (outcome, led) = match self.in_flight.join_or_lead(key) {
+        let (outcome, led) = match self.in_flight.join_or_lead(key.clone()) {
             super::coalesce::Role::Lead(lease) => {
                 let outcome = self.resolver.resolve(query_bytes).await.map_err(|e| format!("{e:#}"));
                 (lease.finish(outcome), true)
@@ -477,12 +481,12 @@ impl DnsHandler {
                     if let Some(cache) = &self.cache {
                         match rcode {
                             // Positive answers keep their record TTLs.
-                            0 => cache.insert(&query.qname, query.qtype, query.qclass, &resp),
+                            0 => cache.insert(&key, &resp),
                             // A name that does not exist is remembered briefly, so a
                             // client retrying a dead name does not cost an upstream
                             // round trip each time. SERVFAIL and other codes may be a
                             // transient upstream fault and are never cached.
-                            3 => cache.insert_negative(&query.qname, query.qtype, query.qclass, &resp),
+                            3 => cache.insert_negative(&key, &resp),
                             _ => {}
                         }
                     }

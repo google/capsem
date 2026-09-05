@@ -24,11 +24,13 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
 from helpers.constants import (
+    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
 from helpers.service import ServiceInstance, wait_exec_ready
+from log_streams import read_log_stream
 
 
 def boot_stages(run_dir: Path, vm_id: str) -> dict[str, float]:
@@ -41,7 +43,7 @@ def boot_stages(run_dir: Path, vm_id: str) -> dict[str, float]:
     if not logs:
         return {}
     found: dict[str, float] = {}
-    for line in logs[0].read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in read_log_stream(logs[0]).splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -59,7 +61,7 @@ def one_cycle(client, run_dir: Path) -> dict[str, float]:
 
     started = time.monotonic()
     created = client.post(
-        "/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+        "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
     )
     provision_ms = (time.monotonic() - started) * 1000
 
@@ -93,7 +95,7 @@ def one_cycle(client, run_dir: Path) -> dict[str, float]:
     started = time.monotonic()
     run = client.post(
         "/run",
-        {"command": "echo ok", "profile_id": "code", "timeout_secs": 60},
+        {"command": "echo ok", "profile_id": CODE_PROFILE_ID, "timeout_secs": 60},
         timeout=180,
     )
     run_ms = (time.monotonic() - started) * 1000
@@ -121,11 +123,10 @@ def main() -> int:
 
     runs = args.runs if args.runs is not None else (1 if args.quick else 3)
     service = ServiceInstance()
-    service.start()
-    client = service.client()
-
     collected: dict[str, list[float]] = {}
     try:
+        service.start()
+        client = service.client()
         for index in range(runs):
             print(f"lifecycle cycle {index + 1}/{runs}", file=sys.stderr)
             for key, value in one_cycle(client, service.tmp_dir).items():

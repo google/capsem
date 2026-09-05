@@ -13,12 +13,39 @@ fn every_call_returns_the_same_built_in_plugin_set() {
     let ids = |registry: &SecurityActionRegistry| registry.plugins.keys().cloned().collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
     assert_eq!(first.plugins.len(), 4);
-    for (id, plugin) in &first.plugins {
+    for (id, plugin) in first.plugins.iter() {
         assert!(
             Arc::ptr_eq(plugin, &second.plugins[id]),
             "plugin {id} is shared, not rebuilt"
         );
     }
+}
+
+#[test]
+fn registering_on_a_clone_does_not_change_the_original_registry() {
+    let original = SecurityActionRegistry::new();
+    let extended = original.clone().register_plugin(DummyPreEicarPlugin).unwrap();
+    let mut policy = BTreeMap::new();
+    policy.insert(
+        "dummy_pre_eicar".to_string(),
+        super::super::SecurityPluginConfig {
+            mode: super::super::SecurityPluginMode::Block,
+            ..disabled_plugin()
+        },
+    );
+    let event = super::super::SecurityEvent::new(super::super::RuntimeSecurityEventType::DnsQuery);
+    let stage = super::super::SecurityPluginStage::Preprocess;
+    assert!(
+        original
+            .with_plugin_policy(policy.clone())
+            .apply_security_plugins(stage, event.clone())
+            .is_err(),
+        "an unregistered active plugin must fail closed"
+    );
+    assert!(extended
+        .with_plugin_policy(policy)
+        .apply_security_plugins(stage, event)
+        .is_ok());
 }
 
 #[test]

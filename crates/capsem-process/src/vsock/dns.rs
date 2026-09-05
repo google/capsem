@@ -15,7 +15,8 @@
 //! What stays on the reply path: the security decision (inside
 //! `DnsHandler::handle`) and the `dns_events` ledger row, which is accepted
 //! by the writer before the answer is sent. The rule-ledger rows derived from
-//! that event are written on their own task.
+//! that event are accepted before completion as well, so shutdown can drain
+//! the DB queue without racing detached producers.
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::AsFd as _;
@@ -91,11 +92,11 @@ pub(super) async fn serve_dns_session(
         let security_rules = Arc::clone(&security_rules);
         tokio::spawn(async move {
             let frame = answer_one(request, &handler, &db, &security_rules).await;
-            drop(permit);
             if let Some(frame) = frame {
                 // channel-closed-ok: the writer is gone with the connection.
                 let _ = frames.send(frame).await;
             }
+            drop(permit);
         });
     }
 
@@ -125,8 +126,7 @@ async fn answer_one(
         request.process_name.clone(),
         capsem_foundation::telemetry::ambient_capsem_trace_id(),
     );
-    // The delegated rule rows are not awaited: they are derived from the
-    // event row already accepted above and their join handle is dropped.
+    // Both the event and its derived rule rows belong to this request.
     let _ = emit_dns_security_write_and_rules(db, security_rules, event).await;
 
     let response = capsem_proto::DnsResponse {
@@ -144,39 +144,30 @@ async fn answer_one(
     }
 }
 
-/// Record the DNS event row (awaited) and write its derived rule-ledger
-/// rows on their own task, off the reply path. Returns the event id and the
-/// handle of the delegated write, so a caller that needs the rule rows to
-/// have landed (a test flushing the ledger) can wait for it.
+/// Accept the DNS event and its derived rule rows before completing. A DB
+/// flush or shutdown after this call therefore includes the whole emission.
 pub(super) async fn emit_dns_security_write_and_rules(
     db: &Arc<capsem_logger::DbWriter>,
     security_rules: &SecurityRulesHandle,
     event: capsem_logger::DnsEvent,
-) -> Option<(
-    capsem_core::security_engine::SecurityEventId,
-    tokio::task::JoinHandle<()>,
-)> {
+) -> Option<capsem_core::security_engine::SecurityEventId> {
     let security_event = capsem_core::net::dns::security_event_from_dns_event(&event);
     let event_id =
         capsem_core::security_engine::emit_security_write(db, capsem_logger::WriteOp::DnsEvent(event)).await?;
     let rules = security_rules.read().unwrap().clone();
-    let db = Arc::clone(db);
-    let delegated_id = event_id.clone();
-    let delegated = tokio::spawn(async move {
-        if let Err(error) = capsem_core::security_engine::emit_matching_security_rules(
-            &db,
-            delegated_id,
-            capsem_core::security_engine::RuntimeSecurityEventType::DnsQuery,
-            &rules,
-            &security_event,
-            current_unix_ms(),
-        )
-        .await
-        {
-            warn!(error = %error, "failed to emit DNS security rule ledger rows");
-        }
-    });
-    Some((event_id, delegated))
+    if let Err(error) = capsem_core::security_engine::emit_matching_security_rules(
+        db,
+        event_id.clone(),
+        capsem_core::security_engine::RuntimeSecurityEventType::DnsQuery,
+        &rules,
+        &security_event,
+        current_unix_ms(),
+    )
+    .await
+    {
+        warn!(error = %error, "failed to emit DNS security rule ledger rows");
+    }
+    Some(event_id)
 }
 
 fn current_unix_ms() -> i64 {

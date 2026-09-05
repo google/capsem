@@ -6,7 +6,7 @@ use super::fixtures::{answer_to, query};
 fn parses_id_name_type_and_class_and_lowercases_the_name() {
     let q = parse_question(&query(0xBEEF, "Load-Test.Example.COM")).unwrap();
     assert_eq!(q.id, 0xBEEF);
-    assert_eq!(q.name, "load-test.example.com");
+    assert_eq!(q.name, b"\x09load-test\x07example\x03com");
     assert_eq!(q.qtype, 1);
     assert_eq!(q.qclass, 1);
     assert_eq!(q.end, 12 + 1 + 9 + 1 + 7 + 1 + 3 + 1 + 4);
@@ -52,6 +52,37 @@ fn an_answer_must_carry_the_same_id_question_and_response_bit() {
     aaaa[end - 3] = 28;
     assert!(!q.is_answered_by(&aaaa), "other record type");
     assert!(!q.is_answered_by(&[0x00, 0x07, 0x81]), "not even a header");
+}
+
+#[test]
+fn a_dot_inside_one_label_is_not_two_labels() {
+    let normal = query(7, "a.b.example");
+    let mut other = normal.clone();
+    other[12] = 3;
+    other[14] = b'.';
+    let expected = parse_question(&normal).unwrap();
+    assert!(
+        !expected.is_answered_by(&answer_to(&other)),
+        "label boundaries are part of the DNS name"
+    );
+}
+
+#[test]
+fn opcode_is_part_of_answer_identity_and_survives_servfail() {
+    let mut query = query(7, "svc.example");
+    let expected = parse_question(&query).unwrap();
+    query[2] |= 5 << 3;
+    assert!(!expected.is_answered_by(&answer_to(&query)));
+    assert!(parse_question(&query)
+        .unwrap()
+        .is_answered_by(&servfail_for(&query).unwrap()));
+}
+
+#[test]
+fn the_name_length_limit_includes_the_root_label() {
+    let name = ["x".repeat(63), "y".repeat(63), "z".repeat(63), "w".repeat(61)].join(".");
+    assert!(parse_question(&query(1, &name)).is_some());
+    assert!(parse_question(&query(1, &(name + "w"))).is_none());
 }
 
 #[test]

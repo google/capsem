@@ -163,6 +163,9 @@ struct ExpectedAnswer {
 impl ExpectedAnswer {
     fn for_query(query_bytes: &[u8]) -> Result<Self> {
         let query = crate::net::parsers::dns_parser::parse_query(query_bytes)?;
+        if query.extra_questions != 0 || query_bytes[2] & 0xF8 != 0 {
+            return Err(anyhow!("DNS forwarding requires one standard question"));
+        }
         Ok(Self {
             id: query.id,
             qname: query.qname,
@@ -178,12 +181,16 @@ impl ExpectedAnswer {
         if u16::from_be_bytes([datagram[0], datagram[1]]) != self.id {
             return Err("transaction id does not match the query");
         }
-        if datagram[2] & 0x80 == 0 {
-            return Err("response bit is clear");
+        if datagram[2] & 0xF8 != 0x80 {
+            return Err("not a standard query response");
         }
         let answered =
             crate::net::parsers::dns_parser::parse_query(datagram).map_err(|_| "question does not decode")?;
-        if answered.qname != self.qname || answered.qtype != self.qtype || answered.qclass != self.qclass {
+        if answered.extra_questions != 0
+            || answered.qname != self.qname
+            || answered.qtype != self.qtype
+            || answered.qclass != self.qclass
+        {
             return Err("question does not match the query");
         }
         Ok(())

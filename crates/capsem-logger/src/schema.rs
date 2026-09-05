@@ -883,11 +883,7 @@ fn validate_table_columns(
     table: &str,
     required_columns: &[&str],
 ) -> Result<(), String> {
-    let pragma = if schema == "main" {
-        format!("PRAGMA table_info({table})")
-    } else {
-        format!("PRAGMA {schema}.table_info({table})")
-    };
+    let pragma = format!("PRAGMA {schema}.table_info({table})");
     let mut stmt = conn
         .prepare(&pragma)
         .map_err(|error| format!("failed to inspect table {schema}.{table}: {error}"))?;

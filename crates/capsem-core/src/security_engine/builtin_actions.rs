@@ -4,7 +4,7 @@
 //! four built-in plugins and a fresh map on every evaluated event: two or
 //! three times per proxied request, once per DNS query, three times per MCP
 //! call. The plugins are stateless, so one registry is built on first use
-//! and cloned (four `Arc`s and a small map) for each evaluation; the
+//! and shared through an `Arc` for each evaluation; the
 //! per-evaluation plugin policy is still applied on the clone.
 
 use std::sync::OnceLock;

@@ -581,11 +581,38 @@ fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
     ))
 }
 
-/// The tool-call row is accepted by the ledger before the reply is sent;
-/// the rule rows derived from it land shortly after, without holding the
-/// reply.
+#[tokio::test]
+async fn completing_mcp_logging_then_shutting_down_preserves_rule_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let endpoint = endpoint_with_matching_rule();
+    let req = request("tools/call", json!({"name":"local__echo","arguments":{"text":"ping"}}));
+    let response = ok_response(json!({"content":[{"type":"text","text":"pong"}]}));
+    let logged = log_mcp_call_with_policy(
+        Arc::clone(&db),
+        &endpoint.security_rules,
+        &req,
+        &response,
+        "codex",
+        1,
+        McpCallPolicyFields::default(),
+    )
+    .await;
+    assert!(logged.event_id.is_some());
+    db.shutdown_blocking();
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    assert_eq!(count(&reader, "tool_calls"), 1);
+    assert_eq!(
+        count(&reader, "security_rule_events"),
+        1,
+        "request completion must own the matching rule row"
+    );
+}
+
+/// Both the call and its matching rule rows are accepted before the reply.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_call_row_precedes_the_reply_and_rule_rows_follow_it() {
+async fn the_call_and_rule_rows_precede_the_reply() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
@@ -606,17 +633,7 @@ async fn the_call_row_precedes_the_reply_and_rule_rows_follow_it() {
         "the call row was accepted before the reply"
     );
 
-    // The derived rule row arrives on its own task.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        db.flush().await;
-        let reader = capsem_logger::DbReader::open(&db_path).unwrap();
-        if count(&reader, "security_rule_events") >= 1 {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "rule rows never arrived");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    assert_eq!(count(&reader, "security_rule_events"), 1);
 
     drop(guest);
     serve.await.unwrap().unwrap();

@@ -45,9 +45,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
 
-use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write, RuntimeSecurityEventType,
-};
+use crate::security_engine::{emit_evaluated_security_rules, emit_security_write, RuntimeSecurityEventType};
 
 trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
@@ -1419,7 +1417,7 @@ async fn handle_request(
                 credential_ref: credential_ref.clone(),
             };
             if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await {
-                delegate_matching_security_rules_for_evaluated_event(
+                emit_evaluated_security_rules(
                     Arc::clone(&config.db),
                     event_id,
                     observed.event_type(),
@@ -1428,7 +1426,8 @@ async fn handle_request(
                     security_event,
                     current_unix_ms(),
                     "mcp_over_http_denied",
-                );
+                )
+                .await;
             }
             let mut scrubbed_stats = BodyStats::new(0);
             scrubbed_stats.bytes = observed.bytes_sent;
@@ -2353,7 +2352,7 @@ async fn handle_request(
                 credential_ref: credential_ref.clone(),
             };
             if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(call)).await {
-                delegate_matching_security_rules_for_evaluated_event(
+                emit_evaluated_security_rules(
                     Arc::clone(&config.db),
                     event_id,
                     observed.event_type(),
@@ -2362,7 +2361,8 @@ async fn handle_request(
                     security_event,
                     current_unix_ms(),
                     "mcp_over_http",
-                );
+                )
+                .await;
             }
         }
         materialize_collected_response_headers(&mut resp_parts.headers, response_body.len(), is_gzip);

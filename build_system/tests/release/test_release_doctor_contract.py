@@ -3198,8 +3198,9 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "_gate-install:" in just
     install_job = ci.split("  test-install:", 1)[1].split("\n  #", 1)[0]
     assert "runs-on: ubuntu-24.04" in install_job
-    assert "sudo modprobe kvm" in install_job
-    assert "sudo modprobe vhost_vsock" in install_job
+    device_helper = "build_system/packaging/shared/install-vm-device-access"
+    assert device_helper in install_job
+    assert "for module in kvm vhost_vsock; do" in _source_text(device_helper)
     assert "test -c /dev/kvm" in install_job
     assert "test -c /dev/vhost-vsock" in install_job
     assert "chmod 0666" not in install_job

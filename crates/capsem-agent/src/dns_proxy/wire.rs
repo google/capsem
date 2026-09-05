@@ -15,9 +15,10 @@ const MAX_NAME: usize = 255;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Question {
     id: u16,
-    /// Labels lowercased and joined with dots; DNS names compare
-    /// case-insensitively (RFC 4343).
-    name: String,
+    opcode: u8,
+    /// Lowercase wire labels, including lengths. A dot inside one label
+    /// must not compare equal to a boundary between two labels.
+    name: Vec<u8>,
     qtype: u16,
     qclass: u16,
     /// Offset one past the question section, for `servfail_for`.
@@ -39,8 +40,8 @@ pub(crate) fn parse_question(msg: &[u8]) -> Option<Question> {
         return None;
     }
     let mut pos = HEADER_LEN;
-    let mut name = String::new();
-    let mut name_len = 0usize;
+    let mut name = Vec::new();
+    let mut name_len = 1usize; // Include the root label in the 255-byte limit.
     loop {
         let len = *msg.get(pos)? as usize;
         pos += 1;
@@ -55,11 +56,9 @@ pub(crate) fn parse_question(msg: &[u8]) -> Option<Question> {
             return None;
         }
         let label = msg.get(pos..pos + len)?;
-        if !name.is_empty() {
-            name.push('.');
-        }
+        name.push(len as u8);
         for byte in label {
-            name.push(byte.to_ascii_lowercase() as char);
+            name.push(byte.to_ascii_lowercase());
         }
         pos += len;
     }
@@ -67,6 +66,7 @@ pub(crate) fn parse_question(msg: &[u8]) -> Option<Question> {
     let qclass = u16::from_be_bytes([*msg.get(pos + 2)?, *msg.get(pos + 3)?]);
     Some(Question {
         id,
+        opcode: msg[2] & 0x78,
         name,
         qtype,
         qclass,
@@ -85,6 +85,7 @@ impl Question {
         match parse_question(datagram) {
             Some(answered) => {
                 answered.id == self.id
+                    && answered.opcode == self.opcode
                     && answered.name == self.name
                     && answered.qtype == self.qtype
                     && answered.qclass == self.qclass
@@ -102,7 +103,7 @@ pub(crate) fn servfail_for(query: &[u8]) -> Option<Vec<u8>> {
     let question = parse_question(query)?;
     let mut out = Vec::with_capacity(question.end);
     out.extend_from_slice(&query[..question.end]);
-    out[2] = (query[2] & 0x01) | 0x80; // QR set, RD kept, opcode 0
+    out[2] = (query[2] & 0x79) | 0x80; // QR set, opcode and RD kept
     out[3] = 0x02; // SERVFAIL, no AA/TC/RA
     out[6..12].fill(0); // no answer, authority or additional records
     Some(out)

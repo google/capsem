@@ -917,7 +917,7 @@ pub async fn emit_matching_security_rules_for_evaluated_event(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn delegate_matching_security_rules_for_evaluated_event(
+pub async fn emit_evaluated_security_rules(
     db: Arc<DbWriter>,
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
@@ -927,21 +927,19 @@ pub fn delegate_matching_security_rules_for_evaluated_event(
     timestamp_unix_ms: i64,
     context: &'static str,
 ) {
-    tokio::spawn(async move {
-        if let Err(error) = emit_matching_security_rules_for_evaluated_event(
-            &db,
-            event_id,
-            event_type,
-            &rules,
-            plugin_policy,
-            event,
-            timestamp_unix_ms,
-        )
-        .await
-        {
-            tracing::warn!(error = %error, context, "failed to emit delegated security rule ledger rows");
-        }
-    });
+    if let Err(error) = emit_matching_security_rules_for_evaluated_event(
+        &db,
+        event_id,
+        event_type,
+        &rules,
+        plugin_policy,
+        event,
+        timestamp_unix_ms,
+    )
+    .await
+    {
+        tracing::warn!(error = %error, context, "failed to emit security rule ledger rows");
+    }
 }
 
 fn prepare_event_for_security_rule_ledger(
@@ -2507,7 +2505,7 @@ pub trait SecurityPlugin: Send + Sync {
 
 #[derive(Default, Clone)]
 pub struct SecurityActionRegistry {
-    plugins: BTreeMap<String, Arc<dyn SecurityPlugin>>,
+    plugins: Arc<BTreeMap<String, Arc<dyn SecurityPlugin>>>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
 }
 
@@ -2532,7 +2530,7 @@ impl SecurityActionRegistry {
                 "security plugin '{id}' registered twice"
             )));
         }
-        self.plugins.insert(id.to_string(), Arc::new(plugin));
+        Arc::make_mut(&mut self.plugins).insert(id.to_string(), Arc::new(plugin));
         Ok(self)
     }
 
@@ -2548,7 +2546,7 @@ impl SecurityActionRegistry {
                 )));
             }
         }
-        for (plugin_id, plugin) in &self.plugins {
+        for (plugin_id, plugin) in self.plugins.iter() {
             if plugin.stage() != stage {
                 continue;
             }

@@ -431,9 +431,7 @@ impl DbReader {
     /// memory tables are the write truth. Service session route handles use it
     /// because capsem-process owns the writes and disk is the process boundary.
     pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<()> {
-        // The sync copies every hot table from disk into memory; before this
-        // check it ran on every query, so a UI poll cost O(ledger) whether or
-        // not anything had been written -- 8 ms at 20k rows, 90 ms at 200k.
+        // Skip copying when no external connection has committed.
         // `data_version` is SQLite's own answer to "did another connection
         // commit since I last looked"; a writer in another process moves it,
         // this connection's own memory-schema writes do not.
@@ -449,6 +447,7 @@ impl DbReader {
         let result = schema::with_memory_schema_lock(|| {
             if schema_changed {
                 schema::reconcile_memory_tables_from_disk(&self.conn)?;
+                schema::validate_ready_schema(&self.conn).map_err(rusqlite::Error::InvalidParameterName)?;
             }
             schema::sync_memory_tables_from_disk(&self.conn, schema::hot_ledger_tables())?;
             if schema_changed {

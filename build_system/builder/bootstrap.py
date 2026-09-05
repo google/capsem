@@ -12,7 +12,7 @@ from pathlib import Path
 def reexec_project_python(root: Path, script: Path, argv: Sequence[str]) -> None:
     """Enter the locked builder environment before loading package dependencies."""
     interpreter = root / "build_system" / ".venv" / "bin" / "python"
-    if interpreter.is_file() and Path(sys.executable).resolve() != interpreter.resolve():
+    if interpreter.is_file() and Path(sys.prefix).resolve() != interpreter.parent.parent.resolve():
         os.execv(str(interpreter), [str(interpreter), str(script), *argv])
 
 

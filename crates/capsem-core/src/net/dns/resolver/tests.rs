@@ -150,6 +150,23 @@ fn the_default_attempt_budget_fits_two_upstreams_inside_the_guest_resolver_timeo
     assert!(DEFAULT_TIMEOUT * DEFAULT_UPSTREAMS.len() as u32 <= Duration::from_secs(5));
 }
 
+#[test]
+fn responses_must_match_the_operation_and_have_exactly_one_question() {
+    let query = query_bytes(7, "example.com.");
+    let expected = ExpectedAnswer::for_query(&query).unwrap();
+    let answer = answer_for(&query, 7, "example.com.");
+    assert!(expected.check(&answer).is_ok());
+    let mut wrong_opcode = answer.clone();
+    wrong_opcode[2] |= 5 << 3;
+    assert!(expected.check(&wrong_opcode).is_err());
+    let mut extra = Message::from_vec(&answer).unwrap();
+    extra.add_query(Query::query(
+        Name::from_str("attacker.example.").unwrap(),
+        RecordType::A,
+    ));
+    assert!(expected.check(&extra.to_vec().unwrap()).is_err());
+}
+
 #[tokio::test]
 async fn a_hundred_concurrent_resolves_complete_against_one_upstream() {
     let upstream = fake_upstream(|query| {

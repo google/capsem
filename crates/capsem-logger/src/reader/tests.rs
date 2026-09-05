@@ -802,6 +802,26 @@ fn resync_after_a_commit_reflects_in_place_updates_and_appended_rows() {
     assert_eq!(reader.disk_syncs(), 2);
 }
 
+#[test]
+fn a_dropped_ledger_table_is_an_error_not_stale_memory_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let disk = Connection::open(&path).unwrap();
+    crate::schema::create_tables(&disk).unwrap();
+    let reader = DbReader::open(&path).unwrap();
+    reader.sync_from_disk().unwrap();
+    disk.execute_batch("DROP TABLE main.dns_events").unwrap();
+    let error = reader
+        .sync_from_disk()
+        .expect_err("missing ledger shape must fail loudly");
+    assert!(error.to_string().contains("dns_events"), "{error}");
+    let query_only: bool = reader
+        .conn
+        .query_row("PRAGMA query_only", [], |row| row.get(0))
+        .unwrap();
+    assert!(query_only, "a failed refresh must restore query-only protection");
+}
+
 /// The incremental copy is only correct while the writer never changes a
 /// row of an append-only ledger in place. This holds the writer's SQL to
 /// the list in `UPDATABLE_HOT_TABLES`; a new UPDATE or DELETE on any other

@@ -33,7 +33,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+)
 from helpers.service import ServiceInstance, wait_exec_ready
 
 # Units the guest reports, by the suffix its key carries.
@@ -162,22 +167,21 @@ def main() -> int:
     name = f"bench-{mode}-{uuid.uuid4().hex[:8]}"
     service = ServiceInstance()
     mock_proc = None
-    if mode == "mitm-load":
-        from helpers.mock_server import start_mock_server
-
-        mock_proc, ready = start_mock_server()
-        corp_path = service.tmp_dir / "bench-corp.toml"
-        corp_path.write_text(mitm_fixture_corp_toml(ready), encoding="utf-8")
-        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
-        os.environ.setdefault("CAPSEM_BENCH_MITM_TARGET", MITM_FIXTURE_TARGET)
-    service.start()
     client = service.client()
-
     try:
+        if mode == "mitm-load":
+            from helpers.mock_server import start_mock_server
+
+            mock_proc, ready = start_mock_server()
+            corp_path = service.tmp_dir / "bench-corp.toml"
+            corp_path.write_text(mitm_fixture_corp_toml(ready), encoding="utf-8")
+            os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+            os.environ.setdefault("CAPSEM_BENCH_MITM_TARGET", MITM_FIXTURE_TARGET)
+        service.start()
         print(f"provisioning {name}", file=sys.stderr)
         client.post(
             "/vms/create",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
+            {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
         )
         if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{name} never became exec-ready")

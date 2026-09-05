@@ -17,9 +17,9 @@ use tracing::{debug, warn};
 
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write, evaluate_security_boundary,
-    McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
-    SecurityEnforcementDecision, SecurityEvent,
+    emit_evaluated_security_rules, emit_security_write, evaluate_security_boundary, McpSecurityEvent,
+    ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
+    SecurityEvent,
 };
 use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 
@@ -600,11 +600,10 @@ async fn log_mcp_call_with_policy(
     };
     let security_event = security_event_from_mcp_call(&call);
     if let Some(event_id) = emit_security_write(&db, WriteOp::McpCall(call)).await {
-        // The call row is accepted before the reply is sent (above); the
-        // rule-ledger rows derived from it are written on their own task
-        // so the client is not held while a third rule pass runs.
+        // Complete the derived rule emission before replying so an immediate
+        // shutdown cannot lose audit rows for an already-completed call.
         let rules = security_rules.read().unwrap().clone();
-        delegate_matching_security_rules_for_evaluated_event(
+        emit_evaluated_security_rules(
             Arc::clone(&db),
             event_id.clone(),
             runtime_mcp_event_type(&req.method),
@@ -613,7 +612,8 @@ async fn log_mcp_call_with_policy(
             security_event,
             current_unix_ms(),
             "framed MCP call",
-        );
+        )
+        .await;
         return LoggedMcpEmission {
             event_id: Some(event_id.as_str().to_string()),
         };

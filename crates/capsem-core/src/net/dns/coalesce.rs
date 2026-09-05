@@ -5,7 +5,7 @@
 //! upstream on its own: two hundred concurrent queries for one name were two
 //! hundred upstream datagrams, two hundred timeouts when the upstream was
 //! slow, and two hundred sockets. Now the first query for a
-//! `(qname, qtype, qclass)` leads the upstream lookup and the rest wait for
+//! wire query (apart from its transaction id) leads the upstream lookup and the rest wait for
 //! its checked answer.
 //!
 //! Where this sits matters for policy: the handler joins a query to a leader
@@ -24,10 +24,14 @@ use tokio::sync::oneshot;
 /// The identity of one lookup. Two queries that differ in any of these are
 /// different lookups.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub(super) struct LookupKey {
-    pub(super) qname: String,
-    pub(super) qtype: u16,
-    pub(super) qclass: u16,
+pub(super) struct LookupKey(Vec<u8>);
+
+impl LookupKey {
+    /// The transaction id is the only query byte safe to substitute. Keep
+    /// flags, question casing, EDNS options and every other wire field.
+    pub(super) fn new(query: &[u8]) -> Self {
+        Self(query[2..].to_vec())
+    }
 }
 
 /// What the leader's upstream lookup produced: the checked answer bytes and

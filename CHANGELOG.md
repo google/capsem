@@ -134,14 +134,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Concurrent gateway status polls recover when a leading request is cancelled,
   and lifecycle notifications remain ordered with their service reads.
-- MCP tool calls answer sooner. The call's ledger row is still accepted
-  before the reply, but the security-rule rows derived from it are written
-  on their own task instead of holding the reply through a third rule pass;
-  the call's request and result are serialized once for the ledger instead
-  of twice each; the security engine's built-in plugin set is built once
-  per process rather than rebuilt for every evaluated event (two to three
-  per proxied request, one per DNS query, three per MCP call); and the
-  guest MCP relay parses each line once instead of twice.
+- Incremental session-ledger refresh fails explicitly if a required disk table
+  disappears, instead of serving a stale memory view.
+- DNS query deadlines now cover writer queueing, cancellation frees pending
+  capacity, and recovered connections discard expired traffic. DNS workers
+  close with their owner, response backpressure retains host capacity limits,
+  and guest resolver timeouts allow both upstream attempts to finish.
+- DNS reuse preserves query flags, options, and question spelling, honors
+  zero and absent authoritative TTLs, and ages cached record TTLs. Messages
+  with unchecked extra questions or unsupported operations never reach an
+  upstream, and response matching preserves DNS label boundaries.
+- DNS, HTTP, model, and MCP request completion now includes derived security
+  and credential ledger writes, preventing shutdown from losing detached
+  audit work. MCP requests and results are serialized once for the ledger,
+  the guest relay parses each line once, and built-in security plugins share
+  an immutable registry while keeping each evaluation's policy isolated.
 - `capsem create` returns as soon as the VM is launched instead of after a
   fixed half-second. The VM process now writes a launch sentinel the
   moment the hypervisor has started the VM and it is answering IPC (about
@@ -185,7 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hundred upstream datagrams and, on a slow upstream, two hundred timeouts.
 - The DNS forwarder's per-upstream timeout is two seconds instead of five,
   so trying both default upstreams fits inside the guest resolver's own
-  five-second timeout and the client sees a SERVFAIL rather than
+  six-second timeout and the client sees a SERVFAIL rather than
   retransmitting the same query into the backlog.
 - Guest DNS no longer serializes on eight lock-step worker threads. The
   forwarder now multiplexes queries over two persistent vsock sessions with a
@@ -193,7 +200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer holds every query queued behind it; the host answers each frame
   on its own task. Every answer is checked against its query's transaction
   id and question before it is delivered, a query the host never answers
-  gets a SERVFAIL after three seconds instead of silence, and the forwarder
+  gets a SERVFAIL after five seconds instead of silence, and the forwarder
   sheds past 128 in-flight queries per session rather than growing a
   queue. On this KVM host, one client went from 395 to 771 queries per
   second (p50 2.4 ms to 0.9 ms) and the plateau under 10 to 200 clients
