@@ -119,6 +119,42 @@ def _fresh_success(config, plan: Plan, run_id: str = "20260814-010000-fresh-cand
     return qualificationjournal.reference(config, path)
 
 
+def test_admission_history_uses_failed_attempt_without_promoting_it_to_proof(config) -> None:
+    plan = _plan()
+    _fresh_success(config, plan)
+    failed = SourceCommit("2" * 40)
+    _write(config, "20260814-020000-failed-candidate", [
+        _start(failed), _shape(plan), _step("source.record", OK),
+        _step("build", FAILED), _end(FAILED),
+    ], commit=failed)
+    latest = qualificationjournal.latest_attempt(config)
+    assert latest is not None and latest.start.source_commit == failed
+    assert qualificationevidence.find_complete(config, failed) is None
+    assert qualificationevidence.latest_complete(config)[0] == COMMIT
+
+
+@pytest.mark.parametrize("ignored", ["live", "empty", "mismatch", "malformed", "symlink"])
+def test_admission_history_ignores_non_attempts(config, ignored) -> None:
+    plan = _plan()
+    older = _fresh_success(config, plan)
+    other = SourceCommit("2" * 40)
+    payloads = [_start(other), _shape(plan), _step("build", FAILED), _end(FAILED)]
+    if ignored == "live":
+        payloads.pop()
+    elif ignored == "empty":
+        payloads.pop(2)
+    elif ignored == "mismatch":
+        payloads[0] = _start(COMMIT)
+    path = _write(config, "20260814-030000-ignored-candidate", payloads, commit=other)
+    if ignored == "malformed":
+        path.write_text("invalid\n")
+    elif ignored == "symlink":
+        path.unlink()
+        path.symlink_to(older.path)
+    latest = qualificationjournal.latest_attempt(config)
+    assert latest is not None and latest.reference == older
+
+
 def test_a_complete_exact_run_log_is_the_reusable_authority(config) -> None:
     plan = _plan()
     expected = _fresh_success(config, plan)

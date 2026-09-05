@@ -90,6 +90,26 @@ def test_evaluate_gateway_cpu_has_measured_twenty_percent_headroom() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("owner", "measured_ms"), [("detection", 1.767), ("enforcement", 1.905)]
+)
+def test_evaluate_service_latency_has_measured_twenty_percent_headroom(
+    owner: str, measured_ms: float
+) -> None:
+    # Full qualification and its focused reproduction on the same fit Linux
+    # host crossed the old margin on different aliases of the same handler.
+    path = f"/profiles/code/{owner}/evaluate"
+    budget = scaled_hot_route_budget(path, gateway=False, samples=128)
+    assert_has_headroom(
+        label=f"service {path} p95",
+        measured=measured_ms,
+        ceiling=budget.p95_ms,
+        minimum_factor=1.2,
+        unit="ms",
+    )
+    assert budget.p95_ms == 3.0
+
+
 def test_non_finite_measurements_are_rejected() -> None:
     with pytest.raises(ValidationError):
         HeadroomGuard(
