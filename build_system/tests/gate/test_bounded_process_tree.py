@@ -54,8 +54,9 @@ def test_timeout_reaps_a_descendant_that_created_a_new_session(tmp_path: Path) -
             text=True,
             timeout=10,
         )
-        pid = int(child_pid.read_text())
         assert result.returncode == 124, result.stderr
+        assert child_pid.is_file(), f"child never started:\n{result.stdout}\n{result.stderr}"
+        pid = int(child_pid.read_text())
         assert not _alive(pid)
     finally:
         if pid is None and child_pid.exists():

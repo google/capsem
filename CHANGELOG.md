@@ -132,6 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Admin image and manifest commands now select the locked builder project
+  explicitly, so they work without an activated Python environment.
 - Debian installation now gives the existing user service immediate ACL-based
   access to `/dev/kvm` and `/dev/vhost-vsock`, while a packaged udev rule and
   `kvm` membership preserve restricted access across future logins and device
