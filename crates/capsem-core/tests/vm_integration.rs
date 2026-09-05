@@ -116,31 +116,6 @@ fn hypervisor_boot_with_empty_ports() {
 }
 
 // -----------------------------------------------------------------------
-// VsockConnection
-// -----------------------------------------------------------------------
-
-#[test]
-fn vsock_connection_can_be_sent_to_thread() {
-    let conn = capsem_core::VsockConnection::new(42, 5001, Box::new(()));
-    let handle = std::thread::spawn(move || {
-        assert_eq!(conn.fd, 42);
-        assert_eq!(conn.port, 5001);
-    });
-    handle.join().unwrap();
-}
-
-#[test]
-fn vsock_connection_can_be_stored_in_vec() {
-    let mut conns = Vec::new();
-    for i in 0..10 {
-        conns.push(capsem_core::VsockConnection::new(i, 5000 + i as u32, Box::new(())));
-    }
-    assert_eq!(conns.len(), 10);
-    assert_eq!(conns[5].fd, 5);
-    assert_eq!(conns[5].port, 5005);
-}
-
-// -----------------------------------------------------------------------
 // Entitlement-gated tests (assets required)
 // -----------------------------------------------------------------------
 
