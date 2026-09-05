@@ -5,12 +5,14 @@ import runpy
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
 
 
 @pytest.mark.parametrize("case", ["security_registry_builtin_clone", "group/case", "security_actions/case"])
 def test_target_output_includes_every_case(tmp_path, monkeypatch, case):
     root = Path(__file__).resolve().parents[3]
-    collector = runpy.run_path(str(root / "benchmarks" / "collectors" / "criterion"))
+    settings = gate_config.load(root).benchmark.run
+    collector = runpy.run_path(str(root / settings.collectors / "criterion"))
     run_bench = collector["run_bench"]
     run_bench.__globals__["CRITERION"] = tmp_path
     collector["samples_for"].__globals__["CRITERION"] = tmp_path
