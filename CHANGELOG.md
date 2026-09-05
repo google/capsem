@@ -132,6 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent gateway status polls recover when a leading request is cancelled,
+  and lifecycle notifications remain ordered with their service reads.
 - MCP tool calls answer sooner. The call's ledger row is still accepted
   before the reply, but the security-rule rows derived from it are written
   on their own task instead of holding the reply through a third rule pass;

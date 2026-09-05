@@ -17,31 +17,22 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::{watch, Mutex};
+use tokio::sync::Mutex;
 
 pub(super) struct RefreshGate<T> {
-    /// Held by the poll currently fetching.
-    fetching: Mutex<()>,
+    /// Cancellation releases a waiter through the mutex itself; there is no
+    /// separate notification that can be missed or abandoned by its sender.
+    completed: Mutex<Option<(u64, Arc<T>)>>,
     /// Count of fetches started so far; a poll arriving when this reads `n`
     /// needs a fetch numbered `n + 1` or later.
     started: AtomicU64,
-    /// The latest completed fetch, numbered.
-    completed: watch::Sender<(u64, Option<Arc<T>>)>,
-}
-
-/// What a poll got back: the read, and whether this poll performed it
-/// (only the fetcher reports lifecycle transitions, so each is reported once).
-pub(super) struct Read<T> {
-    pub(super) value: Arc<T>,
-    pub(super) led: bool,
 }
 
 impl<T> RefreshGate<T> {
     pub(super) fn new() -> Self {
         Self {
-            fetching: Mutex::new(()),
+            completed: Mutex::new(None),
             started: AtomicU64::new(0),
-            completed: watch::channel((0, None)).0,
         }
     }
 
@@ -53,41 +44,22 @@ impl<T> RefreshGate<T> {
 
     /// Return a value from a `fetch` that began after this call did,
     /// performing the fetch only when nobody else's will do.
-    pub(super) async fn read<F, Fut>(&self, fetch: F) -> Read<T>
+    pub(super) async fn read<F, Fut>(&self, fetch: F) -> Arc<T>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = T>,
     {
         let needed = self.started.load(Ordering::SeqCst) + 1;
-        let mut completed = self.completed.subscribe();
-        let mut fetch = Some(fetch);
-        loop {
-            {
-                let latest = completed.borrow_and_update();
-                if latest.0 >= needed {
-                    if let Some(value) = latest.1.as_ref() {
-                        return Read {
-                            value: Arc::clone(value),
-                            led: false,
-                        };
-                    }
-                }
-            }
-            if let Ok(_guard) = self.fetching.try_lock() {
-                let number = self.started.fetch_add(1, Ordering::SeqCst) + 1;
-                debug_assert!(number >= needed);
-                let fetch = fetch.take().expect("a poll fetches at most once");
-                let value = Arc::new(fetch().await);
-                // channel-closed-ok: no receiver means no other poll waited.
-                let _ = self.completed.send((number, Some(Arc::clone(&value))));
-                return Read { value, led: true };
-            }
-            if completed.changed().await.is_err() {
-                // The sender lives as long as the gate; unreachable in practice.
-                let value = Arc::new(fetch.take().expect("a poll fetches at most once")().await);
-                return Read { value, led: true };
+        let mut completed = self.completed.lock().await;
+        if let Some((number, value)) = completed.as_ref() {
+            if *number >= needed {
+                return Arc::clone(value);
             }
         }
+        let number = self.started.fetch_add(1, Ordering::SeqCst) + 1;
+        let value = Arc::new(fetch().await);
+        *completed = Some((number, Arc::clone(&value)));
+        value
     }
 }
 

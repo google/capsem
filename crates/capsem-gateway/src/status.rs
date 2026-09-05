@@ -129,13 +129,18 @@ pub struct ResourceSummary {
 /// and make the TUI reject a session that is already running. The retained
 /// snapshot below is event-diff state only and is never returned to callers.
 pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
-    let read = state.status_cache.gate.read(|| fetch_status(&state)).await;
-    // Only the poll that performed the read reports transitions, so a wave
-    // of concurrent polls sharing one read reports each transition once.
-    if read.led {
-        broadcast_transitions(&state, &read.value).await;
-    }
-    (StatusCode::OK, axum::Json(read.value.as_ref())).into_response()
+    let read = state
+        .status_cache
+        .gate
+        .read(|| async {
+            let response = fetch_status(&state).await;
+            // Publish while this fetch still owns the gate so a later fetch
+            // cannot publish newer lifecycle state before this one.
+            broadcast_transitions(&state, &response).await;
+            response
+        })
+        .await;
+    (StatusCode::OK, axum::Json(read.as_ref())).into_response()
 }
 
 /// Compare the read against the previous one and broadcast a
