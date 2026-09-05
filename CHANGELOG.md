@@ -134,6 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Criterion benchmark collection now retains ungrouped cases as well as grouped
+  cases, including the built-in security registry measurement, instead of
+  silently omitting results outside a directory named after the Cargo target.
 - Concurrent gateway status polls recover when a leading request is cancelled,
   and lifecycle notifications remain ordered with their service reads.
 - Incremental session-ledger refresh fails explicitly if a required disk table
