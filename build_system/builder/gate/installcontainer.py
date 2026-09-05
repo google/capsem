@@ -237,6 +237,11 @@ class InstallContainer:
     def stop(self) -> None:
         self._docker.remove(self.name)
 
+    def report_storage(self) -> None:
+        """Retain path sizes before a cache failure destroys the container."""
+        for command in self._settings.storage_report_commands:
+            self._docker.exec(self.name, list(command), check=False)
+
 
 def await_systemd(
     docker: Docker,

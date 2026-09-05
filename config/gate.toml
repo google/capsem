@@ -251,6 +251,13 @@ cgroup_path = "/sys/fs/cgroup"
 # false, and `test` prints nothing when it says no -- so the gate failed after
 # fifty-three minutes with an exit status and no explanation.
 tmpfs_paths = ["/run:rw,exec,mode=755", "/tmp:rw,exec,mode=1777"]
+# Preserve both logical and allocated directory sizes before cache enforcement
+# can fail and teardown removes the only writable-layer evidence. Stay on the
+# container root filesystem, excluding mounted host inputs and virtual filesystems.
+storage_report_commands = [
+  ["timeout", "30", "du", "--one-file-system", "--bytes", "--max-depth=4", "--threshold=100000000", "/"],
+  ["timeout", "30", "du", "--one-file-system", "--block-size=1", "--max-depth=4", "--threshold=100000000", "/"],
+]
 
 # Where an installed package puts things, and what the runtime calls them.
 bin_dir = "/usr/bin"
