@@ -196,6 +196,13 @@ jobs:
 
       - uses: ./.github/actions/rust-cache
 
+      # cargo check still compiles native build dependencies such as BLAKE3.
+      - name: Install guest cross C toolchains
+        run: >-
+          brew install
+          messense/macos-cross-toolchains/aarch64-unknown-linux-musl
+          messense/macos-cross-toolchains/x86_64-unknown-linux-musl
+
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10.34.5
@@ -399,6 +406,11 @@ jobs:
 
       # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
       - name: Cross-compile check (guest binaries)
+        env:
+          CC_aarch64_unknown_linux_musl: aarch64-unknown-linux-musl-gcc
+          AR_aarch64_unknown_linux_musl: aarch64-unknown-linux-musl-ar
+          CC_x86_64_unknown_linux_musl: x86_64-unknown-linux-musl-gcc
+          AR_x86_64_unknown_linux_musl: x86_64-unknown-linux-musl-ar
         run: |
           cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
           cargo check --release --target x86_64-unknown-linux-musl -p capsem-agent
