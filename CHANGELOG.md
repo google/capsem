@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Worktree test gates preserve the shared cache authority across re-execution,
+  so guest tests launch the host binaries they just built.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,
   instead of erasing the original failure evidence during teardown.
 - Service startup prewarms only profile-requested overlay sizes, eliminating

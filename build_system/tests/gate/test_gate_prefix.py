@@ -771,8 +771,9 @@ def _own_checkout(tmp_path: Path) -> Path:
     return checkout
 
 
+@pytest.mark.parametrize("shared_authority", [False, True])
 def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_authority: bool
 ) -> None:
     """A focused diagnostic is not the complete candidate it is helping fix.
 
@@ -799,14 +800,30 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {reused}"
 
         def run(self, *args, **kwargs) -> int:
+            from capsem_builder import gatelaunch
+
             environment = kwargs["env"]
             assert environment[config.environment.repository_root] == str(reused)
             assert environment[config.environment.source_checkout] == str(config.root)
+            # The re-exec recomputes Cargo's destination from cache authority.
+            # It must agree with the profile symlink the tests will execute.
+            with monkeypatch.context() as child:
+                child.setenv("CAPSEM_CACHE_AUTHORITY", environment["CAPSEM_CACHE_AUTHORITY"])
+                actual_target = gatelaunch._policy_stage(
+                    config.root, gatelaunch._cache_authority(config.root), "cargo"
+                )
+            assert actual_target == Path(environment[config.environment.cargo_target])
             return 0
 
     from capsem_builder.gate import buildcache
 
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
+    config = config.model_copy(update={
+        "prefix": config.prefix.model_copy(update={"cargo_target": _config().prefix.cargo_target})
+    })
+    monkeypatch.delenv("CAPSEM_CACHE_AUTHORITY", raising=False)
+    if shared_authority:
+        monkeypatch.setenv("CAPSEM_CACHE_AUTHORITY", str(tmp_path / "shared-authority"))
     monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)
     monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
