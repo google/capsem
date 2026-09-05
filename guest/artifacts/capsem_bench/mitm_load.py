@@ -59,12 +59,13 @@ DEFAULT_DURATION_S = 10.0
 
 
 def _do_request(url, session):
-    """Single HTTP GET; latency in ms, no body assertions."""
+    """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
     start = time.monotonic()
     try:
         resp = session.get(url, timeout=30)
         elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, resp.status_code, None)
+        error = None if 200 <= resp.status_code < 300 else f"HTTP {resp.status_code}"
+        return (elapsed_ms, resp.status_code, error)
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
         return (elapsed_ms, 0, str(exc))

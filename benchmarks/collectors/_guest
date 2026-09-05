@@ -26,12 +26,11 @@ import sys
 import uuid
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
 # Both, because the test helpers import each other as `helpers.*` and the
 # repository scripts as `scripts.*`; pytest puts the rootdir on the path and a
 # collector run outside pytest has to do the same.
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.constants import (
     CODE_PROFILE_ID,
@@ -250,7 +249,8 @@ def main() -> int:
         f"{len(measured)} measurements from {len(numbers)} numbers",
         file=sys.stderr,
     )
-    json.dump({"metrics": measured}, sys.stdout)
+    # Retain counts, concurrency and errors without ratcheting them as timings.
+    json.dump({"metrics": measured, "sidecar": json.dumps(document)}, sys.stdout)
     return 0
 
 

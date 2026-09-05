@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Benchmark recordings retain guest error counts and concurrency metadata;
+  HTTP error responses count as failed MITM load requests.
 - Multiplexed guest DNS remains compatible with older hosts: replies without
   correlation IDs require an unambiguous match to the original DNS question.
 - Worktree test gates preserve the shared cache authority across re-execution,

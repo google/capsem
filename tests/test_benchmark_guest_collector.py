@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import shlex
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from capsem_builder.gate import config as gate_config
 
@@ -92,3 +95,28 @@ def test_load_dimensions_get_more_guest_cpus_bounded_by_the_host() -> None:
     assert guest_cpus("dns-load", host_cpus=64) == 8, "capped"
     assert guest_cpus("mcp-load", host_cpus=6) == 3
     assert guest_cpus("mitm-load", host_cpus=2) == 2, "never below the default"
+
+
+def test_guest_result_preserves_error_counts_and_concurrency(monkeypatch, capsys) -> None:
+    document = {"dns_load": {"concurrency_levels": [
+        {"concurrency": 200, "total_requests": 500, "errors": 3, "rps": 50.0},
+    ]}}
+    stopped = []
+    client = SimpleNamespace(
+        post=lambda *args, **kwargs: {"exit_code": 0, "stdout": json.dumps(document)},
+        delete=lambda *args: None,
+    )
+    main = collector()["main"]
+    monkeypatch.setitem(main.__globals__, "ServiceInstance", lambda: SimpleNamespace(
+        client=lambda: client, start=lambda: None, stop=lambda: stopped.append(True),
+    ))
+    monkeypatch.setitem(main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(sys, "argv", ["dns-load"])
+
+    assert main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert json.loads(result["sidecar"]) == document
+    assert result["metrics"] == {
+        "concurrency_levels.0.rps": {"unit": "requests_per_second", "samples": [50.0]},
+    }
+    assert stopped == [True]
