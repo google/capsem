@@ -50,7 +50,8 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
             if source.is_file():
                 os.utime(source, (1_000_000_000, 1_000_000_000))
         roots.append(root)
-    env = dict(os.environ, CARGO_TARGET_DIR=str(tmp_path / "target"))
+    target = tmp_path / "cache/target/cargo"
+    env = dict(os.environ, CARGO_TARGET_DIR=str(target))
     # Exercise Cargo freshness itself, independent of any ambient compiler cache.
     for key in (
         "CARGO", "RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER",
@@ -78,7 +79,7 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
         if index >= 2:
             assert all(item["fresh"] for item in artifacts), artifacts
         result = subprocess.run(
-            [str(tmp_path / "target/debug/cache-repro")],
+            [str(target / "debug/cache-repro")],
             capture_output=True, text=True, timeout=5,
         )
         assert result.returncode == 0, result.stderr
