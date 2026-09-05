@@ -1369,7 +1369,7 @@ impl ServiceState {
             },
         );
         drop(instances);
-        instance_reaper::spawn_exit_reaper(
+        let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),
             name.to_string(),
@@ -1604,8 +1604,8 @@ impl ServiceState {
             },
         );
         drop(instances);
-        instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
-
+        let _reaper =
+            instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
         Ok(vm_id)
     }
 

@@ -86,14 +86,14 @@ async fn the_reaper_marks_a_crashed_persistent_vm_defunct() {
         .data
         .vms
         .insert("crashy".to_string(), entry);
-    insert_fake_instance_with_session_dir(&state, &id, std::process::id(), session_dir.clone());
     let uds_path = state.run_dir.join("instances").join(format!("{id}.sock"));
 
     let child = tokio::process::Command::new("sh")
         .args(["-c", "exit 3"])
         .spawn()
         .expect("spawn a child that crashes");
-    crate::instance_reaper::spawn_exit_reaper(
+    insert_fake_instance_with_session_dir(&state, &id, child.id().unwrap(), session_dir.clone());
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.clone(),
         "crashy".to_string(),
@@ -102,14 +102,11 @@ async fn the_reaper_marks_a_crashed_persistent_vm_defunct() {
         session_dir,
     );
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while state.instances.lock().unwrap().contains_key(&id) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "reaper never removed the instance"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!state.instances.lock().unwrap().contains_key(&id));
     let (defunct, suspended, last_error) = state
         .persistent_registry
         .lock()
@@ -123,4 +120,79 @@ async fn the_reaper_marks_a_crashed_persistent_vm_defunct() {
         last_error.as_deref().is_some_and(|tail| tail.contains("kernel panic")),
         "last_error carries the process log tail: {last_error:?}"
     );
+}
+
+#[tokio::test]
+async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/resume-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let entry = test_persistent_entry("resume-vm", session_dir.clone());
+    let id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("resume-vm".into(), entry);
+    let uds_path = state.instance_socket_path(&id).unwrap();
+    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
+
+    let resume = state.save_restore_lock.write().await;
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    insert_fake_instance_with_session_dir(&state, &id, pid, session_dir.clone());
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.clone(),
+        "resume-vm".into(),
+        Arc::clone(&state),
+        uds_path.clone(),
+        session_dir.clone(),
+    );
+    assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
+    let blocked_during_resume = !reaper.is_finished() && state.instances.lock().unwrap().contains_key(&id);
+
+    // A warm-restore fallback can replace the exited child while holding the
+    // exclusive lifecycle lock. The old reaper must recognize its successor.
+    insert_fake_instance_with_session_dir(&state, &id, std::process::id(), session_dir.clone());
+    let db_path = session_dir.join("session.db");
+    tokio::task::spawn_blocking(move || {
+        capsem_logger::DbWriter::open(&db_path, 16).unwrap().shutdown_blocking();
+    })
+    .await
+    .unwrap();
+    let db_handle = state.register_session_db_handle(&id, &session_dir).unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(&uds_path).unwrap();
+    std::fs::write(uds_path.with_extension("ready"), "replacement").unwrap();
+    drop(resume);
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        blocked_during_resume,
+        "exit cleanup must wait until restore releases its lifecycle lock"
+    );
+    assert_eq!(
+        state.instances.lock().unwrap().get(&id).unwrap().pid,
+        std::process::id()
+    );
+    assert!(
+        Arc::ptr_eq(state.session_db_handles.lock().unwrap().get(&id).unwrap(), &db_handle,),
+        "old cleanup unregistered the replacement's logger-owned DB handle"
+    );
+    assert!(
+        std::os::unix::net::UnixStream::connect(&uds_path).is_ok(),
+        "old cleanup unlinked the replacement socket"
+    );
+    assert_eq!(
+        std::fs::read_to_string(uds_path.with_extension("ready")).unwrap(),
+        "replacement"
+    );
+    drop(listener);
 }

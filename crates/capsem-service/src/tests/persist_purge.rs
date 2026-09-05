@@ -190,7 +190,8 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         .args(["-c", &format!("exit {code}")])
         .spawn()
         .expect("spawn child");
-    crate::instance_reaper::spawn_exit_reaper(
+    state.instances.lock().unwrap().get_mut(id).unwrap().pid = child.id().unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.to_string(),
         name.to_string(),
@@ -198,14 +199,11 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         state.run_dir.join("instances").join(format!("{id}.sock")),
         live_dir.clone(),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while state.instances.lock().unwrap().contains_key(id) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "reaper never removed the instance"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!state.instances.lock().unwrap().contains_key(id));
     live_dir
 }
 

@@ -21,9 +21,14 @@ pub(super) fn spawn_exit_reaper(
     state: Arc<ServiceState>,
     uds_path: PathBuf,
     session_dir: PathBuf,
-) {
+) -> tokio::task::JoinHandle<()> {
+    let pid = child.id();
     tokio::spawn(async move {
         let exit_status = child.wait().await.ok();
+        // Reap the OS child before waiting: stop/restore can hold this lock
+        // while waiting for process exit. Cleanup, however, must finish before
+        // resume reuses the session's socket and ready sentinel.
+        let _lifecycle_guard = state.save_restore_lock.read().await;
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
 
         // An ephemeral VM's removal from the instances map below is the
@@ -31,7 +36,21 @@ pub(super) fn spawn_exit_reaper(
         // child exited without an explicit service-side shutdown removing it.
         // A clean process exit is a graceful shutdown regardless of whether
         // the guest or service initiated it; anything else is a crash.
-        let removed = state.instances.lock().unwrap().remove(&id);
+        let removed = {
+            let mut instances = state.instances.lock().unwrap();
+            if instances.get(&id).is_some_and(|instance| Some(instance.pid) != pid) {
+                // A cold fallback can replace a failed restore while holding
+                // the exclusive guard. Its registry, DB and sockets are not
+                // owned by this delayed reaper.
+                tracing::debug!(
+                    id,
+                    ?pid,
+                    "replacement process owns session; skipping stale exit cleanup"
+                );
+                return;
+            }
+            instances.remove(&id)
+        };
         state.unregister_session_db_handle(&id);
         // A session persisted while it ran still lives under sessions/; now
         // that nothing holds it by path, move it home. The bookkeeping below
@@ -112,5 +131,5 @@ pub(super) fn spawn_exit_reaper(
         }
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-    });
+    })
 }
