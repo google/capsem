@@ -15,12 +15,13 @@ def snapshot(monkeypatch):
     """Load the guest-only MCP dependency without polluting other test imports."""
     fastmcp = types.ModuleType("fastmcp")
     transports = types.ModuleType("fastmcp.client.transports")
-    fastmcp.Client = object
-    transports.StdioTransport = object
+    fastmcp.__dict__["Client"] = object
+    transports.__dict__["StdioTransport"] = object
     spec = importlib.util.spec_from_file_location(
         "capsem_bench.snapshot_under_test",
         PROJECT_ROOT / "guest/artifacts/capsem_bench/snapshot.py",
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     with monkeypatch.context() as imports:
         imports.setitem(sys.modules, "fastmcp", fastmcp)

@@ -2,8 +2,7 @@ import struct
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
 
 from capsem_bench.storage import (
     find_mount_for_path,

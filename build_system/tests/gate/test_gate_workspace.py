@@ -151,6 +151,7 @@ def test_workspace_failure_preserves_sibling_pytest_evidence(tmp_path: Path) -> 
         raise GateError("functional failed")
 
     assert pytest_log.read_text() == "five-VM provision failure"
+    assert workspace.preserved is not None
     assert (workspace.preserved / "serial.log").read_text() == "workspace boot log"
     assert not workspace.run_dir.exists()
 
