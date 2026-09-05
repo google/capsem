@@ -87,6 +87,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/release/test_release_staging_tool_boundary.py",
         "build_system/tests/release/test_release_verification_tool_boundary.py",
         "build_system/tests/release/test_remote_ci_verdict_contract.py",
+        "build_system/tests/scripts/test_cargo_workspace_cache.py",
         "build_system/tests/scripts/test_dependency_audit.py",
         "build_system/tests/scripts/test_rust_affected.py",
         "build_system/tests/conftest.py",
