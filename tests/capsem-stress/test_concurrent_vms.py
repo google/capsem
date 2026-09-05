@@ -20,7 +20,7 @@ def test_create_five_vms():
         for i in range(5):
             name = f"stress-{i}-{uuid.uuid4().hex[:6]}"
             resp = client.post("/vms/create", {"name": name, "ram_mb": 1024, "cpus": 1})
-            assert resp is not None, f"VM {i} provision failed"
+            assert resp is not None and "id" in resp, f"VM {i} provision failed: {resp}"
             vms.append((name, resp["id"]))
 
         # Wait for all to be exec-ready
@@ -55,7 +55,7 @@ def test_rapid_create_delete():
         for i in range(10):
             name = f"rapid-{i}-{uuid.uuid4().hex[:6]}"
             resp = client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
-            assert resp is not None, f"Cycle {i} provision failed"
+            assert resp is not None and "id" in resp, f"Cycle {i} provision failed: {resp}"
             client.delete(f"/vms/{name}/delete")
 
         # After all cycles, list should be clean (or only have pre-existing VMs)
