@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Linux VM-device rules prevent transient permission loss on VM create and
+  destroy, including for services with stale supplementary group membership.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,
   instead of erasing the original failure evidence during teardown.
 - Service startup prewarms only profile-requested overlay sizes, eliminating

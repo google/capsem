@@ -111,7 +111,7 @@ def test_debian_package_owns_immediate_vm_device_access() -> None:
     assert 'capsem_install_vm_device_access "$TARGET_USER"' in postinstall
     assert 'MODE="0666"' not in helper
     assert 'target_uid=$(id -u "$target_user")' in helper
-    assert 'RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"' in helper
+    assert 'RUN:="/usr/bin/setfacl -m u:%s:rw /dev/%%k"' in helper
     assert 'rule_target=/run/udev/rules.d/99-capsem-vm-devices.rules' in helper
     assert 'rm -f /etc/udev/rules.d/99-capsem-vm-devices.rules' in helper
     assert 'install -Dm0644 "$rule_temp" "$rule_target"' in helper

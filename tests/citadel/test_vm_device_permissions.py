@@ -74,5 +74,10 @@ def test_vm_device_acl_is_reapplied_after_every_udev_event() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'target_uid=$(id -u "$target_user")' in helper
-    assert helper.count('RUN+="/usr/bin/setfacl -m u:%s:rw /dev/%%k"') == 2
+    assert helper.count('RUN:="/usr/bin/setfacl -m u:%s:rw /dev/%%k"') == 2, (
+        "KVM emits change events on every VM create/destroy. Udev retains "
+        "historical uaccess tags, so TAG-= cannot cancel the queued seat ACL "
+        "reset. Replace and finalize that queue with the owned ACL grant; "
+        "RUN+= leaves an intermittent EACCES window for stale user managers."
+    )
     assert "udevadm settle --timeout=10" in helper
