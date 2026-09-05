@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Resuming a persistent VM protects its socket and session state from delayed
-  cleanup of the previous process, preventing intermittent execution failures.
+  cleanup of the previous process, preventing intermittent execution failures
+  while still reporting crashed restores immediately.
 - Linux VM-device rules prevent transient permission loss on VM create and
   destroy, including for services with stale supplementary group membership.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,

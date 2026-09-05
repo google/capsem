@@ -155,7 +155,7 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
         session_dir.clone(),
     );
     assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
-    let blocked_during_resume = !reaper.is_finished() && state.instances.lock().unwrap().contains_key(&id);
+    let blocked_during_resume = !reaper.is_finished();
 
     // A warm-restore fallback can replace the exited child while holding the
     // exclusive lifecycle lock. The old reaper must recognize its successor.
@@ -194,5 +194,68 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
         std::fs::read_to_string(uds_path.with_extension("ready")).unwrap(),
         "replacement"
     );
+    drop(listener);
+}
+
+#[tokio::test]
+async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "crashed-restore";
+    let session_dir = state.run_dir.join("persistent").join(id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = state.instance_socket_path(id).unwrap();
+    let resume = state.save_restore_lock.write().await;
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 3"])
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        uds_path.clone(),
+        session_dir,
+    );
+    assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
+    let result = wait_for_vm_ready(&uds_path, 1, Some(&state), Some(id)).await;
+    drop(resume);
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.unwrap_err(), "capsem-process exited before signalling ready");
+}
+
+#[tokio::test]
+async fn an_already_replaced_child_cannot_claim_the_new_instance() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "already-replaced";
+    let session_dir = state.run_dir.join("persistent").join(id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = state.instance_socket_path(id).unwrap();
+    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, std::process::id(), session_dir.clone());
+    let listener = std::os::unix::net::UnixListener::bind(&uds_path).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        uds_path.clone(),
+        session_dir,
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.instances.lock().unwrap().get(id).unwrap().pid, std::process::id());
+    assert!(std::os::unix::net::UnixStream::connect(&uds_path).is_ok());
     drop(listener);
 }
