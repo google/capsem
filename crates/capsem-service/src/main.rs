@@ -743,7 +743,6 @@ fn prewarm_system_overlay_templates(run_dir: &StdPath, profiles: &BTreeMap<Strin
     let sizes: HashSet<u32> = profiles
         .values()
         .map(|profile| profile.config().vm.scratch_disk_size_gb)
-        .chain(std::iter::once(16))
         .collect();
     for size_gb in sizes {
         let template_path = capsem_core::system_overlay_template_path(run_dir, size_gb);
