@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent
-ARTIFACTS = PROJECT_ROOT / "guest" / "artifacts"
-sys.path.insert(0, str(ARTIFACTS))
+sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
+
+from capsem_bench import __main__ as bench_main
+from capsem_bench import load_harness
 
 
 class _StubConsole:
@@ -16,10 +17,6 @@ class _StubConsole:
 
     def print(self, *args, **kwargs):
         self.messages.append(" ".join(str(arg) for arg in args))
-
-
-from capsem_bench import __main__ as bench_main
-from capsem_bench import load_harness
 
 
 def test_python_capsem_bench_has_no_http_protocol_or_throughput_modes():
