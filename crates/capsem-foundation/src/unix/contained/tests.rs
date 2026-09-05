@@ -1,6 +1,5 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
@@ -186,10 +185,21 @@ fn symlink_loops_and_directories_are_never_opened_as_files() {
 }
 
 #[test]
+fn listings_preserve_names_without_following_dangling_links() {
+    check_listing_name(OsStr::new("name-☃"));
+}
+
+// APFS rejects invalid UTF-8 names at creation; Linux filesystems admit them.
+#[cfg(target_os = "linux")]
+#[test]
 fn listings_preserve_non_utf8_names_without_following_dangling_links() {
+    use std::os::unix::ffi::OsStrExt;
+    check_listing_name(OsStr::from_bytes(b"name-\xff"));
+}
+
+fn check_listing_name(name: &OsStr) {
     let tree = tree();
-    let non_utf8 = OsStr::from_bytes(b"name-\xff");
-    std::fs::write(tree.root_path.join(non_utf8), b"data").unwrap();
+    std::fs::write(tree.root_path.join(name), b"data").unwrap();
     symlink("absent", tree.root_path.join("dangling")).unwrap();
 
     let kinds: std::collections::HashMap<_, _> = tree
@@ -199,7 +209,7 @@ fn listings_preserve_non_utf8_names_without_following_dangling_links() {
         .into_iter()
         .map(|entry| (entry.name, entry.kind))
         .collect();
-    assert_eq!(kinds[non_utf8], EntryKind::File);
+    assert_eq!(kinds[name], EntryKind::File);
     assert_eq!(kinds[OsStr::new("dangling")], EntryKind::Other);
 }
 
