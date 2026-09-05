@@ -104,6 +104,12 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
                 ["cp", *flags, *[str(source / name) for name in batch], str(destination)],
                 check=True,
             )
+            # Cargo reuses relative-path fingerprints across private prefixes.
+            # Preserving an older worktree's mtime can make another tree's
+            # newer binary look fresh. Keep copied modes, but date the inputs
+            # when this snapshot actually materialized them.
+            for name in batch:
+                os.utime(target / name, None)
 
     for relative in links:
         destination = target / relative

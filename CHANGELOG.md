@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correlation IDs require an unambiguous match to the original DNS question.
 - Worktree test gates preserve the shared cache authority across re-execution,
   so guest tests launch the host binaries they just built.
+  Copied source timestamps also invalidate stale Cargo fingerprints from other
+  worktrees instead of reusing binaries for different source contents.
 - Linux VM-device rules prevent transient permission loss on VM create and
   destroy, including for services with stale supplementary group membership.
 - Failed test gates retain pytest diagnostics when collecting workspace logs,

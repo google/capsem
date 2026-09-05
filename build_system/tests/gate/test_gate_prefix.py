@@ -124,6 +124,32 @@ def source(tmp_path: Path) -> Path:
 # -- the budget --------------------------------------------------------------
 
 
+def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path) -> None:
+    """Cargo compares source mtimes against shared fingerprints across prefixes."""
+    from capsem_builder.gate import snapshot
+
+    older, newer, copied = (tmp_path / name for name in ("older", "newer", "copied"))
+    for directory, value in ((older, 1), (newer, 2)):
+        (directory / "src").mkdir(parents=True)
+        (directory / "Cargo.toml").write_text(
+            '[package]\nname="prefix-probe"\nversion="0.1.0"\nedition="2021"\n'
+        )
+        (directory / "src/main.rs").write_text(f'fn main() {{ println!("{value}"); }}\n')
+        for relative in ("Cargo.toml", "src/main.rs"):
+            os.utime(directory / relative, (1, 1))
+    environment = {**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target"), "RUSTC_WRAPPER": ""}
+
+    def run(directory: Path) -> str:
+        return subprocess.run(
+            ["cargo", "run", "--offline", "--quiet"], cwd=directory, env=environment,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    assert run(newer) == "2"
+    snapshot._copy_files(older, copied, [Path("Cargo.toml"), Path("src/main.rs")])
+    assert run(copied) == "1", "the snapshot must rebuild instead of executing the other tree's binary"
+
+
 def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     """The gateway's sockets are built somewhere the prefix does not reach.
 
@@ -324,7 +350,6 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
     snapshot.populate(source, target, _config())
     config = _config()
     assert snapshot.digest(target, config) == snapshot.digest(source, config)
-    assert os.stat(target / "tracked.txt").st_mtime_ns == os.stat(source / "tracked.txt").st_mtime_ns
 
 
 def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:
