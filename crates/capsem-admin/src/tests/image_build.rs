@@ -82,13 +82,21 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
     assert_eq!(plan.arches[0].arch, "arm64");
     assert_eq!(plan.arches[0].rootfs, "rootfs.erofs");
     assert_eq!(plan.commands.len(), 3);
+    for command in &plan.commands {
+        assert_eq!(
+            &command.argv[..5],
+            ["uv", "run", "--project", "build_system", "--frozen"],
+            "{} must use the locked builder project even without an activated environment",
+            command.step
+        );
+    }
     assert_eq!(plan.commands[0].step, "kernel");
     assert_eq!(
-        plan.commands[0].argv[0..5]
+        plan.commands[0].argv[5..8]
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec!["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend",]
+        vec!["python", "-m", "capsem_builder.image.image_build_backend",]
     );
     assert!(!plan.commands[0]
         .argv
@@ -96,11 +104,11 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
         .any(|window| window[0] == "capsem-builder" && window[1] == "build"));
     assert_eq!(plan.commands[1].step, "rootfs");
     assert_eq!(
-        plan.commands[1].argv[0..5]
+        plan.commands[1].argv[5..8]
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec!["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend",]
+        vec!["python", "-m", "capsem_builder.image.image_build_backend",]
     );
     assert!(!plan.commands[1]
         .argv

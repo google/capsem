@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The code and co-work profiles advance independently to 0.6.2, carrying the
+  guest reliability and benchmark improvements accompanying binary 0.6.3.
 - Capsem advances to version 0.6.3 for the cache-control, test-performance,
   runtime, and security fixes collected in this release.
 - The TCP gateway now pools its HTTP-over-UDS service connections and streams
@@ -245,6 +247,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a poll with nothing new went from 8 ms to 56 µs and a poll right after a
   write from 10 ms to 1.7 ms; at 200,000 rows, 90 ms to 3 ms and 110 ms to
   4 ms. A new criterion bench keeps both numbers measured.
+- Admin image and manifest commands now select the locked builder project
+  explicitly, so they work without an activated Python environment.
 - Debian installation now gives the existing user service immediate ACL-based
   access to `/dev/kvm` and `/dev/vhost-vsock`, while a packaged udev rule and
   `kvm` membership preserve restricted access across future logins and device

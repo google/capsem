@@ -1272,10 +1272,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
                 step: "kernel".to_string(),
                 arch: Some(arch.clone()),
                 env: BTreeMap::new(),
-                argv: vec![
-                    "uv".to_string(),
-                    "run".to_string(),
-                    "python".to_string(),
+                argv: builder_python_command([
                     "-m".to_string(),
                     "capsem_builder.image.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
@@ -1285,7 +1282,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
                     "kernel".to_string(),
                     "--output".to_string(),
                     format!("{}/", args.output.display()),
-                ],
+                ]),
             });
         }
         if matches!(args.template, ImageBuildTemplate::All | ImageBuildTemplate::Rootfs) {
@@ -1297,10 +1294,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
                 step: "rootfs".to_string(),
                 arch: Some(arch.clone()),
                 env,
-                argv: vec![
-                    "uv".to_string(),
-                    "run".to_string(),
-                    "python".to_string(),
+                argv: builder_python_command([
                     "-m".to_string(),
                     "capsem_builder.image.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
@@ -1310,7 +1304,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
                     "rootfs".to_string(),
                     "--output".to_string(),
                     format!("{}/", args.output.display()),
-                ],
+                ]),
             });
         }
     }
@@ -1775,6 +1769,14 @@ pub(super) fn copy_profile_rule_file(
     Ok(())
 }
 
+fn builder_python_command(arguments: impl IntoIterator<Item = String>) -> Vec<String> {
+    ["uv", "run", "--project", "build_system", "--frozen", "python"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(arguments)
+        .collect()
+}
+
 pub(super) fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> CommandReport {
     let version_expr = match &args.version {
         Some(version) => format!("{version:?}"),
@@ -1784,16 +1786,13 @@ pub(super) fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> C
         step: "manifest".to_string(),
         arch: None,
         env: BTreeMap::new(),
-        argv: vec![
-            "uv".to_string(),
-            "run".to_string(),
-            "python3".to_string(),
+        argv: builder_python_command([
             "-c".to_string(),
             format!(
                 "from pathlib import Path; from capsem_builder.image.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
                 args.assets_dir.display().to_string()
             ),
-        ],
+        ]),
     }
 }
 
