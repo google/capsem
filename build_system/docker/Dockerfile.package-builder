@@ -13,6 +13,7 @@ ENV RUSTUP_AUTO_INSTALL=0
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
+COPY --chmod=555 build_system/scripts/build/rustc-workspace-wrapper.sh /prefetch/build_system/scripts/build/rustc-workspace-wrapper.sh
 COPY crates /prefetch/crates
 COPY web/app/package.json web/app/pnpm-lock.yaml web/app/pnpm-workspace.yaml /prefetch/web/app/
 COPY build_system/builder/image/tools/build/materialize_package_ort.py /usr/local/bin/materialize-package-ort.py

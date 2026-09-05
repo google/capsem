@@ -10,6 +10,7 @@ ENV RUSTUP_AUTO_INSTALL=0
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
+COPY --chmod=555 build_system/scripts/build/rustc-workspace-wrapper.sh /prefetch/build_system/scripts/build/rustc-workspace-wrapper.sh
 COPY crates /prefetch/crates
 COPY build_system/pyproject.toml build_system/uv.lock /prefetch/build_system/
 COPY build_system/release_site/package.json build_system/release_site/pnpm-lock.yaml \

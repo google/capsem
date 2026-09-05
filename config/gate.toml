@@ -324,6 +324,7 @@ identity_inputs = [
     "build_system/release_site/pnpm-lock.yaml",
     "build_system/release_site/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.install-builder",
+    "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/materialize-install-os.sh",
     "build_system/scripts/build/configure-apt-snapshot.sh",
 ]
@@ -598,6 +599,7 @@ identity_inputs = [
     "web/app/pnpm-lock.yaml",
     "web/app/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.package-builder",
+    "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
     "build_system/builder/image/tools/build/materialize_package_ort.py",
 ]
