@@ -195,19 +195,30 @@ async fn async_vsock_large_transfer() {
 // AsyncFd::new closes the fd it was handed when registration fails, and the
 // caller closed it again. On a runtime with other connections in flight the
 // number can already belong to someone else, so the second close severed a
-// stranger's socket. A regular file cannot be registered with epoll, which
-// makes the failure path reproducible.
-#[tokio::test]
-async fn async_vsock_new_owns_the_fd_on_failure() {
-    use std::os::unix::io::IntoRawFd;
-    let path = std::env::temp_dir().join(format!("capsem-test-async-vsock-{}", std::process::id()));
-    std::fs::write(&path, b"x").unwrap();
-    let fd = std::fs::File::open(&path).unwrap().into_raw_fd();
-    std::fs::remove_file(&path).ok();
+// stranger's socket. A stopped reactor rejects registration on both epoll and
+// kqueue; a regular file only fails on epoll. Peer EOF proves closure without
+// inspecting a descriptor number another concurrent test could have reused.
+#[test]
+fn async_vsock_new_owns_the_fd_on_failure() {
+    use std::io::Read;
 
-    let err = AsyncVsock::new(fd).err().expect("a regular file cannot be registered");
-    assert_eq!(err.raw_os_error(), Some(libc::EPERM), "{err}");
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    assert_eq!(flags, -1, "the failed constructor must have closed the fd exactly once");
-    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let handle = rt.handle().clone();
+    drop(rt);
+    let _entered = handle.enter();
+    let (stream, mut peer) = UnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+
+    assert!(
+        AsyncVsock::new(stream.into_raw_fd()).is_err(),
+        "the reactor has shut down"
+    );
+    assert_eq!(
+        peer.read(&mut [0]).unwrap(),
+        0,
+        "the failed constructor must close its socket"
+    );
 }
