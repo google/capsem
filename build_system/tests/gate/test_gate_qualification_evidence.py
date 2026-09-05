@@ -130,7 +130,8 @@ def test_admission_history_uses_failed_attempt_without_promoting_it_to_proof(con
     latest = qualificationjournal.latest_attempt(config)
     assert latest is not None and latest.start.source_commit == failed
     assert qualificationevidence.find_complete(config, failed) is None
-    assert qualificationevidence.latest_complete(config)[0] == COMMIT
+    complete = qualificationevidence.latest_complete(config)
+    assert complete is not None and complete[0] == COMMIT
 
 
 @pytest.mark.parametrize("ignored", ["live", "empty", "mismatch", "malformed", "symlink"])

@@ -41,7 +41,7 @@ def policy() -> CachePolicy:
     )
 
 
-def decide(**overrides: object):
+def decide(*, failed_attempt: bool = False, **overrides: object):
     values = {
         "policy": policy().test_admission,
         "baseline": "a" * 40,
@@ -53,7 +53,7 @@ def decide(**overrides: object):
         "prior_forced": False,
     }
     values.update(overrides)
-    return decide_admission(**values)
+    return decide_admission(failed_attempt=failed_attempt, **values)
 
 
 def test_low_impact_repeat_is_refused_with_exact_focus_groups() -> None:
