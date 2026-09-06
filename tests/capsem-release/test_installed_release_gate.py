@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.versions import workspace_version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "verify-installed-release.py"
@@ -174,7 +175,7 @@ def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profil
     assert "verified installed stable release 1.5.9: 2/2 profiles ready" in result.stdout
 
 
-@pytest.mark.parametrize("version", ["0.6.2", "0.6.3", "0.6.4", "1.5.9"])
+@pytest.mark.parametrize("version", ["0.6.2", workspace_version(PROJECT_ROOT), "9.9.9", "1.5.9"])
 def test_failed_session_log_proof_requires_the_released_capability(
     tmp_path: Path, version: str,
 ) -> None:
