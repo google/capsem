@@ -242,7 +242,13 @@ def main() -> int:
             f"status reports {total} profiles but selected manifest declares "
             f"{len(manifest_profiles)}"
         )
-    verify_failed_session_logs(args.capsem, args.capsem_home)
+    # Failed-session ID lookup was added for 0.6.3. The immutable 0.6.2
+    # upgrade baseline cannot acquire that fix; its exact identity, metadata,
+    # service and profiles have still been verified above.
+    if args.package_version == "0.6.2":
+        print("failed-session log proof: not applicable to released 0.6.2")
+    else:
+        verify_failed_session_logs(args.capsem, args.capsem_home)
     if args.evidence_out is not None:
         args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
         args.evidence_out.write_text(

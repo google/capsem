@@ -174,6 +174,43 @@ def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profil
     assert "verified installed stable release 1.5.9: 2/2 profiles ready" in result.stdout
 
 
+@pytest.mark.parametrize("version", ["0.6.2", "0.6.3", "0.6.4", "1.5.9"])
+def test_failed_session_log_proof_requires_the_released_capability(
+    tmp_path: Path, version: str,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    metadata = home / "assets" / "manifest-metadata.json"
+    metadata.write_text(metadata.read_text().replace("1.5.9", version))
+    capsem.write_text(
+        capsem.read_text().replace("1.5.9", version).replace(
+            '  cat "$CAPSEM_RUN_DIR/sessions/$2"-failed-*/process.log',
+            '  echo "unknown session name or id" >&2; exit 1',
+        )
+    )
+
+    result = _run(home, manifest, capsem, package_version=version)
+
+    if version == "0.6.2":
+        assert result.returncode == 0, result.stderr
+        assert "not applicable to released 0.6.2" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "capsem logs exited 1" in result.stderr
+
+
+def test_legacy_log_capability_does_not_bypass_installed_version_identity(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    metadata = home / "assets" / "manifest-metadata.json"
+    metadata.write_text(metadata.read_text().replace("1.5.9", "0.6.2"))
+
+    result = _run(home, manifest, capsem, package_version="0.6.2")
+
+    assert result.returncode != 0
+    assert "does not report package version 0.6.2" in result.stderr
+
+
 def test_installed_release_gate_separates_selected_bytes_from_polling_provenance(
     tmp_path: Path,
 ) -> None:
