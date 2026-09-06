@@ -185,14 +185,18 @@ def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
         service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir, profiles_dir))
 
 
+@pytest.mark.parametrize("collect", [False, True])
 def test_runner_executes_only_winterfell_against_exact_installed_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    collect: bool,
 ) -> None:
     module = _load_runner()
     bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
     evidence = tmp_path / "winterfell.json"
     captured: dict[str, object] = {}
+    run_process = subprocess.run
+    monkeypatch.setenv("PYTEST_ADDOPTS", f"-o cache_dir={tmp_path / 'pytest-cache'}")
 
     class Result:
         returncode = 0
@@ -200,6 +204,16 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured.update(kwargs)
+        if collect:
+            result = run_process(
+                [*command, "--collect-only"],
+                **kwargs,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            return result
         return Result()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -229,8 +243,6 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         "tests/capsem-mcp/test_winterfell_rw.py",
         "tests/capsem-mcp/test_winterfell_exec.py",
         "-q",
-        "-p",
-        "no:cacheprovider",
     ]
     child_environment = cast(dict[str, str], captured["env"])
     assert child_environment["CAPSEM_WINTERFELL_BIN_DIR"] == str(bin_dir)

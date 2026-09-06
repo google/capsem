@@ -384,6 +384,7 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
         r"docker run --rm",
     )
     assert not runner.ran(r"--no-cache")
+    assert not runner.ran(r"no:cacheprovider")
 
 
 def test_install_dependency_materialization_is_the_only_network_open_phase() -> None:
