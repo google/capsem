@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Linux automatic upgrades preserve the updater's manifest handoff when
+  replacing packages from `capsem-update.service`, avoiding a premature fetch
+  of the previous public release during installation.
 - Benchmark recordings retain guest error counts and concurrency metadata;
   HTTP error responses count as failed MITM load requests.
 - Multiplexed guest DNS remains compatible with older hosts: replies without

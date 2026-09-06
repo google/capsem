@@ -218,6 +218,10 @@ esac""",
     ("cgroup", "inside_service"),
     [
         ("0::/user.slice/user-501.slice/user@501.service/app.slice/capsem.service\n", True),
+        ("0::/user.slice/user-501.slice/user@501.service/app.slice/capsem-update.service\n", True),
+        ("0::/user.slice/user-501.slice/user@501.service/app.slice/capsem-update.service/dpkg\n", True),
+        ("0::/user.slice/user-501.slice/user@501.service/app.slice/capsem-update.service-other\n", False),
+        ("0::/user.slice/user-501.slice/user@501.service/app.slice/other-capsem-update.service\n", False),
         (
             "0::/user.slice/user-501.slice/user@501.service/app.slice/"
             "capsem.service/updater\n",

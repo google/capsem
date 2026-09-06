@@ -110,7 +110,7 @@ def _systemd_detection_violations(body: str) -> list[str]:
 def _package_handoff_violations(preinstall: str, ownership: str) -> list[str]:
     required_ownership = (
         "capsem_install_runs_inside_service()",
-        "grep -Eq '(^|/)capsem[.]service($|/)' \"$cgroup_file\"",
+        "grep -Eq '(^|/)capsem(-update)?[.]service($|/)' \"$cgroup_file\"",
     )
     violations: list[str] = [
         f"missing `{needle}` from package cgroup detection"
