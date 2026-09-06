@@ -197,6 +197,9 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     captured: dict[str, object] = {}
     run_process = subprocess.run
     monkeypatch.setenv("PYTEST_ADDOPTS", f"-o cache_dir={tmp_path / 'pytest-cache'}")
+    # This nested process only collects tests against fake installed roots;
+    # it is not the outer CI lane that must prove real build artifacts.
+    monkeypatch.delenv("CAPSEM_REQUIRE_ARTIFACTS", raising=False)
 
     class Result:
         returncode = 0

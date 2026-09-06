@@ -30,6 +30,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import psutil
 import pytest
@@ -558,9 +559,8 @@ class TestCompanionsDieFastAfterServiceSigkill:
 
 class TestServiceShutdownIsFastWithoutVMs:
     """`kill_all_vm_processes` runs inside the service's graceful-shutdown
-    path. It currently performs a 500 ms `thread::sleep` between SIGTERM and
-    SIGKILL of VM processes -- *unconditionally*, even when zero VMs are
-    running. Because `_ensure-service` waits exactly 500 ms between killing
+    path. It used to sleep 500 ms between SIGTERM and SIGKILL even with no
+    VMs running. Because `_ensure-service` waits exactly 500 ms between killing
     the old service and spawning the new one, any additional shutdown latency
     pushes the overlap window wider and reintroduces the gateway-orphan race
     we fixed in `TestServiceSigtermReapsCompanionsPromptly`.
@@ -579,30 +579,49 @@ class TestServiceShutdownIsFastWithoutVMs:
             # Let the service settle (companions spawn, startup finishes).
             time.sleep(1.0)
 
-            start = time.time()
             os.kill(svc.proc.pid, signal.SIGTERM)
             try:
-                svc.proc.wait(timeout=self.NO_VM_SHUTDOWN_BUDGET_SECS + 1.0)
+                # Enforce the deadline in wait itself. Its exponential polling
+                # can observe a 280ms exit at 315ms with a longer timeout.
+                svc.proc.wait(timeout=self.NO_VM_SHUTDOWN_BUDGET_SECS)
             except subprocess.TimeoutExpired:
                 svc.proc.kill()
                 svc.proc.wait(timeout=5)
                 pytest.fail(
                     "service did not exit within "
-                    f"{self.NO_VM_SHUTDOWN_BUDGET_SECS + 1.0}s of SIGTERM"
+                    f"{self.NO_VM_SHUTDOWN_BUDGET_SECS}s of SIGTERM"
                 )
-            elapsed = time.time() - start
-
-            assert elapsed < self.NO_VM_SHUTDOWN_BUDGET_SECS, (
-                f"service shutdown took {elapsed:.2f}s with zero VMs running "
-                f"(budget: {self.NO_VM_SHUTDOWN_BUDGET_SECS}s). "
-                "kill_all_vm_processes must skip its 500ms SIGTERM->SIGKILL "
-                "grace sleep when the VM list is empty -- `_ensure-service` "
-                "only waits 500ms before respawning."
-            )
         finally:
             # proc already reaped above; suppress terminate() on dead handle.
             svc.proc = None
             svc.stop()
+
+
+@pytest.mark.parametrize("exits_in_time", [True, False])
+def test_zero_vm_shutdown_wait_enforces_the_declared_deadline(monkeypatch, exits_in_time):
+    check = TestServiceShutdownIsFastWithoutVMs()
+    killed = []
+
+    def wait(*, timeout):
+        if killed:
+            return 0
+        assert timeout == check.NO_VM_SHUTDOWN_BUDGET_SECS
+        if not exits_in_time:
+            raise subprocess.TimeoutExpired("service", timeout)
+        return 0
+
+    proc = SimpleNamespace(pid=123, wait=wait, kill=lambda: killed.append(True))
+    svc = SimpleNamespace(proc=proc, start=lambda: None, stop=lambda: None)
+    monkeypatch.setattr(sys.modules[__name__], "ServiceInstance", lambda: svc)
+    monkeypatch.setattr(os, "kill", lambda *args: None)
+    monkeypatch.setattr(time, "sleep", lambda *args: None)
+    if exits_in_time:
+        check.test_shutdown_completes_within_budget_when_no_vms()
+        assert not killed
+    else:
+        with pytest.raises(pytest.fail.Exception, match="service did not exit within"):
+            check.test_shutdown_completes_within_budget_when_no_vms()
+        assert killed
 
 
 class TestServiceRestartSequenceKeepsGatewayHealthy:
