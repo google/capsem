@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import stage_release_test_inputs as STAGE
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = (
@@ -148,6 +149,36 @@ def test_verify_only_uses_the_same_authority_without_mutating_apt(tmp_path: Path
         INSTALL.verify_runtime_dependencies(package, config_path=CONFIG, runner=runner) == declared
     )
     assert runner.commands == [("dpkg-deb", "--field", str(package.resolve()), "Depends")]
+
+
+def test_published_package_uses_its_verified_dependency_authority(tmp_path, monkeypatch) -> None:
+    package = tmp_path / "Capsem_0.6.2_amd64.deb"
+    package.write_bytes(b"published package")
+    inputs = tmp_path / "verified-inputs"
+    selected = []
+    monkeypatch.setattr(STAGE, "select_host_package_path", lambda path: selected.append(path) or package)
+    declared = "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3, libc6 (>= 2.39)"
+    runner = FakeRunner(declared)
+
+    assert INSTALL.install_runtime_dependencies(package, package_inputs=inputs, runner=runner) == declared
+    assert selected == [inputs]
+    assert runner.commands[-1][-1] == declared
+
+
+@pytest.mark.parametrize("selection", ["different", "empty", "tampered"])
+def test_published_package_refuses_unverified_selection_before_apt(tmp_path, monkeypatch, selection) -> None:
+    package = tmp_path / "package.deb"
+    package.write_bytes(b"package")
+    def select(_):
+        if selection == "tampered":
+            raise ValueError("release input digest mismatch")
+        return None if selection == "empty" else tmp_path / "other.deb"
+    monkeypatch.setattr(STAGE, "select_host_package_path", select)
+    runner = FakeRunner("libc6")
+
+    with pytest.raises(ValueError, match=r"digest mismatch|manifest-selected"):
+        INSTALL.install_runtime_dependencies(package, package_inputs=tmp_path, runner=runner)
+    assert not any(command[0] == "sudo" for command in runner.commands)
 
 
 @pytest.mark.parametrize(

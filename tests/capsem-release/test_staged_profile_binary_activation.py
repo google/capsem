@@ -284,6 +284,10 @@ def test_pairing_stages_assets_where_materialization_and_tests_read_them(
         "    assets = Path(sys.argv[sys.argv.index('--assets-dir') + 1])\n"
         "    assets.mkdir(parents=True)\n"
         "    (assets / 'manifest.json').write_text('{}\\n')\n"
+        "if '--binary-dir' in sys.argv:\n"
+        "    binaries = Path(sys.argv[sys.argv.index('--binary-dir') + 1])\n"
+        "    binaries.mkdir(parents=True, exist_ok=True)\n"
+        "    (binaries / 'capsem-admin').write_text('published')\n"
         "if '--print-package-path' in sys.argv:\n"
         "    print('package.deb')\n",
         encoding="utf-8",
@@ -291,7 +295,12 @@ def test_pairing_stages_assets_where_materialization_and_tests_read_them(
     uv.chmod(0o755)
     materializer = tmp_path / "build_system/scripts/build/materialize-config.sh"
     materializer.parent.mkdir(parents=True)
-    materializer.write_text('test -f "$CAPSEM_ASSET_MANIFEST"\n', encoding="utf-8")
+    materializer.write_text(
+        'set -eu\ntest -f "$CAPSEM_ASSET_MANIFEST"\n'
+        'mkdir -p cache/target/cargo/debug\n'
+        'printf source > cache/target/cargo/debug/capsem-admin\n',
+        encoding="utf-8",
+    )
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -319,6 +328,8 @@ def test_pairing_stages_assets_where_materialization_and_tests_read_them(
         exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
         assert (Path(exported["CAPSEM_TEST_ASSETS_DIR"]) / "manifest.json").is_file()
         assert "build_system/packaging/linux/install-deb-runtime-dependencies.py" in invoked
+        assert "--package-inputs cache/target/profile-public-before/packages" in invoked
+        assert (Path(exported["CAPSEM_RELEASE_BIN_DIR"]) / "capsem-admin").read_text() == "published"
         assert not (tmp_path / "assets").exists()
         return
     for forbidden in (

@@ -53,9 +53,6 @@ fi
 [[ "$ACTIVATION_READY" == "true" ]]
 
 uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-    --input-dir cache/target/profile-public-before/packages \
-    --binary-dir cache/target/cargo/debug
-uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
     --input-dir cache/target/candidate-profile-inputs \
     --assets-dir cache/target/assets \
     --config-root cache/target/release/staging/config \
@@ -66,11 +63,17 @@ CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
     bash build_system/scripts/build/materialize-config.sh --pair-content
 
+# Materialization builds its admin tool; restore the exact pulled cohort last.
+uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
+    --input-dir cache/target/profile-public-before/packages \
+    --binary-dir cache/target/cargo/debug
+
 package=$(uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
     --input-dir cache/target/profile-public-before/packages \
     --print-package-path)
 test -n "$package"
-uv run --project build_system --frozen python build_system/packaging/linux/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
+uv run --project build_system --frozen python build_system/packaging/linux/install-deb-runtime-dependencies.py "$package" --config config/gate.toml \
+    --package-inputs cache/target/profile-public-before/packages
 
 {
     echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"

@@ -23,9 +23,12 @@ def install_runtime_dependencies(
     package: Path,
     *,
     config_path: Path = Path("config/gate.toml"),
+    package_inputs: Path | None = None,
     runner: Runner = subprocess.run,
 ) -> str:
-    dependencies = verify_runtime_dependencies(package, config_path=config_path, runner=runner)
+    dependencies = verify_runtime_dependencies(
+        package, config_path=config_path, package_inputs=package_inputs, runner=runner,
+    )
     document = tomllib.loads(config_path.read_text(encoding="utf-8"))
     snapshot = document["apt_snapshot"]
     configure = (config_path.parent.parent / snapshot["configure_script"]).resolve()
@@ -52,12 +55,19 @@ def verify_runtime_dependencies(
     package: Path,
     *,
     config_path: Path = Path("config/gate.toml"),
+    package_inputs: Path | None = None,
     runner: Runner = subprocess.run,
 ) -> str:
-    """Verify the exact package's Depends field without changing the host."""
+    """Use source policy for candidates, verified manifest bytes for published packages."""
     resolved = package.resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"exact Debian package does not exist: {resolved}")
+    if package_inputs is not None:
+        from capsem_builder.release.tools.stage_release_test_inputs import select_host_package_path
+
+        selected = select_host_package_path(package_inputs)
+        if selected is None or selected.resolve() != resolved:
+            raise ValueError("runtime package is not the manifest-selected verified package")
 
     result = runner(
         ("dpkg-deb", "--field", str(resolved), "Depends"),
@@ -70,7 +80,10 @@ def verify_runtime_dependencies(
     install = document["install"]
     expected = tuple(install["package_runtime_packages"])
     actual = dependency_names(dependencies) if dependencies else ()
-    if actual != expected:
+    if package_inputs is not None:
+        if not actual:
+            raise ValueError("manifest-selected package declares no runtime dependencies")
+    elif actual != expected:
         raise ValueError(
             "exact package runtime dependencies differ from config authority: "
             f"package={actual!r}, configured={expected!r}"
@@ -100,9 +113,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("package", type=Path)
     parser.add_argument("--config", type=Path, default=Path("config/gate.toml"))
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--package-inputs", type=Path, help="verified manifest-selected published package inputs")
     args = parser.parse_args(argv)
     operation = verify_runtime_dependencies if args.verify_only else install_runtime_dependencies
-    dependencies = operation(args.package, config_path=args.config)
+    dependencies = operation(args.package, config_path=args.config, package_inputs=args.package_inputs)
     if dependencies:
         verb = "verified" if args.verify_only else "installed"
         print(f"{verb} exact package runtime dependencies: {dependencies}")
