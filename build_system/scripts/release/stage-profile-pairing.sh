@@ -57,7 +57,7 @@ uv run --project build_system --frozen python build_system/scripts/release/stage
     --binary-dir cache/target/cargo/debug
 uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
     --input-dir cache/target/candidate-profile-inputs \
-    --assets-dir assets \
+    --assets-dir cache/target/assets \
     --config-root cache/target/release/staging/config \
     --shared-config-root config
 

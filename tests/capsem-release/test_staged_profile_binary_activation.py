@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 from capsem_builder.gate.versions import workspace_version
 from helpers.workflow_contract import workflow_job_source, workflow_step_source
@@ -257,9 +259,11 @@ def test_cold_channel_pairing_branches_before_package_selection() -> None:
     assert '[[ "$ACTIVATION_READY" == "true" ]]' in script
 
 
-def test_cold_channel_pairing_executes_no_package_action(
-    tmp_path: Path,
+@pytest.mark.parametrize("activation_ready", [False, True])
+def test_pairing_stages_assets_where_materialization_and_tests_read_them(
+    tmp_path: Path, activation_ready: bool,
 ) -> None:
+    """Run 34000966932 staged into assets but read cache/target/assets."""
     calls = tmp_path / "uv-calls"
     github_env = tmp_path / "github-env"
     github_env.touch()
@@ -272,10 +276,22 @@ def test_cold_channel_pairing_executes_no_package_action(
     bin_dir.mkdir()
     uv = bin_dir / "uv"
     uv.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$UV_CALLS"\n',
+        f"#!{sys.executable}\n"
+        "import os, sys\nfrom pathlib import Path\n"
+        "with open(os.environ['UV_CALLS'], 'a') as log:\n"
+        "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "if '--assets-dir' in sys.argv:\n"
+        "    assets = Path(sys.argv[sys.argv.index('--assets-dir') + 1])\n"
+        "    assets.mkdir(parents=True)\n"
+        "    (assets / 'manifest.json').write_text('{}\\n')\n"
+        "if '--print-package-path' in sys.argv:\n"
+        "    print('package.deb')\n",
         encoding="utf-8",
     )
     uv.chmod(0o755)
+    materializer = tmp_path / "build_system/scripts/build/materialize-config.sh"
+    materializer.parent.mkdir(parents=True)
+    materializer.write_text('test -f "$CAPSEM_ASSET_MANIFEST"\n', encoding="utf-8")
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -286,7 +302,7 @@ def test_cold_channel_pairing_executes_no_package_action(
         "RELEASE_CHANNEL": "stable",
         "RELEASE_BASELINE_CHANNEL": "stable",
         "RELEASE_PROFILE": "code",
-        "ACTIVATION_READY": "false",
+        "ACTIVATION_READY": str(activation_ready).lower(),
     }
 
     subprocess.run(
@@ -299,6 +315,12 @@ def test_cold_channel_pairing_executes_no_package_action(
     invoked = calls.read_text(encoding="utf-8")
     assert invoked.count("build_system/scripts/release/verify-release-inputs.py") == 3
     assert "build_system/scripts/release/fetch-release-artifacts.py" in invoked
+    if activation_ready:
+        exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines())
+        assert (Path(exported["CAPSEM_TEST_ASSETS_DIR"]) / "manifest.json").is_file()
+        assert "build_system/packaging/linux/install-deb-runtime-dependencies.py" in invoked
+        assert not (tmp_path / "assets").exists()
+        return
     for forbidden in (
         "build_system/scripts/release/stage-release-test-inputs.py",
         "build_system/packaging/linux/install-deb-runtime-dependencies.py",
