@@ -409,8 +409,8 @@ jobs:
           bash build_system/packaging/macos/build-pkg.sh \
             --manifest "$ASSET_MANIFEST_URL" \
             "cache/target/cargo/release/bundle/macos/Capsem.app" \
-            "cache/target/release" \
-            "assets" \
+            "cache/target/cargo/release" \
+            "cache/target/release/staging/assets" \
             "cache/target/config" \
             "$VERSION" \
             "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"

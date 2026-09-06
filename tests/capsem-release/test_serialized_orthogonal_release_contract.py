@@ -7,6 +7,7 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 from __future__ import annotations
 
 import importlib
+import tomllib
 from itertools import product
 from pathlib import Path
 
@@ -648,6 +649,19 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
         "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
     ):
         assert variable in exported
+
+
+def test_macos_package_consumes_cargo_release_output() -> None:
+    step = workflow_step(WORKFLOWS / "release.yaml", "build-app-macos", "Build .pkg installer")
+    commands = parsed_commands(step["run"], origin="release:macos-package")
+    package = next(command for command in commands if "build-pkg.sh" in command.argv[1])
+    cargo = tomllib.loads(_read(".cargo/config.toml"))
+    binary_dir = Path(cargo["build"]["target-dir"]) / "release"
+    assert Path(package.argv[5]) == binary_dir, (
+        "macOS packaging must consume the signed Cargo binaries, not the release distribution directory"
+    )
+    assert Path(package.argv[4]) == binary_dir / "bundle/macos/Capsem.app"
+    assert package.argv[6] == "cache/target/release/staging/assets"
 
 
 def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
