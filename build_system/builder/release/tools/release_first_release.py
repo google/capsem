@@ -146,7 +146,7 @@ def classify_pairing_inputs(
     before_artifact: ArtifactIdentity | None,
     after_artifact: ArtifactIdentity,
 ) -> tuple[TransitionKind, tuple[str, ...]]:
-    """Classify a binary lane and return its complete staged profile set."""
+    """Classify an exact release pairing and return its changed profile set."""
 
     before_profile_map = _profile_map(before_manifest_bytes, "public-before")
     after_profile_map = _profile_map(after_manifest_bytes, "candidate-after")
@@ -173,9 +173,16 @@ def classify_pairing_inputs(
             for profile_id in set(before_profile_map) | set(after_profile_map)
             if before_profile_map.get(profile_id) != after_profile_map.get(profile_id)
         )
-        transition_kind = (
-            TransitionKind.BINARY_ONLY if not changed else TransitionKind.PROFILE_THEN_BINARY
-        )
+        if not changed:
+            transition_kind = TransitionKind.BINARY_ONLY
+        elif (
+            before_artifact is not None
+            and before_artifact.version == after_artifact.version
+            and before_artifact.sha256 == after_artifact.sha256
+        ):
+            transition_kind = TransitionKind.PROFILE_ONLY
+        else:
+            transition_kind = TransitionKind.PROFILE_THEN_BINARY
 
     validate_pairing_inputs(
         kind=transition_kind,

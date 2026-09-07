@@ -1003,6 +1003,43 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     assert profiles == ("code", "experimental")
 
 
+@pytest.mark.parametrize("selected_profile", ["code", "co-work"])
+def test_exact_pairing_classifier_recognizes_profile_only_update(
+    tmp_path: Path,
+    selected_profile: str,
+) -> None:
+    module = _load_module()
+    classifier = _load_first_release()
+    before_artifact = _artifact(tmp_path, module)
+    copied_package = tmp_path / "downloaded" / before_artifact.path.name
+    copied_package.parent.mkdir()
+    copied_package.write_bytes(before_artifact.path.read_bytes())
+    after_artifact = module.ArtifactIdentity.from_path(
+        copied_package,
+        version=before_artifact.version,
+        platform=before_artifact.platform,
+        architecture=before_artifact.architecture,
+    )
+    before_manifest = _manifest(before_artifact)
+    before_manifest["channel"] = "stable"
+    before_manifest["profiles"] = {
+        "code": {"revision": "0.6.1"},
+        "co-work": {"revision": "0.6.1"},
+    }
+    after_manifest = json.loads(json.dumps(before_manifest))
+    after_manifest["profiles"][selected_profile]["revision"] = "0.6.2"
+
+    kind, profiles = classifier.classify_pairing_inputs(
+        channel="stable",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+    )
+    assert kind is classifier.TransitionKind.PROFILE_ONLY
+    assert profiles == (selected_profile,)
+
+
 def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
     tmp_path: Path,
 ) -> None:
