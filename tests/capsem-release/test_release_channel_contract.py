@@ -75,6 +75,9 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     preview_check = workflow.index("      - name: Validate preview distribution")
     activation = workflow.index("      - name: Activate verified production distribution")
     activation_check = workflow.index("      - name: Validate activated production bytes")
+    # Release checkouts are detached; implicit Wrangler branch selection deploys
+    # a HEAD preview instead of activating the configured production branch.
+    assert "--branch=${{ inputs.deploy_branch }}" in workflow[activation:activation_check]
     decision = workflow.index("      - name: Decide production recovery")
     rollback = workflow.index("      - name: Restore prior production deployment")
     rollback_check = workflow.index("      - name: Verify restored production bytes")
