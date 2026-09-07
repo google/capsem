@@ -11,7 +11,9 @@ ACTIVATION_RATIONALE = (
     "Run 33141871462 spent fourteen minutes comparing candidate JSON with prior-deployment "
     "HTML because canonical deployment identity was checked only after the byte poll. Run "
     "33144251618 then proved that a branch-shaped Direct Upload can update canonical metadata "
-    "without moving the project production alias."
+    "without moving the project production alias. Run 34032713236 also proved that omitting "
+    "the production branch on a detached checkout uploads to HEAD instead; explicit branch "
+    "selection and subsequent deployment-identity and byte proof are all required."
 )
 
 NO_MANUAL_PURGE_RATIONALE = (
@@ -49,7 +51,7 @@ def test_pages_preflight_binds_the_deploy_branch_to_cloudflare_production() -> N
     )
 
 
-def test_direct_upload_branches_only_the_immutable_preview() -> None:
+def test_direct_upload_selects_preview_and_production_branches_explicitly() -> None:
     preview = workflow_step(WORKFLOW, "deploy", "Deploy immutable preview")
     production = workflow_step(WORKFLOW, "deploy", "Activate verified production distribution")
     preview_commands = parsed_commands(preview["with"]["command"], origin="Pages preview")
@@ -59,9 +61,12 @@ def test_direct_upload_branches_only_the_immutable_preview() -> None:
     assert any(argument.startswith("--branch=") for argument in preview_commands[0].argv), (
         ACTIVATION_RATIONALE
     )
-    assert not any(
+    assert any(
         argument.startswith("--branch=") for argument in production_commands[0].argv
     ), ACTIVATION_RATIONALE
+    assert "--branch=${{ inputs.deploy_branch }}" in production["with"]["command"], (
+        ACTIVATION_RATIONALE
+    )
 
 
 def test_pages_activation_never_manually_purges_cloudflare_cache() -> None:
