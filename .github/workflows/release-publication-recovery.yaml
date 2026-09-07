@@ -5,9 +5,13 @@ on:
   workflow_dispatch:
     inputs:
       failed_run_id:
-        description: Terminal Release run that failed only at channel assembly.
+        description: Terminal Release run that failed only at channel assembly or deployment.
         required: true
         type: string
+      deployment_only:
+        description: Reuse the verified site artifact after a deployment-only failure; no builds or VM tests.
+        type: boolean
+        default: false
       source_commit:
         description: Exact source commit qualified by the failed Release run.
         required: true
@@ -40,7 +44,18 @@ env:
   ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
 
 jobs:
+  deploy-qualified-channel:
+    if: ${{ inputs.deployment_only }}
+    uses: ./.github/workflows/release-channel.yaml
+    with:
+      channel: ${{ inputs.channel }}
+      dist_artifact: binary-channel-preview
+      artifact_run_id: ${{ inputs.failed_run_id }}
+      source_commit: ${{ inputs.source_commit }}
+    secrets: inherit
+
   recover-release-channel:
+    if: ${{ !inputs.deployment_only }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

@@ -528,3 +528,28 @@ def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -
     assert "build_system/scripts/build/prove-live-public-install.sh" in public
     live_proof = _read("build_system/scripts/build/prove-live-public-install.sh")
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
+
+
+def test_deployment_recovery_reuses_verified_site_without_rebuilding_or_vm_tests() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(_read(".github/workflows/release-publication-recovery.yaml"))
+    jobs = workflow["jobs"]
+    assert jobs["recover-release-channel"]["if"] == "${{ !inputs.deployment_only }}"
+    deploy = jobs["deploy-qualified-channel"]
+    assert deploy["if"] == "${{ inputs.deployment_only }}"
+    assert deploy["uses"] == "./.github/workflows/release-channel.yaml"
+    assert deploy["with"] == {
+        "channel": "${{ inputs.channel }}",
+        "dist_artifact": "binary-channel-preview",
+        "artifact_run_id": "${{ inputs.failed_run_id }}",
+        "source_commit": "${{ inputs.source_commit }}",
+    }
+    assert "steps" not in deploy
+    # Assembly and its expensive post-install proof remain a separate branch.
+    assert jobs["deploy-release-channel"]["needs"] == ["recover-release-channel"]
+    assert jobs["verify-release-downloads"]["needs"] == ["deploy-release-channel"]
+    assert set(jobs) == {
+        "recover-release-channel", "deploy-release-channel",
+        "verify-release-downloads", "deploy-qualified-channel",
+    }
