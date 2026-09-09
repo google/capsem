@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from rust_sources import production
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -212,6 +213,34 @@ def test_shell_proof_requires_guest_executed_marker(tmp_path: Path) -> None:
     assert calls[0] == "create --name proof-session"
     assert "shell --name proof-session" in calls
     assert calls[-1] == "delete proof-session"
+
+
+@pytest.mark.parametrize("keep_session", [False, True])
+def test_shell_proof_preserves_the_guest_shell_when_keeping_its_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keep_session: bool,
+) -> None:
+    module = _proof_module()
+    binary, log = _fake_capsem(tmp_path, execute_input=True)
+    monkeypatch.setenv("CAPSEM_FAKE_LOG", str(log))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    writes = []
+    write = os.write
+
+    def record_write(fd, data):
+        writes.append(data)
+        return write(fd, data)
+
+    monkeypatch.setattr(module.os, "write", record_write)
+    monkeypatch.setattr(sys, "argv", [
+        str(PROOF_SCRIPT), "--capsem", str(binary), "--marker", "CAPSEM_KEEP_SHELL",
+        "--session-name", "keep-proof", "--startup-delay", "0", "--timeout", "5",
+        *(["--keep-session"] if keep_session else []),
+    ])
+    assert module.main() == 0
+    assert (b"exit\r" in writes) is not keep_session, "kept sessions still need a live guest shell"
+    if keep_session:
+        assert b"\x1bq" in writes, "leave the TUI through its detach shortcut"
+    assert ("delete keep-proof" in log.read_text().splitlines()) is not keep_session
 
 
 def test_shell_proof_creates_session_with_requested_profile(tmp_path: Path) -> None:

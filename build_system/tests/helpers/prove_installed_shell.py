@@ -128,6 +128,7 @@ def prove_shell(
     profile: str | None,
     timeout: float,
     startup_delay: float,
+    keep_session: bool = False,
 ) -> None:
     create_args = [str(capsem), "create", "--name", session_name]
     if profile is not None:
@@ -241,10 +242,12 @@ def prove_shell(
                 f"{failure}; terminal tail follows:\n{tail}"
             )
 
-        # Exit the guest shell, then use the TUI's global Alt-Q shortcut.
-        with contextlib.suppress(OSError):
-            os.write(master, b"exit\r")
-        time.sleep(0.5)
+        # A kept VM must retain its shell for the following suspend proof.
+        # Alt-Q detaches the client without terminating the guest PTY.
+        if not keep_session:
+            with contextlib.suppress(OSError):
+                os.write(master, b"exit\r")
+            time.sleep(0.5)
         if process.poll() is None:
             with contextlib.suppress(OSError):
                 os.write(master, b"\x1bq")
@@ -286,6 +289,7 @@ def main() -> int:
             args.profile,
             args.timeout,
             args.startup_delay,
+            keep_session=args.keep_session,
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"installed shell proof failed: {error}", file=sys.stderr)
