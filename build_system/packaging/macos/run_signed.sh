@@ -77,9 +77,14 @@ source_identity() {
 }
 
 prepare_signed_copy() {
-    local source key published captured
+    local source key published captured copied
     for attempt in 1 2 3; do
-        source=$(source_identity) || die "cannot stat $original"
+        if ! source=$(source_identity 2>> "$BUILD_LOG"); then
+            [[ -f "$original" ]] && die "cannot stat signing inputs for $original"
+            log "Cargo removed $original before capture $attempt; retrying"
+            sleep 0.05
+            continue
+        fi
         key=$(printf '%s\n%s' "$original" "$source" | shasum -a 256) || die "cannot identify $original"
         key=${key%% *}
         # Keep the executable beside Cargo's original: current_exe().parent()
@@ -92,8 +97,12 @@ prepare_signed_copy() {
         acquire_sign_lock
         if ! signature_receipt_current; then
             staging="$published.tmp.$$"
-            cp -c "$original" "$staging" || die "cannot capture $original"
-            captured=$(source_identity) || die "cannot recheck $original"
+            copied=0
+            cp -c "$original" "$staging" 2>> "$BUILD_LOG" && copied=1
+            if ! captured=$(source_identity 2>> "$BUILD_LOG"); then
+                [[ -f "$original" ]] && die "cannot recheck signing inputs for $original"
+                captured=""
+            fi
             if [[ "$captured" != "$source" ]]; then
                 # A concurrent Cargo build changed the source while copying.
                 # Retry only that observed race, before signing or publishing.
@@ -101,8 +110,10 @@ prepare_signed_copy() {
                 rm -f "$staging"
                 staging=""
                 release_sign_lock
+                sleep 0.05
                 continue
             fi
+            [[ "$copied" == 1 ]] || die "cannot capture $original"
             binary="$staging"
             expected=$(plutil -convert xml1 -o - "$ENTITLEMENTS") || die "invalid entitlements at $ENTITLEMENTS"
             if ! signature_current; then

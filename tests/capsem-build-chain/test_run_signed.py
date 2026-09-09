@@ -30,7 +30,21 @@ def test_run_signed_reuses_only_verified_matching_entitlements(tmp_path: Path) -
         "cp": """
 if [ "${1:-}" = -c ]; then
   shift
+  if [ "${FAIL_COPY:-0}" = 1 ]; then exit 23; fi
+  if [ "${MISSING_COPY:-0}" = 1 ] && [ ! -e "$SIGN_STATE/missing" ]; then
+    touch "$SIGN_STATE/missing"
+    mv "$SOURCE_BINARY" "$SOURCE_BINARY.next"
+    (sleep 0.03; mv "$SOURCE_BINARY.next" "$SOURCE_BINARY") &
+    exit 1
+  fi
   /bin/cp "$@" || exit 1
+  if [ "${MISSING_RECHECK:-0}" = 1 ] && [ ! -e "$SIGN_STATE/recheck" ]; then
+    touch "$SIGN_STATE/recheck"
+    mv "$SOURCE_BINARY" "$SOURCE_BINARY.next"
+    if [ "${PERMANENT_MISSING:-0}" = 0 ]; then
+      (sleep 0.03; mv "$SOURCE_BINARY.next" "$SOURCE_BINARY") &
+    fi
+  fi
   if [ "${RACE_COPY:-0}" = 1 ] && [ ! -e "$SIGN_STATE/copied" ]; then
     touch "$SIGN_STATE/copied"
     printf '#!/bin/sh\\necho after-copy\\n' > "$SOURCE_BINARY.next"
@@ -164,6 +178,36 @@ for path in sys.argv[3:]:
     copied = subprocess.run(command, env={**env, "RACE_COPY": "1"}, capture_output=True)
     assert copied.returncode == 0, copied.stderr
     assert copied.stdout == b"after-copy\n"
+
+    binary.write_text("#!/bin/sh\necho survived-unlink\n")
+    missing = subprocess.run(command, env={**env, "MISSING_COPY": "1"}, capture_output=True)
+    assert missing.returncode == 0, missing.stderr
+    assert missing.stdout == b"survived-unlink\n"
+    assert not list(tmp_path.glob(".run-signed-*.tmp.*"))
+    assert not (tmp_path / "cache/target/.run_signed_codesign.lock").exists()
+
+    binary.write_text("#!/bin/sh\necho must-not-copy\n")
+    failed = subprocess.run(command, env={**env, "FAIL_COPY": "1"}, capture_output=True)
+    assert failed.returncode == 1
+    assert b"cannot capture" in failed.stderr
+    assert not failed.stdout
+
+    binary.write_text("#!/bin/sh\necho survived-recheck\n")
+    missing = subprocess.run(command, env={**env, "MISSING_RECHECK": "1"}, capture_output=True)
+    assert missing.returncode == 0, missing.stderr
+    assert missing.stdout == b"survived-recheck\n"
+    (state / "recheck").unlink()
+    binary.write_text("#!/bin/sh\necho must-not-retry-forever\n")
+    missing = subprocess.run(
+        command, env={**env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1"},
+        capture_output=True, timeout=5,
+    )
+    assert missing.returncode == 1
+    assert b"Cargo kept replacing" in missing.stderr
+    assert not missing.stdout
+    assert not list(tmp_path.glob(".run-signed-*.tmp.*"))
+    assert not (tmp_path / "cache/target/.run_signed_codesign.lock").exists()
+    Path(str(binary) + ".next").rename(binary)
 
     alias = tmp_path / "program-alias"
     os.link(binary, alias)
