@@ -66,8 +66,23 @@ capsem_isolated() {
         "$CAPSEM_HOME_DIR/bin/capsem" "$@"
 }
 cleanup() {
+    local status=$?
     stop_isolated_processes
+    python3 - "$RUN_DIR" "$WORK_ROOT/diagnostics" <<'PY'
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+for path in source.rglob("*.log"):
+    if path.is_file() and not path.is_symlink():
+        target = destination / path.relative_to(source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 1024 * 1024))
+            target.write_bytes(stream.read())
+PY
     rm -rf "$RUN_DIR"
+    return "$status"
 }
 trap cleanup EXIT
 

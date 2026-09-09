@@ -6,11 +6,44 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 MACOS = ROOT / "build_system" / "packaging" / "macos"
 LEGACY = ROOT / ("scr" + "ipts")
+
+
+@pytest.mark.parametrize("status", [0, 23])
+def test_physical_boot_cleanup_retains_logs_and_exit_status(tmp_path: Path, status: int) -> None:
+    script = tmp_path / "build_system/packaging/macos/prove-macos-package-boot.sh"
+    script.parent.mkdir(parents=True)
+    # Run the real setup/EXIT trap without installing a package or starting VZ.
+    setup = (MACOS / script.name).read_text().split('rm -rf "$WORK_ROOT"\n', 1)[0]
+    script.write_text(setup + '''
+mkdir -p "$RUN_DIR/persistent/vm" "$WORK_ROOT"
+printf '%s' "$RUN_DIR" > "$WORK_ROOT/runtime-path"
+printf 'checkpoint failed\\n' > "$RUN_DIR/persistent/vm/serial.log"
+printf 'service evidence\\n' > "$RUN_DIR/service.2026-09-09.log"
+printf 'large VM state is not diagnostic evidence' > "$RUN_DIR/persistent/vm/rootfs.img"
+exit "$PROOF_EXIT_STATUS"
+''')
+    package = tmp_path / "fixture.pkg"
+    package.write_text("fixture")
+    result = subprocess.run(
+        ["bash", "-c", 'uname() { echo Darwin; }; pkill() { :; }; source "$@"',
+         "proof", str(script), "--package", str(package), "--version", "0.0.0",
+         "--assets-dir", str(tmp_path)],
+        env={"PATH": "/usr/bin:/bin", "PROOF_EXIT_STATUS": str(status)},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == status, result.stderr
+    work = tmp_path / "cache/target/macos-package-boot"
+    assert not Path((work / "runtime-path").read_text()).exists()
+    logs = work / "diagnostics"
+    assert (logs / "persistent/vm/serial.log").read_text() == "checkpoint failed\n"
+    assert (logs / "service.2026-09-09.log").read_text() == "service evidence\n"
+    assert not (logs / "persistent/vm/rootfs.img").exists()
 
 EXPECTED_MODES = {
     "build-pkg.sh": 0o755,
