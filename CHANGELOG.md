@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tart cache enforcement counts tags and digests sharing one cached image once,
+  preserving warm macOS release bases without falsely exceeding their budget.
 - macOS development gates can start the shared compiler cache inside the
   network sandbox, and private Git snapshots exclude unreachable build debris.
 - Web dependencies include the latest Astro, Sharp, Vitest, js-yaml, and SVGO

@@ -1,7 +1,9 @@
 """Native runtime adapters inventory only explicitly owned resources."""
 
+import json
 from pathlib import Path
 
+import pytest
 from capsem_builder.cache import dockeradapter, tartadapter
 from capsem_builder.cache.contract import CacheScope, PruneStrategy
 from capsem_builder.cache.runtimemodels import (
@@ -173,8 +175,8 @@ def test_docker_inventory_rejects_negative_total_size() -> None:
         raise AssertionError("negative total size must fail closed")
 
 
-def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> None:
-    policy = TartRuntimePolicy(
+def tart_policy(tmp_path: Path) -> TartRuntimePolicy:
+    return TartRuntimePolicy(
         description="Tart test cache",
         scope=CacheScope.TART,
         warm_size_bytes=80 * 1024**3,
@@ -189,6 +191,10 @@ def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> Non
         base_images=("base@sha256:" + "a" * 64,),
         home=str(tmp_path),
     )
+
+
+def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> None:
+    policy = tart_policy(tmp_path)
 
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
         return command(
@@ -208,3 +214,51 @@ def test_tart_inventory_preserves_foreign_and_running_vms(tmp_path: Path) -> Non
     assert report.resources[0].protected is True
     assert report.resources[2].owned is False
     assert report.owned_bytes == 5 * 1024**3
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_tart_inventory_bills_physical_oci_images_once(tmp_path: Path, reverse: bool) -> None:
+    repository = tmp_path / "cache" / "OCIs" / "base"
+    first, second = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    for digest in (first, second):
+        (repository / digest).mkdir(parents=True)
+    (repository / "latest").symlink_to(first, target_is_directory=True)
+    rows = [
+        {"Name": f"base@{first}", "Source": "OCI", "Size": 33},
+        {
+            "Name": "base:latest",
+            "Source": "OCI",
+            "Size": 33,
+            "Accessed": "2026-09-08T00:00:00Z",
+            "Running": True,
+        },
+        {"Name": f"base@{second}", "Source": "OCI", "Size": 33},
+        {"Name": "capsem-glowup-clone", "Source": "local", "Size": 33},
+    ]
+    if reverse:
+        rows.reverse()
+
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        return command(argv, json.dumps(rows))
+
+    report = tartadapter.inventory("tart", tart_policy(tmp_path), runner=runner, now_ns=1)
+
+    assert report.available, report.error
+    assert report.owned_bytes == 99 * 1024**3
+    assert len(report.resources) == 3
+    base = next(item for item in report.resources if f"base@{first}" in item.names)
+    assert set(base.names) == {f"base@{first}", "base:latest"}
+    assert base.active and base.protected and base.owned
+    assert base.last_used_ns == 1788825600000000000
+    assert base.logical_bytes == 33 * 1024**3
+
+
+def test_tart_inventory_rejects_missing_oci_backing_directory(tmp_path: Path) -> None:
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        return command(argv, '[{"Name":"base:latest","Source":"OCI","Size":33}]')
+
+    report = tartadapter.inventory("tart", tart_policy(tmp_path), runner=runner, now_ns=1)
+
+    assert not report.available
+    assert report.error and "base" in report.error
+    assert not report.resources

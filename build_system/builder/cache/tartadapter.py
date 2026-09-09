@@ -40,6 +40,37 @@ def _allocated_bytes(root: Path) -> int:
     return allocated
 
 
+def _oci_path(home: str, name: str) -> Path:
+    # Tart lists both digest directories and tag symlinks to those directories.
+    # Resolve backing storage, never infer aliasing from repository or VM size.
+    repository, separator, reference = name.rpartition("@" if "@" in name else ":")
+    if not separator or not repository or not reference:
+        raise ValueError(f"invalid Tart OCI name {name!r}")
+    root = (Path(home).expanduser() / "cache" / "OCIs").resolve()
+    try:
+        path = (root / repository / reference).resolve(strict=True)
+    except OSError as error:
+        raise ValueError(f"cannot resolve Tart OCI {name!r}: {error}") from error
+    if not path.is_relative_to(root) or not path.is_dir():
+        raise ValueError(f"Tart OCI {name!r} has invalid backing directory {path}")
+    return path
+
+
+def _merge(left: RuntimeResource, right: RuntimeResource) -> RuntimeResource:
+    names = tuple(sorted({*left.names, *right.names}))
+    return RuntimeResource(
+        kind=ResourceKind.VM,
+        identity=next((name for name in names if "@" in name), names[0]),
+        names=names,
+        logical_bytes=max(left.logical_bytes, right.logical_bytes),
+        created_ns=min(left.created_ns, right.created_ns),
+        last_used_ns=max(left.last_used_ns, right.last_used_ns),
+        active=left.active or right.active,
+        owned=left.owned or right.owned,
+        protected=left.protected or right.protected,
+    )
+
+
 def inventory(
     runtime_id: str,
     policy: TartRuntimePolicy,
@@ -63,7 +94,7 @@ def inventory(
         rows = json.loads(result.stdout)
         if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
             raise ValueError("Tart list JSON must be an array of objects")
-        resources = []
+        resources: dict[tuple[str, str], RuntimeResource] = {}
         for row in rows:
             name = str(row.get("Name", ""))
             source = str(row.get("Source", "")).lower()
@@ -76,20 +107,20 @@ def inventory(
                 raise ValueError(f"Tart VM {name!r} has invalid Size")
             accessed = _timestamp(row.get("Accessed"))
             running = bool(row.get("Running", False))
-            resources.append(
-                RuntimeResource(
-                    kind=ResourceKind.VM,
-                    identity=name,
-                    names=(name,),
-                    logical_bytes=int(size * 1024**3),
-                    created_ns=accessed,
-                    last_used_ns=accessed,
-                    active=running,
-                    owned=working or base,
-                    protected=running or base or not working,
-                )
+            resource = RuntimeResource(
+                kind=ResourceKind.VM,
+                identity=name,
+                names=(name,),
+                logical_bytes=int(size * 1024**3),
+                created_ns=accessed,
+                last_used_ns=accessed,
+                active=running,
+                owned=working or base,
+                protected=running or base or not working,
             )
-    except (TypeError, ValueError, json.JSONDecodeError) as error:
+            key = (source, str(_oci_path(policy.home, name)) if source == "oci" else name)
+            resources[key] = _merge(resources[key], resource) if key in resources else resource
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         return RuntimeInventory(
             runtime_id=runtime_id,
             kind=RuntimeKind.TART,
@@ -99,7 +130,7 @@ def inventory(
             owned_bytes=0,
             error=str(error),
         )
-    values = tuple(sorted(resources, key=lambda row: row.identity))
+    values = tuple(sorted(resources.values(), key=lambda row: row.identity))
     native = _allocated_bytes(Path(policy.home).expanduser())
     return RuntimeInventory(
         runtime_id=runtime_id,
