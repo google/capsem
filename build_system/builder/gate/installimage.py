@@ -86,6 +86,7 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
         command=["bash", "-lc", command],
         network=settings.smoke_network,
         user=settings.guest_user.name,
+        console=ConsoleMode.STREAM,
         env={
             names.project_environment: settings.venv,
             names.test_output_root: settings.test_output_root,

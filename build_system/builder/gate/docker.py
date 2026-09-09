@@ -102,6 +102,7 @@ class Docker(ImageOperations):
         user: str | None = None,
         env: dict[str, str] | None = None,
         mounts: tuple[Mount, ...] = (),
+        console: ConsoleMode | None = None,
     ) -> bool:
         """Run a container to completion and report whether it worked.
 
@@ -109,6 +110,9 @@ class Docker(ImageOperations):
         which is right for work and wrong for a question -- and a call site
         that wants the answer had to build its own argv to get it, which is how
         the last hand-built `docker run` in the gate outlived the wrapper.
+
+        Set `console` for qualification probes whose output must survive in
+        the runner's step log. Ordinary presence questions remain silent.
         """
         network_value = require_container_network(network)
         argv = ["docker", "run", "--rm", "--network", network_value, *options]
@@ -118,6 +122,8 @@ class Docker(ImageOperations):
             argv += ["-e", f"{key}={value}"]
         argv += [part for mount in mounts for part in ("-v", str(mount))]
         argv += [image, *command]
+        if console is not None:
+            return self._runner.run(argv, check=False, console=console) == 0
         return self._runner.succeeds(argv)
 
     # -- extraction --------------------------------------------------------

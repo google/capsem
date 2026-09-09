@@ -595,6 +595,42 @@ def test_a_failing_sealed_smoke_check_is_not_repaired_by_a_second_build() -> Non
     assert not runner.ran(r"--no-cache")
 
 
+@pytest.mark.parametrize("filed", [False, True])
+def test_failed_smoke_preserves_tool_stdout_and_stderr(tmp_path, monkeypatch, capfd, filed):
+    from dataclasses import replace
+
+    from capsem_builder.gate import installimage
+    from capsem_builder.gate.proc import Runner
+
+    log = tmp_path / "smoke.log"
+
+    class SmokeRunner(Runner):
+        def filed(self, command):
+            return replace(command, log=log) if filed else command
+
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'smoke command: %s\\n' \"$*\"\n"
+        "printf 'missing pinned tool fixture\\n' >&2\n"
+        "exit 17\n"
+    )
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+
+    with pytest.raises(GateError, match="sealed image"):
+        installimage._smoke(SmokeRunner(PROJECT_ROOT), CONFIG, image="smoke-fixture")
+
+    output = capfd.readouterr()
+    combined = output.out + output.err
+    assert combined.count("smoke command:") == 1
+    assert "--network none" in combined
+    assert "missing pinned tool fixture" in combined
+    if filed:
+        assert "smoke command:" in log.read_text()
+        assert "missing pinned tool fixture" in log.read_text()
+
+
 def test_the_package_makes_virtualisation_devices_reachable_from_inside(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

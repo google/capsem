@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sealed install smoke checks retain tool stdout and stderr in gate evidence
+  so failed qualification identifies the missing or broken input.
 - Docker builders retain installed dependency layers when only their identity
   labels change, and host tool version changes preserve earlier install layers.
 - macOS source watching ignores delayed notifications for unchanged inputs
