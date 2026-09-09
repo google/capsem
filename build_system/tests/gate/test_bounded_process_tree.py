@@ -15,13 +15,13 @@ SYSTEM_PYTHON = Path("/usr/bin/python3")
 
 
 def _alive(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "stat="],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0 and bool(result.stdout.strip())
+    # Seatbelt refuses execution of macOS's privileged ps binary. Signal zero
+    # checks this test's own child without requiring that executable.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_timeout_reaps_a_descendant_that_created_a_new_session(tmp_path: Path) -> None:

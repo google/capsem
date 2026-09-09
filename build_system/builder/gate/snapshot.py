@@ -178,10 +178,8 @@ def _materialize_repository(source: Path, target: Path) -> None:
     of copying the entire object directory, including unreachable artifacts
     and abandoned temporary packs. It requires no network and creates no
     hardlinks, which macOS Seatbelt correctly refuses across this boundary.
-    The copy uses no `alternates` file, so the
-    original may be garbage-collected without pulling bytes out from under a
-    running gate. The clone owns its `HEAD` and refs, so a commit in the source
-    cannot move it.
+    Without `alternates`, source garbage collection cannot remove this copy's
+    objects. Its independent `HEAD` and refs cannot move with the source.
 
     `--no-checkout` because the working tree arrives separately and writing it
     twice would be the expensive half. That leaves the index empty, so

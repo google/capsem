@@ -5626,7 +5626,9 @@ def test_release_selection_match_guard_is_directly_unit_testable(
 def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) -> None:
     tool_bin = tmp_path / "bin"
     tool_bin.mkdir()
-    for command in ("python3",):
+    # Remove ripgrep while retaining the ordinary Git source inventory. Removing
+    # Git too selects a tarball fallback that cannot honor this checkout's ignores.
+    for command in ("python3", "git"):
         source = shutil.which(command)
         assert source is not None, f"test host is missing {command}"
         (tool_bin / command).symlink_to(source)

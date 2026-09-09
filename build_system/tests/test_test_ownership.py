@@ -58,6 +58,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_gate_module_boundary.py",
         "build_system/tests/gate/test_gate_cache_layout.py",
         "build_system/tests/gate/test_gate_cache_tooling.py",
+        "build_system/tests/gate/test_gate_cache_sandbox.py",
+        "build_system/tests/gate/test_gate_snapshot_repository.py",
         "build_system/tests/gate/test_gate_qualification_reuse.py",
         "build_system/tests/gate/test_gate_pycache_authority.py",
         "build_system/tests/gate/test_gate_run_transfer.py",
