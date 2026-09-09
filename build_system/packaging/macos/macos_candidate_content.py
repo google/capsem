@@ -84,3 +84,44 @@ def localize_candidate_profile_urls(manifest_path: Path) -> None:
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def stage_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.unlink(missing_ok=True)
+    # Do not hard-link or copy macOS provenance/resource-fork metadata into the
+    # VirtioFS share. Tart guests can intermittently receive EACCES when Python
+    # opens a hard-linked host file carrying com.apple.provenance.
+    shutil.copyfile(source, destination)
+    destination.chmod(source.stat().st_mode & 0o777)
+
+
+def stage_guest_scripts(root: Path, share: Path) -> None:
+    """Stage the commands executed inside the disposable macOS guest."""
+    # Launchers share their real release implementation; the clean guest has
+    # neither an editable builder install nor the repository bootstrap path.
+    for name in (
+        "__init__.py", "release/__init__.py", "release/tools/__init__.py",
+        "release/tools/release_fixture_server.py", "release/tools/release_glowup.py",
+        "release/tools/release_transition.py", "release/tools/verify_installed_release.py",
+    ):
+        stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
+    stage_file(root / "build_system/packaging/macos" / "macos_tart_guest.sh", share / "guest.sh")
+    request = root / "build_system/packaging/shared/install-manifest-request.sh"
+    stage_file(request, share / request.name)
+    release_script_root = root / "build_system" / "scripts" / "release"
+    for name in (
+        "verify-installed-release.py",
+        "release_transition.py",
+    ):
+        stage_file(release_script_root / name, share / name)
+    release_site_script = (
+        root / "build_system/release_site/scripts/serve-release-test-root.py"
+    )
+    stage_file(release_site_script, share / release_site_script.name)
+    for name in (
+        "macos-install-user-request.sh",
+        "macos_tart_transition_support.py",
+        "macos-tart-regression-probes.sh",
+    ):
+        stage_file(root / "build_system/packaging/macos" / name, share / name)

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tart install proofs stage the release helpers' Python dependencies, so the
+  clean macOS guest can serve manifests and verify installed transitions.
 - Local macOS packages consume executables from Cargo's canonical output
   directory, fixing package assembly after a successful release build.
 - Focused install verification produces the complete profile asset cohort and

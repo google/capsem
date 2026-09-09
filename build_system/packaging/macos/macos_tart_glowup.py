@@ -32,6 +32,7 @@ from capsem_builder.release.tools.release_transition_candidates import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+from macos_candidate_content import stage_file, stage_guest_scripts  # noqa: E402
 from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
 
 _TART = load_policy(PROJECT_ROOT).runtimes["tart"]
@@ -165,16 +166,6 @@ def run_checked(
         timeout=timeout,
         capture_output=capture_output,
     )
-
-
-def stage_file(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.unlink(missing_ok=True)
-    # Do not hard-link or copy macOS provenance/resource-fork metadata into the
-    # VirtioFS share. Tart guests can intermittently receive EACCES when Python
-    # opens a hard-linked host file carrying com.apple.provenance.
-    shutil.copyfile(source, destination)
-    destination.chmod(source.stat().st_mode & 0o777)
 
 
 def sha256(path: Path) -> str:
@@ -439,26 +430,7 @@ def main() -> int:
         strict=True,
     ):
         stage_file(source, share / name)
-    stage_file(Path(__file__).resolve().parent / "macos_tart_guest.sh", share / "guest.sh")
-    request = PROJECT_ROOT / "build_system/packaging/shared/install-manifest-request.sh"
-    stage_file(request, share / request.name)
-    release_script_root = PROJECT_ROOT / "build_system" / "scripts" / "release"
-    for name in (
-        "verify-installed-release.py",
-        "release_fixture_server.py",
-        "release_transition.py",
-    ):
-        stage_file(release_script_root / name, share / name)
-    release_site_script = (
-        PROJECT_ROOT / "build_system/release_site/scripts/serve-release-test-root.py"
-    )
-    stage_file(release_site_script, share / release_site_script.name)
-    for name in (
-        "macos-install-user-request.sh",
-        "macos_tart_transition_support.py",
-        "macos-tart-regression-probes.sh",
-    ):
-        stage_file(Path(__file__).resolve().parent / name, share / name)
+    stage_guest_scripts(PROJECT_ROOT, share)
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None

@@ -15,10 +15,13 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _load_handler():
-    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
-    from bootstrap import mount_builder_package
+    try:
+        import capsem_builder  # noqa: F401
+    except ModuleNotFoundError:
+        sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+        from bootstrap import mount_builder_package
 
-    mount_builder_package(ROOT)
+        mount_builder_package(ROOT)
     from capsem_builder.release.tools.release_fixture_server import handler_for_root
 
     return handler_for_root

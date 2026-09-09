@@ -274,6 +274,25 @@ def test_ip_wait_fails_immediately_when_tart_runner_exits() -> None:
         module.wait_for_guest_ip("capsem-glowup-123", ExitedRunner())
 
 
+@pytest.mark.parametrize("script", [
+    "serve-release-test-root.py", "verify-installed-release.py",
+    "release_transition.py", "macos_tart_transition_support.py",
+])
+def test_staged_guest_commands_need_no_checkout_or_installed_packages(
+    tmp_path: Path, script: str,
+) -> None:
+    share = tmp_path / "share"
+    _load_harness().stage_guest_scripts(PROJECT_ROOT, share)
+
+    result = subprocess.run(
+        [sys.executable, "-S", str(share / script), "--help"],
+        cwd=tmp_path, env={}, capture_output=True, text=True, check=False, timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "usage:" in result.stdout
+
+
 def test_tart_share_inputs_are_copied_not_hard_linked(tmp_path: Path) -> None:
     module = _load_harness()
     source = tmp_path / "source"
