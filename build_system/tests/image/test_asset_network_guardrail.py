@@ -189,6 +189,9 @@ def test_rootfs_privilege_hardening_strips_a_synthetic_file(tmp_path: Path) -> N
     root.mkdir()
     privileged = root / "synthetic-privileged"
     privileged.write_text("fixture\n", encoding="utf-8")
+    # macOS temp directories can inherit wheel, outside this user's groups;
+    # chmod then silently strips SGID before the hardening command can test it.
+    os.chown(privileged, -1, os.getgid())
     privileged.chmod(0o6755)
     privilege_bits = stat.S_ISUID | stat.S_ISGID
     assert privileged.stat().st_mode & privilege_bits == privilege_bits
