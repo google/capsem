@@ -8,7 +8,7 @@ import sqlite3
 import textwrap
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ from helpers.constants import (
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
-from log_streams import read_log_stream
+from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
 
@@ -484,11 +484,15 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert len(mcp_tool_events) == 1
         assert mcp_tool_events[0]["tool_name"] == "fixture_lookup"
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
+        client.delete(f"/vms/{vm_id}/delete", timeout=60)
+        vm_id = None
+        service_log = service.stop_and_read_log()
         assert "gateway.proxy.ok" in gateway_log
         assert "security_latest" in service_log or "/security/latest" in service_log
-        assert "mcp" in service_log.lower()
+        # MCP observation belongs to capsem-process. The service owns the
+        # ledger queries above; incidental protocol words are not log evidence.
+        assert_service_log_evidence(service_log)
     finally:
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
@@ -498,9 +502,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             stop_process(mock_proc)
         if gateway is not None:
             gateway.stop()
-        try:
-            assert vm_id is not None
-            service.client().delete(f"/vms/{vm_id}/delete", timeout=30)
-        except Exception:
-            pass
+        if vm_id is not None:
+            with suppress(Exception):
+                service.client().delete(f"/vms/{vm_id}/delete", timeout=30)
         service.stop()

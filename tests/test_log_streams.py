@@ -11,7 +11,12 @@ def test_service_log_evidence_accepts_current_owned_targets(target: str) -> None
 
 @pytest.mark.parametrize(
     "text",
-    ["", "not json\n", '{"target":"capsem_gateway"}\n'],
+    [
+        "",
+        "not json\n",
+        '{"target":"capsem_gateway"}\n',
+        '{"target":"capsem.mitm","fields":{"message":"mcp tools/call"}}\n',
+    ],
 )
 def test_service_log_evidence_rejects_missing_owned_records(text: str) -> None:
     with pytest.raises(AssertionError):
