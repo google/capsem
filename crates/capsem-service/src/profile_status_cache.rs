@@ -1,7 +1,12 @@
-use super::{build_profile_status_cache, load_profile_catalog_for_service, AppError, Bytes, ServiceState, StatusCode};
+use super::{
+    append_asset_reconcile_status, build_profile_status_cache, load_profile_catalog_for_service, AppError, Bytes,
+    ServiceState, StatusCode,
+};
 use anyhow::Result;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::Path as StdPath;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -89,4 +94,21 @@ pub(super) fn profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileSt
 
 pub(super) fn profile_status_catalog_body(state: &ServiceState) -> Result<Bytes, AppError> {
     Ok(profile_status_cache(state)?.catalog_body.clone())
+}
+
+pub(super) fn refresh_reconcile_fields(state: &ServiceState, mut value: serde_json::Value) -> serde_json::Value {
+    let reconcile = state.asset_reconcile.lock().map(|s| s.clone()).unwrap_or_default();
+    if let Some(obj) = value.as_object_mut() {
+        if obj.contains_key("downloading") {
+            let active = reconcile.in_progress || state.asset_reconcile_inflight.load(Ordering::Acquire);
+            obj.insert("downloading".to_string(), json!(active));
+            if active {
+                // The cached ready snapshot predates this repair. Reconciliation
+                // publishes its replacement before releasing the inflight claim.
+                obj.insert("ready".to_string(), json!(false));
+            }
+        }
+    }
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
 }

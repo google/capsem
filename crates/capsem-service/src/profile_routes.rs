@@ -1113,18 +1113,6 @@ pub(super) fn json_bytes_response(body: Bytes) -> axum::response::Response {
         .into_response()
 }
 
-pub(super) fn refresh_reconcile_fields(state: &ServiceState, mut value: serde_json::Value) -> serde_json::Value {
-    let reconcile = state.asset_reconcile.lock().map(|s| s.clone()).unwrap_or_default();
-    if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("downloading") {
-            let active = reconcile.in_progress || state.asset_reconcile_inflight.load(Ordering::Acquire);
-            obj.insert("downloading".to_string(), json!(active));
-        }
-    }
-    append_asset_reconcile_status(&mut value, &reconcile);
-    value
-}
-
 pub(super) fn cached_profile_status_for_route(
     state: &ServiceState,
     profile_id: &str,

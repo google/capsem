@@ -107,6 +107,7 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
     assert_eq!(status, StatusCode::OK, "{repairing}");
     assert_eq!(repairing["started"], true);
     assert_eq!(repairing["downloading"], true);
+    assert_eq!(repairing["ready"], false, "{repairing}");
     let repaired = asset_wait::wait_for_profile_assets(&app).await;
     assert_eq!(repaired["ready"], true, "{repaired}");
     assert_eq!(repaired["downloaded"], 1, "{repaired}");

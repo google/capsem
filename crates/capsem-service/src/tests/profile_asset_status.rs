@@ -8,9 +8,32 @@ fn reconcile_claim_keeps_routes_unsettled_until_cache_publication() {
     state.asset_reconcile.lock().unwrap().last_downloaded = Some(3);
 
     assert!(asset_reconcile_has_route_fields(&state));
-    let status = refresh_reconcile_fields(&state, json!({ "downloading": false }));
+    let status = refresh_reconcile_fields(&state, json!({ "ready": true, "downloading": false }));
     assert_eq!(status["downloading"], true);
+    assert_eq!(
+        status["ready"], false,
+        "cached readiness must not survive an active repair"
+    );
     assert_eq!(status["downloaded"], 3);
+}
+
+#[test]
+fn active_reconcile_masks_cached_readiness_without_promoting_missing_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    state.asset_reconcile.lock().unwrap().in_progress = true;
+    let cached = json!({ "ready": true, "downloading": false });
+    let active = refresh_reconcile_fields(&state, cached.clone());
+    assert_eq!(active["ready"], false);
+    assert_eq!(active["downloading"], true);
+    assert_eq!(cached["ready"], true, "masking must not mutate the retained snapshot");
+
+    state.asset_reconcile.lock().unwrap().in_progress = false;
+    for ready in [false, true] {
+        let settled = refresh_reconcile_fields(&state, json!({ "ready": ready, "downloading": true }));
+        assert_eq!(settled["ready"], ready);
+        assert_eq!(settled["downloading"], false);
+    }
 }
 
 #[cfg(unix)]
