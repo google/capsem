@@ -295,6 +295,7 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     local_glowup = Path(local_release_glowup.__file__).read_text(encoding="utf-8")
     macos_glowup = (ROOT / "build_system/packaging/macos/macos_release_glowup.py").read_text(encoding="utf-8")
     tart_host = (ROOT / "build_system/packaging/macos/macos_tart_glowup.py").read_text(encoding="utf-8")
+    tart_content = (ROOT / "build_system/packaging/macos/macos_candidate_content.py").read_text(encoding="utf-8")
     tart_guest = (ROOT / "build_system/packaging/macos/macos_tart_guest.sh").read_text(encoding="utf-8")
     tart_regressions = (ROOT / "build_system/packaging/macos/macos-tart-regression-probes.sh").read_text(
         encoding="utf-8"
@@ -311,7 +312,8 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     assert '"started"' in tart_regressions
     assert "STALE_HELPER_EVIDENCE" in tart_regressions
     assert "old_service_pid" in tart_regressions
-    assert "macos-tart-regression-probes.sh" in tart_host
+    assert "stage_guest_scripts(PROJECT_ROOT, share)" in tart_host
+    assert "macos-tart-regression-probes.sh" in tart_content
     assert "PERSISTENT_PIN_EVIDENCE" in physical_boot
     assert "--keep-session" in physical_boot
     assert '"persistent_pin_resume": True' in physical_boot

@@ -29,11 +29,10 @@ from capsem_builder.release.tools.release_glowup import (
 from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
+from macos_candidate_content import stage_file, stage_guest_scripts
+from macos_tart_transition_support import local_tart_capabilities
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-from macos_candidate_content import stage_file, stage_guest_scripts  # noqa: E402
-from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
 
 _TART = load_policy(PROJECT_ROOT).runtimes["tart"]
 if not isinstance(_TART, TartRuntimePolicy):
