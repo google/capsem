@@ -45,7 +45,7 @@ def test_run_signed_materializes_its_cache_leaves(tmp_path: Path, platform: str)
     )
 
     assert result.returncode == 1
-    expected = "codesign requires macOS" if platform == "Linux" else "entitlements.plist not found"
+    expected = "codesign requires macOS" if platform == "Linux" else f"not found at {package_dir}/"
     assert expected in result.stderr
     assert (tmp_path / "cache" / "target").is_dir()
     assert expected in (
