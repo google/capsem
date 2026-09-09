@@ -1087,7 +1087,7 @@ impl ProfileFixture {
         let dir = tempfile::tempdir().unwrap();
         let config_root = dir.path().join("config");
         let profile_dir = config_root.join("profiles/code");
-        let source_dir = dir.path().join("asset-source/arm64");
+        let source_dir = dir.path().join("asset source + # %20 é/arm64");
         std::fs::create_dir_all(&profile_dir).unwrap();
         std::fs::create_dir_all(&source_dir).unwrap();
 
@@ -1155,19 +1155,19 @@ refresh_policy = "on_profile_refresh"
 
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
-url = "file://{}"
+url = "{}"
 hash = "{}"
 size = {}
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
-url = "file://{}"
+url = "{}"
 hash = "{}"
 size = {}
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
-url = "file://{}"
+url = "{}"
 hash = "{}"
 size = {}
 
@@ -1200,13 +1200,13 @@ health_check_interval_secs = 60
 [mcp.server_enabled]
 capsem = true
 "#,
-            kernel.display(),
+            reqwest::Url::from_file_path(&kernel).unwrap(),
             descriptor_hash(&kernel),
             file_size(&kernel),
-            initrd.display(),
+            reqwest::Url::from_file_path(&initrd).unwrap(),
             descriptor_hash(&initrd),
             file_size(&initrd),
-            rootfs.display(),
+            reqwest::Url::from_file_path(&rootfs).unwrap(),
             descriptor_hash(&rootfs),
             file_size(&rootfs),
             descriptor_hash(&enforcement),

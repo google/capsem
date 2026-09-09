@@ -37,8 +37,11 @@ pub(crate) async fn handle_profile_obom(
             format!("profile {} has no OBOM for current architecture", profile.id),
         )
     })?;
-    let document = if let Some(path) = obom.url.strip_prefix("file://") {
-        let path = PathBuf::from(path);
+    let document = if obom.url.starts_with("file://") {
+        let path = reqwest::Url::parse(&obom.url)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("invalid local OBOM URL: {}", obom.url)))?;
         let info = obom.clone();
         Some(
             tokio::task::spawn_blocking(move || read_local_profile_obom(&path, &info))

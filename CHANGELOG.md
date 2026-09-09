@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Local profile assets and OBOM files decode file URLs correctly, including
+  spaces and escaped filename characters in macOS shared directories.
 - Asset repair reports profiles as not ready until background reconciliation
   publishes the refreshed status, avoiding contradictory readiness responses.
 - Tart install proofs stage the release helpers' Python dependencies, so the

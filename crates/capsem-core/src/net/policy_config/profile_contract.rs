@@ -415,13 +415,10 @@ impl Profile {
         fs::create_dir_all(assets_dir.join(arch))
             .map_err(|error| format!("create asset dir {}: {error}", assets_dir.display()))?;
         for (kind, descriptor) in arch_assets.iter() {
-            let Some(source_path) = descriptor.url.strip_prefix("file://") else {
-                return Err(format!(
-                    "profile {} asset {arch}/{kind} must use file:// for local profile download",
-                    self.config.id
-                ));
-            };
-            let source_path = PathBuf::from(source_path);
+            let source_path = reqwest::Url::parse(&descriptor.url)
+                .ok()
+                .and_then(|url| url.to_file_path().ok())
+                .ok_or_else(|| format!("profile {} {arch}/{kind}: invalid local file URL", self.config.id))?;
             let destination = profile_asset_path(assets_dir, arch, descriptor)?;
             fs::copy(&source_path, &destination).map_err(|error| {
                 format!(

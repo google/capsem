@@ -911,7 +911,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
     });
     let obom_bytes = serde_json::to_vec(&obom_doc).unwrap();
     let obom_hash = blake3::hash(&obom_bytes).to_hex().to_string();
-    let obom_path = profile_dir.join("obom.cdx.json");
+    let obom_path = profile_dir.join("obom with + # %20 é.cdx.json");
     std::fs::write(&obom_path, &obom_bytes).unwrap();
 
     let arch = capsem_core::net::policy_config::current_profile_arch().to_string();
@@ -922,7 +922,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
             arch.clone(),
             ProfileObomDescriptor {
                 name: "obom.cdx.json".to_string(),
-                url: format!("file://{}", obom_path.display()),
+                url: reqwest::Url::from_file_path(&obom_path).unwrap().into(),
                 hash: format!("blake3:{obom_hash}"),
                 size: obom_bytes.len() as u64,
                 generator: "cdxgen".to_string(),

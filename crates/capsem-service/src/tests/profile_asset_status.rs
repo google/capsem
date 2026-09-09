@@ -1,5 +1,30 @@
 use super::*;
 
+#[tokio::test]
+async fn profile_asset_download_decodes_file_urls_before_opening_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("My Shared Files + # %20 é");
+    let bytes = b"exact local kernel bytes";
+    std::fs::write(&source, bytes).unwrap();
+    let asset = ProfileAssetDescriptor {
+        name: "vmlinuz".into(),
+        url: reqwest::Url::from_file_path(&source).unwrap().into(),
+        hash: Some(format!("blake3:{}", blake3::hash(bytes).to_hex())),
+        size: Some(bytes.len() as u64),
+    };
+    let target = dir.path().join("installed/kernel");
+    let mut progress = Vec::new();
+
+    asset_background::download_profile_asset(&asset, &target, |done, total, complete| {
+        progress.push((done, total, complete));
+    })
+    .await
+    .expect("percent-encoded source path is decoded exactly once");
+
+    assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    assert_eq!(progress.last(), Some(&(bytes.len() as u64, asset.size, true)));
+}
+
 #[test]
 fn reconcile_claim_keeps_routes_unsettled_until_cache_publication() {
     let dir = tempfile::tempdir().unwrap();
