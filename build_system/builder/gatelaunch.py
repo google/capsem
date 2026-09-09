@@ -211,6 +211,7 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     uv = _policy_stage(source, authority, "python-uv")
     ruff = _policy_stage(source, authority, "python-ruff")
     rust = _policy_stage(source, authority, "rust-sccache")
+    rust.mkdir(parents=True, exist_ok=True)
     cache = _policy(source)
     environment = {
         **python,

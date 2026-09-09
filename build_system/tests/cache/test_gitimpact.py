@@ -21,6 +21,7 @@ def test_working_source_impact_includes_every_git_source_shape(tmp_path: Path) -
     git(tmp_path, "init", "-q", "-b", "main")
     git(tmp_path, "config", "user.name", "Cache Test")
     git(tmp_path, "config", "user.email", "cache@example.test")
+    git(tmp_path, "config", "commit.gpgsign", "false")
     tracked = tmp_path / "config/settings/settings.toml"
     tracked.parent.mkdir(parents=True)
     tracked.write_text("one", encoding="utf-8")

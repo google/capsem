@@ -268,7 +268,7 @@ def _build_and_prove(
                     ),
                     contends=(config.exclusive("apple_vz"),),
                     kind=Kind.E2E,
-                    needs=frozenset({Needs.DOCKER, Needs.DISK, Needs.NETWORK}),
+                    needs=frozenset({Needs.VM, Needs.DOCKER, Needs.DISK, Needs.NETWORK}),
                     speed=Speed.SLOW,
                 ),
                 after=previous,

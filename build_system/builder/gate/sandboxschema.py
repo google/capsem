@@ -42,6 +42,7 @@ class SandboxConfig(Strict):
     sockets: tuple[str, ...]
     local_socket_prefixes: tuple[str, ...]
     local_socket_regexes: tuple[str, ...]
+    cache_socket_stages: tuple[str, ...]
     local_binds: bool
     loopback: tuple[str, ...]
     log_command: str

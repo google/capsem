@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS development gates can start the shared compiler cache inside the
+  network sandbox, and private Git snapshots exclude unreachable build debris.
+- Web dependencies include the latest Astro, Sharp, Vitest, js-yaml, and SVGO
+  security fixes, with downgrade guards across all four web workspaces.
 - Linux automatic upgrades preserve the updater's manifest handoff when
   replacing packages from `capsem-update.service`, avoiding a premature fetch
   of the previous public release during installation.

@@ -120,7 +120,8 @@ pub fn set_socket_timeout(fd: RawFd, which: libc::c_int, timeout: Duration) {
     // deprecated on musl (they widen in a future libc); infer them instead.
     let tv = libc::timeval {
         tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX) as _,
-        tv_usec: i32::try_from(timeout.subsec_micros()).unwrap_or(0).into(),
+        // Always below 1_000_000, fitting both macOS i32 and Linux i64.
+        tv_usec: timeout.subsec_micros() as _,
     };
     unsafe {
         libc::setsockopt(

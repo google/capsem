@@ -6,11 +6,26 @@ import subprocess
 import sys
 from pathlib import Path
 
+from capsem_builder import gatelaunch
 from capsem_builder.cache.config import load_policy
 
 ROOT = Path(__file__).resolve().parents[3]
 BOUNDED = ROOT / "build_system/scripts/ci/run-bounded-command.py"
 CACHE_POLICY = load_policy(ROOT)
+
+
+def test_cold_compiler_cache_socket_parent_exists_before_launch(tmp_path: Path) -> None:
+    source = tmp_path / "checkout"
+    (source / "config").mkdir(parents=True)
+    for name in ("cache.toml", "gate.toml"):
+        (source / "config" / name).write_bytes((ROOT / "config" / name).read_bytes())
+    environment = gatelaunch.contained_environment(source)
+    socket = Path(environment["SCCACHE_SERVER_UDS"])
+    assert socket.parent.is_dir(), (
+        "sccache binds its configured Unix socket before initializing its cache; "
+        "cold bounded Cargo diagnostics must create the policy-owned parent first"
+    )
+    assert socket.parent == Path(environment["SCCACHE_DIR"])
 
 
 def test_bounded_pytest_leaves_no_cache_beside_source(tmp_path: Path) -> None:

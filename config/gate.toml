@@ -2580,6 +2580,10 @@ local_socket_prefixes = [
 # which is inside the prefix and therefore has no fixed path to list.
 local_socket_regexes = ["cache/target/tests/home/\\.capsem/run/"]
 
+# sccache's server and startup notification use AF_UNIX in these owned
+# stages. Resolve through cache policy, including macOS canonical /private paths.
+cache_socket_stages = ["rust-sccache", "test-temp"]
+
 # Servers the gate starts and talks to: the mock upstream, the gateway, and
 # every per-VM listener. `local:*:0` alone was 1915 of the observed events.
 local_binds = true

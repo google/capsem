@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 
+from . import cachelayout
 from .config import GateConfig
 
 #: SBPL's own comment marker, so a generated profile can explain itself to
@@ -47,6 +48,9 @@ def profile(config: GateConfig, *, report: bool) -> str:
     lines.append(f"{_COMMENT} {settings.socket_reason}")
     for socket_path in _sockets(config):
         lines.append(f'(allow network* (literal "{socket_path}"))')
+    for stage in settings.cache_socket_stages:
+        directory = cachelayout.stage_path(config, stage).resolve()
+        lines.append(f'(allow network* (subpath "{directory}"))')
     for prefix in settings.local_socket_prefixes:
         # Prefix punctuation is policy. ``Path`` normalizes a trailing slash
         # away, turning a configured ``/tmp/capsem/`` namespace into the

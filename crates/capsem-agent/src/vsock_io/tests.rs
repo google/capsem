@@ -1,4 +1,5 @@
 use super::*;
+use std::os::fd::AsRawFd;
 use std::os::unix::io::IntoRawFd;
 use std::os::unix::net::UnixStream;
 use std::thread;
@@ -105,19 +106,7 @@ fn write_all_fd_timeout_on_stalled_peer() {
     let fd = client.into_raw_fd();
 
     // Set a 200ms send timeout so the test doesn't wait 30s.
-    let tv = libc::timeval {
-        tv_sec: 0,
-        tv_usec: 200_000,
-    };
-    unsafe {
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_SNDTIMEO,
-            &tv as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        );
-    }
+    set_socket_timeout(fd, libc::SO_SNDTIMEO, Duration::from_millis(200));
 
     // Write 1MB with no reader -- must timeout, not hang.
     let result = write_all_fd(fd, &vec![0u8; 1024 * 1024]);
@@ -126,6 +115,21 @@ fn write_all_fd_timeout_on_stalled_peer() {
 
     unsafe {
         nix::libc::close(fd);
+    }
+}
+
+#[test]
+fn socket_timeouts_preserve_fractional_seconds_and_clear_both_directions() {
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    // Read the kernel's socket options through std, independently of the
+    // platform-dependent timeval conversion. Zero must disable an old timeout.
+    for millis in [250, 1_250, 999, 0] {
+        let timeout = Duration::from_millis(millis);
+        let expected = (!timeout.is_zero()).then_some(timeout);
+        set_socket_timeout(socket.as_raw_fd(), libc::SO_SNDTIMEO, timeout);
+        set_socket_timeout(socket.as_raw_fd(), libc::SO_RCVTIMEO, timeout);
+        assert_eq!(socket.write_timeout().unwrap(), expected);
+        assert_eq!(socket.read_timeout().unwrap(), expected);
     }
 }
 
