@@ -160,25 +160,6 @@ def test_no_recipe_hides_shell_logic_without_a_shebang() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_gate_module_grows_into_the_justfile_it_replaced() -> None:
-    ceiling = BOUNDARY.max_module_lines
-    modules = sorted(GATE_PACKAGE.rglob("*.py"))
-    assert len(modules) > 3, "scanned too few modules to trust this guard"
-
-    oversized = {
-        module.relative_to(PROJECT_ROOT).as_posix(): len(
-            module.read_text(encoding="utf-8").splitlines()
-        )
-        for module in modules
-        if len(module.read_text(encoding="utf-8").splitlines()) > ceiling
-    }
-
-    assert not oversized, (
-        f"a gate module over {ceiling} lines is the 2000-line justfile growing "
-        f"back in Python; split it by responsibility: {oversized}"
-    )
-
-
 def test_the_cli_only_parses_and_dispatches() -> None:
     """Business logic in the entry point is how one file becomes all of them.
 

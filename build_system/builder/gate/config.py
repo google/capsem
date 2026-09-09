@@ -35,7 +35,6 @@ from .buildschema import (
     ModulesConfig,
     SbomConfig,
     SigningConfig,
-    SuitesConfig,
     WebSurfacesConfig,
 )
 from .configschema import (
@@ -57,6 +56,7 @@ from .harnessschema import (
     PrefixConfig,
     RunLogConfig,
     SandboxConfig,
+    SuitesConfig,
     WorkspaceConfig,
 )
 from .lintschema import LintConfig, LintSurface

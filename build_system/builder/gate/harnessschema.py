@@ -14,7 +14,7 @@ and not a silent default in either half.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     NonNegativeFloat,
@@ -253,3 +253,37 @@ class WorkspaceConfig(Strict):
         if not path.is_absolute() or template.count("{root_id}") != 1:
             raise ValueError("workspace run_dir must be absolute and contain {root_id} once")
         return template
+
+
+class PytestConfig(Strict):
+    root: str
+    repository_root: str
+    build_system_root: str
+    build_system_project: str
+    project_distribution: str
+    project_manifest: str
+    citadel: str
+    collection_flags: tuple[str, ...]
+    base_flags: tuple[str, ...]
+    stop_at_first: str
+    parallel_workers: PositiveInt
+    parallel_distribution: Literal["loadfile"]
+    coverage_flags: tuple[str, ...]
+    coverage_seed_flags: tuple[str, ...]
+    coverage_append_flags: tuple[str, ...]
+    coverage_finish_flags: tuple[str, ...]
+    broad_ignores: tuple[str, ...]
+    host_snapshot_serial: tuple[str, ...]
+    serial_paths: tuple[str, ...]
+    benchmark_baseline: str
+    benchmark_deselect: str
+    require_artifacts: str
+    profile_variable: str
+    base_profile: str
+    materialized_profiles: str
+    test_manifest: str
+
+
+class SuitesConfig(Strict):
+    source_contract: tuple[str, ...]
+    pytest: PytestConfig
