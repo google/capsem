@@ -119,6 +119,47 @@ def test_a_read_only_close_is_not_recorded_as_a_filesystem_change(tmp_path: Path
     assert watch.faults == []
 
 
+@pytest.mark.parametrize("event_kind", ["created", "modified"])
+@pytest.mark.parametrize("mutation", ["write", "restore", "chmod"])
+def test_delayed_native_events_ignore_unchanged_source_but_keep_live_mutations(
+    tmp_path: Path, monkeypatch, event_kind: str, mutation: str
+) -> None:
+    from watchdog.events import FileCreatedEvent, FileModifiedEvent
+
+    source = tmp_path / "input.toml"
+    source.write_text("original")
+
+    class Observer:
+        def schedule(self, handler, _path, *, recursive):
+            self.handler = handler
+
+        def start(self):
+            event = FileCreatedEvent if event_kind == "created" else FileModifiedEvent
+            self.handler.on_any_event(event(str(source)))
+
+        def stop(self):
+            pass
+
+        def join(self, *, timeout):
+            pass
+
+    observer = Observer()
+    monkeypatch.setattr("watchdog.observers.Observer", lambda: observer)
+    with _watch(tmp_path) as watch:
+        assert not watch.events, "a delayed pre-watch notification is not a live mutation"
+        before = source.stat()
+        if mutation == "chmod":
+            source.chmod(0o600)
+            source.chmod(before.st_mode)
+        else:
+            source.write_text("changed")
+            if mutation == "restore":
+                source.write_text("original")
+                os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+        observer.handler.on_any_event(FileModifiedEvent(str(source)))
+        assert any(fault.reason == "source-tree" for fault in watch.faults)
+
+
 def test_the_error_log_survives_a_run_that_is_killed(tmp_path: Path) -> None:
     """Line-buffered and fsynced, because the run being described may not
     exit cleanly -- and that is when the report matters most."""
@@ -211,7 +252,9 @@ def test_a_hardlink_into_build_output_is_named_where_it_lands(tmp_path: Path) ->
     staged = output / "root-payload-abc"
 
     live: list[Fault] = []
-    with Watch([tmp_path / "cache" / "target"], source_root=tmp_path, on_fault=live.append) as watch:
+    with Watch(
+        [tmp_path / "cache" / "target"], source_root=tmp_path, on_fault=live.append
+    ) as watch:
         watch.entered("contracts.release")
         os.link(seed, staged)
         _settle(watch, 1)
@@ -316,7 +359,9 @@ def test_a_declared_shared_resource_is_not_a_fault() -> None:
 
 def test_build_output_is_not_the_checked_in_tree() -> None:
     watch = Watch([], source_root=Path("/repo"))
-    watch._judge(Event(at=1.0, kind="modified", path=Path("/repo/cache/target/x"), steps=("build",)))
+    watch._judge(
+        Event(at=1.0, kind="modified", path=Path("/repo/cache/target/x"), steps=("build",))
+    )
     assert watch.faults == []
 
 
@@ -372,7 +417,9 @@ def test_rmtree_of_build_output_is_not_reported_as_a_source_mutation(
     (root / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
     (root / "config" / "profiles").mkdir(parents=True)
     (root / "cache" / "target" / "config" / "profiles" / "code" / "profile.toml").write_text("x")
-    (root / "cache" / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text("y")
+    (root / "cache" / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text(
+        "y"
+    )
 
     # cwd at the checkout root is what made a bare entry name resolve into the
     # source tree in the first place.
@@ -599,7 +646,9 @@ def test_the_fault_log_is_bounded(tmp_path: Path) -> None:
     assert len(generations) <= 3, generations
     total = sum(path.stat().st_size for path in generations)
     assert total <= 512 * 3, f"{total} bytes across {generations}"
-    assert "/repo/cache/target/399" in log_path.read_text(encoding="utf-8"), "newest fault was dropped"
+    assert "/repo/cache/target/399" in log_path.read_text(encoding="utf-8"), (
+        "newest fault was dropped"
+    )
 
 
 def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None:

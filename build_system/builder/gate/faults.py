@@ -7,6 +7,7 @@ of facts, without a disk, a scheduler, or a sixty-minute gate behind them.
 from __future__ import annotations
 
 import hashlib
+import os
 import stat
 import subprocess
 from dataclasses import dataclass
@@ -191,33 +192,59 @@ def facts_of(path: Path) -> Facts:
     )
 
 
-def source_inodes(source_root: Path) -> dict[int, Path]:
-    """Every checked-in file, keyed by inode.
-
-    A hardlink into build output creates a directory entry in `cache/target/` and
-    leaves the source directory untouched, so watching the source tree cannot
-    see it happen: the only trace is that the new file's inode is one of
-    these. `git ls-files` rather than a walk -- it is the authority on what is
-    tracked, it does not descend into build output, and it costs milliseconds.
-    """
+def _source_files(source_root: Path) -> list[Path]:
+    """Source inputs, including new files, without descending into caches."""
     try:
         listing = subprocess.run(
-            ["git", "ls-files", "-z"],
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
             cwd=source_root,
             capture_output=True,
             text=True,
             check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
-        return {}
+        paths = []
+        for directory, names, files in os.walk(source_root):
+            base = Path(directory)
+            names[:] = [name for name in names if name not in BUILD_OUTPUT]
+            paths.extend(base / name for name in files if is_source(base / name, source_root))
+        return paths
+    return [source_root / name for name in listing.split("\0") if name]
 
+
+def source_inodes(source_root: Path) -> dict[int, Path]:
+    """Source inodes expose hardlinks made under otherwise writable output."""
     inodes: dict[int, Path] = {}
-    for name in listing.split("\0"):
-        if not name:
-            continue
-        path = source_root / name
+    for path in _source_files(source_root):
         try:
             inodes[path.stat().st_ino] = path
         except OSError:
             continue
     return inodes
+
+
+def file_stamp(path: Path) -> tuple[int, ...] | None:
+    """Mutation metadata; ctime catches restored bytes, mtimes, and modes."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+        info.st_nlink,
+        info.st_uid,
+        info.st_gid,
+    )
+
+
+def source_stamps(source_root: Path) -> dict[Path, tuple[int, ...]]:
+    return {
+        path: stamp
+        for path in _source_files(source_root)
+        if (stamp := file_stamp(path)) is not None
+    }

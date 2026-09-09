@@ -35,8 +35,10 @@ from .faults import (
     Event,
     Fault,
     facts_of,
+    file_stamp,
     is_source,
     source_inodes,
+    source_stamps,
 )
 from .interception import CURRENT_STEP
 
@@ -88,6 +90,7 @@ class Watch:
         self._digests: dict[str, Path] = {}
         self._reported: set[tuple[Path, str]] = set()
         self._refusal: str | None = None
+        self._source_stamps: dict[Path, tuple[int, ...]] = {}
 
     # -- step attribution ---------------------------------------------------
 
@@ -132,12 +135,13 @@ class Watch:
         from watchdog.observers import Observer
 
         watch = self
+        self._source_stamps = source_stamps(self._source_root)
 
         class _Handler(FileSystemEventHandler):
             def on_any_event(self, event) -> None:
                 if event.is_directory or event.event_type == "opened":
                     return
-                watch.observed(event.event_type, Path(str(event.src_path)))
+                watch.notified(event.event_type, Path(str(event.src_path)))
 
         observer = Observer()
         for root in self._roots:
@@ -162,6 +166,18 @@ class Watch:
         self._observer = None
 
     # -- observation --------------------------------------------------------
+
+    def notified(self, kind: str, path: Path) -> None:
+        """Ignore delayed FSEvents for source unchanged since watch startup.
+
+        Direct intercepted operations still call `observed`: even a write
+        restored before inspection is evidence. Native notifications lack
+        that certainty, so compare metadata including ctime, not just bytes.
+        """
+        baseline = self._source_stamps.get(path)
+        if kind in {"created", "modified"} and baseline is not None and file_stamp(path) == baseline:
+            return
+        self.observed(kind, path)
 
     def observed(self, kind: str, path: Path, *, before: int | None = None) -> None:
         """One change, from either source.
