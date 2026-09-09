@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -91,3 +92,41 @@ def test_release_workflow_selects_owned_macos_resources() -> None:
     assert f"--entitlements {prefix}entitlements.plist" in source
     assert f"bash {prefix}build-pkg.sh" in source
     assert f"bash {prefix}macos-install-user-request.sh write" in source
+
+
+def test_local_package_consumes_the_binaries_cargo_produced(tmp_path: Path) -> None:
+    """Exercise the assembly handoff without compiling or installing a package."""
+    script = tmp_path / "build_system/packaging/macos/build-test-macos-package.sh"
+    script.parent.mkdir(parents=True)
+    script.write_bytes((MACOS / script.name).read_bytes())
+    (tmp_path / "Cargo.toml").write_text('version = "0.0.0"\n')
+    release = tmp_path / "cache/target/cargo/release"
+    (release / "bundle/macos/Capsem.app").mkdir(parents=True)
+    (release / "capsem").write_text("compiled payload\n")
+    content = tmp_path / "content"
+    content.mkdir()
+
+    result = subprocess.run(
+        [
+            "bash", "-c", r'''
+            cargo() { :; }
+            uname() { echo Darwin; }
+            bash() {
+                if [[ "${1##*/}" == build-pkg.sh ]]; then
+                    [[ -d "$4" && -f "$5/capsem" ]] || {
+                        echo "assembly cannot find Cargo's payload in $5" >&2
+                        exit 1
+                    }
+                    echo PACKAGE_INPUTS_FOUND
+                    exit 0
+                fi
+            }
+            source "$1" --assets-dir "$2" --config-root "$2"
+            ''',
+            "package-handoff", str(script), str(content),
+        ],
+        capture_output=True, text=True, check=False, timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PACKAGE_INPUTS_FOUND" in result.stdout

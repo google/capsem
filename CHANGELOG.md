@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Local macOS packages consume executables from Cargo's canonical output
+  directory, fixing package assembly after a successful release build.
 - Focused install verification produces the complete profile asset cohort and
   checks every architecture before spending time on release package builds.
 - Cross-architecture asset prefetch includes each target's certificate-source

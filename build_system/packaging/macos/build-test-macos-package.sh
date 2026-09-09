@@ -72,7 +72,7 @@ bash build_system/scripts/build/check-build-provenance.sh "$ROOT/cache/target/ca
 bash "$SCRIPT_DIR/build-pkg.sh" \
     --manifest "$MANIFEST_URL" \
     "$ROOT/cache/target/cargo/release/bundle/macos/Capsem.app" \
-    "$ROOT/cache/target/release" \
+    "$ROOT/cache/target/cargo/release" \
     "$ASSETS_DIR" \
     "$CONFIG_ROOT" \
     "$VERSION"
