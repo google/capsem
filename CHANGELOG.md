@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS nextest launches close accidentally inherited pipe descriptors before
+  test entry, preserving detection of subprocesses leaked by the tests themselves.
 - macOS Cargo executions use verified signed clones, preserving warm reuse while
   concurrent builds replace their original executables.
 - Focused macOS binary verification builds its runtime executables before signing,

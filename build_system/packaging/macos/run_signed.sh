@@ -6,6 +6,19 @@
 # All runner diagnostics go to a unified build log (never stdout/stderr).
 set -o pipefail
 
+# Rust's macOS pipe() + separate CLOEXEC update can race nextest's parallel
+# spawns. Close foreign inherited descriptors before launching any helpers.
+# This affects only nextest entry, not children created later by a test or
+# descriptors intentionally passed to ordinary cargo run. Bash owns fd 255
+# for this script; stdin/stdout/stderr belong to nextest's capture contract.
+if [[ "${NEXTEST:-}" == "1" ]]; then
+    for descriptor_path in /dev/fd/*; do
+        descriptor=${descriptor_path##*/}
+        case "$descriptor" in 0|1|2|255|*[!0-9]*) continue ;; esac
+        eval "exec ${descriptor}>&-"
+    done
+fi
+
 # Find the workspace root based on the script's owned package location.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"

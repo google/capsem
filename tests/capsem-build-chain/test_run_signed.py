@@ -175,6 +175,24 @@ for path in sys.argv[3:]:
         subprocess.run(invocation, env=env, check=True, capture_output=True)
     assert verifies.read_text() == verified, "hardlinked names must retain independent receipts"
 
+    binary.write_text(
+        '#!/bin/sh\nif [ -e "/dev/fd/$PROBE_FD" ]; then echo inherited; else echo closed; fi\n'
+    )
+    read_fd, write_fd = os.pipe()
+    try:
+        for nextest, expected in (("", b"inherited\n"), ("1", b"closed\n")):
+            inherited = subprocess.run(
+                command,
+                env={**env, "NEXTEST": nextest, "PROBE_FD": str(write_fd)},
+                pass_fds=(write_fd,),
+                capture_output=True,
+                check=True,
+            )
+            assert inherited.stdout == expected
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
 
 def test_run_signed_serializes_codesign_without_flock() -> None:
     script = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "run_signed.sh").read_text()
