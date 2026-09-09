@@ -1945,14 +1945,14 @@ class TestBuildLedger:
     @patch("capsem_builder.image.docker.create_erofs")
     @patch("capsem_builder.image.docker.export_container_fs")
     @patch("capsem_builder.image.docker.docker_build")
-    @patch("capsem_builder.image.docker.cross_compile_agent")
+    @patch("capsem_builder.image.guestbinarycache.materialize")
     @patch("capsem_builder.image.docker.sync_container_clock")
     @patch("capsem_builder.image.docker.detect_runtime")
     def test_rootfs_build_records_export_erofs_and_versions(
         self,
         mock_runtime,
         _mock_sync,
-        mock_cross_compile,
+        mock_guest_binaries,
         _mock_docker_build,
         mock_export,
         mock_create_erofs,
@@ -1965,7 +1965,7 @@ class TestBuildLedger:
     ):
         mock_runtime.return_value = "docker"
 
-        def fake_cross_compile(_build, _arch_name, _repo_root, context_dir):
+        def fake_guest_binaries(_build, _arch_name, _repo_root, context_dir, _names, _compiler):
             copied = []
             for binary in GUEST_BINARIES:
                 path = context_dir / binary
@@ -2011,7 +2011,7 @@ class TestBuildLedger:
             )
             return path
 
-        mock_cross_compile.side_effect = fake_cross_compile
+        mock_guest_binaries.side_effect = fake_guest_binaries
         mock_export.side_effect = fake_export
         mock_create_erofs.side_effect = fake_erofs
         mock_generate_obom.side_effect = fake_obom

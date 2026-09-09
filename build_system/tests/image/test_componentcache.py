@@ -21,10 +21,12 @@ from capsem_builder.image.componentcache import (
 )
 from capsem_builder.image.config import load_guest_config
 from capsem_builder.image.guestbinarycache import current as guest_current
+from capsem_builder.image.guestbinarycache import identity as guest_identity
 from capsem_builder.image.guestbinarycache import materialize
 from capsem_builder.image.models import BuildConfig
 
 ROOT = Path(__file__).resolve().parents[3]
+ELF_HEADER = b"\x7fELF\x02\x01\x01" + bytes(57)
 
 
 def test_guest_binary_identity_names_only_its_output_inputs() -> None:
@@ -48,9 +50,13 @@ def test_guest_binary_identity_names_only_its_output_inputs() -> None:
 def repository(tmp_path: Path) -> Path:
     config = tmp_path / "config"
     config.mkdir()
-    policy = (ROOT / "config/cache.toml").read_text(encoding="utf-8").replace(
-        'authority_environment = "CAPSEM_CACHE_AUTHORITY"',
-        'authority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"',
+    policy = (
+        (ROOT / "config/cache.toml")
+        .read_text(encoding="utf-8")
+        .replace(
+            'authority_environment = "CAPSEM_CACHE_AUTHORITY"',
+            'authority_environment = "CAPSEM_TEST_CACHE_AUTHORITY"',
+        )
     )
     config.joinpath("cache.toml").write_text(policy, encoding="utf-8")
     return tmp_path
@@ -119,6 +125,29 @@ def test_changed_component_input_is_a_clean_miss(tmp_path: Path) -> None:
     repo = repository(tmp_path)
 
     assert restore(repo, "rootfs", input_digest({"source": "new"}), tmp_path / "out") is None
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_outputs_outside_cache_authority_cannot_publish_receipts(tmp_path, linked):
+    repo = repository(tmp_path)
+    outside = repo / "fixture-output"
+    outside.mkdir()
+    (outside / "agent").write_bytes(b"mock binary")
+    output = outside
+    if linked:
+        output = repo / "cache/target/escape"
+        output.parent.mkdir(parents=True)
+        output.symlink_to(outside, target_is_directory=True)
+    generation = input_digest({"source": "actual source, mocked compiler"})
+
+    store(repo, "guest-binaries", generation, output, ("agent",))
+
+    assert not (repo / "cache/objects").exists(), (
+        "A mocked producer using real repository inputs must not publish its "
+        "temporary outputs into the shared component cache. Publication needs "
+        "the same resolved output containment check as restore/current."
+    )
+    assert restore(repo, "guest-binaries", generation, repo / "cache/target/real") is None
 
 
 def test_component_receipt_recognizes_only_exact_current_outputs(tmp_path: Path) -> None:
@@ -222,7 +251,7 @@ def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
         output.mkdir(parents=True, exist_ok=True)
         binaries = tuple(output / name for name in names)
         for binary in binaries:
-            binary.write_bytes(binary.name.encode())
+            binary.write_bytes(ELF_HEADER + binary.name.encode())
             binary.chmod(0o555)
         return list(binaries)
 
@@ -253,3 +282,55 @@ def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
     assert calls == 1
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
     assert all(path.stat().st_mode & 0o777 == 0o555 for path in second)
+
+
+@pytest.mark.parametrize(
+    "payload,mode",
+    [
+        (b"mock binary", 0o555),
+        (b"\x7fELF\x02\x01\x01", 0o555),
+        (ELF_HEADER, 0o444),
+    ],
+)
+@pytest.mark.parametrize("cached", [False, True])
+def test_guest_cache_rejects_non_executable_or_invalid_elf(tmp_path, payload, mode, cached):
+    repo = repository(tmp_path)
+    (repo / "guest-input").write_text("source")
+    build = cast(
+        BuildConfig,
+        SimpleNamespace(
+            guest_rust_builder=SimpleNamespace(source_roots=("guest-input",)),
+        ),
+    )
+    output = repo / "cache/target/guest"
+    output.mkdir(parents=True)
+    binary = output / "agent"
+    names = (binary.name,)
+    calls = 0
+
+    def compile_binaries(_build, _arch, _repo, _output):
+        nonlocal calls
+        calls += 1
+        binary.unlink(missing_ok=True)
+        binary.write_bytes(ELF_HEADER if cached else payload)
+        binary.chmod(0o555 if cached else mode)
+        return [binary]
+
+    with patch(
+        "capsem_builder.image.guestbinarycache.guestbuilder.image_tag", return_value="sealed:one"
+    ):
+        generation = guest_identity(build, "arm64", repo, names)
+        if cached:
+            binary.write_bytes(payload)
+            binary.chmod(mode)
+            store(repo, "guest-binaries", generation, output, names)
+            assert not guest_current(build, "arm64", repo, output, names)
+            materialize(build, "arm64", repo, output, names, compile_binaries)
+            assert calls == 1
+            assert guest_current(build, "arm64", repo, output, names)
+            materialize(build, "arm64", repo, output, names, compile_binaries)
+            assert calls == 1, "The repaired generation must be reused"
+        else:
+            with pytest.raises(ValueError, match="ELF"):
+                materialize(build, "arm64", repo, output, names, compile_binaries)
+            assert not (repo / "cache/objects").exists()

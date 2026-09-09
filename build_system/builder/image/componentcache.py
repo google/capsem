@@ -187,9 +187,11 @@ def store(
     identity: str,
     output: Path,
     relatives: tuple[str, ...],
-) -> ComponentReceipt:
+) -> ComponentReceipt | None:
     """Publish a complete component receipt after importing every output."""
     paths = _paths(repository)
+    if not output.resolve().is_relative_to(paths.root.resolve()):
+        return None
     files = {relative: import_file(paths, output / relative) for relative in relatives}
     receipt = ComponentReceipt(
         schema_id=SCHEMA, component=component, input_digest=identity, files=files

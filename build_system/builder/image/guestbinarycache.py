@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import stat
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -39,6 +41,23 @@ def _ordered(paths: Sequence[Path], names: tuple[str, ...]) -> tuple[Path, ...]:
     return tuple(by_name[name] for name in names)
 
 
+def _executable_elf(paths: Sequence[Path]) -> bool:
+    """Reject placeholder files before trusting or publishing guest outputs."""
+    for path in paths:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o555
+            or metadata.st_size < 64
+        ):
+            return False
+        with path.open("rb") as stream:
+            # Both supported guests use 64-bit, little-endian ELF version 1.
+            if stream.read(7) != b"\x7fELF\x02\x01\x01":
+                return False
+    return True
+
+
 def current(
     build: BuildConfig,
     arch_name: str,
@@ -49,7 +68,7 @@ def current(
     """Whether staging exactly matches the current content-addressed generation."""
     generation = identity(build, arch_name, repository, binary_names)
     found = componentcache.current(repository, "guest-binaries", generation, output)
-    return found is not None and bool(_ordered(found, binary_names))
+    return found is not None and _executable_elf(_ordered(found, binary_names))
 
 
 def materialize(
@@ -64,8 +83,15 @@ def materialize(
     generation = identity(build, arch_name, repository, binary_names)
     restored = componentcache.restore(repository, "guest-binaries", generation, output)
     if restored is not None:
-        return _ordered(restored, binary_names)
+        ordered = _ordered(restored, binary_names)
+        if _executable_elf(ordered):
+            return ordered
+        logging.getLogger(__name__).warning(
+            "Rebuilding invalid cached guest ELF generation %s", generation
+        )
 
     compiled = _ordered(compiler(build, arch_name, repository, output), binary_names)
+    if not _executable_elf(compiled):
+        raise ValueError("guest binary producer must return nonempty ELF64 files with mode 555")
     componentcache.store(repository, "guest-binaries", generation, output, binary_names)
     return compiled
