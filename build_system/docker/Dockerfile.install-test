@@ -16,9 +16,7 @@ RUN --mount=type=cache,id=capsem-install-source-cargo-${TARGETARCH},target=/tmp/
         /tmp/capsem-install-current
 
 FROM ${BASE}
-ARG INPUT_IDENTITY
 ARG FRESH_CLI
-LABEL org.capsem.install-image.input-key=${INPUT_IDENTITY}
 
 # The helper owns the systemd harness, exact OS cohort, Python environment and
 # pnpm store. This layer owns only the source revision being qualified.
@@ -45,3 +43,7 @@ COPY --from=source-cli --chmod=0555 \
 RUN test -x "${UV_PROJECT_ENVIRONMENT}/bin/python" \
     && test -x "${FRESH_CLI}" \
     && test -x /src/build_system/release_site/node_modules/.bin/astro
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.install-image.input-key=${INPUT_IDENTITY}

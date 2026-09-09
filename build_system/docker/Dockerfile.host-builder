@@ -32,13 +32,6 @@ FROM ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e8
 
 ARG APT_SNAPSHOT_BASE
 ARG APT_SNAPSHOT_ID
-ARG PNPM_VERSION
-ARG RUST_TOOLCHAIN
-ARG RUST_TARGETS
-ARG TAURI_CLI_VERSION
-ARG CARGO_NEXTEST_VERSION
-ARG CARGO_LLVM_COV_VERSION
-ARG INPUT_IDENTITY
 ARG WORKSPACE_APT_PACKAGES
 ARG WORKSPACE_CROSS_APT_PACKAGES
 
@@ -79,6 +72,7 @@ RUN test -n "$WORKSPACE_APT_PACKAGES" \
 # tree intact preserves npm/npx's relative symlink targets while avoiding a
 # NodeSource setup script that performs another full multiarch apt refresh.
 COPY --from=node-runtime /usr/local/ /usr/local/
+ARG PNPM_VERSION
 RUN test -n "$PNPM_VERSION" && npm install -g "pnpm@${PNPM_VERSION}"
 
 # ---- Rust toolchain (kept identical to rust-toolchain.toml and CI) ----
@@ -88,6 +82,8 @@ ENV PATH="/usr/local/cargo/bin:$PATH"
 
 COPY --from=rust-toolchain /usr/local/rustup/ /usr/local/rustup/
 COPY --from=rust-toolchain /usr/local/cargo/ /usr/local/cargo/
+ARG RUST_TOOLCHAIN
+ARG RUST_TARGETS
 RUN rustc_version="$(rustc --version)" \
     && case "$rustc_version" in "rustc ${RUST_TOOLCHAIN} "*) ;; *) exit 1 ;; esac \
     && test -n "$RUST_TARGETS" \
@@ -106,16 +102,17 @@ RUN rustc_version="$(rustc --version)" \
 # and the Cargo tools. The image carried all of it and every container saw the
 # volume instead.
 
+ARG TAURI_CLI_VERSION
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked && exit 0; sleep $((attempt * 5)); done; exit 1
+ARG CARGO_NEXTEST_VERSION
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --version "${CARGO_NEXTEST_VERSION}" --locked && exit 0; sleep $((attempt * 5)); done; exit 1
+ARG CARGO_LLVM_COV_VERSION
 RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" --locked && { installed=1; break; }; sleep $((attempt * 5)); done; \
     [ "$installed" = 1 ] && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
 
 # ---- Exact uv binary (for capsem-builder scripts) ----
 COPY --from=uv-runtime /uv /uvx /usr/local/bin/
 RUN uv --version
-
-LABEL org.capsem.host-builder.input-key="${INPUT_IDENTITY}"
 
 # ---- Helper script to swap -dev libs for cross-compilation ----
 # Keep this after the expensive stable toolchain layers so edits to the swap
@@ -158,3 +155,7 @@ RUN mkdir -p /usr/local/cargo && printf '%s\n' \
 RUN git config --system --add safe.directory /src
 
 WORKDIR /src
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.host-builder.input-key="${INPUT_IDENTITY}"

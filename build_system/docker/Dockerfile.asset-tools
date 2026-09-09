@@ -16,9 +16,6 @@ ARG CDXGEN_URL
 ARG CDXGEN_SHA256
 ARG CDX_VALIDATE_URL
 ARG CDX_VALIDATE_SHA256
-ARG INPUT_IDENTITY
-
-LABEL org.capsem.asset-tools.input-key="${INPUT_IDENTITY}"
 
 # This is the sole network-open asset post-processing materializer. APT's
 # signed metadata and every downloaded executable are selected by checked-in
@@ -57,3 +54,7 @@ RUN set -eux; \
     mkfs.erofs --help > /dev/null 2>&1; \
     cdxgen --version; \
     cdx-validate --version
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.asset-tools.input-key="${INPUT_IDENTITY}"

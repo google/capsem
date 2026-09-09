@@ -6,9 +6,6 @@ ARG TRUSTSTORE_IMAGE
 FROM ${TRUSTSTORE_IMAGE} AS truststore
 FROM ${BASE}
 
-ARG INPUT_IDENTITY
-LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
-
 COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 RUN set -eux; \
@@ -107,3 +104,7 @@ RUN uv pip install --system --break-system-packages --require-hashes \
 
 RUN rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* && \
     rm -rf /root && mkdir -p /root
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"

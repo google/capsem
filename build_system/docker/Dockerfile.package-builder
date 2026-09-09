@@ -56,9 +56,6 @@ ARG PNPM_STORE
 ARG APT_LISTS_CACHE_ID
 ARG APT_ARCHIVES_CACHE_ID
 ARG ORT_LIB_LOCATION
-ARG INPUT_IDENTITY
-
-LABEL org.capsem.package-builder.input-key=${INPUT_IDENTITY}
 
 COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs
 
@@ -90,3 +87,7 @@ ENV CARGO_HOME=${CARGO_STORE}
 ENV CAPSEM_PNPM_STORE=${PNPM_STORE}
 ENV ORT_STRATEGY=system
 ENV ORT_LIB_LOCATION=${ORT_LIB_LOCATION}
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.package-builder.input-key=${INPUT_IDENTITY}

@@ -36,9 +36,6 @@ ARG CARGO_STORE
 ARG PNPM_STORE
 ARG APT_LISTS_CACHE_ID
 ARG APT_ARCHIVES_CACHE_ID
-ARG INPUT_IDENTITY
-
-LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
 
 COPY --chmod=555 build_system/scripts/build/configure-apt-snapshot.sh /usr/local/bin/configure-apt-snapshot
 COPY --chmod=555 build_system/docker/materialize-install-os.sh /usr/local/bin/materialize-install-os
@@ -89,3 +86,7 @@ ENV RUSTUP_AUTO_INSTALL=0
 ENV CARGO_NET_OFFLINE=true
 ENV CARGO_HOME=${CARGO_STORE}
 ENV CAPSEM_INSTALL_PNPM_STORE=${PNPM_STORE}
+
+# Metadata must not enter the environment of expensive RUN layers.
+ARG INPUT_IDENTITY
+LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
