@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import importlib.util
 import json
@@ -177,26 +176,14 @@ def _issued(command: str, args: tuple) -> str:
     return gate_issued(command, args)
 
 
-#: `test:` is the whole local diagnostic, and running its plan against a
-#: recording runner
-#: stops at the first step that needs a real machine. So the text for it is the
-#: union of what each phase issues, gathered by running each module command --
-#: which is the same work, reached without one failure hiding the rest.
-def _whole_gate() -> tuple[tuple[str, dict], ...]:
-    import sys as _sys
-
-    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-    from helpers.gate import WHOLE_GATE
-
-    return WHOLE_GATE
-
-
-@functools.cache
 def _dispatched_text(name: str) -> str:
     if name in {"test:", "_test-candidate:"}:
-        return "\n".join(
-            _issued(command, tuple(sorted(args.items()))) for command, args in _whole_gate()
-        )
+        # The shared owner walks every module inside one expendable checkout
+        # and caches the text by qualification mode. Per-module copies and a
+        # second alias cache cost minutes and hide changes in qualification.
+        from helpers.gate import gate_issues
+
+        return gate_issues()
     command, args = _DISPATCHED[name]
     return _issued(command, tuple(sorted(args.items())))
 
@@ -344,6 +331,46 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
     marker = f"struct {struct_name}"
     assert marker in source
     return source[: source.index(marker)]
+
+
+def test_whole_gate_aliases_share_one_inspection_per_qualification(tmp_path, monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    from helpers import gate
+
+    copies = []
+    issued = []
+    mode = {"value": "local"}
+
+    @contextmanager
+    def inspection(_source):
+        copies.append(mode["value"])
+        yield tmp_path
+
+    def record(_root, name, args):
+        issued.append((name, args))
+        return f"{mode['value']}/{name}/{dict(args).get('arch', '')}"
+
+    monkeypatch.setattr(gate, "_inspection_checkout", inspection)
+    monkeypatch.setattr(gate, "_gate_issued_from", record)
+    monkeypatch.setattr(
+        "capsem_builder.gate.qualification.from_environment",
+        lambda _config: SimpleNamespace(mode=mode["value"]),
+    )
+    gate._issues.cache_clear()
+    try:
+        original = _dispatched_text("test:")
+        assert _dispatched_text("_test-candidate:") == original
+        assert copies == ["local"], "whole-gate aliases must reuse their isolated source reader"
+        assert issued == [(name, tuple(sorted(args.items()))) for name, args in gate.WHOLE_GATE]
+        assert "cross-compile/arm64" in original and "cross-compile/x86_64" in original
+        assert "test-glowup" in original
+
+        mode["value"] = "release"
+        assert _dispatched_text("test:") != original
+        assert copies == ["local", "release"], "qualification changes must invalidate inspection"
+    finally:
+        gate._issues.cache_clear()
 
 
 def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
