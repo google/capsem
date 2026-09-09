@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
 import pytest
 import variables
 from capsem_builder.gate import cli, focus, module_contracts
-from capsem_builder.gate.qualification import LocalQualification
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.module_glowup import glowup
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.qualification import BinaryQualification, LocalQualification
 from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -77,28 +84,70 @@ def test_rust_focus_uses_the_configured_affected_selector() -> None:
     assert "capsem-gate" not in rendered
 
 
-def test_install_focus_materializes_the_standalone_content_pair(monkeypatch) -> None:
-    """A focused glow-up must not inherit a prior Ironbank workspace."""
-    from capsem_builder.gate.content import ProfileContent
+def test_install_focus_produces_the_complete_cohort_before_packaging(monkeypatch) -> None:
+    """A native recovery manifest cost an ARM package build before x86 failed."""
+    selected: list[ProfileContent] = []
+    original = ProfileContent.built_profile.__func__
 
-    selected: list[Path] = []
-    original = ProfileContent.standalone.__func__
-
-    def observed(cls, config):
-        content = original(cls, config)
-        selected.append(content.root)
+    def observed(cls, config, profile):
+        content = original(cls, config, profile)
+        selected.append(content)
         return content
 
-    monkeypatch.setattr(ProfileContent, "standalone", classmethod(observed))
+    monkeypatch.setattr(ProfileContent, "built_profile", classmethod(observed))
     plan = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("install"),
         qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     ).plan()
 
-    assert selected == [ROOT]
-    assert "materialize-config" in plan.labels
-    assert plan.labels.index("materialize-config") < plan.labels.index("package.arm64.content")
+    config = gate_config.load(ROOT)
+    expected = original(ProfileContent, config, config.suites.pytest.base_profile)
+    assert selected == [expected]
+    assert plan.after_of("glowup.content") == {"artifacts.build-chain"}
+    assert str(expected.root) in "\n".join(plan.step_named("glowup.content").render())
+    waves = [{step.label for step in wave} for wave in plan.order()]
+    for arch in config.architectures:
+        before = next(i for i, wave in enumerate(waves) if "glowup.content" in wave)
+        build = next(i for i, wave in enumerate(waves) if f"package.{arch}.build" in wave)
+        assert before < build
+        assert f"assets.build.{arch}" in plan.labels
+
+
+def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: Path) -> None:
+    config = gate_config.load(ROOT)
+    content = ProfileContent.isolated(config, tmp_path)
+    content.assets.mkdir(parents=True)
+    manifest = {"assets": {"current": "test", "releases": {"test": {"arches": {}}}}}
+    manifest["assets"]["releases"]["test"]["arches"][config.host_arch().name] = {}
+    payload = json.dumps(manifest)
+    (content.assets / config.install.manifest_name).write_text(payload)
+    paired = content.config_manifest(config)
+    paired.parent.mkdir(parents=True)
+    paired.write_text(payload)
+    # Supply the native files so the missing foreign declaration is decisive.
+    native = content.assets / config.host_arch().name
+    native.mkdir()
+    for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
+        (native / name).write_bytes(b"fixture")
+    plan = Plan("glowup-early-content")
+    glowup(plan, config, qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+           local_content=content)
+    runner = RecordingRunner(ROOT)
+    with pytest.raises(GateError, match="manifest does not declare"):
+        for action in plan.step_named("glowup.content").actions:
+            action.perform(Context(runner, config))
+    assert not runner.commands
+
+
+def test_pulled_glowup_does_not_rebuild_source_assets() -> None:
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT), _args("install"),
+        qualification=BinaryQualification(
+            input_dir="pulled", package="pulled/capsem.deb", bin_dir="pulled/bin",
+        ),
+    )
+    assert not any(label.startswith("assets.build.") for label in command.plan().labels)
 
 
 def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> None:

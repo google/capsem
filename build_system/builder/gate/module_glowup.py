@@ -12,6 +12,7 @@ from . import (
     hostpackage,
     install,
     installplan,
+    module_artifacts,
     platformproof,
     runtimeprepare,
 )
@@ -44,10 +45,21 @@ class GlowupModule(
     """
 
     uses_qualification = True
+    outside_egress = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        glowup(plan, self._config, qualification=self.qualification)
+        if self.qualification.pulled:
+            glowup(plan, self._config, qualification=self.qualification)
+        else:
+            built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification)
+            glowup(
+                plan, self._config, qualification=self.qualification, after=(built,),
+                local_content=ProfileContent.built_profile(
+                    self._config, self._config.suites.pytest.base_profile,
+                ),
+                materialized=built,
+            )
         return plan
 
 
@@ -77,6 +89,26 @@ def glowup(
     )
 
 
+def _content_step(config: GateConfig, content: ProfileContent, *, arches: tuple | None = None) -> Step:
+    """Validate the complete paired cohort before spending time packaging it."""
+    targets = tuple(config.architectures.values()) if arches is None else arches
+    return step(
+        "content",
+        Call(
+            f"verify paired content {content.root} for {', '.join(arch.name for arch in targets)}",
+            lambda _context: content.require_complete(config, arches=targets),
+            justification=CallJustification(
+                kind=OpaqueKind.PURE_INSPECTION,
+                reason="glow-up consumes one inseparable assets/config cohort",
+                effects=machine_effects(),
+            ),
+        ),
+        kind=Kind.STATIC_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.FAST,
+    )
+
+
 # -- the release lane ------------------------------------------------------
 
 
@@ -102,24 +134,7 @@ def pulled_package(
     """
     glowup_dir = work_dir or config.modules.glowup_work_dir
     verified = phase.add(
-        step(
-            "content",
-            Call(
-                "verify one paired manifest-selected content bundle",
-                lambda _context: content.require_complete(
-                    config,
-                    arches=(config.host_arch(),),
-                ),
-                justification=CallJustification(
-                    kind=OpaqueKind.PURE_INSPECTION,
-                    reason="release glow-up consumes one inseparable assets/config cohort",
-                    effects=machine_effects(),
-                ),
-            ),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
+        _content_step(config, content, arches=(config.host_arch(),)),
         after=after,
     )
     # Before the install proof, not after it. That proof runs on ubuntu:24.04,
@@ -156,15 +171,6 @@ def _glowup_step(
     pairing: dict[str, str] | None = None,
 ) -> Step:
     """The same script the local install proof runs, with the same arguments.
-
-    All three of `--evidence-dir`, `--profile-revision-policy` and the source
-    commit were missing here, and every one of them is `required=True`. This
-    step could therefore never have got past `argparse` -- a release lane whose
-    last two steps were an instant usage error, in the only phase no local run
-    reaches. `installproof.prove_glowup` has passed them all along, which is
-    what makes the omission invisible: the script is exercised constantly, just
-    never through this call site. The rehearsal in `module_rehearsal` exists so
-    that stops being true.
 
     The evidence directory is outside `work_dir` on purpose: the script writes
     its first evidence file and only then clears the work directory, so an
@@ -231,7 +237,8 @@ def _build_and_prove(
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
     materialized = materialized or plan.shared(runtimeprepare.materialize_config_step(config))
-    previous: tuple = (materialized, *after)
+    verified = phase.add(_content_step(config, content), after=(materialized, *after))
+    previous: tuple = (verified,)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader

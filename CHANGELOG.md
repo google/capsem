@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Focused install verification produces the complete profile asset cohort and
+  checks every architecture before spending time on release package builds.
 - Cross-architecture asset prefetch includes each target's certificate-source
   image, preventing sealed builds from unexpectedly contacting the registry.
 - macOS nextest launches close accidentally inherited pipe descriptors before
