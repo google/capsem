@@ -220,7 +220,11 @@ def test_warm_prefetch_uses_the_input_keyed_helper_without_registry_egress() -> 
     assert not runner.matching(r"docker build")
 
 
-def test_prefetch_pulls_rust_bases_only_for_helper_consumers() -> None:
+@pytest.mark.parametrize("machine", ("arm64", "x86_64"))
+def test_asset_prefetch_includes_target_truststores_even_when_compilers_are_crossed(
+    monkeypatch: pytest.MonkeyPatch, machine: str,
+) -> None:
+    monkeypatch.setattr(guestbuilder.platform, "machine", lambda: machine)
     config = gate_config.load(PROJECT_ROOT)
     runner = RecordingRunner(PROJECT_ROOT, failures=("docker image inspect",))
 
@@ -237,9 +241,20 @@ def test_prefetch_pulls_rust_bases_only_for_helper_consumers() -> None:
     assert runner.ran(rf"docker pull --platform {arm.docker_platform} {arm.base_image}")
     assert runner.ran(rf"docker pull --platform {x86.docker_platform} {x86.base_image}")
 
-    # The Rust builder base is the host's, because a foreign target is crossed
-    # rather than emulated. Only the requested consumer's helper base is
-    # pulled, and no architecture outside `rust_names` drags one in.
+    # Kernel/rootfs Dockerfiles copy certificates from the target's exact
+    # Rust child, independently of the host-native compiler helper. Omitting
+    # that child made a sealed macOS build try Docker Hub after 32 minutes.
+    for arch in (arm, x86):
+        assert runner.ran(
+            rf"docker pull --platform {arch.docker_platform} {arch.rust_builder_base_image}"
+        )
+
+
+def test_compiler_only_prefetch_does_not_pull_foreign_truststores() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    runner = RecordingRunner(PROJECT_ROOT, failures=("docker image inspect",))
+    imagebases.prefetch(runner, config, names=(), rust_names=("arm64", "x86_64"))
+
     resolved = guestbuilder.environment(BUILD, "arm64")
     assert runner.ran(rf"docker pull --platform {resolved.docker_platform} {resolved.base_image}")
     unused = {arch.rust_builder_base_image for arch in BUILD.architectures.values()} - {
@@ -247,6 +262,15 @@ def test_prefetch_pulls_rust_bases_only_for_helper_consumers() -> None:
     }
     for reference in unused:
         assert not runner.ran(rf"docker pull .*{reference}")
+
+
+def test_warm_asset_prefetch_reuses_both_target_truststores() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    runner = RecordingRunner(PROJECT_ROOT)
+
+    imagebases.prefetch(runner, config, names=("arm64", "x86_64"))
+
+    assert not runner.matching(r"docker pull")
 
 
 def test_materialization_fails_closed_without_its_exact_rust_base() -> None:

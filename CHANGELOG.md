@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cross-architecture asset prefetch includes each target's certificate-source
+  image, preventing sealed builds from unexpectedly contacting the registry.
 - macOS nextest launches close accidentally inherited pipe descriptors before
   test entry, preserving detection of subprocesses leaked by the tests themselves.
 - macOS Cargo executions use verified signed clones, preserving warm reuse while

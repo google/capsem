@@ -74,10 +74,16 @@ def prefetch(
     if asset_tools and config.host_arch().name not in base_names:
         base_names.append(config.host_arch().name)
     for name, arch in selected(config, base_names):
-        if docker.image_exists(arch.base_image, platform=arch.docker_platform):
-            runner.note(f"exact {name} guest base is already present: {arch.base_image}")
-        else:
-            docker.pull(arch.base_image, platform=arch.docker_platform)
+        # Asset Dockerfiles copy CA certificates from the target's Rust child.
+        # Cross-compiling with the host's child does not materialize that input.
+        for subject, reference in (
+            ("guest base", arch.base_image),
+            ("asset truststore", arch.rust_builder_base_image),
+        ):
+            if docker.image_exists(reference, platform=arch.docker_platform):
+                runner.note(f"exact {name} {subject} is already present: {reference}")
+            else:
+                docker.pull(reference, platform=arch.docker_platform)
 
     # The Rust builder base is the *host* platform's exact child even for a
     # foreign target, because a foreign target is cross-compiled rather than
@@ -192,7 +198,7 @@ class Prefetch(Action, name="guest-base-prefetch"):
         rust_names = self._names if self._rust_names is None else self._rust_names
         rust_scope = "all architectures" if rust_names is None else ", ".join(rust_names) or "none"
         return (
-            f"materialize exact guest base images ({scope}); "
+            f"materialize exact guest base images ({scope}) and target truststores; "
             f"Rust builder bases ({rust_scope}); "
             f"asset tools ({'host' if self._asset_tools else 'none'})"
         )

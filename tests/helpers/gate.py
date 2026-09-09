@@ -97,7 +97,7 @@ def _recorded_image_platform(root: Path, reference: str) -> str:
         build = None
     if build is not None:
         for name, arch in build.architectures.items():
-            if reference == arch.base_image:
+            if reference in (arch.base_image, arch.rust_builder_base_image):
                 return arch.docker_platform
             resolved = guestbuilder.environment(build, name)
             if reference == resolved.base_image:
