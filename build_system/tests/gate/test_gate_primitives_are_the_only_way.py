@@ -250,10 +250,10 @@ def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
     `assetlanes` hand-rolled its own pool, because the plan could express only
     "one holder" and its two lanes must overlap. A claim carries a mode now,
     so they are two steps holding the daemon shared -- and this guard has no
-    exceptions left beyond the scheduler itself.
+    exceptions beyond the scheduler and the run's filesystem observation.
     """
     if module.name in set(BOUNDARY.direct_concurrency):
-        pytest.skip("the scheduler itself")
+        pytest.skip("the scheduler or the run-owned filesystem observer")
 
     found = _schedulers(module)
 
@@ -267,10 +267,11 @@ def test_the_plan_is_the_only_scheduler() -> None:
     """Widening this is a design decision. The graph decides what overlaps.
 
     `planrunner`, not `plan`: the scheduler was split out when `plan` outgrew
-    the module ceiling. One module still, and still the only one -- the graph
-    decides what may overlap, and executing that decision is its own job.
+    the module ceiling. The metadata survey observes the entire run and is
+    stopped/joined by Watch; it cannot be a step inside the plan it monitors.
+    It performs no build work, whose concurrency remains graph-owned.
     """
-    assert set(BOUNDARY.direct_concurrency) == {"planrunner.py"}
+    assert set(BOUNDARY.direct_concurrency) == {"planrunner.py", "metadatasurvey.py"}
 
 
 def test_a_mutex_is_not_mistaken_for_a_scheduler(tmp_path: Path) -> None:

@@ -1031,7 +1031,9 @@ direct_machine_access = [
 # thread pool has parallelism the graph cannot see -- and therefore parallelism
 # the exclusives cannot constrain, which is exactly what seven bare `&` in one
 # recipe body were.
-direct_concurrency = ["planrunner.py"]
+# The metadata survey is part of filesystem observation, lives across the
+# entire plan, and is stopped/joined by Watch. It never executes build work.
+direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 
 # A script added today must stay at or below this ceiling. Historical larger
 # scripts are exact line-count ratchets below: they may not grow, and any
@@ -1948,6 +1950,7 @@ building = ["frontend-build", "docs", "site"]
 # neither.
 source_contract = [
     "build_system/tests/gate/test_gate_observation.py",
+    "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
     "build_system/tests/gate/test_gate_initrd.py",
     "build_system/tests/gate/test_gate_plan_purity.py",
@@ -2712,6 +2715,9 @@ summary = "summary.txt"
 # staged release channel, because a hardlink *to* checked-in source lands in
 # build output and leaves the source directory untouched.
 observed_roots = ["config", "crates", "scripts", "guest", "src", "cache/target/tests/web-parity"]
+# Bound native registration and teardown; a live Python thread is not a ready watch.
+observer_timeout_seconds = 5.0
+observer_survey_seconds = 1.0
 # Trees inside those roots where two files holding identical bytes is somebody
 # else's decision. Exact and short on purpose: the duplicate-content rule earns
 # its place everywhere else -- it caught a package lane copying a hardlinked

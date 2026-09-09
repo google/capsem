@@ -42,22 +42,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FD_PATH_TEMPLATE = gate_config.load(PROJECT_ROOT).runlog.fd_path_template
 
 
-def _settle(watch: Watch, count: int, timeout: float = 5.0) -> None:
-    """Wait for delivery rather than guessing with a sleep.
-
-    FSEvents coalesces on its own schedule; a fixed sleep is either slow or
-    flaky, and a test written because of a race may not introduce one.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and len(watch.events) < count:
-        time.sleep(0.02)
-
-
 def _until(predicate, timeout: float = 5.0) -> None:
     """Wait for the thing being asserted, not for a proxy of it.
 
-    `_settle` waits on `watch.events`, and for an assertion about *faults* that
-    is the wrong quantity by one line of `Watch.observed`: the event is
+    Waiting on `watch.events` for an assertion about *faults* watches
+    the wrong quantity by one line of `Watch.observed`: the event is
     appended and only then judged, both on the watchdog thread. A test polling
     the event count can therefore win the race into the gap between the two
     and assert on faults that are microseconds from existing.
@@ -190,11 +179,13 @@ def test_a_transient_mode_change_is_seen_even_though_it_reverts(tmp_path: Path) 
 
     with _watch(tmp_path) as watch:
         watch.entered("suite")
-        _settle(watch, 1)
-        target.chmod(0o000)
-        _settle(watch, 2)
-        target.chmod(before)
-        _settle(watch, 3)
+        try:
+            target.chmod(0o000)
+            _until(lambda: any(f.reason == "source-tree" for f in watch.faults))
+            assert watch.faults, "the source mutation was not delivered while active"
+        finally:
+            target.chmod(before)
+        _until(lambda: any(e.path == target and e.mode == before for e in watch.events))
         watch.left("suite")
 
     assert target.stat().st_mode & 0o777 == before, "the test must leave no trace"
@@ -257,7 +248,7 @@ def test_a_hardlink_into_build_output_is_named_where_it_lands(tmp_path: Path) ->
     ) as watch:
         watch.entered("contracts.release")
         os.link(seed, staged)
-        _settle(watch, 1)
+        _until(lambda: any(f.reason == "hardlinked-source" for f in live))
         watch.left("contracts.release")
 
     hardlink = [fault for fault in watch.faults if fault.reason == "hardlinked-source"]

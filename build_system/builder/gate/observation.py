@@ -41,6 +41,8 @@ from .faults import (
     source_stamps,
 )
 from .interception import CURRENT_STEP
+from .metadatasurvey import MetadataSurvey
+from .nativeobserver import file_handler, ready_observer
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from watchdog.observers.api import BaseObserver
@@ -70,8 +72,12 @@ class Watch:
         on_fault: Callable[[Fault], None] | None = None,
         duplicate_content_exempt: Iterable[str] = (),
         source_replica_roots: Iterable[str] = (),
+        observer_timeout: float = 5.0,
+        survey_interval: float = 1.0,
     ) -> None:
         self._roots = [root for root in roots if root.exists()]
+        self._observer_timeout = observer_timeout
+        self._survey_interval = survey_interval
         self._source_root = source_root.resolve()
         self._source_inodes = source_inodes(self._source_root)
         self._declared = dict(declared or {})
@@ -83,9 +89,11 @@ class Watch:
 
         self._live: set[str] = set()
         self._lock = threading.Lock()
+        self._judging = threading.RLock()
         self._refusal_ready = threading.Condition(self._lock)
         self._refusals_recording = 0
         self._observer: BaseObserver | None = None
+        self._metadata_survey: MetadataSurvey | None = None
         self._modes: dict[Path, list[int]] = {}
         self._digests: dict[str, Path] = {}
         self._reported: set[tuple[Path, str]] = set()
@@ -131,23 +139,22 @@ class Watch:
     # -- lifecycle ----------------------------------------------------------
 
     def __enter__(self) -> Watch:
-        from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
 
-        watch = self
         self._source_stamps = source_stamps(self._source_root)
-
-        class _Handler(FileSystemEventHandler):
-            def on_any_event(self, event) -> None:
-                if event.is_directory or event.event_type == "opened":
-                    return
-                watch.notified(event.event_type, Path(str(event.src_path)))
-
-        observer = Observer()
+        self._metadata_survey = MetadataSurvey(
+            self._roots, self.notified, self.refuse, interval=self._survey_interval,
+        )
+        observer = ready_observer(Observer(), timeout=self._observer_timeout)
         for root in self._roots:
-            observer.schedule(_Handler(), str(root), recursive=True)
-        observer.start()
+            observer.schedule(file_handler(self.notified), str(root), recursive=True)
+        try:
+            observer.start()
+        except BaseException:
+            observer.stop()
+            raise
         self._observer = observer
+        self._metadata_survey.start()
         self.survey()
         return self
 
@@ -157,12 +164,16 @@ class Watch:
         error: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        if self._metadata_survey is not None:
+            self._metadata_survey.stop()
+            self._metadata_survey.join(timeout=self._observer_timeout)
+            self._metadata_survey = None
         observer = self._observer
         if observer is None:
             return
         observer.stop()
         # Bounded: a hung observer thread must not outlive the run it watched.
-        observer.join(timeout=5)
+        observer.join(timeout=self._observer_timeout)
         self._observer = None
 
     # -- observation --------------------------------------------------------
@@ -227,7 +238,8 @@ class Watch:
 
     def _judge(self, event: Event) -> None:
         """Apply every rule to one event; the rules live in `faultrules`."""
-        faultrules.judge(self, event)
+        with self._judging:
+            faultrules.judge(self, event)
 
     def is_source(self, path: Path) -> bool:
         return is_source(path, self._source_root)

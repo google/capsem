@@ -196,6 +196,8 @@ class RunLogConfig(Strict):
     latest_link: str
     #: Trees each run watches for filesystem faults, relative to the checkout.
     observed_roots: tuple[str, ...]
+    observer_timeout_seconds: PositiveFloat
+    observer_survey_seconds: PositiveFloat
     #: Trees where identical bytes are a third party's doing, not ours.
     duplicate_content_exempt: tuple[str, ...]
     #: Exact frozen source replicas: copied inputs, not authored artifacts.

@@ -88,6 +88,8 @@ def observing(
         on_fault=report,
         duplicate_content_exempt=config.runlog.duplicate_content_exempt,
         source_replica_roots=config.runlog.source_replica_roots,
+        observer_timeout=settings.observer_timeout_seconds,
+        survey_interval=settings.observer_survey_seconds,
     )
     try:
         with watch, Instrument(watch, fd_path_template=settings.fd_path_template):
