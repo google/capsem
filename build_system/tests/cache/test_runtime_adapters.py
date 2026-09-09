@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from capsem_builder.cache import dockeradapter, tartadapter
 from capsem_builder.cache.contract import CacheScope, PruneStrategy
+from capsem_builder.cache.dockerformat import timestamp
 from capsem_builder.cache.runtimemodels import (
     DockerRuntimePolicy,
     ResourceKind,
@@ -47,7 +48,12 @@ def docker_policy() -> DockerRuntimePolicy:
     )
 
 
-def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> None:
+@pytest.mark.parametrize("created", [
+    "2026-08-01 00:00:00 +0000 UTC",
+    "2026-07-31 20:00:00 -0400 EDT",
+    "2026-08-01 02:00:00 +0200 CEST",
+])
+def test_docker_inventory_reconciles_native_categories_and_owned_resources(created: str) -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
         if argv[1:4] == ("system", "df", "-v"):
             return command(
@@ -73,7 +79,7 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
                 argv,
                 '{"ID":"container-1","Names":"capsem-old","Image":"capsem-tool:one",'
                 '"State":"exited","Size":"3MB (virtual 1GB)",'
-                '"CreatedAt":"2026-08-01 00:00:00 +0000 UTC"}',
+                f'"CreatedAt":{json.dumps(created)}}}',
             )
         if argv[1:3] == ("image", "ls"):
             return command(
@@ -95,6 +101,8 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources() -> 
     report = dockeradapter.inventory("docker", docker_policy(), runner=runner, now_ns=1)
 
     assert report.available is True
+    container = next(row for row in report.resources if row.kind == ResourceKind.CONTAINER)
+    assert container.created_ns == timestamp("2026-08-01T00:00:00Z")
     assert report.native_bytes == 102_000_000_000
     assert report.owned_bytes == 98_003_000_000
     assert [resource.kind for resource in report.resources] == [

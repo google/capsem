@@ -42,7 +42,11 @@ def reclaimable_size(value: str) -> int:
 def timestamp(value: str) -> int:
     if not value:
         return 0
-    normalized = value.removesuffix(" UTC").replace("Z", "+00:00")
+    # Docker's Go formatter appends a local zone name to its numeric offset.
+    # The offset is authoritative; abbreviations depend on the host timezone
+    # and cannot be parsed reliably through Python's locale-dependent %Z.
+    normalized = re.sub(r"([+-]\d{2}:?\d{2}) [A-Za-z]+$", r"\1", value)
+    normalized = normalized.removesuffix(" UTC").replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
