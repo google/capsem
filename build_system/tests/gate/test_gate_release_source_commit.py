@@ -176,8 +176,9 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
     assert [*argv, commit][slot] == str(parsed.source_commit)
 
 
+@pytest.mark.parametrize("shared_authority", [False, True])
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_authority: bool
 ) -> None:
     from capsem_builder.gate import buildcache, cachelayout, cachetooling, cargotarget, prefix
     from capsem_builder.gate import config as gate_config
@@ -186,6 +187,8 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
     config = original.model_copy(update={"prefix": _relocated_prefix(original, tmp_path)})
+    authority = tmp_path / "outer-checkout" if shared_authority else config.root
+    monkeypatch.setenv(cachelayout.cache_paths(config).policy.authority_environment, str(authority))
     populated: list[tuple[Path, SourceCommit]] = []
     environments: list[dict[str, str]] = []
 
@@ -220,7 +223,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
             # The child must resolve every repository-owned path against its
             # immutable source snapshot, never the mutable invoking checkout.
             config.environment.repository_root: str(tmp_path / str(commit)),
-            cachelayout.cache_paths(config).policy.authority_environment: str(config.root),
+            cachelayout.cache_paths(config).policy.authority_environment: str(authority),
             config.environment.source_commit: str(commit),
             # Named here rather than merely tolerated: the child compiles into
             # one shared build directory, and it learns that from the exported

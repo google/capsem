@@ -144,6 +144,9 @@ def test_failed_attempt_refuses_before_recording_or_any_plan_work(monkeypatch) -
     monkeypatch.setattr(command, "_describe", lambda: Plan("candidate"))
     monkeypatch.setattr(command, "reexec", lambda: None)
     monkeypatch.setattr(command, "_recording", lambda **_: pytest.fail("refused run started work"))
+    # This tests admission of a new top-level command, not the earlier nested
+    # lock refusal. No recording or machine-lock acquisition may be reached.
+    monkeypatch.delenv(command._config.locks.gate.run_marker, raising=False)
 
     with pytest.raises(GateError, match="explicitly approved retry"):
         command.execute()
