@@ -67,6 +67,8 @@ class CachePaths(BaseModel):
         absolute_target = target.absolute()
         if absolute_target == stage_root or stage_root not in absolute_target.parents:
             raise ValueError(f"refusing target outside cache stage {stage_id!r}: {target}")
+        if not absolute_target.parent.resolve().is_relative_to(stage_root.resolve()):
+            raise ValueError(f"refusing target outside cache stage {stage_id!r}: {target}")
         return absolute_target
 
     def resolve(self, configured: Path) -> Path:

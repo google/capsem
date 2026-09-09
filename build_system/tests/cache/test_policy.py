@@ -11,6 +11,15 @@ from pydantic import ValidationError
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+@pytest.mark.parametrize("field,value", [
+    ("retention_root", "../outside"), ("retention_root", "/tmp/outside"),
+    ("mutation_locks", ["../outside"]), ("mutation_locks", ["/tmp/outside"]),
+])
+def test_retention_and_native_lock_paths_stay_inside_their_stage(field, value) -> None:
+    with pytest.raises(ValidationError, match="relative descendant"):
+        stage(**{field: value})
+
+
 def stage(**overrides: object) -> StagePolicy:
     values = {
         "description": "Cargo test output",
@@ -91,6 +100,9 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].maximum_count is None
     assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
     assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
+    assert policy.stages["cargo"].prune_strategy is PruneStrategy.GENERATIONAL
+    assert policy.stages["cargo"].retention_root == Path("debug/incremental")
+    assert Path("debug/.cargo-lock") in policy.stages["cargo"].mutation_locks
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
     assert policy.control is not None

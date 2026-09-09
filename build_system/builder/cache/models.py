@@ -17,9 +17,12 @@ from pydantic import (
     model_validator,
 )
 
-from .contract import CacheContract, CacheScope, PruneStrategy
+from .contract import CacheContract as CacheContract
+from .contract import CacheScope as CacheScope
+from .contract import PruneStrategy as PruneStrategy
 from .controlmodels import CacheControlPolicy
 from .runtimemodels import RuntimeInventory, RuntimePolicy
+from .stagepolicy import StagePolicy, _relative_descendant
 
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 STAGE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -41,13 +44,6 @@ class AdmissionEventKind(StrEnum):
 
     FORCED_ATTEMPT = "forced-attempt"
     COMPLETE_SUCCESS = "complete-success"
-
-
-def _relative_descendant(value: Path, *, field: str) -> Path:
-    posix = PurePosixPath(value.as_posix())
-    if value.is_absolute() or str(posix) in {"", "."} or ".." in posix.parts:
-        raise ValueError(f"{field} must be a relative descendant")
-    return Path(posix)
 
 
 class TestRoute(BaseModel):
@@ -85,50 +81,6 @@ class TestAdmissionPolicy(BaseModel):
         prefixes = [route.prefix for route in self.routes]
         if len(prefixes) != len(set(prefixes)):
             raise ValueError("test admission route prefixes must be unique")
-        return self
-
-
-class StagePolicy(CacheContract):
-    """One independently accounted leaf in the cache tree."""
-
-    path: Path
-    external: StrictBool = False
-    entry_root: Path = Path(".")
-    selector_globs: tuple[str, ...] = ()
-    maximum_age_hours: PositiveStrictInt
-    maximum_count: PositiveStrictInt | None = None
-    managed_globs: tuple[str, ...] = ("*",)
-    lease_template: str | None = None
-
-    @model_validator(mode="after")
-    def validate_stage(self) -> StagePolicy:
-        if self.path.is_absolute():
-            if not self.external:
-                raise ValueError("absolute stage path requires external=true")
-            if self.prune_strategy is not PruneStrategy.EPHEMERAL:
-                raise ValueError("external stage requires the ephemeral prune strategy")
-            if len(self.path.parts) < 4:
-                raise ValueError("external stage path must name a concrete descendant")
-        else:
-            if self.external:
-                raise ValueError("external stage path must be absolute")
-            object.__setattr__(self, "path", _relative_descendant(self.path, field="stage path"))
-        entry_root = PurePosixPath(self.entry_root.as_posix())
-        if self.entry_root.is_absolute() or ".." in entry_root.parts:
-            raise ValueError("stage entry_root must stay inside the stage path")
-        object.__setattr__(self, "entry_root", Path(entry_root))
-        if self.scope is not CacheScope.DISK:
-            raise ValueError("filesystem cache stages require repository scope")
-        if self.prune_strategy in {PruneStrategy.DOCKER, PruneStrategy.TART}:
-            raise ValueError("filesystem cache stages require a filesystem prune strategy")
-        if not self.managed_globs or any(not pattern for pattern in self.managed_globs):
-            raise ValueError("managed_globs must contain non-empty patterns")
-        if self.lease_template is not None and self.lease_template.count("{key}") != 1:
-            raise ValueError("lease_template must contain exactly one {key} placeholder")
-        for pattern in self.selector_globs:
-            path = PurePosixPath(pattern)
-            if not pattern or path.is_absolute() or ".." in path.parts:
-                raise ValueError("selector_globs must stay inside the cache root")
         return self
 
 

@@ -223,12 +223,11 @@ def measure(config: GateConfig) -> Size:
     dependency bump and deleted crate leaves output here forever. It reached
     8 GB in three days.
 
-    Its size is reported through the common cache inventory, and a normal gate
-    never reclaims it. Selective deletion underneath Cargo corrupts its
-    fingerprint judgement, while whole-directory deletion silently turns the
-    expensive public qualification into a cold build. The operator may still
-    request that deliberately with `--clean-build`; the typed cache contract
-    is the capacity authority for normal runs.
+    The common cache owner reclaims only old incremental sessions during
+    ordinary retention, under Cargo's native output locks. Compiled outputs
+    and dependencies survive, so capacity recovery does not force a cold
+    build. The operator can still request that with `--clean-build`; the
+    typed cache contract remains the capacity authority.
     """
     shared = path(config)
     if not shared.is_dir():

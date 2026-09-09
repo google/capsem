@@ -57,7 +57,10 @@ class DiskBackend:
                 applied=True,
                 violations=result.violations,
             )
-        inventory = select_inventory(scan_inventory(self._paths, self._policy), request.cache_id)
+        retention = request.operation is not CacheOperation.CLEAN
+        inventory = select_inventory(
+            scan_inventory(self._paths, self._policy, retention=retention), request.cache_id,
+        )
         before = inventory.logical_bytes
         plan = (
             plan_clean(inventory, request.cache_id)
@@ -68,7 +71,7 @@ class DiskBackend:
             apply_prune(self._paths, plan, reason=request.reason)
         after = (
             select_inventory(
-                scan_inventory(self._paths, self._policy), request.cache_id
+                scan_inventory(self._paths, self._policy, retention=retention), request.cache_id
             ).logical_bytes
             if request.apply
             else before

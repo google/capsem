@@ -100,6 +100,12 @@ after usage crosses `max_size_bytes`. `enforce` is an applied preflight and
 fails if protected state prevents compliance. `clean` is the explicit cold
 operation; it still preserves active leases and protected generations.
 
+Cargo's ordinary retention selects generations under `debug/incremental`.
+Compiled dependencies, executables, and verified signed copies count toward
+capacity but survive ordinary pruning. Inventory counts nested retention roots
+once. Native Cargo output locks protect the whole stage and are acquired again
+through deletion; even an explicit cold clean preserves their lock inodes.
+
 Retained cache lifetime ends only through these typed operations. Do not add
 consumer-boundary releases, post-test eviction hooks, or other subsystem
 lifecycle paths that bypass the owner's warm/max/age/count policy.

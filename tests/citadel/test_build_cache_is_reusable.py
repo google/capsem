@@ -221,13 +221,18 @@ def test_the_public_complete_gate_never_discards_reusable_output() -> None:
     )
 
 
-def test_compiler_cache_is_measured_but_only_explicitly_cleaned(tmp_path: Path) -> None:
+def test_capacity_recovery_preserves_compiled_output(tmp_path: Path) -> None:
     """The reuse contract covers policy as well as the public recipe spelling.
 
     The recipe guard above was green while a pre-run threshold deleted 41.9
-    GiB of compiler output. The shared Cargo tree is deliberately opaque to
-    generic pruning because selectively deleting Cargo internals is unsound.
+    GiB of compiler output. Recovery may discard incremental sessions, under
+    native Cargo locks, but must leave the compiled dependency graph reusable.
     """
+    from capsem_builder.cache.inventory import scan_inventory
+    from capsem_builder.cache.operations import apply_prune
+    from capsem_builder.cache.paths import CachePaths
+    from capsem_builder.cache.planner import plan_prune
+
     config = _relocated(tmp_path)
     shared = cargotarget.path(config)
     artifact = shared / "debug" / "deps" / "libcapsem.rlib"
@@ -238,9 +243,26 @@ def test_compiler_cache_is_measured_but_only_explicitly_cleaned(tmp_path: Path) 
     observed = cargotarget.measure(config)
 
     assert observed.gb > 0
-    assert load_policy(ROOT).stages["cargo"].prune_strategy is PruneStrategy.NONE
+    policy = load_policy(ROOT)
+    cargo = policy.stages["cargo"]
+    assert cargo.prune_strategy is PruneStrategy.GENERATIONAL
+    assert cargo.retention_root == Path("debug/incremental")
+    assert Path("debug/.cargo-lock") in cargo.mutation_locks
+    configured = policy.model_copy(update={
+        "stages": {"cargo": cargo.model_copy(update={
+            "warm_size_bytes": len(payload), "max_size_bytes": len(payload) + 1,
+        })}, "runtimes": {}, "control": None,
+    })
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    incremental = shared / "debug/incremental/old/state"
+    incremental.parent.mkdir(parents=True)
+    incremental.write_bytes(payload)
+    plan = plan_prune(scan_inventory(paths, configured, retention=True), configured)
+    assert [action.path for action in plan.actions] == [incremental.parent]
+    apply_prune(paths, plan, reason="capacity regression proof")
+    assert not incremental.exists()
     assert artifact.read_bytes() == payload, (
-        "measuring the compiler cache discarded the warm gate output; "
+        "capacity recovery discarded the warm gate output; "
         "only an explicit --clean-build may do that"
     )
 

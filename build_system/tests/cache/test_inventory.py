@@ -4,10 +4,12 @@ import fcntl
 import os
 from pathlib import Path
 
+import pytest
 from capsem_builder.cache import leases
 from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
+from capsem_builder.cache.planner import plan_prune
 
 
 def policy() -> CachePolicy:
@@ -144,3 +146,48 @@ def test_process_exit_releases_every_cache_lease(monkeypatch, tmp_path: Path) ->
 
     assert descriptor.closed
     assert held == {}
+
+
+def test_nested_incremental_inventory_counts_build_outputs_once_and_protects_cargo(tmp_path: Path) -> None:
+    stage = policy().stages["objects"].model_copy(update={
+        "entry_root": Path("debug/incremental"),
+        "prune_strategy": PruneStrategy.GENERATIONAL,
+        "mutation_locks": (Path("debug/.cargo-lock"),),
+        "warm_size_bytes": 20, "max_size_bytes": 29,
+    })
+    configured = policy().model_copy(update={"stages": {"objects": stage}})
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    root = paths.stage("objects")
+    for relative in ("debug/incremental/old/state", "debug/deps/compiled", "release/compiled"):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x" * 10)
+    lock = root / "debug/.cargo-lock"
+    lock.touch()
+
+    inventory = scan_inventory(paths, configured, now_ns=10)
+    assert inventory.stages[0].logical_bytes == 30, "nested entries were counted twice"
+    plan = plan_prune(inventory, configured)
+    assert [a.path for a in plan.actions] == [root / "debug/incremental/old"]
+    assert plan.reclaim_bytes == 10
+
+    with lock.open("rb") as descriptor:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        locked = scan_inventory(paths, configured, now_ns=10)
+        assert locked.stages[0].entries[0].protected
+        assert not plan_prune(locked, configured).actions
+
+
+def test_retention_root_cannot_follow_an_ancestor_symlink_outside_its_stage(tmp_path: Path) -> None:
+    stage = policy().stages["objects"].model_copy(update={
+        "retention_root": Path("debug/incremental"),
+    })
+    configured = policy().model_copy(update={"stages": {"objects": stage}})
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    paths.stage("objects").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    (outside / "incremental/keep").mkdir(parents=True)
+    (paths.stage("objects") / "debug").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="entry root"):
+        scan_inventory(paths, configured, retention=True)

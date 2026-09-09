@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from .leases import mutation_locks
 from .models import AdmissionEvent, ApplyResult, PrunePlan
 from .paths import CachePaths
 
@@ -30,6 +32,17 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _unlocked_targets(target: Path, locks: tuple[Path, ...]) -> Iterator[Path]:
+    """Cold clean keeps native lock inodes so a producer cannot replace them."""
+    if target in locks:
+        return
+    if target.is_dir() and not target.is_symlink() and any(target in lock.parents for lock in locks):
+        for child in sorted(target.iterdir()):
+            yield from _unlocked_targets(child, locks)
+    else:
+        yield target
+
+
 def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResult:
     """Apply one reviewed plan and append its exact outcome to the journal."""
     if not reason.strip():
@@ -37,12 +50,14 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
     targets = tuple(paths.contained_entry(action.stage_id, action.path) for action in plan.actions)
     removed: list[Path] = []
     missing: list[Path] = []
-    for target in targets:
-        if target.exists() or target.is_symlink():
-            _remove(target)
-            removed.append(target)
-        else:
-            missing.append(target)
+    with mutation_locks(paths, (action.stage_id for action in plan.actions)) as locks:
+        for selected in targets:
+            for target in _unlocked_targets(selected, locks):
+                if target.exists() or target.is_symlink():
+                    _remove(target)
+                    removed.append(target)
+                else:
+                    missing.append(target)
     journal = paths.root / JOURNAL_PATH
     journal.parent.mkdir(parents=True, exist_ok=True)
     event = {

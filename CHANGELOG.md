@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cargo cache maintenance reclaims old incremental compiler state under native
+  build locks while preserving compiled dependencies and signed executables.
 - Guest control connections survive reconnects when no snapshot froze the
   filesystem; real suspend/resume still requires successful freeze and thaw.
 - Local profile assets and OBOM files decode file URLs correctly, including

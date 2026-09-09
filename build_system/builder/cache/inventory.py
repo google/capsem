@@ -52,14 +52,20 @@ def _stage_inventory(
     paths: CachePaths,
     policy: CachePolicy,
     allocated_seen: set[tuple[int, int]],
+    *, retention: bool = False,
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
     stage_root = paths.stage(stage_id)
-    stage_path = stage_root / stage_policy.entry_root
+    entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
+                  else stage_policy.entry_root)
+    stage_path = stage_root / entry_root
+    if stage_path.is_symlink() or not stage_path.resolve().is_relative_to(stage_root.resolve()):
+        raise ValueError(f"cache entry root escapes its stage: {stage_path}")
     referenced = _referenced_keys(paths, stage_policy.selector_globs, stage_path)
     entries: list[CacheEntry] = []
     unmanaged_logical = 0
     unmanaged_allocated = 0
+    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
     if stage_path.is_dir():
         for child in sorted(stage_path.iterdir(), key=lambda item: item.name):
             logical, allocated = _entry_size(child, allocated_seen)
@@ -78,18 +84,24 @@ def _stage_inventory(
                     managed=managed,
                     protected=managed
                     and (
-                        child.name in referenced
+                        busy or child.name in referenced
                         or _lease_active(stage_path, stage_policy.lease_template, child.name)
                     ),
                 )
             )
-    if stage_policy.entry_root != Path(".") and stage_root.is_dir():
-        for child in stage_root.iterdir():
-            if child == stage_path:
-                continue
-            logical, allocated = _entry_size(child, allocated_seen)
-            unmanaged_logical += logical
-            unmanaged_allocated += allocated
+    if entry_root != Path(".") and stage_root.is_dir():
+        # Account for siblings at every level, excluding the managed subtree
+        # exactly once even when its entry_root is nested (Cargo incremental).
+        ancestor = stage_root
+        for part in entry_root.parts:
+            selected = ancestor / part
+            if ancestor.is_dir():
+                for child in ancestor.iterdir():
+                    if child != selected:
+                        logical, allocated = _entry_size(child, allocated_seen)
+                        unmanaged_logical += logical
+                        unmanaged_allocated += allocated
+            ancestor = selected
     return StageInventory(
         stage_id=stage_id,
         path=stage_path,
@@ -155,13 +167,14 @@ def _unclassified_inventory(
 
 
 def scan_inventory(
-    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None
+    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None,
+    retention: bool = False,
 ) -> CacheInventory:
     """Scan configured leaves without creating cache directories or following links."""
     allocated_seen: set[tuple[int, int]] = set()
     scan_order = sorted(policy.stages, key=lambda stage_id: (stage_id != "objects", stage_id))
     by_id = {
-        stage_id: _stage_inventory(stage_id, paths, policy, allocated_seen)
+        stage_id: _stage_inventory(stage_id, paths, policy, allocated_seen, retention=retention)
         for stage_id in scan_order
     }
     unclassified = _unclassified_inventory(paths, policy, allocated_seen)
@@ -207,7 +220,8 @@ def scan_retention_inventory(
     )
 
     stages = tuple(
-        _stage_inventory(stage_id, paths, policy, allocated_seen) for stage_id in stage_ids
+        _stage_inventory(stage_id, paths, policy, allocated_seen, retention=True)
+        for stage_id in stage_ids
     )
     return RetentionInventory(
         root=paths.root,

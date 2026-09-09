@@ -5,6 +5,8 @@ from __future__ import annotations
 import atexit
 import fcntl
 import os
+from collections.abc import Iterable, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -66,6 +68,29 @@ def active_path(path: Path) -> bool:
             return True
         fcntl.flock(descriptor, fcntl.LOCK_UN)
     return False
+
+
+@contextmanager
+def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tuple[Path, ...]]:
+    """Hold producer-owned locks through removal, including a late-starting build."""
+    locked = []
+    with ExitStack() as stack:
+        for stage_id in sorted(set(stage_ids)):
+            root = paths.stage(stage_id)
+            for relative in sorted(paths.policy.stages[stage_id].mutation_locks):
+                lock = root / relative
+                if not lock.parent.resolve().is_relative_to(root.resolve()) or lock.is_symlink():
+                    raise ValueError(f"mutation lock escapes cache stage: {lock}")
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                descriptor = stack.enter_context(os.fdopen(
+                    os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b",
+                ))
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as error:
+                    raise ValueError(f"cache stage is busy: {lock}") from error
+                locked.append(lock)
+        yield tuple(locked)
 
 
 atexit.register(release_all)

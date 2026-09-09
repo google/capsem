@@ -61,7 +61,11 @@ scope = "disk"
 path = "target/cargo"
 warm_size_bytes = 161061273600 # 150 GiB
 max_size_bytes = 193273528320 # 180 GiB
-prune_strategy = "none"
+prune_strategy = "generational"
+# Ordinary retention selects only disposable incremental sessions. Explicit
+# clean still owns the whole Cargo stage; native lock inodes survive both.
+retention_root = "debug/incremental"
+mutation_locks = ["debug/.cargo-lock", "release/.cargo-lock", "llvm-cov-target/debug/.cargo-lock"]
 maximum_age_hours = 720
 
 [stages.generated]
