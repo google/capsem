@@ -12,12 +12,14 @@ mod boot_timing;
 mod control_writer;
 use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
 mod shutdown;
+mod snapshot;
 mod terminal_bridge;
 use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 #[cfg(test)]
 use control_writer::{frame_or_drop, SharedCtrlReceiver};
 #[cfg(test)]
 use shutdown::HostShutdown;
+use snapshot::{freeze_system_filesystem, thaw_system_filesystem, SYSTEM_FS_MOUNT};
 use terminal_bridge::bridge_loop;
 #[path = "vsock_io.rs"]
 mod vsock_io;
@@ -80,34 +82,6 @@ fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
     let mut payload = vec![0u8; len];
     read_exact_fd(fd, &mut payload)?;
     decode_host_msg(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
-const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";
-
-fn fsfreeze_command(mode: &'static str) -> std::process::Command {
-    let mut command = std::process::Command::new("fsfreeze");
-    command.args([mode, SYSTEM_FS_MOUNT]);
-    command
-}
-
-fn set_system_filesystem_frozen(frozen: bool) -> io::Result<()> {
-    let mode = if frozen { "-f" } else { "-u" };
-    let status = fsfreeze_command(mode).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "fsfreeze {mode} {SYSTEM_FS_MOUNT} exited with {status}"
-        )))
-    }
-}
-
-fn freeze_system_filesystem() -> io::Result<()> {
-    set_system_filesystem_frozen(true)
-}
-
-fn thaw_system_filesystem() -> io::Result<()> {
-    set_system_filesystem_frozen(false)
 }
 
 // ---------------------------------------------------------------------------

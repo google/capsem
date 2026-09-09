@@ -6509,7 +6509,8 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
     # filesystem without creating a bind-mount cycle inside the upperdir.
     assert "mkdir -p /newroot/dev/.capsem-system" in init
     assert "mount --bind /mnt/system /newroot/dev/.capsem-system" in init
-    assert 'const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";' in source
+    snapshot = (PROJECT_ROOT / "crates/capsem-agent/src/snapshot.rs").read_text()
+    assert 'const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";' in snapshot
 
     prepare = source.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
         "Ok(HostToGuest::Unfreeze) => {", maxsplit=1

@@ -228,28 +228,6 @@ fn prepare_snapshot_roundtrip() {
 }
 
 #[test]
-fn snapshot_freeze_commands_target_the_persistent_ext4_upper() {
-    let freeze = fsfreeze_command("-f");
-    assert_eq!(freeze.get_program(), "fsfreeze");
-    assert_eq!(
-        freeze
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["-f", SYSTEM_FS_MOUNT]
-    );
-
-    let thaw = fsfreeze_command("-u");
-    assert_eq!(thaw.get_program(), "fsfreeze");
-    assert_eq!(
-        thaw.get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["-u", SYSTEM_FS_MOUNT]
-    );
-}
-
-#[test]
 fn unfreeze_roundtrip() {
     let (read_fd, write_fd) = make_pipe();
     let msg = HostToGuest::Unfreeze;
