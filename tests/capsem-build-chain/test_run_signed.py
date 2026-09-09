@@ -27,18 +27,38 @@ def test_run_signed_reuses_only_verified_matching_entitlements(tmp_path: Path) -
     mocks = {
         "uname": "echo Darwin",
         "plutil": 'if [ "$5" = - ]; then cat; else cat "$5"; fi',
+        "cp": """
+if [ "${1:-}" = -c ]; then
+  shift
+  /bin/cp "$@" || exit 1
+  if [ "${RACE_COPY:-0}" = 1 ] && [ ! -e "$SIGN_STATE/copied" ]; then
+    touch "$SIGN_STATE/copied"
+    printf '#!/bin/sh\\necho after-copy\\n' > "$SOURCE_BINARY.next"
+    chmod 755 "$SOURCE_BINARY.next"
+    mv "$SOURCE_BINARY.next" "$SOURCE_BINARY"
+  fi
+  exit 0
+fi
+exec /bin/cp "$@"
+""",
         "codesign": """
 case "$1" in
-  --display) cat "$5.entitlements" ;;
+  --display) cat "$SIGN_STATE/$(stat -f '%d-%i' "$5").entitlements" ;;
   --verify)
     echo verified >> "$VERIFY_CALLS"
-    [ "${FAIL_VERIFY:-0}" = 0 ] && cmp -s "$3" "$3.signed" ;;
+    [ "${FAIL_VERIFY:-0}" = 0 ] && cmp -s "$3" "$SIGN_STATE/$(stat -f '%d-%i' "$3").signed" ;;
   --sign)
     echo signed >> "$SIGN_CALLS"
     [ "${FAIL_SIGN:-0}" = 0 ] || exit 17
     sleep 0.1
-    cp "$6" "$6.signed"
-    cp "$4" "$6.entitlements" ;;
+    identity=$(stat -f '%d-%i' "$6")
+    cp "$6" "$SIGN_STATE/$identity.signed"
+    cp "$4" "$SIGN_STATE/$identity.entitlements"
+    if [ "${REPLACE_SOURCE:-0}" = 1 ]; then
+      printf '#!/bin/sh\\necho replaced\\n' > "$SOURCE_BINARY.next"
+      chmod 755 "$SOURCE_BINARY.next"
+      mv "$SOURCE_BINARY.next" "$SOURCE_BINARY"
+    fi ;;
   *) exit 99 ;;
 esac
 """,
@@ -63,11 +83,15 @@ for path in sys.argv[3:]:
     stat.chmod(0o755)
     calls = tmp_path / "sign-calls"
     verifies = tmp_path / "verify-calls"
+    state = tmp_path / "sign-state"
+    state.mkdir()
     env = {
         **os.environ,
         "PATH": f"{commands}:{os.environ['PATH']}",
         "SIGN_CALLS": str(calls),
         "VERIFY_CALLS": str(verifies),
+        "SIGN_STATE": str(state),
+        "SOURCE_BINARY": str(binary),
     }
     command = ["bash", str(package / "run_signed.sh"), str(binary)]
 
@@ -114,6 +138,42 @@ for path in sys.argv[3:]:
     runner.write_text(runner.read_text() + "\n# policy changed\n")
     subprocess.run(command, env=env, check=True, capture_output=True)
     assert verifies.read_text() != before
+
+    # Cargo can replace its public alias after signing starts. The execution
+    # must retain the captured bytes, then select new bytes on the next call.
+    binary.write_text("#!/bin/sh\necho captured\n")
+    raced = subprocess.run(command, env={**env, "REPLACE_SOURCE": "1"}, capture_output=True)
+    assert raced.returncode == 0, raced.stderr
+    assert raced.stdout == b"captured\n"
+    assert b"replaced" in binary.read_bytes()
+    fresh = subprocess.run(command, env=env, check=True, capture_output=True)
+    assert fresh.stdout == b"replaced\n"
+    signed = next(
+        path
+        for path in tmp_path.glob(".run-signed-program-*")
+        if path.read_bytes() == binary.read_bytes()
+    )
+    assert signed.parent == binary.parent
+    before = signed.stat().st_mtime_ns
+    signed.write_text("#!/bin/sh\necho tampered\n")
+    os.utime(signed, ns=(before, before))
+    repaired = subprocess.run(command, env=env, check=True, capture_output=True)
+    assert repaired.stdout == b"replaced\n"
+
+    binary.write_text("#!/bin/sh\necho before-copy\n")
+    copied = subprocess.run(command, env={**env, "RACE_COPY": "1"}, capture_output=True)
+    assert copied.returncode == 0, copied.stderr
+    assert copied.stdout == b"after-copy\n"
+
+    alias = tmp_path / "program-alias"
+    os.link(binary, alias)
+    alias_command = [*command[:-1], str(alias)]
+    for invocation in (command, alias_command):
+        subprocess.run(invocation, env=env, check=True, capture_output=True)
+    verified = verifies.read_text()
+    for invocation in (command, alias_command):
+        subprocess.run(invocation, env=env, check=True, capture_output=True)
+    assert verifies.read_text() == verified, "hardlinked names must retain independent receipts"
 
 
 def test_run_signed_serializes_codesign_without_flock() -> None:

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS Cargo executions use verified signed clones, preserving warm reuse while
+  concurrent builds replace their original executables.
 - Focused macOS binary verification builds its runtime executables before signing,
   so it works without a previous full build.
 - macOS test runners reuse verified signatures for unchanged binaries, avoiding

@@ -35,7 +35,7 @@ acquire_sign_lock() {
         fi
         sleep 0.05
     done
-    trap 'rm -rf "$SIGN_LOCK_DIR"' EXIT
+    trap 'if [[ -n "$staging" ]]; then rm -f "$staging"; fi; rm -rf "$SIGN_LOCK_DIR"' EXIT
 }
 
 release_sign_lock() {
@@ -52,11 +52,62 @@ signature_current() {
 }
 
 signature_receipt_current() {
-    # ctime catches writes even when a compiler restores mtime; inode catches
-    # atomic replacements. Include the policy and runner so either invalidates
-    # reuse. BSD stat's explicit precision preserves nanoseconds on APFS.
-    fingerprint=$(stat -f '%d:%i:%p:%z:%.9Fm:%.9Fc' "$binary" "$ENTITLEMENTS" "${BASH_SOURCE[0]}") || return 1
+    [[ -f "$binary" && -f "$receipt" ]] || return 1
+    fingerprint=$(stat -f '%d:%i:%p:%z:%.9Fm:%.9Fc' "$binary") || return 1
     [[ -f "$receipt" && "$(< "$receipt")" == "$fingerprint" ]]
+}
+
+source_identity() {
+    # Include inode, mode and nanosecond ctime so replacing a binary or
+    # restoring its mtime cannot hide a write. Policy changes invalidate reuse.
+    stat -f '%d:%i:%p:%z:%.9Fm:%.9Fc' "$original" "$ENTITLEMENTS" "${BASH_SOURCE[0]}"
+}
+
+prepare_signed_copy() {
+    local source key published captured
+    for attempt in 1 2 3; do
+        source=$(source_identity) || die "cannot stat $original"
+        key=$(printf '%s\n%s' "$original" "$source" | shasum -a 256) || die "cannot identify $original"
+        key=${key%% *}
+        # Keep the executable beside Cargo's original: current_exe().parent()
+        # must still discover sibling service/process binaries. APFS clones
+        # share storage, but codesign never mutates Cargo's alias or inode.
+        published="$binary_dir/.run-signed-${original##*/}-$key"
+        binary="$published"
+        receipt="$SIGN_CACHE_DIR/$key"
+        signature_receipt_current && return
+        acquire_sign_lock
+        if ! signature_receipt_current; then
+            staging="$published.tmp.$$"
+            cp -c "$original" "$staging" || die "cannot capture $original"
+            captured=$(source_identity) || die "cannot recheck $original"
+            if [[ "$captured" != "$source" ]]; then
+                # A concurrent Cargo build changed the source while copying.
+                # Retry only that observed race, before signing or publishing.
+                log "Cargo replaced $original during capture $attempt; retrying"
+                rm -f "$staging"
+                staging=""
+                release_sign_lock
+                continue
+            fi
+            binary="$staging"
+            expected=$(plutil -convert xml1 -o - "$ENTITLEMENTS") || die "invalid entitlements at $ENTITLEMENTS"
+            if ! signature_current; then
+                log "signing captured $original with entitlements"
+                codesign --sign - --entitlements "$ENTITLEMENTS" --force "$binary" >> "$BUILD_LOG" 2>&1 ||
+                    die "codesign failed for $original. Run 'just doctor' to diagnose signing issues."
+                signature_current || die "codesign verification failed for $original"
+            fi
+            mv "$staging" "$published" || die "cannot publish signed $original"
+            staging=""
+            binary="$published"
+            stat -f '%d:%i:%p:%z:%.9Fm:%.9Fc' "$binary" > "$receipt.tmp" || die "cannot record signature for $original"
+            mv "$receipt.tmp" "$receipt" || die "cannot publish signature for $original"
+        fi
+        release_sign_lock
+        return
+    done
+    die "Cargo kept replacing $original while capturing its executable"
 }
 
 # Platform check
@@ -66,35 +117,17 @@ fi
 
 # The first argument is the binary we need to sign and run.
 if [ -f "$1" ]; then
-    binary="$1"
+    original="$1"
+    staging=""
 
     # Apply entitlements. Ad-hoc signing (-) is sufficient for local dev.
     if [ -f "$ENTITLEMENTS" ]; then
-        key=$(stat -f '%d-%i' "$binary") || die "cannot stat $binary"
         # This receipt belongs to the compiled artifact, inside Cargo's owned
         # output directory. It has no independent retained cache authority.
-        SIGN_CACHE_DIR="$(dirname "$binary")/.run-signed"
+        binary_dir="$(dirname "$original")"
+        SIGN_CACHE_DIR="$binary_dir/.run-signed"
         mkdir -p "$SIGN_CACHE_DIR" || die "cannot create signature receipt directory"
-        receipt="$SIGN_CACHE_DIR/$key"
-        # Nextest invokes this runner once per test. Verify without changing the
-        # executable; re-signing thousands of times serialized all test starts.
-        if ! signature_receipt_current; then
-            acquire_sign_lock
-            # Another cold launch may have signed this binary while we waited.
-            if ! signature_receipt_current; then
-                expected=$(plutil -convert xml1 -o - "$ENTITLEMENTS") || die "invalid entitlements at $ENTITLEMENTS"
-                if ! signature_current; then
-                    log "signing $binary with entitlements"
-                    if ! codesign --sign - --entitlements "$ENTITLEMENTS" --force "$binary" >> "$BUILD_LOG" 2>&1; then
-                        die "codesign failed for $binary. Run 'just doctor' to diagnose signing issues."
-                    fi
-                    signature_current || die "codesign verification failed for $binary"
-                fi
-                stat -f '%d:%i:%p:%z:%.9Fm:%.9Fc' "$binary" "$ENTITLEMENTS" "${BASH_SOURCE[0]}" > "$receipt.tmp" || die "cannot record signature for $binary"
-                mv "$receipt.tmp" "$receipt" || die "cannot publish signature for $binary"
-            fi
-            release_sign_lock
-        fi
+        prepare_signed_copy
     else
         die "entitlements.plist not found at $ENTITLEMENTS. Run 'just doctor' to diagnose."
     fi
@@ -103,7 +136,7 @@ if [ -f "$1" ]; then
     # Set the assets directory and execute the binary with remaining args.
     # CAPSEM_ASSETS_DIR allows the VM to find vmlinuz/initrd/rootfs.
     log "launching $binary $*"
-    CAPSEM_ASSETS_DIR="$ROOT_DIR/assets" exec "$binary" "$@"
+    CAPSEM_ASSETS_DIR="$ROOT_DIR/assets" exec -a "$original" "$binary" "$@"
 fi
 
 # Fallback: just execute it.
