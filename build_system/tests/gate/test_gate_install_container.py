@@ -595,6 +595,19 @@ def test_a_failing_sealed_smoke_check_is_not_repaired_by_a_second_build() -> Non
     assert not runner.ran(r"--no-cache")
 
 
+def test_smoke_uses_the_configured_writable_pytest_cache():
+    from capsem_builder.gate import installimage
+
+    guest = CONFIG.install.guest_user.model_copy(update={"pytest_cache": "/owned/pytest-cache"})
+    settings = CONFIG.install.model_copy(update={"guest_user": guest})
+    config = CONFIG.model_copy(update={"install": settings})
+    runner = RecordingRunner(PROJECT_ROOT)
+
+    installimage._smoke(runner, config, image="smoke-fixture")
+
+    assert "-o cache_dir=/owned/pytest-cache" in runner.commands[0].argv[-1]
+
+
 @pytest.mark.parametrize("filed", [False, True])
 def test_failed_smoke_preserves_tool_stdout_and_stderr(tmp_path, monkeypatch, capfd, filed):
     from dataclasses import replace

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Install smoke tests use their configured writable pytest cache, allowing
+  qualification to finish while the source directory remains protected.
 - Sealed install smoke checks retain tool stdout and stderr in gate evidence
   so failed qualification identifies the missing or broken input.
 - Docker builders retain installed dependency layers when only their identity
