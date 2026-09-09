@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import shlex
-import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
+
+from .package_payload import deb_payload_files
 
 HOST_BINARIES = (
     "capsem",
@@ -35,21 +35,12 @@ def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
     cannot rewrite this metadata or repoint the product at arbitrary HTTP input.
     """
 
-    with tempfile.TemporaryDirectory() as extracted:
-        subprocess.run(["dpkg-deb", "-x", str(deb), extracted], check=True)
-        # Repacked and native packages use different prefixes, so locate the
-        # one package-owned metadata file instead of assuming either layout.
-        found = sorted(Path(extracted).rglob("assets/manifest-metadata.json"))
-        if len(found) != 1:
-            root = Path(extracted)
-            layout = sorted(
-                str(path.relative_to(root)) for path in root.rglob("*capsem*") if path.is_dir()
-            )[:10]
-            raise SystemExit(
-                f"package must declare exactly one manifest metadata, found "
-                f"{len(found)} in {deb}; capsem directories present: {layout or 'none'}"
-            )
-        packaged = json.loads(found[0].read_text(encoding="utf-8"))
+    # Repacked and native packages use different prefixes. Select the one
+    # package-owned metadata member without extracting executables or paths.
+    found = deb_payload_files(deb, select=lambda name: name.endswith("/assets/manifest-metadata.json"))
+    if len(found) != 1:
+        raise SystemExit(f"package must declare exactly one manifest metadata, found {len(found)} in {deb}")
+    packaged = json.loads(next(iter(found.values())))
     url = packaged.get("manifest_url")
     channel = packaged.get("channel")
     if not isinstance(url, str) or not isinstance(channel, str):

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release rehearsal reads Debian package identity, embedded manifest metadata,
+  and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using
   the timestamp's numeric offset for retention decisions.
 - Debian platform checks run on macOS without host Debian tools or shared

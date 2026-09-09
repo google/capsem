@@ -1692,15 +1692,9 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
     FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    def fake_extract(command: tuple[str, ...], check: bool) -> None:
-        assert command[:2] == ("dpkg-deb", "--extract")
-        assert check is True
-        root = Path(command[-1]) / "usr/bin"
-        root.mkdir(parents=True)
-        for name, payload in binary_payloads.items():
-            (root / name).write_bytes(payload)
-
-    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+    monkeypatch.setattr(STAGE, "deb_payload_files", lambda _path, **_: {
+        f"/usr/bin/{name}": payload for name, payload in binary_payloads.items()
+    })
     binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     stale = binary_dir / "capsem-source-built"
@@ -1788,12 +1782,9 @@ def test_package_staging_rejects_inventory_missing_from_the_package(
     FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    def fake_extract(command: tuple[str, ...], check: bool) -> None:
-        root = Path(command[-1]) / "usr/bin"
-        root.mkdir(parents=True)
-        (root / "capsem").write_bytes(b"resolved-capsem")
-
-    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+    monkeypatch.setattr(STAGE, "deb_payload_files", lambda _path, **_: {
+        "/usr/bin/capsem": b"resolved-capsem",
+    })
 
     with pytest.raises(ValueError, match="capsem-service"):
         STAGE.stage_package_binaries(inputs, tmp_path / "cache/target/cargo/debug")
@@ -1806,14 +1797,11 @@ def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
     package.write_bytes(b"candidate-package")
     payloads = {"capsem": b"candidate-capsem", "capsem-service": b"candidate-service"}
 
-    def fake_extract(command: tuple[str, ...], check: bool) -> None:
-        assert Path(command[2]) == package
-        root = Path(command[-1]) / "usr/bin"
-        root.mkdir(parents=True)
-        for name, payload in payloads.items():
-            (root / name).write_bytes(payload)
+    def read_payload(path: Path, **_) -> dict[str, bytes]:
+        assert path == package
+        return {f"/usr/bin/{name}": payload for name, payload in payloads.items()}
 
-    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+    monkeypatch.setattr(STAGE, "deb_payload_files", read_payload)
     binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     (binary_dir / "capsem").write_bytes(b"source-capsem")

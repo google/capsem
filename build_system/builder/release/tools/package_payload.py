@@ -16,8 +16,22 @@ import subprocess
 import tarfile
 import tempfile
 import zlib
+from collections.abc import Callable
+from email.parser import Parser
 from io import BytesIO
 from pathlib import Path
+
+from .generate_host_binary_sbom import deb_data_member
+
+
+def deb_field(package: Path, field: str) -> str:
+    """Read exactly one nonempty Debian control field without host tools."""
+    name, data = deb_data_member(package, member_prefix="control.tar")
+    control = tar_payload_files(data, name, select=lambda path: path == "/control")["/control"]
+    values = Parser().parsestr(control.decode("utf-8")).get_all(field, [])
+    if len(values) != 1 or not values[0].strip():
+        raise SystemExit(f"{package} must declare exactly one nonempty {field} field")
+    return values[0].strip()
 
 
 def package_payload_files(package_path: Path) -> dict[str, bytes]:
@@ -28,7 +42,9 @@ def package_payload_files(package_path: Path) -> dict[str, bytes]:
     return {}
 
 
-def deb_payload_files(package_path: Path) -> dict[str, bytes]:
+def deb_payload_files(
+    package_path: Path, *, select: Callable[[str], bool] | None = None,
+) -> dict[str, bytes]:
     contents = package_path.read_bytes()
     offset = 8
     if not contents.startswith(b"!<arch>\n"):
@@ -49,18 +65,18 @@ def deb_payload_files(package_path: Path) -> dict[str, bytes]:
         offset = data_end + (size % 2)
     if data_member is None:
         raise ValueError("missing data.tar member")
-    return tar_payload_files(data_member, data_member_name)
+    return tar_payload_files(data_member, data_member_name, select=select)
 
 
 def tar_payload_files(
-    payload: bytes, member_name: str, *, selected: frozenset[str] | None = None,
+    payload: bytes, member_name: str, *, select: Callable[[str], bool] | None = None,
 ) -> dict[str, bytes]:
     try:
         with tarfile.open(fileobj=BytesIO(payload), mode="r:*") as archive:
             rows: dict[str, bytes] = {}
             for member in archive.getmembers():
                 name = normalize_payload_path(member.name)
-                if selected is not None and name not in selected:
+                if select is not None and not select(name):
                     continue
                 if not member.isfile():
                     continue
@@ -85,7 +101,7 @@ def tar_payload_files(
                 normalize_payload_path(path.relative_to(payload_dir).as_posix()): path.read_bytes()
                 for path in payload_dir.rglob("*")
                 if path.is_file()
-                and (selected is None or normalize_payload_path(path.relative_to(payload_dir).as_posix()) in selected)
+                and (select is None or select(normalize_payload_path(path.relative_to(payload_dir).as_posix())))
             }
 
 

@@ -39,7 +39,6 @@ version = 1
 "build_system/builder/image/docker.py" = "0d07429c06f5626571ab086046af694690090aa9528a52d42bdabf2cd1695acf"
 "build_system/builder/image/models.py" = "1eeecc17c2556ac4d39f0483b959451dfc448ce91957d343d0086f2200d4c643"
 "build_system/builder/release/tools/check_channel_deploy_freshness.py" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
-"build_system/builder/release/tools/release_installed_probe.py" = "10433d44f64bc101477604aab81ff5d51daf21235252462adc87db2acbfaac92"
 "build_system/builder/release/tools/verify_installed_release.py" = "0b270519d58b72d347b0e3181e65990fc9862255f37cd35c4004deb681880467"
 "build_system/packaging/macos/run_signed.sh" = "e4d39c253cd29ef4badda1914f18b678eebf8bb51d19dafdb6f8ff54ccb7442d"
 "build_system/release_site/package.json" = "a63cfabf58ec35a875142aedc19e2b67207e82e4f5ee09c8606234bde9671329"

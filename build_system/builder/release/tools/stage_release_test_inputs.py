@@ -21,6 +21,7 @@ from capsem_builder.image.tools.build.stage_profile_assets import (
     stage_profile_architecture_assets,
 )
 
+from .package_payload import deb_payload_files
 from .profile_root_payload import stage_legacy_root
 from .release_cohort import REQUIRED_LINUX_RELEASE_BINARIES
 from .release_inputs import (
@@ -296,16 +297,25 @@ def functional_binary_cohort_readiness(input_dir: Path) -> dict[str, Any]:
     }
 
 
-def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
-    package, package_path = _select_host_package(input_dir)
-    extract_dir = binary_dir.parent / "resolved-package"
+def _extract_binaries(package_path: Path, extract_dir: Path) -> None:
+    """Extract only regular Capsem executables through the portable reader."""
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True)
-    subprocess.run(
-        ("dpkg-deb", "--extract", str(package_path), str(extract_dir)),
-        check=True,
+    payloads = deb_payload_files(
+        package_path, select=lambda name: name.startswith("/usr/bin/capsem")
+        and "/" not in name.removeprefix("/usr/bin/"),
     )
+    for name, payload in payloads.items():
+        target = extract_dir / safe_relative(name.removeprefix("/"), "package binary path")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+
+
+def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
+    package, package_path = _select_host_package(input_dir)
+    extract_dir = binary_dir.parent / "resolved-package"
+    _extract_binaries(package_path, extract_dir)
     inventory = package.get("binaries")
     if not isinstance(inventory, list) or not inventory:
         raise ValueError(f"package {package_path} has no host binary inventory")
@@ -366,13 +376,7 @@ def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
 
 def stage_candidate_package(package_path: Path, binary_dir: Path) -> list[Path]:
     extract_dir = binary_dir.parent / "candidate-package"
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir)
-    extract_dir.mkdir(parents=True)
-    subprocess.run(
-        ("dpkg-deb", "--extract", str(package_path), str(extract_dir)),
-        check=True,
-    )
+    _extract_binaries(package_path, extract_dir)
     binaries = sorted(path for path in (extract_dir / "usr/bin").glob("capsem*") if path.is_file())
     if not binaries:
         raise ValueError(f"candidate package {package_path} contains no Capsem binaries")

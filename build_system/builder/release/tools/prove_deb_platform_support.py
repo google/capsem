@@ -32,11 +32,10 @@ import re
 import subprocess
 import sys
 import tomllib
-from email.parser import Parser
 from pathlib import Path
 
 from .generate_host_binary_sbom import deb_data_member
-from .package_payload import tar_payload_files
+from .package_payload import deb_field, tar_payload_files
 
 PROBE_BINARY = "usr/bin/capsem-admin"
 _LIBC_CLAUSE = re.compile(r"libc6\s*\(>=\s*([0-9][0-9.]*)\s*\)")
@@ -54,9 +53,7 @@ def shown(value: tuple[int, ...]) -> str:
 
 def declared_floor(package: Path) -> tuple[int, ...]:
     """The glibc floor the package promises, read from its own control file."""
-    name, data = deb_data_member(package, member_prefix="control.tar")
-    control = tar_payload_files(data, name, selected=frozenset({"/control"}))["/control"]
-    depends = str(Parser().parsestr(control.decode("utf-8")).get("Depends", ""))
+    depends = deb_field(package, "Depends")
     match = _LIBC_CLAUSE.search(depends)
     if match is None:
         raise SystemExit(
@@ -178,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
 
     name, data = deb_data_member(args.package)
     selected = f"/{PROBE_BINARY}"
-    binary = tar_payload_files(data, name, selected=frozenset({selected}))[selected]
+    binary = tar_payload_files(data, name, select=lambda path: path == selected)[selected]
     for row in linux["distributions"]:
         suffix = row.get("tag_suffix", "")
         image = f"{row['repository']}:{row['version']}{suffix}@{row['digest']}"

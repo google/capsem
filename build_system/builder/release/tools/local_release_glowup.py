@@ -28,6 +28,7 @@ from capsem_builder.gate.sourcecommit import SourceCommit
 from . import release_installed_probe as installed_probe
 from . import repository_root
 from .marketing_install_surface import validate_checked_in_marketing_install_surface
+from .package_payload import deb_field
 from .release_first_release import (
     activates_first_profiles,
     classify_pairing_inputs,
@@ -988,11 +989,11 @@ def run(command: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | N
 
 
 def deb_version(path: Path) -> str:
-    return subprocess.check_output(["dpkg-deb", "-f", str(path), "Version"], text=True).strip()
+    return deb_field(path, "Version")
 
 
 def deb_arch(path: Path) -> str:
-    arch = subprocess.check_output(["dpkg-deb", "-f", str(path), "Architecture"], text=True).strip()
+    arch = deb_field(path, "Architecture")
     if arch not in {"amd64", "arm64"}:
         raise SystemExit(f"unsupported local glow-up deb architecture: {arch}")
     return arch
