@@ -288,17 +288,22 @@ def test_start_service_creates_run_dir_before_pidfile(tmp_path, monkeypatch):
     assert captured["args"][captured["args"].index("--uds-path") + 1] == str(module.SERVICE_SOCKET)
 
 
-@pytest.mark.parametrize("host_arch", ["arm64", "x86_64"])
-def test_start_service_uses_current_host_assets_from_dual_arch_tree(
-    tmp_path, monkeypatch, host_arch
+@pytest.mark.parametrize("host_machine,host_arch", [
+    ("arm64", "arm64"), ("aarch64", "arm64"), ("x86_64", "x86_64"), ("AMD64", "x86_64"),
+])
+def test_start_service_uses_native_assets_despite_a_foreign_current_alias(
+    tmp_path, monkeypatch, host_machine, host_arch
 ):
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "machine", lambda: host_machine)
     monkeypatch.setenv("CAPSEM_INTEGRATION_HOME", str(tmp_path / "integration-home"))
     module = load_integration_script()
 
     assets = tmp_path / "assets"
     for arch in ("arm64", "x86_64"):
         (assets / arch).mkdir(parents=True)
-    (assets / "current").symlink_to(host_arch)
+    (assets / "current").symlink_to("x86_64" if host_arch == "arm64" else "arm64")
 
     class FakeProc:
         pid = 424242
@@ -319,7 +324,7 @@ def test_start_service_uses_current_host_assets_from_dual_arch_tree(
     )
 
     selected = Path(captured["args"][captured["args"].index("--assets-dir") + 1])
-    assert selected == assets / "current"
+    assert selected == assets / host_arch
     assert selected.resolve() == (assets / host_arch).resolve()
 
 

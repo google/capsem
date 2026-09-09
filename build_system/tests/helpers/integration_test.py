@@ -102,15 +102,12 @@ def _profile_env() -> dict[str, str]:
 
 
 def _service_assets_dir(assets_dir: str) -> str:
-    """Use the gate-owned host architecture selector when given an asset tree.
+    """Select native assets; `current` can name the last cross-built lane."""
+    from capsem_builder.gate.config import for_root
 
-    The asset gate points ``cache/target/assets/current`` at ``config.host_arch()`` after
-    merging both architecture lanes. A release input may instead already be
-    an architecture-specific directory, so retain that direct-root shape.
-    """
     root = Path(assets_dir)
-    current = root / "current"
-    return str(current if current.exists() or current.is_symlink() else root)
+    native = root / for_root(PROJECT_ROOT).host_arch().name
+    return str(native if native.is_dir() else root)
 
 
 def _profile_run_prefix(
