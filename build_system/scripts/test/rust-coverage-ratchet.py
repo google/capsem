@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import platform
 import sys
 import tomllib
 from collections import defaultdict
@@ -142,6 +143,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def platform_floors(
+    baseline: dict[str, float], overrides: dict[str, dict[str, float]], system: str
+) -> dict[str, float]:
+    """A platform may strengthen the shared floor, never weaken another host."""
+    if system not in overrides:
+        raise ValueError(f"coverage policy does not declare host {system}")
+    for host, floors in overrides.items():
+        for crate, floor in floors.items():
+            if crate not in baseline or not baseline[crate] <= floor <= 100.0:
+                raise ValueError(f"invalid {host} coverage floor for {crate}: {floor}")
+    return baseline | overrides[system]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = Path.cwd()
@@ -150,6 +164,9 @@ def main(argv: list[str] | None = None) -> int:
         crate: float(floor)
         for crate, floor in settings["rust_coverage_crate_floors"].items()
     }
+    floors = platform_floors(
+        floors, settings["rust_coverage_platform_crate_floors"], platform.system()
+    )
     max_headroom = float(settings["rust_coverage_ratchet_headroom"])
     minimum_floor = float(settings["rust_coverage_crate_minimum"])
     crates = workspace_crates(root, args.crate_root)

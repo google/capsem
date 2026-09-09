@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn discovery_reads_owned_files_and_honors_port_override() {
+    const CHILD: &str = "CAPSEM_TRAY_DISCOVERY_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // Give discovery its own process environment; concurrent HTTP tests
+        // must never observe a temporary gateway directory or token.
+        let root = std::env::temp_dir().join(format!("capsem-tray-discovery-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "gateway::tests::discovery_reads_owned_files_and_honors_port_override",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("CAPSEM_HOME", &root)
+            .env("CAPSEM_RUN_DIR", &root)
+            .env("CAPSEM_ASSETS_DIR", root.join("assets"))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+
+    let root = capsem_foundation::paths::capsem_run_dir();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let error = GatewayClient::discover(None)
+                .await
+                .err()
+                .expect("missing port must fail");
+            assert!(error.to_string().contains("gateway.port"));
+            std::fs::write(root.join("gateway.port"), "invalid").unwrap();
+            let error = GatewayClient::discover(None)
+                .await
+                .err()
+                .expect("invalid port must fail");
+            assert!(error.to_string().contains("invalid port"));
+            std::fs::write(root.join("gateway.port"), " 19222\n").unwrap();
+            let error = GatewayClient::discover(None)
+                .await
+                .err()
+                .expect("missing token must fail");
+            assert!(error.to_string().contains("gateway.token"));
+            std::fs::write(root.join("gateway.token"), " fixture-token\n").unwrap();
+            let discovered = GatewayClient::discover(None).await.unwrap();
+            assert_eq!(discovered.port(), 19222);
+            assert_eq!(discovered.auth_header().unwrap(), "Bearer fixture-token");
+            std::fs::write(root.join("gateway.port"), "corrupt").unwrap();
+            let overridden = GatewayClient::discover(Some(32123)).await.unwrap();
+            assert_eq!(overridden.port(), 32123);
+            assert_eq!(overridden.base_url(), "http://127.0.0.1:32123");
+        });
+}
+
+#[test]
 fn deserialize_status_response() {
     let json = r#"{
             "service": "running",

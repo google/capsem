@@ -37,6 +37,7 @@ class ModulesConfig(Strict):
     rust_coverage_crate_minimum: PositiveFloat
     rust_coverage_ratchet_headroom: PositiveFloat
     rust_coverage_crate_floors: dict[str, float]
+    rust_coverage_platform_crate_floors: dict[Literal["Darwin", "Linux"], dict[str, float]]
     rust_test_profile_variable: str
     rust_test_profile: str
     rust_doctests: tuple[str, ...]

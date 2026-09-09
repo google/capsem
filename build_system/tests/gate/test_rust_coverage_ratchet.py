@@ -3,26 +3,54 @@
 from __future__ import annotations
 
 import importlib.util
+import platform
 from pathlib import Path
 
-SCRIPT = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "test"
-    / "rust-coverage-ratchet.py"
-)
+import pytest
+
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "test" / "rust-coverage-ratchet.py"
 SPEC = importlib.util.spec_from_file_location("rust_coverage_ratchet", SCRIPT)
 assert SPEC and SPEC.loader
 RATCHET = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RATCHET)
 
 
+@pytest.mark.parametrize("system,hits", [("Linux", 77), ("Darwin", 82)])
+def test_each_host_ratchets_its_own_compiled_coverage(tmp_path, monkeypatch, system, hits):
+    _manifest(tmp_path, "engine", "product-core")
+    report = tmp_path / "coverage.lcov"
+    report.write_text(
+        "SF:native/engine/src/lib.rs\n"
+        + "".join(f"DA:{row},{int(row <= hits)}\n" for row in range(1, 101))
+    )
+    (tmp_path / "gate.toml").write_text(
+        "[modules]\nrust_coverage_crate_minimum=40.0\n"
+        "rust_coverage_ratchet_headroom=3.0\n"
+        "rust_coverage_crate_floors={product-core=75.0}\n"
+        "rust_coverage_platform_crate_floors={Linux={},Darwin={product-core=80.0}}\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(platform, "system", lambda: system)
+
+    assert (
+        RATCHET.main(
+            [
+                "--report",
+                str(report),
+                "--crate-root",
+                "native",
+                "--config",
+                "gate.toml",
+            ]
+        )
+        == 0
+    )
+
+
 def _manifest(root: Path, directory: str, package: str) -> None:
     crate = root / "native" / directory
     crate.mkdir(parents=True)
-    (crate / "Cargo.toml").write_text(
-        f'[package]\nname = "{package}"\nversion = "0.1.0"\n'
-    )
+    (crate / "Cargo.toml").write_text(f'[package]\nname = "{package}"\nversion = "0.1.0"\n')
 
 
 def test_workspace_inventory_uses_package_names_and_configured_root(
@@ -35,6 +63,20 @@ def test_workspace_inventory_uses_package_names_and_configured_root(
         "engine": "product-core",
         "shell": "product-cli",
     }
+
+
+@pytest.mark.parametrize(
+    "overrides,system",
+    [
+        ({"Linux": {}, "Darwin": {"product-core": 74.99}}, "Linux"),
+        ({"Linux": {}, "Darwin": {"unknown": 80.0}}, "Darwin"),
+        ({"Linux": {}, "Darwin": {"product-core": 101.0}}, "Darwin"),
+        ({"Linux": {}}, "Darwin"),
+    ],
+)
+def test_platform_floors_fail_closed_without_weakening_baseline(overrides, system):
+    with pytest.raises(ValueError):
+        RATCHET.platform_floors({"product-core": 75.0}, overrides, system)
 
 
 def test_lcov_groups_unique_lines_by_owning_crate(tmp_path: Path) -> None:
@@ -117,13 +159,16 @@ def test_required_floor_rounds_up_to_a_sufficient_hundredth() -> None:
         "product-core: 78.51% leaves 3.01 points above its 75.50% floor; "
         "raise the floor to at least 75.52% in the same change"
     ]
-    assert RATCHET.violations(
-        {"product-core": coverage},
-        {"product-core"},
-        {"product-core": 75.52},
-        3.0,
-        40.0,
-    ) == []
+    assert (
+        RATCHET.violations(
+            {"product-core": coverage},
+            {"product-core"},
+            {"product-core": 75.52},
+            3.0,
+            40.0,
+        )
+        == []
+    )
 
 
 def test_coverage_inside_the_platform_variation_band_passes() -> None:
@@ -148,9 +193,7 @@ def test_no_crate_floor_can_fall_below_the_workspace_minimum() -> None:
         40.0,
     )
 
-    assert problems == [
-        "product-core: 39.99% floor is below the workspace crate minimum of 40.00%"
-    ]
+    assert problems == ["product-core: 39.99% floor is below the workspace crate minimum of 40.00%"]
 
 
 def test_invalid_workspace_minimum_fails_closed() -> None:

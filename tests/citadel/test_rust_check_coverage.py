@@ -182,6 +182,27 @@ def test_per_crate_coverage_ratchets_match_the_workspace() -> None:
     )
 
 
+def _platform_floors_preserve_baseline(platforms) -> bool:
+    baseline = MODULES.rust_coverage_crate_floors
+    return set(platforms) == {"Darwin", "Linux"} and all(
+        crate in baseline and baseline[crate] <= floor <= 100.0
+        for overrides in platforms.values()
+        for crate, floor in overrides.items()
+    )
+
+
+def test_platform_coverage_cannot_weaken_the_shared_ratchet() -> None:
+    assert _platform_floors_preserve_baseline(MODULES.rust_coverage_platform_crate_floors), (
+        RUST_COVERAGE_RATIONALE + "\nEach supported host must preserve or raise shared crate floors."
+    )
+    for invalid in (
+        {"Linux": {}},
+        {"Linux": {}, "Darwin": {"capsem-core": 0.0}},
+        {"Linux": {}, "Darwin": {"unknown-crate": 80.0}},
+    ):
+        assert not _platform_floors_preserve_baseline(invalid), RUST_COVERAGE_RATIONALE
+
+
 def test_workspace_coverage_ratchets_every_llvm_dimension() -> None:
     configured = {}
     for floor in MODULES.rust_coverage_floors:
