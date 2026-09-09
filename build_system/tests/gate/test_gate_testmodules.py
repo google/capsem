@@ -130,6 +130,31 @@ def test_artifacts_owns_the_frontend_bundle_before_build_chain() -> None:
     assert f"(in {workspace})" in "\n".join(plan.step_named(node).render())
 
 
+def test_focused_static_builds_every_runtime_binary_before_macos_signing(monkeypatch) -> None:
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "on_macos", lambda: True)
+    plan = _plan(StaticModule)
+    build = plan.step_named("static.build-binaries")
+    assert plan.after_of("static.sign") >= {build.label, "static.rust-coverage"}
+    assert plan.after_of(build.label) >= {
+        "static.toolchain.ort", "static.web.frontend-bundle",
+    }
+    output = "\n".join(build.render())
+    assert "cargo build" in output
+    assert "ORT_STRATEGY=system" in output
+    assert {CONFIG.path(binary) for binary in CONFIG.signing.binaries} <= set(build.produces)
+
+
+def test_composed_static_reuses_the_prepared_native_runtime(monkeypatch) -> None:
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "on_macos", lambda: True)
+    plan = _plan(CandidateCommand)
+    assert "prepare.sign" in plan.after_of("static.sign")
+    assert "static.build-binaries" not in {step.label for step in plan.steps}
+
+
 def test_candidate_hands_one_frontend_bundle_to_every_consumer() -> None:
     plan = CandidateCommand(
         RecordingRunner(PROJECT_ROOT),

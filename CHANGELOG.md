@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Focused macOS binary verification builds its runtime executables before signing,
+  so it works without a previous full build.
 - macOS test runners reuse verified signatures for unchanged binaries, avoiding
   repeated signing and lock contention for every nextest case.
 - Rust coverage ratchets account for macOS's compiled code inventory while

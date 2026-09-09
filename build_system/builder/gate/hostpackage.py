@@ -21,7 +21,9 @@ from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
-def build_step(config: GateConfig, *, label: str = "build-binaries"):
+def build_step(
+    config: GateConfig, *, label: str = "build-binaries", env: dict[str, str] | None = None
+):
     """Build the binaries `sign_step` is about to sign.
 
     They had no producer. Signing has always been `codesign ... --force
@@ -40,7 +42,7 @@ def build_step(config: GateConfig, *, label: str = "build-binaries"):
     binary_dir = config.path(settings.binaries[0]).parent
     return step(
         label,
-        Run(["cargo", "build", *selected]),
+        Run(["cargo", "build", *selected], env=env),
         contends=(config.exclusive("workspace_binaries"),),
         produces=tuple(binary_dir / name for name in settings.built),
         kind=Kind.PACKAGE,

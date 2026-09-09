@@ -70,6 +70,7 @@ def static(
     generated: Step | None = None,
     bundled: Step | None = None,
     node: Step | None = None,
+    runtime: Step | None = None,
 ) -> tuple[Step, ...]:
     """What can be proved from source, in the order the proofs depend on.
 
@@ -166,7 +167,18 @@ def static(
     built = (agents, ort, frontend)
     coverage = phase.add(rustchecks.coverage(config), after=built)
     leaves.append(phase.add(rustchecks.doctests(config), after=built))
-    leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
+    # Coverage builds test harnesses in its own target directory. Standalone
+    # macOS signing needs real runtime executables; a composed candidate hands
+    # over the existing producer so this never rebuilds a prepared runtime.
+    if runtime is None and host.on_macos():
+        runtime = phase.add(
+            hostpackage.build_step(
+                config, env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC)
+            ),
+            after=(ort, frontend),
+        )
+    signing_inputs = (coverage, runtime) if runtime is not None else (coverage,)
+    leaves.append(phase.add(hostpackage.sign_step(config), after=signing_inputs))
     return tuple(leaves)
 
 

@@ -146,6 +146,7 @@ def compose_modules(
         generated=generated,
         bundled=bundled,
         node=node,
+        runtime=prepared.ready,
     )
     signed = next(step for step in static if step.label == "static.sign")
     artifacts = vmmodules.artifacts(
