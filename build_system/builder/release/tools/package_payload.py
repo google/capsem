@@ -52,17 +52,22 @@ def deb_payload_files(package_path: Path) -> dict[str, bytes]:
     return tar_payload_files(data_member, data_member_name)
 
 
-def tar_payload_files(payload: bytes, member_name: str) -> dict[str, bytes]:
+def tar_payload_files(
+    payload: bytes, member_name: str, *, selected: frozenset[str] | None = None,
+) -> dict[str, bytes]:
     try:
         with tarfile.open(fileobj=BytesIO(payload), mode="r:*") as archive:
             rows: dict[str, bytes] = {}
             for member in archive.getmembers():
+                name = normalize_payload_path(member.name)
+                if selected is not None and name not in selected:
+                    continue
                 if not member.isfile():
                     continue
                 handle = archive.extractfile(member)
                 if handle is None:
                     continue
-                rows[normalize_payload_path(member.name)] = handle.read()
+                rows[name] = handle.read()
             return rows
     except tarfile.TarError:
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -80,6 +85,7 @@ def tar_payload_files(payload: bytes, member_name: str) -> dict[str, bytes]:
                 normalize_payload_path(path.relative_to(payload_dir).as_posix()): path.read_bytes()
                 for path in payload_dir.rglob("*")
                 if path.is_file()
+                and (selected is None or normalize_payload_path(path.relative_to(payload_dir).as_posix()) in selected)
             }
 
 

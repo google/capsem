@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Debian platform checks run on macOS without host Debian tools or shared
+  temporary directories, while exercising the exact packaged executable.
 - Cargo cache maintenance reclaims old incremental compiler state under native
   build locks while preserving compiled dependencies and signed executables.
 - Guest control connections survive reconnects when no snapshot froze the

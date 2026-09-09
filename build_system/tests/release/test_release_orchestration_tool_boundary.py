@@ -25,6 +25,7 @@ EXISTING_TOOLS = {
     "package_payload",
     "profile_root_payload",
     "project_first_channel_before",
+    "prove_deb_platform_support",
     "prove_release_profile_assets",
     "release_channel_author",
     "release_cohort",

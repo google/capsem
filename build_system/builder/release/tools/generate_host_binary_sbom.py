@@ -73,8 +73,8 @@ def deb_entries(artifact: Path) -> list[dict[str, object]]:
         return entries_from_payload(payload)
 
 
-def deb_data_member(artifact: Path) -> tuple[str, bytes]:
-    """Read a Debian package's data archive without platform-specific `ar`."""
+def deb_data_member(artifact: Path, *, member_prefix: str = "data.tar") -> tuple[str, bytes]:
+    """Read a Debian package's selected archive without platform-specific tools."""
     contents = artifact.read_bytes()
     if not contents.startswith(b"!<arch>\n"):
         raise SystemExit(f"{artifact} is not an ar archive")
@@ -93,11 +93,11 @@ def deb_data_member(artifact: Path) -> tuple[str, bytes]:
         data_end = data_start + size
         if data_end > len(contents):
             raise SystemExit(f"{artifact} has a truncated ar member")
-        if name.startswith("data.tar"):
+        if name.startswith(member_prefix):
             return name, contents[data_start:data_end]
         offset = data_end + (size % 2)
 
-    raise SystemExit(f"{artifact} has no data.tar payload")
+    raise SystemExit(f"{artifact} has no {member_prefix} payload")
 
 
 def pkg_entries(artifact: Path) -> list[dict[str, object]]:
