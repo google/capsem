@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Benchmark preflight recognizes macOS without requiring Linux's KVM device
+  and records native system load on both platforms.
 - Tart cache enforcement counts tags and digests sharing one cached image once,
   preserving warm macOS release bases without falsely exceeding their budget.
 - macOS development gates can start the shared compiler cache inside the

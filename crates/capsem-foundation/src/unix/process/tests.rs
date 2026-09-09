@@ -5,6 +5,12 @@ use nix::errno::Errno;
 use super::*;
 
 #[test]
+fn native_system_load_is_available_and_nonnegative() {
+    let load = load_average().expect("native Unix host must expose its load average");
+    assert!(load.is_finite() && load >= 0.0);
+}
+
+#[test]
 fn process_ids_reject_values_the_kernel_cannot_name() {
     assert!(ProcessId::try_from(0).is_err());
     assert!(ProcessId::try_from(i32::MAX as u32 + 1).is_err());

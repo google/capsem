@@ -71,6 +71,18 @@ pub fn current_uid() -> u32 {
     nix::unistd::getuid().as_raw()
 }
 
+/// One-minute system load, or `None` if the host cannot provide it.
+///
+/// The native Unix interface works on macOS as well as Linux, without procfs
+/// or a subprocess that may be unavailable inside the gate's sandbox.
+pub fn load_average() -> Option<f64> {
+    let mut load = [0.0];
+    // SAFETY: the buffer holds the one double requested and remains writable
+    // for the call; getloadavg does not retain its pointer.
+    let observed = unsafe { libc::getloadavg(load.as_mut_ptr(), 1) };
+    (observed == 1).then_some(load[0])
+}
+
 /// The current process's parent, or `None` for an unrepresentable kernel value.
 pub fn parent_process_id() -> Option<ProcessId> {
     u32::try_from(nix::unistd::getppid().as_raw())

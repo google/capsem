@@ -46,12 +46,6 @@ impl Fitness {
     }
 }
 
-/// One-minute load average, or `None` where the OS does not publish one.
-fn load_average(proc_loadavg: &Path) -> Option<f64> {
-    let text = fs::read_to_string(proc_loadavg).ok()?;
-    text.split_whitespace().next()?.parse().ok()
-}
-
 /// The CPU frequency governor, where the kernel exposes one.
 fn governor(sysfs: &Path) -> Option<String> {
     fs::read_to_string(sysfs).ok().map(|g| g.trim().to_string())
@@ -60,6 +54,7 @@ fn governor(sysfs: &Path) -> Option<String> {
 /// Judge a set of observed facts. Pure, so the policy is testable without a
 /// machine that happens to be in the state under test.
 pub fn assess(
+    os: &str,
     cpu_count: usize,
     load: Option<f64>,
     governor: Option<&str>,
@@ -93,7 +88,9 @@ pub fn assess(
         }
     }
 
-    if !kvm {
+    // Apple VZ does not expose a Linux device node. Its actual boot capability
+    // is exercised by the macOS gate, not inferred by pretending KVM exists.
+    if os == "linux" && !kvm {
         objections.push(Objection {
             what: "kvm".to_string(),
             detail: "no /dev/kvm; guest dimensions would measure emulation".to_string(),
@@ -156,11 +153,11 @@ pub fn running_capsem_processes() -> std::io::Result<Vec<String>> {
 /// Observe this machine and judge it.
 pub fn examine(arch: &str, os: &str, strays: &[String]) -> Fitness {
     let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let load = load_average(Path::new("/proc/loadavg"));
+    let load = capsem_foundation::unix::process::load_average();
     let governor = governor(Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"));
     let kvm = Path::new("/dev/kvm").exists();
 
-    let objections = assess(cpu_count, load, governor.as_deref(), kvm, strays);
+    let objections = assess(os, cpu_count, load, governor.as_deref(), kvm, strays);
 
     Fitness {
         host: Host {
