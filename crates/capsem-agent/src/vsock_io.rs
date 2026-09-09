@@ -118,10 +118,14 @@ fn set_io_timeouts(fd: RawFd) {
 pub fn set_socket_timeout(fd: RawFd, which: libc::c_int, timeout: Duration) {
     // The field types are `time_t` / `suseconds_t`, whose aliases are
     // deprecated on musl (they widen in a future libc); infer them instead.
+    // Subsecond micros fit macOS's i32; Linux's i64 conversion is lossless.
+    #[cfg(target_os = "macos")]
+    let micros = timeout.subsec_micros() as i32;
+    #[cfg(not(target_os = "macos"))]
+    let micros = timeout.subsec_micros().into();
     let tv = libc::timeval {
         tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX) as _,
-        // Always below 1_000_000, fitting both macOS i32 and Linux i64.
-        tv_usec: timeout.subsec_micros() as _,
+        tv_usec: micros,
     };
     unsafe {
         libc::setsockopt(
