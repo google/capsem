@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("language", ["python", "typescript"])
-def test_sdk_against_real_gateway_and_stopped_workspace(language: Literal["python", "typescript"]) -> None:
+@pytest.mark.parametrize("language", ["python", "typescript", "rust"])
+def test_sdk_against_real_gateway_and_stopped_workspace(language: Literal["python", "typescript", "rust"]) -> None:
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
     project = ROOT / "sdk" / language
@@ -30,9 +30,13 @@ def test_sdk_against_real_gateway_and_stopped_workspace(language: Literal["pytho
         seed_workspace_changes(service.tmp_dir, service.profiles_dir)
         service.start()
         gateway.start()
+        commands = {
+            "python": ["uv", "run", "--project", str(project), "--frozen", "python", "-m", "tests.gateway_acceptance"],
+            "typescript": ["node", "tools/gateway-acceptance.mjs"],
+            "rust": ["cargo", "run", "--quiet", "-p", "capsem-sdk", "--example", "gateway_acceptance"],
+        }
         result = subprocess.run(
-            ["uv", "run", "--project", str(project), "--frozen", "python", "-m", "tests.gateway_acceptance"]
-            if language == "python" else ["node", "tools/gateway-acceptance.mjs"],
+            commands[language],
             cwd=project,
             env={**{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                  "SDK_GATEWAY_URL": f"http://127.0.0.1:{gateway.port}",
