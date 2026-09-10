@@ -74,6 +74,8 @@ impl Publisher {
         let listener =
             std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, host_port)).context("bind publication listener")?;
         let host_port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(listener)?;
         let binary = std::env::current_exe()?.with_file_name("capsem-router");
         let (parent, child_socket) = StdUnixStream::pair()?;
         let mut child = tokio::process::Command::new(binary)
@@ -91,13 +93,7 @@ impl Publisher {
         let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone()?)?;
         let mut events = UnixStream::from_std(parent)?;
         tokio::time::timeout(Duration::from_secs(5), async {
-            send_grant(
-                &sender,
-                Grant::Listen {
-                    socket: listener.as_fd(),
-                },
-            )
-            .await?;
+            send_grant(&sender, Grant::Hello).await?;
             match Event::read(&mut events).await.context("read router startup response")? {
                 Event::Ready => {}
                 Event::ConfinementFailed => anyhow::bail!("port router could not install its sandbox"),
@@ -107,12 +103,11 @@ impl Publisher {
         })
         .await
         .context("router startup timed out")??;
-        drop(listener); // The companion exclusively owns the listening fd.
         let owner = self.clone();
         let task = tokio::spawn(async move {
             let _permit = permit;
             tokio::select! {
-                result = broker::serve(owner, guest_port, control, sender, events) => {
+                result = broker::serve(owner, guest_port, listener, control, sender, events) => {
                     if let Err(error) = result { tracing::warn!(%error, host_port, "publication router disconnected"); }
                 }
                 status = child.wait() => { tracing::info!(?status, host_port, "publication router exited"); }

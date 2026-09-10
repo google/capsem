@@ -15,7 +15,8 @@ fn confinement_denies_ambient_authority_but_preserves_inherited_tcp() {
     std::fs::write(&secret, b"hypervisor state").unwrap();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
-    let socket = super::super::fd::duplicate(listener.as_fd()).unwrap();
+    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    let (socket, _) = listener.accept().unwrap();
     let executable = std::env::current_exe().unwrap();
     #[cfg(target_os = "macos")]
     let executable = {
@@ -31,11 +32,9 @@ fn confinement_denies_ambient_authority_but_preserves_inherited_tcp() {
         .env("ROUTER_SANDBOX_TEST", &secret)
         .env("ROUTER_CONTROL_TEST", &control)
         .env("ROUTER_PORT_TEST", port.to_string())
-        .stdin(Stdio::from(socket))
+        .stdin(Stdio::from(std::os::fd::OwnedFd::from(socket)))
         .spawn()
         .unwrap();
-    drop(listener);
-    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
     client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     client.write_all(b"ping").unwrap();
     let mut reply = [0; 4];
@@ -52,17 +51,30 @@ fn sandbox_child() {
         return;
     };
     let control = std::env::var_os("ROUTER_CONTROL_TEST").unwrap();
-    let port = std::env::var("ROUTER_PORT_TEST").unwrap().parse().unwrap();
+    let port: u16 = std::env::var("ROUTER_PORT_TEST").unwrap().parse().unwrap();
     let stdin = std::io::stdin();
-    let listener = TcpListener::from(super::super::fd::duplicate(stdin.as_fd()).unwrap());
+    let mut stream = TcpStream::from(super::super::fd::duplicate(stdin.as_fd()).unwrap());
+    #[cfg(target_os = "linux")]
+    let (forbidden_listener, _queued) = {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let queued = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        (listener, queued)
+    };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .unwrap();
-    confine(port).unwrap();
+    confine().unwrap();
     runtime.block_on(async {
         tokio::task::spawn(async move {
+            #[cfg(target_os = "linux")]
+            assert_eq!(
+                forbidden_listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "router accepted a connection from an inherited listener"
+            );
             assert!(std::fs::read(secret).is_err(), "router read hypervisor state");
             assert!(
                 UnixStream::connect(control).is_err(),
@@ -82,7 +94,6 @@ fn sandbox_child() {
         .await
         .unwrap();
     });
-    let (mut stream, _) = listener.accept().unwrap();
     let mut request = [0; 4];
     stream.read_exact(&mut request).unwrap();
     assert_eq!(&request, b"ping");

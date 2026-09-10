@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Published TCP listeners stay with the VM owner. The confined router receives
+  only connected descriptor pairs; bounded acknowledgements and control failure
+  close both endpoints even when the router retains duplicate descriptors.
 - The confined network companion is now named `capsem-router`; package signing
   continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output

@@ -13,8 +13,7 @@ authors.workspace = true
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 tokio.workspace = true
-tokio-unix-ipc.workspace = true
-serde.workspace = true
+tracing.workspace = true
 clap = { workspace = true, features = ["derive"] }
 
 [lints]

@@ -1,23 +1,21 @@
+use capsem_foundation::unix::router_channel::Sender;
 use capsem_router::{send_grant, Event, Grant, MAX_CONNECTIONS};
 use std::net::Ipv4Addr;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UnixStream};
+use tokio::net::{TcpListener, TcpStream, UnixStream};
+use tokio::process::{Child, Command};
 use tokio::time::{timeout, Duration};
 
 struct Router {
     child: Child,
-    sender: Option<capsem_foundation::unix::router_channel::Sender>,
+    sender: Option<Sender>,
     events: Option<UnixStream>,
-    address: std::net::SocketAddr,
 }
-
 impl Router {
     async fn start() -> Self {
-        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let address = listener.local_addr().unwrap();
         let (parent, child) = StdUnixStream::pair().unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_capsem-router"))
             .args(["--parent-pid", &std::process::id().to_string()])
@@ -25,120 +23,155 @@ impl Router {
             .stdin(Stdio::from(std::os::fd::OwnedFd::from(child)))
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .spawn()
             .unwrap();
         parent.set_nonblocking(true).unwrap();
-        let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
-        let events = UnixStream::from_std(parent).unwrap();
+        let sender = Sender::new(parent.try_clone().unwrap()).unwrap();
         let mut router = Self {
             child,
             sender: Some(sender),
-            events: Some(events),
-            address,
+            events: Some(UnixStream::from_std(parent).unwrap()),
         };
-        send_grant(
-            router.sender.as_ref().unwrap(),
-            Grant::Listen {
-                socket: listener.as_fd(),
-            },
-        )
-        .await
-        .unwrap();
+        router.grant(Grant::Hello).await;
         assert_eq!(router.event().await, Event::Ready);
         router
     }
-
+    async fn grant(&self, grant: Grant<std::os::fd::BorrowedFd<'_>>) {
+        timeout(Duration::from_secs(2), send_grant(self.sender.as_ref().unwrap(), grant))
+            .await
+            .unwrap()
+            .unwrap();
+    }
     async fn event(&mut self) -> Event {
         timeout(Duration::from_secs(5), Event::read(self.events.as_mut().unwrap()))
             .await
             .unwrap()
             .unwrap()
     }
-}
-
-impl Drop for Router {
-    fn drop(&mut self) {
-        if self.child.try_wait().unwrap().is_none() {
-            self.child.kill().unwrap();
-            self.child.wait().unwrap();
-        }
+    async fn pair(&self, id: u64) -> (TcpStream, UnixStream) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (source, _) = listener.accept().await.unwrap();
+        let (destination, peer) = StdUnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        self.grant(Grant::Connected {
+            id,
+            source: source.as_fd(),
+            destination: destination.as_fd(),
+        })
+        .await;
+        (client, UnixStream::from_std(peer).unwrap())
+    }
+    async fn close(&mut self) {
+        self.sender.take();
+        self.events.take();
+        timeout(Duration::from_secs(3), self.child.wait())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 
 #[tokio::test]
-async fn sandboxed_router_accepts_data_descriptors_and_preserves_half_close() {
+async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
     let mut router = Router::start().await;
-    let mut tcp = TcpStream::connect(router.address).await.unwrap();
-    let Event::Open(id) = router.event().await else {
-        panic!("missing connection request");
-    };
-    let (data, echo) = StdUnixStream::pair().unwrap();
-    send_grant(
-        router.sender.as_ref().unwrap(),
-        Grant::Connected {
-            id,
-            socket: data.as_fd(),
-        },
-    )
-    .await
-    .unwrap();
-    echo.set_nonblocking(true).unwrap();
-    let mut echo = UnixStream::from_std(echo).unwrap();
+    let (mut tcp, mut peer) = router.pair(1).await;
+    assert_eq!(router.event().await, Event::Accepted(1));
     tcp.write_all(b"\x00\xffhello").await.unwrap();
     tcp.shutdown().await.unwrap();
     let mut bytes = Vec::new();
-    timeout(Duration::from_secs(5), echo.read_to_end(&mut bytes))
+    timeout(Duration::from_secs(5), peer.read_to_end(&mut bytes))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(bytes, b"\x00\xffhello");
-    echo.write_all(b"reply after EOF").await.unwrap();
-    echo.shutdown().await.unwrap();
+    peer.write_all(b"reply after EOF").await.unwrap();
+    peer.shutdown().await.unwrap();
     bytes.clear();
     timeout(Duration::from_secs(5), tcp.read_to_end(&mut bytes))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(bytes, b"reply after EOF");
-    assert_eq!(router.event().await, Event::Closed(id));
-    router.sender.take();
-    router.events.take();
-    timeout(Duration::from_secs(3), async {
-        while router.child.try_wait().unwrap().is_none() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(
-        TcpStream::connect(router.address).await.is_err(),
-        "listener survived parent channel close"
+    assert_eq!(router.event().await, Event::Closed(1));
+    router.close().await;
+}
+
+#[tokio::test]
+async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
+    let mut router = Router::start().await;
+    let mut peers = Vec::new();
+    for id in 1..=MAX_CONNECTIONS as u64 {
+        peers.push(router.pair(id).await);
+        assert_eq!(router.event().await, Event::Accepted(id));
+    }
+    let excess = MAX_CONNECTIONS as u64 + 1;
+    let (mut refused, _peer) = router.pair(excess).await;
+    assert_eq!(router.event().await, Event::Refused(excess));
+    assert_eq!(
+        timeout(Duration::from_secs(2), refused.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    router.grant(Grant::Abort { id: 1 }).await;
+    assert_eq!(router.event().await, Event::Closed(1));
+    let replacement = router.pair(excess + 1).await;
+    assert_eq!(router.event().await, Event::Accepted(excess + 1));
+    peers.push(replacement);
+    router.close().await;
+    for (mut client, mut peer) in peers {
+        assert_eq!(
+            timeout(Duration::from_secs(2), client.read(&mut [0]))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            timeout(Duration::from_secs(2), peer.read(&mut [0]))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn duplicate_id_aborts_router_and_all_granted_endpoints() {
+    let mut router = Router::start().await;
+    let (mut client, _peer) = router.pair(1).await;
+    assert_eq!(router.event().await, Event::Accepted(1));
+    let _duplicate = router.pair(1).await;
+    let status = timeout(Duration::from_secs(3), router.child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!status.success());
+    assert_eq!(
+        timeout(Duration::from_secs(2), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
     );
 }
 
 #[tokio::test]
-async fn connection_limit_applies_backpressure_and_refusal_frees_a_slot() {
+async fn unconnected_listener_descriptor_is_refused() {
     let mut router = Router::start().await;
-    let mut clients = Vec::new();
-    let mut first = 0;
-    for _ in 0..MAX_CONNECTIONS {
-        clients.push(TcpStream::connect(router.address).await.unwrap());
-        let Event::Open(id) = router.event().await else {
-            panic!("missing open");
-        };
-        if first == 0 {
-            first = id;
-        }
-    }
-    clients.push(TcpStream::connect(router.address).await.unwrap());
-    assert!(
-        timeout(Duration::from_millis(100), Event::read(router.events.as_mut().unwrap()))
-            .await
-            .is_err()
-    );
-    send_grant(router.sender.as_ref().unwrap(), Grant::Refused { id: first })
-        .await
-        .unwrap();
-    assert_eq!(router.event().await, Event::Closed(first));
-    assert!(matches!(router.event().await, Event::Open(_)));
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let (data, _peer) = StdUnixStream::pair().unwrap();
+    router
+        .grant(Grant::Connected {
+            id: 1,
+            source: listener.as_fd(),
+            destination: data.as_fd(),
+        })
+        .await;
+    assert_eq!(router.event().await, Event::Refused(1));
+    router.close().await;
 }

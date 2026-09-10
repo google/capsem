@@ -2,7 +2,7 @@
 //! signal, namespace, or filesystem mutation syscall is available afterwards.
 use std::io;
 
-pub(super) fn confine(_: u16) -> io::Result<()> {
+pub(super) fn confine() -> io::Result<()> {
     #[cfg(target_arch = "aarch64")]
     let architecture = 0xc00000b7;
     #[cfg(target_arch = "x86_64")]
@@ -26,7 +26,6 @@ pub(super) fn confine(_: u16) -> io::Result<()> {
         libc::SYS_recvmsg,
         libc::SYS_sendto,
         libc::SYS_sendmsg,
-        libc::SYS_accept4,
         libc::SYS_shutdown,
         libc::SYS_getsockopt,
         libc::SYS_setsockopt,
@@ -35,6 +34,8 @@ pub(super) fn confine(_: u16) -> io::Result<()> {
         libc::SYS_epoll_create1,
         libc::SYS_epoll_ctl,
         libc::SYS_epoll_pwait,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_epoll_wait,
         libc::SYS_eventfd2,
         libc::SYS_futex,
         libc::SYS_mmap,
@@ -61,11 +62,6 @@ pub(super) fn confine(_: u16) -> io::Result<()> {
     for syscall in allowed {
         filter.push(instruction(0x15, 0, 1, syscall as u32));
         filter.push(instruction(0x06, 0, 0, 0x7fff0000)); // RET ALLOW
-    }
-    #[cfg(target_arch = "x86_64")]
-    for syscall in [libc::SYS_accept, libc::SYS_epoll_wait] {
-        filter.push(instruction(0x15, 0, 1, syscall as u32));
-        filter.push(instruction(0x06, 0, 0, 0x7fff0000));
     }
     filter.push(instruction(0x06, 0, 0, 0x00050000 | libc::EPERM as u32));
     let program = libc::sock_fprog {

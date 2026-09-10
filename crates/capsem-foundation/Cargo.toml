@@ -19,7 +19,6 @@ runtime = [
     "dep:serde",
     "dep:serde_json",
     "dep:tokio",
-    "dep:tokio-unix-ipc",
     "dep:tracing",
     "dep:tracing-appender",
     "dep:tracing-subscriber",
@@ -34,7 +33,6 @@ rmp-serde = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
-tokio-unix-ipc = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-appender = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }

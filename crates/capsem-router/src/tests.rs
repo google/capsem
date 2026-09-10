@@ -1,41 +1,56 @@
 use super::*;
-use std::net::Ipv4Addr;
-use std::os::fd::AsFd;
+use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use std::os::unix::net::UnixStream as StdUnixStream;
-use tokio::net::{TcpListener, TcpStream, UnixStream};
+use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
+fn stream_pair() -> (StdUnixStream, UnixStream) {
+    let (owned, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    (owned, UnixStream::from_std(peer).unwrap())
+}
+
 #[tokio::test]
-async fn relay_preserves_binary_half_close_and_concurrent_connections() {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let address = listener.local_addr().unwrap();
+async fn connected_pair_preserves_binary_half_close_and_concurrency() {
     let (parent, child) = StdUnixStream::pair().unwrap();
-    let grants = capsem_foundation::unix::router_channel::Receiver::<Grant>::new(child.try_clone().unwrap()).unwrap();
-    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    let sender = Sender::new(parent.try_clone().unwrap()).unwrap();
+    let receiver = Receiver::new(child.try_clone().unwrap()).unwrap();
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
     let mut events = UnixStream::from_std(parent).unwrap();
-    let router = tokio::spawn(relay(listener, grants, UnixStream::from_std(child).unwrap()));
-    assert_eq!(
-        timeout(Duration::from_secs(2), Event::read(&mut events))
-            .await
-            .unwrap()
-            .unwrap(),
-        Event::Ready
-    );
-    let mut clients = tokio::task::JoinSet::new();
-    for index in 0..32u8 {
-        clients.spawn(async move {
-            let mut client = TcpStream::connect(address).await.unwrap();
-            let bytes = vec![index; 32 * 1024];
-            client.write_all(&bytes).await.unwrap();
+    let router = tokio::spawn(relay(receiver, UnixStream::from_std(child).unwrap()));
+    assert_eq!(Event::read(&mut events).await.unwrap(), Event::Ready);
+    let mut peers = tokio::task::JoinSet::new();
+    for id in 1..=32 {
+        let (source, mut client) = stream_pair();
+        let (destination, mut server) = stream_pair();
+        send_grant(
+            &sender,
+            Grant::Connected {
+                id,
+                source: source.as_fd(),
+                destination: destination.as_fd(),
+            },
+        )
+        .await
+        .unwrap();
+        peers.spawn(async move {
+            let payload = vec![id as u8; 32 * 1024];
+            let echo = tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                server.read_to_end(&mut bytes).await.unwrap();
+                server.write_all(&bytes).await.unwrap();
+                server.shutdown().await.unwrap();
+            });
+            client.write_all(&payload).await.unwrap();
             client.shutdown().await.unwrap();
-            let mut received = Vec::new();
-            client.read_to_end(&mut received).await.unwrap();
-            assert_eq!(received, bytes);
+            let mut bytes = Vec::new();
+            client.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(bytes, payload);
+            echo.await.unwrap();
         });
     }
-    let mut echoes = tokio::task::JoinSet::new();
+    let mut accepted = 0;
     let mut closed = 0;
     while closed < 32 {
         match timeout(Duration::from_secs(5), Event::read(&mut events))
@@ -43,62 +58,56 @@ async fn relay_preserves_binary_half_close_and_concurrent_connections() {
             .unwrap()
             .unwrap()
         {
-            Event::Open(id) => {
-                let (router_data, echo) = StdUnixStream::pair().unwrap();
-                send_grant(
-                    &sender,
-                    Grant::Connected {
-                        id,
-                        socket: router_data.as_fd(),
-                    },
-                )
-                .await
-                .unwrap();
-                echo.set_nonblocking(true).unwrap();
-                echoes.spawn(async move {
-                    let mut echo = UnixStream::from_std(echo).unwrap();
-                    let mut bytes = Vec::new();
-                    echo.read_to_end(&mut bytes).await.unwrap();
-                    echo.write_all(&bytes).await.unwrap();
-                    echo.shutdown().await.unwrap();
-                });
-            }
+            Event::Accepted(_) => accepted += 1,
             Event::Closed(_) => closed += 1,
-            Event::Ready | Event::ConfinementFailed => panic!("unexpected startup event"),
+            other => panic!("unexpected {other:?}"),
         }
     }
-    while let Some(result) = clients.join_next().await {
+    assert_eq!(accepted, 32);
+    while let Some(result) = peers.join_next().await {
         result.unwrap();
     }
-    while let Some(result) = echoes.join_next().await {
-        result.unwrap();
-    }
-    router.abort();
+    drop(sender);
+    drop(events);
+    assert!(timeout(Duration::from_secs(2), router).await.unwrap().unwrap().is_err());
 }
 
 #[tokio::test]
-async fn hostile_event_is_rejected_after_nine_bytes() {
-    let (mut writer, mut reader) = tokio::io::duplex(9);
-    writer.write_all(&[255; 9]).await.unwrap();
-    assert_eq!(
-        Event::read(&mut reader).await.unwrap_err().kind(),
-        io::ErrorKind::InvalidData
-    );
+async fn hostile_or_wrong_version_event_is_rejected_after_fixed_frame() {
+    for frame in [[255; 10], [0; 10]] {
+        let (mut writer, mut reader) = tokio::io::duplex(10);
+        writer.write_all(&frame).await.unwrap();
+        assert_eq!(
+            Event::read(&mut reader).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 }
 
 #[tokio::test]
-async fn startup_confinement_failure_is_bounded_and_distinct_from_ready() {
-    let (mut writer, mut reader) = tokio::io::duplex(9);
-    writer.write_all(&[3, 0, 0, 0, 0, 0, 0, 0, 0]).await.unwrap();
-    let failure = Event::read(&mut reader).await.unwrap();
-    assert_ne!(failure, Event::Ready);
-    failure.write(&mut writer).await.unwrap();
-    let mut frame = [0; 9];
-    reader.read_exact(&mut frame).await.unwrap();
-    assert_eq!(frame, [3, 0, 0, 0, 0, 0, 0, 0, 0]);
-    writer.write_all(&[3, 0, 0, 0, 0, 0, 0, 0, 1]).await.unwrap();
-    assert_eq!(
-        Event::read(&mut reader).await.unwrap_err().kind(),
-        io::ErrorKind::InvalidData
-    );
+async fn grant_rejects_missing_or_excess_descriptors_and_versions() {
+    use capsem_foundation::unix::router_channel::Frame;
+    let (source, _) = StdUnixStream::pair().unwrap();
+    for count in [0, 1, 3] {
+        let fds = (0..count)
+            .map(|_| capsem_foundation::unix::fd::duplicate(source.as_fd()).unwrap())
+            .collect();
+        assert!(Grant::decode(Frame {
+            bytes: encode(1, 1),
+            fds
+        })
+        .is_err());
+    }
+    assert!(Grant::decode(Frame {
+        bytes: [0; 10],
+        fds: vec![]
+    })
+    .is_err());
+}
+
+#[tokio::test]
+async fn startup_failure_is_distinct_from_ready() {
+    let (mut writer, mut reader) = tokio::io::duplex(10);
+    Event::ConfinementFailed.write(&mut writer).await.unwrap();
+    assert_eq!(Event::read(&mut reader).await.unwrap(), Event::ConfinementFailed);
 }

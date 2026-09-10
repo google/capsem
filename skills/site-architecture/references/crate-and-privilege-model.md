@@ -27,7 +27,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: profile/asset/release validation and materialization.
 - **`capsem-mcp`**: host MCP server bridging AI-agent tools to the service API.
-- **`capsem-router`**: Seatbelt/seccomp-confined TCP relay; receives only a loopback listener and connected VSOCK descriptors. No control socket, file access, or virtualization entitlement.
+- **`capsem-router`**: Seatbelt/seccomp-confined TCP relay; receives connected descriptor pairs over a private, bounded grant channel. The VM owner accepts listeners and retains endpoint shutdown handles. No service control socket, ambient file access, listener acceptance, or virtualization entitlement.
 - **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
 - **`capsem-mcp-builtin`**: built-in HTTP and file/snapshot MCP tools.
 - **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.

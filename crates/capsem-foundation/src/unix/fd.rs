@@ -61,6 +61,18 @@ pub fn shutdown(fd: BorrowedFd<'_>, how: SocketShutdown) -> io::Result<()> {
     socket::shutdown(fd.as_raw_fd(), how.as_nix()).map_err(errno::io)
 }
 
+/// Reject files, listeners and datagram sockets before adopting a relay stream.
+pub fn validate_connected_stream(fd: BorrowedFd<'_>) -> io::Result<()> {
+    if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "router requires stream sockets",
+        ));
+    }
+    socket::getpeername::<socket::SockaddrStorage>(fd.as_raw_fd()).map_err(errno::io)?;
+    Ok(())
+}
+
 fn retry_eintr<T>(mut operation: impl FnMut() -> Result<T, Errno>) -> Result<T, Errno> {
     loop {
         match operation() {

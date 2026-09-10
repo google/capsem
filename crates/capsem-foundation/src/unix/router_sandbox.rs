@@ -39,15 +39,9 @@ pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
 }
 
 /// Restrict the whole process after runtime setup and descriptor inheritance.
-/// The only network listener granted on macOS is this pre-bound loopback port.
-pub fn confine(port: u16) -> io::Result<()> {
-    if port == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "router listener must be bound",
-        ));
-    }
-    platform::confine(port)
+/// Only connected descriptors are granted; no listener permission is needed.
+pub fn confine() -> io::Result<()> {
+    platform::confine()
 }
 
 #[cfg(target_os = "macos")]
@@ -60,10 +54,8 @@ mod platform {
         fn sandbox_free_error(error: *mut libc::c_char);
     }
 
-    pub(super) fn confine(port: u16) -> io::Result<()> {
-        let profile = CString::new(format!(
-            "(version 1)(deny default)(allow network-inbound (local ip \"localhost:{port}\"))"
-        ))?;
+    pub(super) fn confine() -> io::Result<()> {
+        let profile = CString::new("(version 1)(deny default)")?;
         let mut error = std::ptr::null_mut();
         // SAFETY: the profile is NUL terminated; sandbox_init initializes the
         // error pointer, whose allocation is released through its paired API.
@@ -89,7 +81,7 @@ mod platform;
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod platform {
-    pub(super) fn confine(_: u16) -> std::io::Result<()> {
+    pub(super) fn confine() -> std::io::Result<()> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "router sandbox unavailable",

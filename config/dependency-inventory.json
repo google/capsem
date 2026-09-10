@@ -873,8 +873,8 @@
    "capsem-credentials",
    "capsem-foundation",
    "capsem-logger",
-   "capsem-router",
    "capsem-proto",
+   "capsem-router",
    "core-foundation-sys",
    "criterion",
    "dispatch2",
@@ -954,7 +954,6 @@
    "serde_json",
    "tempfile",
    "tokio",
-   "tokio-unix-ipc",
    "tracing",
    "tracing-appender",
    "tracing-subscriber"
@@ -1117,17 +1116,6 @@
    "tracing-subscriber"
   ]
  },
- "capsem-router": {
-  "build_script": false,
-  "dependencies": [
-   "capsem-foundation",
-   "capsem-guard",
-   "clap",
-   "serde",
-   "tokio",
-   "tokio-unix-ipc"
-  ]
- },
  "capsem-process": {
   "build_script": false,
   "dependencies": [
@@ -1165,6 +1153,16 @@
    "tempfile",
    "thiserror",
    "tokio"
+  ]
+ },
+ "capsem-router": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-foundation",
+   "capsem-guard",
+   "clap",
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-service": {

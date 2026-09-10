@@ -1,27 +1,41 @@
 use super::*;
 use capsem_router::MAX_CONNECTIONS;
+use tokio::net::TcpListener;
+use tokio::time::Instant;
 
 struct Active {
     setup: tokio::task::AbortHandle,
-    _connection: Option<VsockConnection>,
+    source: std::net::TcpStream,
+    connection: Option<VsockConnection>,
+    acknowledgement: Option<Instant>,
+    accepted: bool,
 }
 impl Drop for Active {
     fn drop(&mut self) {
         self.setup.abort();
+        if let Err(error) = self.source.shutdown(std::net::Shutdown::Both) {
+            tracing::debug!(%error, "publication source shutdown");
+        }
+        if let Some(connection) = &self.connection {
+            if let Err(error) = connection.shutdown_both() {
+                tracing::debug!(%error, "publication destination shutdown");
+            }
+        }
     }
 }
 
 pub(super) async fn serve(
     owner: Arc<Publisher>,
     guest_port: u16,
+    listener: TcpListener,
     control: mpsc::Sender<ServiceToProcess>,
     sender: capsem_foundation::unix::router_channel::Sender,
     mut events: UnixStream,
 ) -> Result<()> {
     let mut active: HashMap<u64, Active> = HashMap::new();
+    let mut connecting: HashMap<u64, Active> = HashMap::new();
+    let mut next_grant: u64 = 1;
     let mut setups = tokio::task::JoinSet::new();
-    // Frame readers run to completion. Cancelling read_exact midway through a
-    // record when another select branch wins would lose framing state.
     let mut readers = tokio::task::JoinSet::new();
     let (queue, mut records) = mpsc::channel(16);
     readers.spawn(async move {
@@ -33,50 +47,77 @@ pub(super) async fn serve(
             }
         }
     });
-    let mut last_id = 0;
-    loop {
-        tokio::select! {
-            event = records.recv() => match event.context("router event reader closed")?? {
-                Event::Open(id) => {
-                    ensure!(id > last_id && active.len() < MAX_CONNECTIONS, "router exceeded its connection authority");
-                    last_id = id;
+    let mut acknowledgements = tokio::time::interval(Duration::from_millis(100));
+    let result = async {
+        loop {
+            tokio::select! {
+                accepted = listener.accept(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
+                    let (source, peer) = accepted?;
+                    source.set_nodelay(true)?;
+                    let source = source.into_std()?;
                     let (pending, receiver) = owner.request()?;
-                    let global_id = pending.id;
+                    let id = pending.id;
+                    let control = control.clone();
                     let setup = setups.spawn(async move {
                         let _pending = pending;
-                        let result = async {
-                            tokio::time::timeout(Duration::from_secs(8), receiver).await.context("guest connection timed out")?
-                                .context("guest connection cancelled")?
-                        }.await;
+                        let result = tokio::time::timeout(Duration::from_secs(8), async {
+                            control.send(ServiceToProcess::ConnectPort { id, port: guest_port }).await
+                                .context("guest control closed")?;
+                            receiver.await.context("guest connection cancelled")?
+                        }).await.context("guest connection timed out").and_then(|result| result);
                         (id, result)
                     });
-                    active.insert(id, Active { setup, _connection: None });
-                    tokio::time::timeout(Duration::from_secs(1), control.send(ServiceToProcess::ConnectPort { id: global_id, port: guest_port })).await??;
+                    tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
+                    connecting.insert(id, Active { setup, source, connection: None, acknowledgement: None, accepted: false });
                 }
-                Event::Closed(id) => {
-                    ensure!(active.remove(&id).is_some(), "router closed an unknown connection");
+                event = records.recv() => match event.context("router event reader closed")?? {
+                    Event::Accepted(id) => {
+                        let flow = active.get_mut(&id).context("router acknowledged unknown connection")?;
+                        ensure!(flow.acknowledgement.take().is_some() && !flow.accepted, "invalid router acknowledgement");
+                        flow.accepted = true;
+                    }
+                    Event::Closed(id) => {
+                        let flow = active.remove(&id).context("router closed unknown connection")?;
+                        ensure!(flow.accepted, "router closed unacknowledged connection");
+                    }
+                    Event::Refused(id) => {
+                        let flow = active.remove(&id).context("router refused unknown connection")?;
+                        ensure!(flow.acknowledgement.is_some() && !flow.accepted, "unexpected router refusal");
+                    }
+                    Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
+                },
+                completed = setups.join_next(), if !setups.is_empty() => {
+                    let (id, result) = completed.unwrap().context("publication setup task failed")?;
+                    let mut flow = connecting.remove(&id).context("completed unknown publication setup")?;
+                    match result {
+                        Ok(connection) => {
+                            // Guest setup completes out of order. The child sees
+                            // an independent, monotonic handoff sequence.
+                            let id = next_grant;
+                            next_grant = next_grant.checked_add(1).context("router grant ids exhausted")?;
+                            let destination = connection.try_clone_fd()?;
+                            flow.connection = Some(connection);
+                            flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
+                            tokio::time::timeout(Duration::from_secs(2), send_grant(&sender, Grant::Connected {
+                                id, source: flow.source.as_fd(), destination: destination.as_fd()
+                            })).await??;
+                            active.insert(id, flow);
+                        }
+                        Err(error) => {
+                            tracing::debug!(connection_id = id, %error, "publication connection refused");
+                        }
+                    }
                 }
-                Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
-            },
-            completed = setups.join_next(), if !setups.is_empty() => {
-                let (id, result) = match completed.unwrap() {
-                    Ok(result) => result,
-                    Err(error) if error.is_cancelled() => continue,
-                    Err(error) => return Err(error.into()),
-                };
-                let Some(active) = active.get_mut(&id) else { continue; };
-                match result {
-                    Ok(connection) => {
-                        let fd = connection.try_clone_fd()?;
-                        tokio::time::timeout(Duration::from_secs(2), send_grant(&sender, Grant::Connected { id, socket: fd.as_fd() })).await??;
-                        active._connection = Some(connection);
-                    }
-                    Err(error) => {
-                        tracing::debug!(id, %error, "publication connection refused");
-                        tokio::time::timeout(Duration::from_secs(2), send_grant(&sender, Grant::Refused { id })).await??;
-                    }
+                _ = acknowledgements.tick() => {
+                    ensure!(!active.values().any(|flow| flow.acknowledgement.is_some_and(|deadline| deadline <= Instant::now())),
+                        "router acknowledgement timed out");
                 }
             }
         }
-    }
+    }.await;
+    active.clear();
+    connecting.clear();
+    setups.shutdown().await;
+    readers.shutdown().await;
+    result
 }

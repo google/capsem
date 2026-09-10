@@ -1,148 +1,203 @@
-//! Data-plane companion protocol. No hypervisor or service-control dependency.
-use serde::{Deserialize, Serialize};
+//! Versioned descriptor-pair grants; policy and destination selection stay in core.
+use capsem_foundation::unix::{
+    fd,
+    router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
+};
+use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio_unix_ipc::serde::Handle;
+use tokio::net::UnixStream;
+use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
+const VERSION: u8 = 1;
 
-/// Only the trusted parent sends descriptor-bearing messages. The parent must
-/// never deserialize a variable-sized message from the confined child.
-#[derive(Serialize, Deserialize)]
-pub enum Grant<Socket = Handle<OwnedFd>> {
-    Listen { socket: Socket },
-    Connected { id: u64, socket: Socket },
-    Refused { id: u64 },
+pub enum Grant<Socket = OwnedFd> {
+    Hello,
+    Connected {
+        id: u64,
+        source: Socket,
+        destination: Socket,
+    },
+    Abort {
+        id: u64,
+    },
 }
 
-/// Borrow descriptors across send; `Handle` serialization consumes ownership
-/// but tokio-unix-ipc 0.4 does not close its serialized descriptors afterwards.
-/// Keeping ownership with the caller also closes correctly on cancellation.
-pub async fn send_grant(
-    sender: &capsem_foundation::unix::router_channel::Sender,
-    grant: Grant<BorrowedFd<'_>>,
-) -> io::Result<()> {
-    use tokio_unix_ipc::serde::HandleRef;
-    let grant = match grant {
-        Grant::Listen { socket } => Grant::Listen {
-            socket: HandleRef(socket.as_raw_fd()),
-        },
-        Grant::Connected { id, socket } => Grant::Connected {
+fn encode(kind: u8, id: u64) -> [u8; FRAME_SIZE] {
+    let mut frame = [0; FRAME_SIZE];
+    frame[0] = VERSION;
+    frame[1] = kind;
+    frame[2..].copy_from_slice(&id.to_be_bytes());
+    frame
+}
+fn decode(bytes: [u8; FRAME_SIZE]) -> io::Result<(u8, u64)> {
+    if bytes[0] != VERSION {
+        return Err(invalid("incompatible router protocol"));
+    }
+    Ok((bytes[1], u64::from_be_bytes(bytes[2..].try_into().unwrap())))
+}
+fn invalid(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+impl Grant {
+    pub fn decode(mut frame: Frame) -> io::Result<Self> {
+        match (decode(frame.bytes)?, frame.fds.len()) {
+            ((0, 0), 0) => Ok(Self::Hello),
+            ((1, id), 2) if id != 0 => {
+                let destination = frame.fds.pop().unwrap();
+                let source = frame.fds.pop().unwrap();
+                Ok(Self::Connected {
+                    id,
+                    source,
+                    destination,
+                })
+            }
+            ((2, id), 0) if id != 0 => Ok(Self::Abort { id }),
+            _ => Err(invalid("invalid router grant or descriptor count")),
+        }
+    }
+}
+pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Result<()> {
+    match grant {
+        Grant::Hello => sender.send(&encode(0, 0), &[]).await?,
+        Grant::Connected {
             id,
-            socket: HandleRef(socket.as_raw_fd()),
-        },
-        Grant::Refused { id } => Grant::Refused { id },
+            source,
+            destination,
+        } => {
+            sender
+                .send(&encode(1, id), &[source.as_raw_fd(), destination.as_raw_fd()])
+                .await?
+        }
+        Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
     };
-    let (payload, fds) = tokio_unix_ipc::serde::serialize((grant, true))?;
-    sender.send(&payload, &fds).await?;
     Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Event {
     Ready,
-    Open(u64),
+    Accepted(u64),
     Closed(u64),
     ConfinementFailed,
+    Refused(u64),
 }
-
 impl Event {
-    /// Fixed nine-byte requests bound allocation even for a hostile router.
     pub async fn read(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<Self> {
-        let mut frame = [0; 9];
+        let mut frame = [0; FRAME_SIZE];
         reader.read_exact(&mut frame).await?;
-        let id = u64::from_be_bytes(frame[1..].try_into().unwrap());
-        match (frame[0], id) {
+        match decode(frame)? {
             (0, 0) => Ok(Self::Ready),
-            (1, id) if id != 0 => Ok(Self::Open(id)),
+            (1, id) if id != 0 => Ok(Self::Accepted(id)),
             (2, id) if id != 0 => Ok(Self::Closed(id)),
             (3, 0) => Ok(Self::ConfinementFailed),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid router event")),
+            (4, id) if id != 0 => Ok(Self::Refused(id)),
+            _ => Err(invalid("invalid router event")),
         }
     }
-
     pub async fn write(&self, writer: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
-        let (kind, id) = match self {
-            Self::Ready => (0, 0u64),
-            Self::Open(id) => (1, *id),
-            Self::Closed(id) => (2, *id),
-            Self::ConfinementFailed => (3, 0),
+        let frame = match self {
+            Self::Ready => encode(0, 0),
+            Self::Accepted(id) => encode(1, *id),
+            Self::Closed(id) => encode(2, *id),
+            Self::ConfinementFailed => encode(3, 0),
+            Self::Refused(id) => encode(4, *id),
         };
-        let mut frame = [0; 9];
-        frame[0] = kind;
-        frame[1..].copy_from_slice(&id.to_be_bytes());
-        writer.write_all(&frame).await
+        timeout(Duration::from_secs(2), writer.write_all(&frame)).await?
     }
 }
 
-pub async fn relay(
-    listener: tokio::net::TcpListener,
-    grants: capsem_foundation::unix::router_channel::Receiver<Grant>,
-    mut events: tokio::net::UnixStream,
-) -> io::Result<()> {
-    use std::collections::HashMap;
-    use tokio::sync::oneshot;
-    use tokio::time::{timeout, Duration};
+// Explicit shutdown wakes holders of duplicate FDs on cancellation and EOF.
+struct Stream(UnixStream);
+impl Stream {
+    fn new(socket: OwnedFd) -> io::Result<Self> {
+        fd::validate_connected_stream(socket.as_fd())?;
+        fd::set_nonblocking(socket.as_fd(), true)?;
+        Ok(Self(UnixStream::from_std(std::os::unix::net::UnixStream::from(
+            socket,
+        ))?))
+    }
+}
+impl Drop for Stream {
+    fn drop(&mut self) {
+        if let Err(error) = fd::shutdown(self.0.as_fd(), fd::SocketShutdown::Both) {
+            tracing::debug!(%error, "router endpoint shutdown");
+        }
+    }
+}
+
+pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
     let mut jobs = tokio::task::JoinSet::new();
-    let mut pending: HashMap<u64, oneshot::Sender<OwnedFd>> = HashMap::new();
+    let mut active = HashMap::new();
     let mut readers = tokio::task::JoinSet::new();
     let (queue, mut messages) = tokio::sync::mpsc::channel(16);
     readers.spawn(async move {
         loop {
-            let message = grants.recv().await;
+            let message = grants.recv().await.and_then(Grant::decode);
             let failed = message.is_err();
             if queue.send(message).await.is_err() || failed {
                 break;
             }
         }
     });
-    let mut next_id = 0u64;
-    Event::Ready.write(&mut events).await?;
-    loop {
-        tokio::select! {
-            accepted = listener.accept(), if jobs.len() < MAX_CONNECTIONS => {
-                let (mut tcp, _) = accepted?;
-                tcp.set_nodelay(true)?;
-                next_id = next_id.checked_add(1).ok_or_else(|| io::Error::other("router connection id exhausted"))?;
-                let id = next_id;
-                let (sender, receiver) = oneshot::channel();
-                pending.insert(id, sender);
-                jobs.spawn(async move {
-                    let result = async {
-                        let fd = timeout(Duration::from_secs(10), receiver).await
-                            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
-                            .map_err(|_| io::Error::from(io::ErrorKind::ConnectionRefused))?;
-                        // The backend data fd is socket-like on both VZ and KVM;
-                        // no Unix address operation is performed on this stream.
-                        let stream = std::os::unix::net::UnixStream::from(fd);
-                        capsem_foundation::unix::fd::set_nonblocking(stream.as_fd(), true)?;
-                        let mut data = tokio::net::UnixStream::from_std(stream)?;
-                        tokio::io::copy_bidirectional(&mut tcp, &mut data).await?;
-                        Ok::<_, io::Error>(())
-                    }.await;
-                    (id, result)
-                });
-                Event::Open(id).write(&mut events).await?;
-            }
-            message = messages.recv() => match message.ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof))?? {
-                Grant::Connected { id, socket } => {
-                    if let Some(sender) = pending.remove(&id) {
-                        // A late grant is closed immediately after setup timeout.
-                        let _ = sender.send(socket.into_inner());
+    let result = async {
+        Event::Ready.write(&mut events).await?;
+        let mut last_id = 0;
+        loop {
+            tokio::select! {
+                message = messages.recv() => match message.ok_or_else(|| invalid("router grant channel closed"))?? {
+                    Grant::Connected { id, source, destination } => {
+                        if id <= last_id { return Err(invalid("reused router connection id")); }
+                        last_id = id;
+                        if active.len() >= MAX_CONNECTIONS {
+                            Event::Refused(id).write(&mut events).await?;
+                            continue;
+                        }
+                        let pair = Stream::new(source).and_then(|source| Stream::new(destination).map(|destination| (source, destination)));
+                        let (mut source, mut destination) = match pair {
+                            Ok(pair) => pair,
+                            Err(error) => {
+                                tracing::debug!(connection_id = id, %error, "router rejected descriptor pair");
+                                Event::Refused(id).write(&mut events).await?;
+                                continue;
+                            }
+                        };
+                        // Acknowledgement precedes forwarding and is bounded.
+                        Event::Accepted(id).write(&mut events).await?;
+                        let task = jobs.spawn(async move {
+                            let result = tokio::io::copy_bidirectional_with_sizes(&mut source.0, &mut destination.0, 16 * 1024, 16 * 1024).await;
+                            if let Err(error) = result { tracing::debug!(connection_id = id, %error, "router stream ended"); }
+                            id
+                        });
+                        active.insert(id, task);
                     }
+                    Grant::Abort { id } => {
+                        if let Some(task) = active.get(&id) { task.abort(); }
+                    }
+                    Grant::Hello => return Err(invalid("duplicate router hello")),
+                },
+                completed = jobs.join_next(), if !jobs.is_empty() => match completed.unwrap() {
+                    Ok(id) => {
+                        active.remove(&id);
+                        Event::Closed(id).write(&mut events).await?;
+                    }
+                    Err(error) if error.is_cancelled() => {
+                        if let Some(id) = active.iter().find_map(|(&id, task)| (task.id() == error.id()).then_some(id)) {
+                            active.remove(&id);
+                            Event::Closed(id).write(&mut events).await?;
+                        }
+                    },
+                    Err(error) => return Err(io::Error::other(error)),
                 }
-                Grant::Refused { id } => { pending.remove(&id); }
-                Grant::Listen { .. } => return Err(io::Error::new(io::ErrorKind::InvalidData, "duplicate listener grant")),
-            },
-            completed = jobs.join_next(), if !jobs.is_empty() => {
-                let (id, result) = completed.unwrap().map_err(io::Error::other)?;
-                pending.remove(&id);
-                if let Err(error) = result { eprintln!("router connection {id}: {error}"); }
-                Event::Closed(id).write(&mut events).await?;
             }
         }
-    }
+    }.await;
+    readers.shutdown().await;
+    jobs.shutdown().await;
+    result
 }
 
 #[cfg(test)]

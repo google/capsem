@@ -908,7 +908,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-unix-ipc",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -1126,9 +1125,8 @@ dependencies = [
  "capsem-foundation",
  "capsem-guard",
  "clap",
- "serde",
  "tokio",
- "tokio-unix-ipc",
+ "tracing",
 ]
 
 [[package]]
