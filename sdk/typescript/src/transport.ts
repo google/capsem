@@ -20,6 +20,13 @@ export class HttpError extends Error {
   }
 }
 
+export class NetworkError extends Error {
+  override readonly name = 'NetworkError';
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Gateway connection failed', {cause});
+  }
+}
+
 export class Transport {
   readonly #url: string;
   readonly #token: string;
@@ -60,11 +67,19 @@ export class Transport {
     if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? MediaType.JSON);
     const signals = [this.#closed.signal, AbortSignal.timeout(this.#timeoutMs)];
     if (options.signal) signals.push(options.signal);
-    const response = await fetch(this.#url + path + (query.size ? `?${query}` : ''), {
-      method, headers, redirect: 'manual', signal: AbortSignal.any(signals),
-      ...(options.body === undefined ? {} : {body: typeof options.body === 'string' ? options.body : new Uint8Array(options.body)}),
-    });
-    const payload = new Uint8Array(await response.arrayBuffer());
+    const signal = AbortSignal.any(signals);
+    let response: Response;
+    let payload: Uint8Array;
+    try {
+      response = await fetch(this.#url + path + (query.size ? `?${query}` : ''), {
+        method, headers, redirect: 'manual', signal,
+        ...(options.body === undefined ? {} : {body: typeof options.body === 'string' ? options.body : new Uint8Array(options.body)}),
+      });
+      payload = new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new NetworkError(error);
+    }
     if (!response.ok) throw new HttpError(response.status, new TextDecoder().decode(payload));
     return payload;
   }

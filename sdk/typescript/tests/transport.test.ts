@@ -1,7 +1,42 @@
 import {EventEmitter, once} from 'node:events';
-import {expect, it} from 'vitest';
+import {afterEach, expect, it, vi} from 'vitest';
+import {NetworkError} from '../src/index.js';
 import {HttpError, MediaType, Method, Transport} from '../src/transport.js';
 import {gateway} from './gateway.js';
+
+afterEach(() => vi.unstubAllGlobals());
+
+it.each(['fetch', 'body'])('classifies %s failures as network errors without replaying a mutation', async stage => {
+  const cause = new TypeError('connection lost');
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  if (stage === 'fetch') fetch.mockRejectedValue(cause);
+  else fetch.mockResolvedValue(new Response(new ReadableStream({start(controller) {controller.error(cause);}})));
+  vi.stubGlobal('fetch', fetch);
+  const transport = new Transport('http://localhost', 'secret');
+  const request = transport.request(Method.POST, '/mutation');
+  await expect(request).rejects.toBeInstanceOf(NetworkError);
+  await expect(request).rejects.toMatchObject({name: 'NetworkError', message: 'connection lost', cause});
+  expect(fetch).toHaveBeenCalledTimes(1);
+  transport.close();
+});
+
+it('retains non-Error fetch failures as the network error cause', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue('connection lost'));
+  const transport = new Transport('http://localhost', 'secret');
+  await expect(transport.request(Method.GET, '/')).rejects.toMatchObject({
+    name: 'NetworkError', message: 'Gateway connection failed', cause: 'connection lost',
+  });
+  transport.close();
+});
+
+it('preserves a caller-provided cancellation reason by identity', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller cancelled');
+  controller.abort(reason);
+  const transport = new Transport('http://localhost', 'secret');
+  await expect(transport.request(Method.POST, '/mutation', {signal: controller.signal})).rejects.toBe(reason);
+  transport.close();
+});
 
 it('authenticates and encodes paths, query values, JSON and binary bodies', async () => {
   await gateway((request, response) => response.end(request.body), async (url, received) => {

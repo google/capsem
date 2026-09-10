@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK `NetworkError` distinguishes connection failures from invalid
+  gateway responses while preserving cancellation reasons and request deadlines.
+
 - UI VM lifecycle calls use validated TypeScript SDK responses and preserve
   bounded gateway token refresh. Fork confirmation keeps the entered name and
   opens the returned canonical VM ID.

@@ -43,7 +43,10 @@ ledger; stopped VMs return the gateway's conflict error.
 
 Pass `{signal}` to cancel a call. Choose `timeoutMs` long enough for the command's
 `timeout_secs`; the HTTP deadline covers response reading too. `HttpError`
-preserves the gateway status and response text. Mutations are never retried.
+preserves the gateway status and response text. `NetworkError` identifies fetch
+or response-body connection failures and retains the original `cause`. Response
+validation errors remain distinct; cancellation and timeout reasons are preserved.
+Mutations are never retried.
 
 Created/forked handles share their owner's connection. Closing a child leaves
 siblings usable; closing the owner invalidates its children. `close()` releases
