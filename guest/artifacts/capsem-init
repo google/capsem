@@ -643,6 +643,13 @@ else
     while true; do sleep 60; done
 fi
 
+# A configured container is session state, so existing cold restart/fork boots
+# its saved command. Runtime namespaces/cgroups belong only to this boot.
+if [ -f /newroot/root/.capsem-image/ready ]; then
+    rm -rf /newroot/var/tmp/capsem-container
+    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
+fi
+
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
 if [ -d /mnt/shared/workspace ]; then
     AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log

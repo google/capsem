@@ -4,7 +4,7 @@ use anyhow::Result;
 
 pub mod publish;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PortMapping {
     pub host: u16,
     pub guest: u16,

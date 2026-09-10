@@ -97,3 +97,35 @@ def test_missing_command_fails_before_runtime_launch(launcher):
     config["process"]["args"] = []
     with pytest.raises(ValueError, match="command"):
         launcher.configure(config, {"config": {}}, {"args": [], "env": {}})
+
+
+def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_path):
+    import hashlib
+    import json
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    content = b"verified OCI bytes"
+    (stage / "0-0").write_bytes(content)
+    (stage / "transfer.json").write_text(
+        json.dumps(
+            [
+                {
+                    "path": "blob",
+                    "key": 0,
+                    "parts": 1,
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            ]
+        )
+    )
+    for name in ("first-boot", "restart"):
+        layout = tmp_path / name
+        layout.mkdir()
+        launcher.assemble(stage, layout)
+        assert (layout / "blob").read_bytes() == content
+    (stage / "0-0").write_bytes(b"tampered")
+    layout = tmp_path / "tampered"
+    layout.mkdir()
+    with pytest.raises(ValueError, match="digest"):
+        launcher.assemble(stage, layout)

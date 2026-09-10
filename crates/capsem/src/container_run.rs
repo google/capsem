@@ -116,7 +116,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
         profile_id: args.profile.clone(),
         ram_mb: 4096,
         cpus: 4,
-        persistent: false,
+        persistent: true,
         env: None,
         from: None,
     };
@@ -150,15 +150,25 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     };
     let result = tokio::select! {
         result = work => result,
-        code = &mut cancel => Ok(code),
+        code = &mut cancel => { eprintln!("Detached from {name}; use the existing VM lifecycle commands to stop or delete it"); return Ok(code); },
         _ = deadline => { eprintln!("Container timed out"); Ok(124) },
     };
-    let cleanup: Result<ApiResponse<serde_json::Value>> = client.delete(&format!("/vms/{}/delete", vm.id)).await;
+    if result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<std::io::Error>())
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
+    {
+        return result; // Closing the output attachment must not stop the workload.
+    }
+    let cleanup: Result<ApiResponse<serde_json::Value>> = client
+        .post(&format!("/vms/{}/stop", vm.id), serde_json::json!({}))
+        .await;
     match (result, cleanup.and_then(ApiResponse::into_result)) {
         (Ok(code), Ok(_)) => Ok(code),
         (Err(error), Ok(_)) => Err(error),
-        (Ok(_), Err(error)) => Err(error.context("container VM cleanup failed")),
-        (Err(error), Err(cleanup)) => Err(error.context(format!("container VM cleanup also failed: {cleanup:#}"))),
+        (Ok(_), Err(error)) => Err(error.context("container VM stop failed")),
+        (Err(error), Err(cleanup)) => Err(error.context(format!("container VM stop also failed: {cleanup:#}"))),
     }
 }
 

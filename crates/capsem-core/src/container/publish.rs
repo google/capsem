@@ -18,8 +18,10 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
 mod broker;
+mod saved;
 
 pub struct Publisher {
+    saved: Option<saved::Mappings>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<VsockConnection>>>>,
     next_id: AtomicU64,
     incoming: Arc<Semaphore>,
@@ -29,6 +31,7 @@ pub struct Publisher {
 impl Default for Publisher {
     fn default() -> Self {
         Self {
+            saved: None,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             incoming: Arc::new(Semaphore::new(128)),

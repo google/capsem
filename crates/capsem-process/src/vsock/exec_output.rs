@@ -57,15 +57,21 @@ pub(super) fn stream_exec_output(
     id: u64,
     sender: &tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>,
 ) -> std::io::Result<(Vec<u8>, u64)> {
+    let mut attached = true;
     read_output(
         reader,
         |data| {
-            sender
-                .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput {
-                    id,
-                    data: data.to_vec(),
-                })
-                .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
+            if attached {
+                attached = sender
+                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput {
+                        id,
+                        data: data.to_vec(),
+                    })
+                    .is_ok();
+            }
+            // A detached client owns no guest lifetime. Keep draining with the
+            // same capture bound so logs cannot block or SIGPIPE the workload.
+            Ok(())
         },
         true,
     )

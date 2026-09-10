@@ -91,3 +91,14 @@ fn bounded_consumer_applies_backpressure_without_holding_job_store_locks() {
     assert_eq!(captured, bytes);
     assert_eq!(total, 4 * 8192);
 }
+
+#[test]
+fn detached_stream_keeps_draining_without_unbounded_capture() {
+    let mut source = std::io::Cursor::new(vec![42; MAX_EXEC_OUTPUT_BYTES + 100_000]);
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    drop(receiver);
+    let (captured, total) = stream_exec_output(&mut source, 91, &sender).unwrap();
+    assert_eq!(total, MAX_EXEC_OUTPUT_BYTES as u64 + 100_000);
+    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(source.position(), total);
+}

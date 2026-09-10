@@ -1,4 +1,4 @@
-"""Run one verified OCI layout in a disposable guest. Invoked by the host CLI."""
+"""Run one verified OCI layout; session workspace retains its restart inputs."""
 
 import hashlib
 import json
@@ -153,7 +153,6 @@ def assemble(stage, layout):
                 data = part.read_bytes()
                 output.write(data)
                 digest.update(data)
-                part.unlink()
         if digest.hexdigest() != entry["sha256"]:
             raise ValueError("OCI upload digest mismatch")
 
@@ -187,6 +186,7 @@ def run(stage):
             json.loads((stage / "options.json").read_text()),
         )
         config_path.write_text(json.dumps(config))
+        (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
         process = subprocess.Popen(
             [

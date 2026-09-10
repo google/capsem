@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listener cleanup when the workload or VM exits.
 - `capsem run docker://IMAGE` (or a qualified registry reference) pulls and caches
   verified OCI images, runs the image command in an image-named VM with live logs,
-  and removes the VM on completion, timeout, or interruption. Registry-specific
+  and retains a named VM controlled by the existing lifecycle commands. Registry-specific
   CA trust and username/token authentication are supported.
 - Both profiles include `runc`; guest kernels support offline OCI process
   namespaces and cgroup CPU, memory, and process limits.
@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Container runs now retain their named VM for the existing stop, restart, fork
+  and delete commands. Closing the log client detaches; reboot restores the
+  saved image command and host port bindings. Forks omit host bindings.
 - Host builds and native packages include the port router; it receives no
   virtualization entitlement.
 - Registry pulls use the existing WebPKI TLS trust stack without platform

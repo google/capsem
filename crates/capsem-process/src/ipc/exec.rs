@@ -34,7 +34,7 @@ pub(super) async fn run(
     } else {
         // User work has no implicit duration limit. Closing the streaming
         // connection releases this job's queues; the VM lifecycle owns killing
-        // the command and descendants when the attached run is cancelled.
+        // the command and descendants on explicit stop/delete.
         tokio::select! {
             result = await_exec_result(rx) => result,
             _ = output.closed(), if streaming => Err("exec stream consumer disconnected".to_string()),

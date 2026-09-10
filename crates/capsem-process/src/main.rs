@@ -361,9 +361,18 @@ async fn run_async_main_loop(
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
 ) -> Result<()> {
-    let job_store = Arc::new(JobStore::new());
+    let job_store = Arc::new(JobStore {
+        publisher: Arc::new(capsem_core::container::publish::Publisher::for_session(&session_dir)),
+        ..JobStore::new()
+    });
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
+    let restored = job_store
+        .publisher
+        .restore(ctrl_tx.clone())
+        .await
+        .context("restore published ports")?;
+    *job_store.publications.lock().unwrap() = restored;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
