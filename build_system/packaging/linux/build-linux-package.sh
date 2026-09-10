@@ -68,7 +68,7 @@ cp "$RELEASE_DIR/capsem-pty-agent" \
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
-    -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
+    -p capsem-port-router -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
 bash build_system/scripts/build/check-build-provenance.sh "$RELEASE_DIR/capsem" \
     "${CAPSEM_BUILD_REVISION:-}"
@@ -104,7 +104,7 @@ bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB
 
 echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"
-dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
+dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-port-router|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
 
 cp "$DEB" "$OUT/"
 # Record the exact package this run produced, so a stale cache/target/packages entry

@@ -22,7 +22,7 @@
 # Underscore recipes are implementation detail. No workflow may call one:
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
+host_crates := "-p capsem-service -p capsem-process -p capsem-port-router -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 
 # Inventory and control the repository cache. Positional arguments preserve
 # every caller-owned argv boundary, including multiword option values.

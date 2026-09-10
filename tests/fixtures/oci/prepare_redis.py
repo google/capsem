@@ -1,5 +1,6 @@
 """Explicit host-only prefetch for the Redis spike; never starts the image."""
 
+import argparse
 import gzip
 import hashlib
 import json
@@ -7,9 +8,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[3]
-OUTPUT = ROOT / "cache/target/tests/redis-image"
 
 
 def docker(*args):
@@ -19,12 +17,15 @@ def docker(*args):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    output = parser.parse_args().output
     pin = json.loads(Path(__file__).with_name("redis-image.json").read_text())
     docker("pull", "--platform", pin["platform"], pin["image"])
     image = json.loads(docker("image", "inspect", pin["image"]))[0]
     assert f"{image['Os']}/{image['Architecture']}" == pin["platform"]
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=OUTPUT) as tmp:
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output) as tmp:
         container = docker(
             "create",
             "--platform",
@@ -52,8 +53,8 @@ def main():
             "image_id": image["Id"],
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }
-        archive.replace(OUTPUT / archive.name)
-        (OUTPUT / "redis-image.json").write_text(json.dumps(metadata, indent=2))
+        archive.replace(output / archive.name)
+        (output / "redis-image.json").write_text(json.dumps(metadata, indent=2))
         print(json.dumps(metadata, indent=2))
 
 

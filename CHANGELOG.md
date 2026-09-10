@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Host builds and native packages include the port router; it receives no
+  virtualization entitlement.
 - Registry pulls use the existing WebPKI TLS trust stack without platform
   keychain verification dependencies.
 - Single-architecture asset builds and initrd repacks generate manifests for
