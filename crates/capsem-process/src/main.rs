@@ -31,6 +31,7 @@ use vsock::VsockOptions;
 /// cleanup".
 #[derive(Default)]
 pub(crate) struct Shutdown {
+    publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
 }
@@ -50,14 +51,17 @@ impl Shutdown {
 }
 
 pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
-    // Taking the owners makes this safe when graceful shutdown, a signal,
-    // and an error path race. Exactly one path drains; the others see an
-    // empty owner set.
-    let mut owned = {
-        let mut guard = shutdown.lock().await;
-        std::mem::take(&mut *guard)
-    };
-    let _ = tokio::task::spawn_blocking(move || owned.drain_blocking()).await;
+    // Keep the lock through joining: a concurrent shutdown caller must not
+    // stop the run loop while the first caller is still draining its owners.
+    let mut guard = shutdown.lock().await;
+    let mut owned = std::mem::take(&mut *guard);
+    if let Some(publisher) = owned.publisher.take() {
+        publisher.shutdown().await;
+    }
+    if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
+        error!(%error, "background owner drain failed");
+    }
+    drop(guard);
 }
 
 fn process_kernel_cmdline() -> &'static str {
@@ -365,6 +369,7 @@ async fn run_async_main_loop(
         publisher: Arc::new(capsem_core::container::publish::Publisher::for_session(&session_dir)),
         ..JobStore::new()
     });
+    shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let restored = job_store

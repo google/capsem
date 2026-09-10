@@ -4,6 +4,34 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 #[tokio::test]
+async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
+    let owner = Arc::new(Publisher::default());
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    owner.shutdown().await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(100), peer.read(&mut [0]))
+            .await
+            .expect("shutdown left a detached header reader")
+            .unwrap(),
+        0
+    );
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(100), peer.read(&mut [0]))
+            .await
+            .expect("closed publisher accepted another guest socket")
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
     let owner = Arc::new(Publisher::default());
     let (parent, child) = StdUnixStream::pair().unwrap();
@@ -22,6 +50,7 @@ async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
         control,
         sender,
         UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
     ));
     let _first = tokio::net::TcpStream::connect(address).await.unwrap();
     let ServiceToProcess::ConnectPort { id: first, .. } = requests.recv().await.unwrap() else {
@@ -76,6 +105,7 @@ async fn missing_pair_ack_shuts_down_retained_descriptors() {
         control,
         sender,
         UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
     let ServiceToProcess::ConnectPort { id, .. } = requests.recv().await.unwrap() else {
@@ -119,6 +149,7 @@ async fn compromised_router_cannot_request_destination_connections() {
         control,
         sender,
         UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
     ));
     let mut child = UnixStream::from_std(child).unwrap();
     Event::Accepted(1).write(&mut child).await.unwrap();
@@ -150,6 +181,7 @@ async fn malformed_child_record_cannot_allocate_or_dial() {
         control,
         sender,
         UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
     ));
     let mut child = UnixStream::from_std(child).unwrap();
     child.write_all(&[255; 10]).await.unwrap();
@@ -177,6 +209,7 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         control,
         sender,
         UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
     assert!(matches!(

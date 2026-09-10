@@ -31,6 +31,7 @@ pub(super) async fn serve(
     control: mpsc::Sender<ServiceToProcess>,
     sender: capsem_foundation::unix::router_channel::Sender,
     mut events: UnixStream,
+    cancellation: CancellationToken,
 ) -> Result<()> {
     let mut active: HashMap<u64, Active> = HashMap::new();
     let mut connecting: HashMap<u64, Active> = HashMap::new();
@@ -51,6 +52,7 @@ pub(super) async fn serve(
     let result = async {
         loop {
             tokio::select! {
+                _ = cancellation.cancelled() => return Ok(()),
                 accepted = listener.accept(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
                     let (source, peer) = accepted?;
                     source.set_nodelay(true)?;

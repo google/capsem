@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
 use capsem_proto::ipc::ServiceToProcess;
 use capsem_router::{send_grant, Event, Grant};
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::Ipv4Addr;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
@@ -16,6 +17,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 mod broker;
 mod saved;
@@ -26,6 +28,9 @@ pub struct Publisher {
     next_id: AtomicU64,
     incoming: Arc<Semaphore>,
     mappings: Arc<Semaphore>,
+    tasks: Mutex<tokio::task::JoinSet<()>>,
+    cancellation: CancellationToken,
+    drain: tokio::sync::Mutex<()>,
 }
 
 impl Default for Publisher {
@@ -36,6 +41,9 @@ impl Default for Publisher {
             next_id: AtomicU64::new(1),
             incoming: Arc::new(Semaphore::new(128)),
             mappings: Arc::new(Semaphore::new(8)),
+            tasks: Mutex::new(tokio::task::JoinSet::new()),
+            cancellation: CancellationToken::new(),
+            drain: tokio::sync::Mutex::new(()),
         }
     }
 }
@@ -43,7 +51,8 @@ impl Default for Publisher {
 pub struct Publication {
     pub host_port: u16,
     pub router_pid: u32,
-    task: tokio::task::JoinHandle<()>,
+    task: tokio::task::AbortHandle,
+    cancellation: CancellationToken,
 }
 
 impl Publication {
@@ -54,17 +63,55 @@ impl Publication {
 
 impl Drop for Publication {
     fn drop(&mut self) {
-        self.task.abort();
+        self.cancellation.cancel();
     }
 }
 
 impl Publisher {
+    pub async fn shutdown(&self) {
+        let _drain = self.drain.lock().await;
+        self.cancellation.cancel();
+        let mut tasks = std::mem::take(&mut *self.tasks.lock().unwrap());
+        if tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(result) = tasks.join_next().await {
+                if let Err(error) = result {
+                    tracing::error!(%error, "VM router task failed during shutdown");
+                }
+            }
+        })
+        .await
+        .is_err()
+        {
+            tracing::error!("VM router tasks exceeded shutdown deadline");
+            tasks.abort_all();
+            while let Some(result) = tasks.join_next().await {
+                if let Err(error) = result {
+                    if !error.is_cancelled() {
+                        tracing::error!(%error, "VM router task failed during abort");
+                    }
+                }
+            }
+        }
+    }
+
+    fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> Result<tokio::task::AbortHandle> {
+        let mut tasks = self.tasks.lock().unwrap();
+        ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
+        while let Some(result) = tasks.try_join_next() {
+            if let Err(error) = result {
+                tracing::error!(%error, "VM router task failed");
+            }
+        }
+        Ok(tasks.spawn(task))
+    }
+
     pub async fn publish(
         self: &Arc<Self>,
         host_port: u16,
         guest_port: u16,
         control: mpsc::Sender<ServiceToProcess>,
     ) -> Result<Publication> {
+        ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
         ensure!(guest_port != 0, "guest port must be nonzero");
         let permit = self
             .mappings
@@ -104,20 +151,33 @@ impl Publisher {
         .await
         .context("router startup timed out")??;
         let owner = self.clone();
-        let task = tokio::spawn(async move {
+        let cancellation = self.cancellation.child_token();
+        let stop = cancellation.clone();
+        let task = self.spawn(async move {
             let _permit = permit;
+            let broker = broker::serve(owner, guest_port, listener, control, sender, events, stop.clone());
+            tokio::pin!(broker);
             tokio::select! {
-                result = broker::serve(owner, guest_port, listener, control, sender, events) => {
+                result = &mut broker => {
                     if let Err(error) = result { tracing::warn!(%error, host_port, "publication router disconnected"); }
                 }
-                status = child.wait() => { tracing::info!(?status, host_port, "publication router exited"); }
+                status = child.wait() => {
+                    tracing::info!(?status, host_port, "publication router exited");
+                    stop.cancel();
+                    if let Err(error) = broker.await { tracing::debug!(%error, host_port, "publication cleanup after router exit"); }
+                }
             }
-            // kill_on_drop and parent-watch cover cancellation and parent death.
-        });
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => if let Err(error) = child.kill().await { tracing::error!(%error, "router termination failed"); },
+                Err(error) => tracing::error!(%error, "router exit status unavailable"),
+            }
+        })?;
         Ok(Publication {
             host_port,
             router_pid,
             task,
+            cancellation,
         })
     }
 
@@ -125,16 +185,18 @@ impl Publisher {
         let Ok(permit) = self.incoming.clone().try_acquire_owned() else {
             return;
         };
-        let owner = self.clone();
-        tokio::spawn(async move {
+        let owner = Arc::downgrade(self);
+        let cancellation = self.cancellation.clone();
+        let task = self.spawn(async move {
             let _permit = permit;
-            let result = async {
+            let read = async {
                 let socket = StdUnixStream::from(connection.try_clone_fd()?);
                 socket.set_nonblocking(true)?;
                 let mut stream = UnixStream::from_std(socket)?;
                 let mut header = [0; 9];
                 tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut header)).await??;
                 let id = u64::from_be_bytes(header[..8].try_into().unwrap());
+                let owner = owner.upgrade().context("VM router owner closed")?;
                 if let Some(sender) = owner.pending.lock().unwrap().remove(&id) {
                     let result = if header[8] == 1 {
                         Ok(connection)
@@ -144,12 +206,18 @@ impl Publisher {
                     let _ = sender.send(result);
                 }
                 Ok::<_, anyhow::Error>(())
-            }
-            .await;
+            };
+            let result = tokio::select! {
+                result = read => result,
+                _ = cancellation.cancelled() => return,
+            };
             if let Err(error) = result {
                 tracing::debug!(%error, "publication data setup refused");
             }
         });
+        if let Err(error) = task {
+            tracing::debug!(%error, "guest data arrived after router shutdown");
+        }
     }
 
     fn request(self: &Arc<Self>) -> Result<(Pending, oneshot::Receiver<Result<VsockConnection>>)> {
