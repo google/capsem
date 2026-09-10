@@ -1,0 +1,18 @@
+[package]
+name = "capsem-api"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+utoipa = "5.4"
+
+[lints]
+workspace = true

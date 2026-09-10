@@ -49,25 +49,7 @@ pub struct StatusResponse {
     pub profiles: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum VmLifecycleState {
-    Running,
-    Stopped,
-    Suspended,
-    Defunct,
-    Incompatible,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum VmAction {
-    Pause,
-    Stop,
-    Start,
-    Resume,
-    Fork,
-    Delete,
-}
+pub use capsem_api::{VmAction, VmLifecycleState};
 
 #[derive(Serialize, Clone)]
 pub struct VmSummary {
