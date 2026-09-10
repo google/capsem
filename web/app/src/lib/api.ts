@@ -1300,45 +1300,21 @@ export function sanitizePath(raw: string): string {
 
 /** List files in a VM workspace directory. */
 export async function listFiles(id: string, path?: string, depth?: number): Promise<FileListResponse> {
-  const params = new URLSearchParams();
-  if (path) params.set('path', sanitizePath(path));
-  if (depth != null) params.set('depth', String(depth));
-  const qs = params.toString();
-  const url = `/vms/${encodeURIComponent(id)}/files/list${qs ? `?${qs}` : ''}`;
-  const resp = await _get(url);
-  return await resp.json();
+  return _sdk.call(transport => gateway.listVmFiles(transport, {
+    id, ...(path ? { path: sanitizePath(path) } : {}), ...(depth == null ? {} : { depth }),
+  }));
 }
 
 /** Download a file from a VM workspace. Returns text, blob, and size. */
-export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
-  const sanitized = sanitizePath(path);
-  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new ApiError(resp.status, body);
-  }
-  const blob = await resp.blob();
-  const text = await blob.text();
+export async function getFileContent(id: string, path: string, mime?: string | null): Promise<FileContentResult> {
+  const bytes = await _sdk.call(transport => gateway.downloadVmFile(transport, { id, path: sanitizePath(path) }));
+  const blob = new Blob([new Uint8Array(bytes)], { type: mime ?? 'application/octet-stream' });
+  const text = new TextDecoder().decode(bytes);
   return { text, blob, size: blob.size };
 }
 
 /** Upload a file to a VM workspace. */
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
-  const sanitized = sanitizePath(path);
-  const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${_token}`,
-      'Content-Type': 'application/octet-stream',
-    },
-    body,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return await resp.json();
+  const body = typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(await content.arrayBuffer());
+  return _sdk.call(transport => gateway.uploadVmFile(transport, { id, path: sanitizePath(path), body }));
 }

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UI file browsing and transfers use typed SDK operations, including validated
+  file metadata, byte-preserving uploads/downloads and bounded token refresh.
+
 - UI logs, detailed stats, snapshot inspection and command execution use typed
   SDK operations. Invalid responses are rejected without discarding the connection.
 

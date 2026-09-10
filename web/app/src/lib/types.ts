@@ -386,29 +386,7 @@ export interface FileNode {
   sizeBytes?: number;
 }
 
-/** A file entry from the host-side files API (GET /vms/{id}/files/list). */
-export interface FileEntry {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtime: number;
-  mime?: string;
-  label?: string;
-  is_text?: boolean;
-  children?: FileEntry[];
-}
-
-/** Response from GET /vms/{id}/files/list. */
-export interface FileListResponse {
-  entries: FileEntry[];
-}
-
-/** Response from POST /vms/{id}/files/content (upload). */
-export interface FileUploadResponse {
-  success: boolean;
-  size: number;
-}
+export type { FileListEntry as FileEntry, FileListResponse, UploadResponse as FileUploadResponse } from '@capsem/sdk';
 
 /** Result from getFileContent(). */
 export interface FileContentResult {

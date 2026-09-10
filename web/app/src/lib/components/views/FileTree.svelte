@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileEntryType } from "@capsem/sdk";
   import Folder from 'phosphor-svelte/lib/Folder';
   import FolderOpen from 'phosphor-svelte/lib/FolderOpen';
   import FileText from 'phosphor-svelte/lib/File';
@@ -16,7 +17,7 @@
   let expanded = $state<Record<string, boolean>>({});
 
   function toggle(entry: FileEntry) {
-    if (entry.type === 'directory') {
+    if (entry.type === FileEntryType.DIRECTORY) {
       expanded[entry.path] = !expanded[entry.path];
     } else {
       onSelect(entry);
@@ -28,7 +29,7 @@
       e.preventDefault();
       toggle(entry);
     }
-    if (entry.type === 'directory') {
+    if (entry.type === FileEntryType.DIRECTORY) {
       if (e.key === 'ArrowRight' && !expanded[entry.path]) {
         expanded[entry.path] = true;
       }
@@ -41,7 +42,7 @@
 
 <ul class="list-none m-0 p-0" role="tree">
   {#each entries as entry}
-    <li role="treeitem" aria-selected={selectedPath === entry.path} aria-expanded={entry.type === 'directory' ? expanded[entry.path] ?? false : undefined}>
+    <li role="treeitem" aria-selected={selectedPath === entry.path} aria-expanded={entry.type === FileEntryType.DIRECTORY ? expanded[entry.path] ?? false : undefined}>
       <button
         type="button"
         class="w-full flex items-center gap-x-1.5 py-1 px-2 text-sm rounded-lg transition-colors
@@ -52,7 +53,7 @@
         onclick={() => toggle(entry)}
         onkeydown={(e) => handleKeydown(e, entry)}
       >
-        {#if entry.type === 'directory'}
+        {#if entry.type === FileEntryType.DIRECTORY}
           {#if expanded[entry.path]}
             <FolderOpen size={16} class="shrink-0 text-primary" />
           {:else}
@@ -62,12 +63,12 @@
           <FileText size={16} class="shrink-0 text-muted-foreground" />
         {/if}
         <span class="truncate">{entry.name}</span>
-        {#if entry.type === 'file' && entry.size > 0}
+        {#if entry.type === FileEntryType.FILE && entry.size > 0}
           <span class="ml-auto text-xs text-muted-foreground shrink-0">{formatBytes(entry.size)}</span>
         {/if}
       </button>
 
-      {#if entry.type === 'directory' && expanded[entry.path] && entry.children}
+      {#if entry.type === FileEntryType.DIRECTORY && expanded[entry.path] && entry.children}
         <FileTree
           entries={entry.children}
           depth={depth + 1}

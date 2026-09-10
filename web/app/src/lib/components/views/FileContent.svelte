@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileEntryType } from "@capsem/sdk";
   import { onDestroy } from 'svelte';
   import type { FileEntry } from '../../types';
   import { themeStore } from '../../stores/theme.svelte.ts';
@@ -25,18 +26,18 @@
   });
 
   let isImage = $derived(
-    entry != null && entry.type === 'file' &&
+    entry != null && entry.type === FileEntryType.FILE &&
     entry.mime != null && entry.mime.startsWith('image/') &&
     entry.is_text !== true && entry.label !== 'svg'
   );
 
   let isSvg = $derived(
-    entry != null && entry.type === 'file' &&
+    entry != null && entry.type === FileEntryType.FILE &&
     (entry.label === 'svg' || entry.mime === 'image/svg+xml')
   );
 
   let isBinary = $derived(
-    entry != null && entry.type === 'file' &&
+    entry != null && entry.type === FileEntryType.FILE &&
     entry.is_text === false && !isImage && !isSvg
   );
 
@@ -131,7 +132,7 @@
         {#if entry.size > 0}
           <span class="text-xs text-muted-foreground mr-1">{formatBytes(entry.size)}</span>
         {/if}
-        {#if entry.type === 'file'}
+        {#if entry.type === FileEntryType.FILE}
           {#if !isBinary && !isImage && content}
             <button
               type="button"
@@ -187,7 +188,7 @@
         {@html highlightedHtml}
       {:else if content}
         <pre class="px-4 py-2 font-mono text-sm text-foreground whitespace-pre">{content}</pre>
-      {:else if entry.type === 'directory'}
+      {:else if entry.type === FileEntryType.DIRECTORY}
         <div class="flex items-center justify-center h-full">
           <p class="text-muted-foreground">Select a file to view its contents</p>
         </div>
