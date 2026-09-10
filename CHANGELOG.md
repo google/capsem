@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem-bench-rs redis` collects validated Redis PING samples with configurable
+  concurrency and pipelining on both the host and guest.
 - `capsem run -p HOST:GUEST IMAGE` publishes loopback TCP ports through VSOCK
   using a confined Rust companion, with bounded concurrent connections and
   listener cleanup when the workload or VM exits.

@@ -10,6 +10,9 @@ mod machine;
 mod protocol;
 #[cfg(feature = "host")]
 mod protocol_record;
+#[path = "stats/rates.rs"]
+mod rates;
+mod redis;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;
@@ -54,6 +57,7 @@ async fn main() -> Result<()> {
         #[cfg(feature = "host")]
         profile: "code".to_string(),
     })) {
+        Command::Redis(args) => println!("{}", serde_json::to_string(&redis::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();
