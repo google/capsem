@@ -36,6 +36,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
+crates/capsem-api/             Gateway wire types and OpenAPI contract shared by clients
 crates/capsem-config/          Product config types, parsing, validation, and provider/MCP identity
 crates/capsem-credentials/     Credential provider contracts and durable credential store
 crates/capsem-core/            VM, hypervisor, security engine, and host network runtime

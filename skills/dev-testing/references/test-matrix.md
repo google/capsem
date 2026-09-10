@@ -14,6 +14,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-api` | Gateway wire types and OpenAPI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-config` | Config contracts | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-credentials` | Credential contracts/store | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-proto` | Wire contracts | Yes | Compile/no-run | Clippy | Yes |
