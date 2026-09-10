@@ -186,37 +186,6 @@ pub struct McpToolInfoResponse {
     pub permission_source: String,
 }
 
-/// Query parameters for GET /vms/{id}/history.
-#[derive(Deserialize, Debug)]
-#[allow(dead_code)]
-pub struct HistoryQuery {
-    #[serde(default = "default_history_limit")]
-    pub limit: usize,
-    #[serde(default)]
-    pub offset: usize,
-    pub search: Option<String>,
-    #[serde(default = "default_history_layer")]
-    pub layer: String,
-}
-
-#[allow(dead_code)]
-fn default_history_limit() -> usize {
-    500
-}
-#[allow(dead_code)]
-fn default_history_layer() -> String {
-    "all".to_string()
-}
-
-/// Response for GET /vms/{id}/history.
-#[derive(Serialize, Debug)]
-#[allow(dead_code)]
-pub struct HistoryResponse {
-    pub commands: Vec<capsem_logger::HistoryEntry>,
-    pub total: u64,
-    pub has_more: bool,
-}
-
 /// Response for GET /vms/{id}/history/processes.
 #[derive(Serialize, Debug)]
 #[allow(dead_code)]

@@ -362,9 +362,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     {"id": session_id, "layers": "exec,fs,tool", "limit": 50},
                 )
             )
-            assert set(timeline) == {"columns", "rows"}
-            assert {"layer", "summary", "status"} <= set(timeline["columns"])
-            timeline_rows = [dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]]
+            assert set(timeline) == {"events"}
+            assert all({"layer", "summary", "status"} <= set(event) for event in timeline["events"])
+            timeline_rows = timeline["events"]
             assert any(row["layer"] == "exec" and nonce in row["summary"] for row in timeline_rows)
             assert any(row["layer"] == "fs" and guest_path in row["summary"] for row in timeline_rows)
             assert any(

@@ -638,6 +638,84 @@
         }
       }
     },
+    "/vms/{id}/history": {
+      "get": {
+        "operationId": "getVmHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum commands to return. Defaults to 500, capped at 2000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Literal, case-sensitive search over commands, previews and details.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/HistoryLayerFilter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/info": {
       "get": {
         "operationId": "getVmInfo",
@@ -1003,6 +1081,90 @@
           }
         }
       }
+    },
+    "/vms/{id}/timeline": {
+      "get": {
+        "operationId": "getVmTimeline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "description": "Filter to a trace, also retaining legacy records without a trace ID.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Lookback duration (30m, 1h, 7d) or RFC3339 timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events. Defaults to 200, capped at 2000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "description": "Comma-separated layers. Defaults to all five layers.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/TimelineLayer"
+              }
+            },
+            "style": "form",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1089,6 +1251,73 @@
           }
         }
       },
+      "AuditHistoryDetails": {
+        "type": "object",
+        "required": [
+          "pid",
+          "ppid",
+          "uid",
+          "exe"
+        ],
+        "properties": {
+          "audit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exe": {
+            "type": "string"
+          },
+          "parent_exe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ppid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "tty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ChangesResponse": {
         "type": "object",
         "required": [
@@ -1125,6 +1354,35 @@
         "properties": {
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "ExecHistoryDetails": {
+        "type": "object",
+        "required": [
+          "source",
+          "exec_id"
+        ],
+        "properties": {
+          "exec_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExecSource"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1170,6 +1428,15 @@
             "description": "The guest produced more output than the per-exec cap allows, so\n`stdout` is a prefix. Defaulted so an older client still decodes."
           }
         }
+      },
+      "ExecSource": {
+        "type": "string",
+        "enum": [
+          "api",
+          "cli",
+          "mcp",
+          "frontend"
+        ]
       },
       "FileActionCount": {
         "type": "object",
@@ -1348,6 +1615,105 @@
             "type": "string"
           },
           "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HistoryDetails": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ExecHistoryDetails"
+          },
+          {
+            "$ref": "#/components/schemas/AuditHistoryDetails"
+          }
+        ]
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "layer",
+          "command",
+          "details"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/HistoryDetails"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/HistoryLayer"
+          },
+          "stderr_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stdout_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryLayer": {
+        "type": "string",
+        "enum": [
+          "exec",
+          "audit"
+        ]
+      },
+      "HistoryLayerFilter": {
+        "type": "string",
+        "enum": [
+          "all",
+          "exec",
+          "audit"
+        ]
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": [
+          "commands",
+          "total",
+          "has_more"
+        ],
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "total": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
@@ -2550,6 +2916,109 @@
             ]
           }
         }
+      },
+      "TimelineEvent": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "layer",
+          "ref",
+          "summary"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "layer": {
+            "$ref": "#/components/schemas/TimelineLayer"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/TimelineReference"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TimelineStatus",
+                "description": "Exit code for exec, HTTP code for net/model, decision for tool, null for fs."
+              }
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TimelineLayer": {
+        "type": "string",
+        "enum": [
+          "exec",
+          "tool",
+          "net",
+          "fs",
+          "model"
+        ]
+      },
+      "TimelineReference": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "TimelineResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEvent"
+            }
+          }
+        }
+      },
+      "TimelineStatus": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "$ref": "#/components/schemas/ToolDecision"
+          }
+        ]
+      },
+      "ToolDecision": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "denied",
+          "warned",
+          "error"
+        ]
       },
       "UpdateActionResponse": {
         "type": "object",

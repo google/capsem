@@ -2209,12 +2209,12 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{timeline}");
-    let rows = timeline["rows"].as_array().unwrap();
+    let rows = timeline["events"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{timeline}");
-    assert_eq!(rows[0][1], "tool");
-    assert_eq!(rows[0][3], "model/Write (call_id=orphan-tool)");
-    assert_eq!(rows[0][4], "allowed");
-    assert_eq!(rows[0][6], "trace-orphan-tool");
+    assert_eq!(rows[0]["layer"], "tool");
+    assert_eq!(rows[0]["summary"], "model/Write (call_id=orphan-tool)");
+    assert_eq!(rows[0]["status"], "allowed");
+    assert_eq!(rows[0]["trace_id"], "trace-orphan-tool");
 }
 
 // -----------------------------------------------------------------------

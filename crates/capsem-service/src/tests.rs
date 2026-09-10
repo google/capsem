@@ -612,6 +612,7 @@ mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
 mod files_api;
+mod inspection;
 mod ledger_routes;
 mod lifecycle;
 mod logs_api;

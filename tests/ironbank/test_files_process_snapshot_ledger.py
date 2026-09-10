@@ -186,11 +186,6 @@ def _extract_json_line(output: str, prefix: str) -> dict:
     raise AssertionError(f"{prefix!r} missing from output:\n{output}")
 
 
-def _columnar_rows(payload: dict) -> list[dict]:
-    assert set(payload) == {"columns", "rows"}
-    columns = payload["columns"]
-    assert columns == ["timestamp", "layer", "ref", "summary", "status", "duration_ms", "trace_id"]
-    return [dict(zip(columns, row, strict=True)) for row in payload["rows"]]
 
 
 def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
@@ -403,12 +398,12 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
                     timeout=30,
                 ),
                 lambda payload: (
-                    len(_columnar_rows(payload)) >= len(paths)
+                    len(payload["events"]) >= len(paths)
                     and {"fs", "exec"}
-                    <= {event["layer"] for event in _columnar_rows(payload)}
+                    <= {event["layer"] for event in payload["events"]}
                 ),
             )
-            timeline_rows = _columnar_rows(timeline)
+            timeline_rows = timeline["events"]
             assert len(timeline_rows) >= len(paths)
             layers = {event["layer"] for event in timeline_rows}
             assert {"fs", "exec"} <= layers

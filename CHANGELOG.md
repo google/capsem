@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed history details and timeline events for gateway SDKs. Timeline returns
+  named event objects; history and timeline filters reject unknown layers.
 - Typed snapshot listings and checkpoint-based workspace changes through the
   gateway, with stable pagination and symlink-safe file comparison.
 - VM information includes typed model/MCP usage, network totals, and filesystem

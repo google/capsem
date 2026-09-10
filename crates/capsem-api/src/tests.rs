@@ -1,4 +1,32 @@
 use super::*;
+
+#[test]
+fn inspection_types_reject_unknown_categories_and_preserve_union_values() {
+    assert!(serde_json::from_str::<HistoryLayerFilter>("\"net\"").is_err());
+    assert!(serde_json::from_str::<TimelineLayer>("\"tools\"").is_err());
+    assert!(serde_json::from_str::<ToolDecision>("\"magic\"").is_err());
+    assert_eq!(
+        serde_json::from_str::<TimelineStatus>("200").unwrap(),
+        TimelineStatus::Code(200)
+    );
+    assert_eq!(
+        serde_json::from_str::<TimelineStatus>("\"allowed\"").unwrap(),
+        TimelineStatus::Decision(ToolDecision::Allowed)
+    );
+    let query: TimelineQuery = serde_json::from_value(serde_json::json!({"layers":"exec,tool"})).unwrap();
+    assert_eq!(query.layers.unwrap(), vec![TimelineLayer::Exec, TimelineLayer::Tool]);
+    assert!(serde_json::from_value::<TimelineQuery>(serde_json::json!({"layers":"exec,invented"})).is_err());
+    let schema = serde_json::to_value(openapi()).unwrap();
+    let parameters = schema["paths"]["/vms/{id}/timeline"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let layers = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "layers")
+        .unwrap();
+    assert_eq!(layers["explode"], false);
+    assert_eq!(layers["schema"]["type"], "array");
+}
 use serde_json::json;
 use utoipa::PartialSchema;
 

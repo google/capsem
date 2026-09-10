@@ -102,29 +102,9 @@ pub(super) async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
-) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!(
-        "history:layer={}:limit={}:offset={}:search={}",
-        params.layer,
-        params.limit,
-        params.offset,
-        params.search.as_deref().unwrap_or("")
-    );
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+) -> Result<Json<api::HistoryResponse>, AppError> {
     let session = history_ledger_for_vm(&state, &id).await?;
-    let response = query_history_ledger(&session, &params);
-    let body = serde_json::to_vec(&response).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize history response: {error}"),
-        )
-    })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
-    Ok(json_bytes_response(Bytes::from(body)))
+    Ok(Json(query_history_ledger(&session, &params)))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.

@@ -24,6 +24,15 @@ pub fn openapi() -> OpenApi {
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
     doc.get::<SnapshotsStatus>("/vms/{id}/snapshots/status", "getVmSnapshotsStatus");
     doc.get::<SnapshotsList>("/vms/{id}/snapshots/list", "listVmSnapshots");
+    let timeline = doc
+        .operation::<TimelineResponse>("/vms/{id}/timeline", "getVmTimeline")
+        .parameters(Some(TimelineQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/timeline", HttpMethod::Get, timeline);
+    doc.schema::<HistoryLayerFilter>();
+    let history = doc
+        .operation::<HistoryResponse>("/vms/{id}/history", "getVmHistory")
+        .parameters(Some(HistoryQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/history", HttpMethod::Get, history);
     let changes = doc
         .operation::<ChangesResponse>("/vms/{id}/changes", "getVmChanges")
         .parameters(Some(ChangesQuery::into_params(|| Some(ParameterIn::Query))));

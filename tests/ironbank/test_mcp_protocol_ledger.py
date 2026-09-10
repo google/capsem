@@ -410,19 +410,12 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             ),
             lambda payload: any(
                 row["summary"].startswith(f"{observed_server}/fixture_lookup")
-                for row in [
-                    dict(zip(payload["columns"], row, strict=True))
-                    for row in payload["rows"]
-                ]
+                for row in payload["events"]
             ),
         )
-        assert set(timeline) == {"columns", "rows"}
-        assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
-            timeline["columns"]
-        )
-        timeline_rows = [
-            dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]
-        ]
+        assert set(timeline) == {"events"}
+        assert all({"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(event) for event in timeline["events"])
+        timeline_rows = timeline["events"]
         timeline_summaries = {row["summary"] for row in timeline_rows}
         assert any(
             summary.startswith(f"{observed_server}/fixture_lookup")
