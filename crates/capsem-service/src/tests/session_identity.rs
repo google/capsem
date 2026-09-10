@@ -170,6 +170,8 @@ async fn startup_hydration_keys_persistent_db_handles_by_session_id() {
 fn persistent_route_identity_source_guard() {
     let sources = [
         ("main.rs", include_str!("../main.rs")),
+        ("provision.rs", include_str!("../vm_lifecycle/provision.rs")),
+        ("resume_process.rs", include_str!("../vm_lifecycle/resume_process.rs")),
         ("ledger_routes.rs", include_str!("../ledger_routes.rs")),
     ];
     for (file, source) in sources {

@@ -26,29 +26,16 @@ fn provision_persistent_validates_name() {
 
 #[test]
 fn child_reapers_start_after_instance_registration() {
-    let source = include_str!("../main.rs");
-    for (function, next_function, reaper) in [
-        (
-            "    fn provision_sandbox(",
-            "    fn resume_sandbox(",
-            "instance_reaper::spawn_exit_reaper(",
-        ),
-        (
-            "    fn resume_sandbox(",
-            "    fn has_existing_resume_checkpoint(",
-            "instance_reaper::spawn_exit_reaper(",
-        ),
+    for (function, body) in [
+        ("provision_sandbox", include_str!("../vm_lifecycle/provision.rs")),
+        ("resume_sandbox", include_str!("../vm_lifecycle/resume_process.rs")),
     ] {
-        let start = source.find(function).expect("launch function exists");
-        let end = source[start..]
-            .find(next_function)
-            .map(|offset| start + offset)
-            .expect("following function exists");
-        let body = &source[start..end];
         let insertion = body
             .find("instances.insert(")
             .expect("launch function registers its instance");
-        let reaper = body.find(reaper).expect("launch function starts its child reaper");
+        let reaper = body
+            .find("instance_reaper::spawn_exit_reaper(")
+            .expect("launch function starts its child reaper");
 
         assert!(
             insertion < reaper,
