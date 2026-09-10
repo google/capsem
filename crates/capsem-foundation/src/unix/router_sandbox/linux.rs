@@ -38,6 +38,10 @@ pub(super) fn confine() -> io::Result<()> {
         libc::SYS_epoll_wait,
         libc::SYS_eventfd2,
         libc::SYS_futex,
+        // Threads created before TSYNC can still be completing libc startup.
+        // These register only thread-local state; clone/clone3 remain denied.
+        libc::SYS_rseq,
+        libc::SYS_set_robust_list,
         libc::SYS_mmap,
         libc::SYS_munmap,
         libc::SYS_mprotect,

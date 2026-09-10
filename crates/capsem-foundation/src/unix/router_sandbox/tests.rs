@@ -67,6 +67,18 @@ fn sandbox_child() {
         .build()
         .unwrap();
     confine().unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        // An invalid registration must reach the kernel, not seccomp EPERM.
+        // glibc treats denied rseq registration on a starting thread as fatal.
+        let result = unsafe { libc::syscall(libc::SYS_rseq, std::ptr::null::<u8>(), 0usize, 0u32, 0u32) };
+        assert_eq!(result, -1);
+        assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINVAL));
+        assert!(
+            std::thread::Builder::new().spawn(|| {}).is_err(),
+            "router created a new thread after confinement"
+        );
+    }
     runtime.block_on(async {
         tokio::task::spawn(async move {
             #[cfg(target_os = "linux")]
