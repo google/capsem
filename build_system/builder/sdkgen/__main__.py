@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .generation import python_sources, synchronize, typescript_sources
+from .generation import python_sources, rust_sources, synchronize, typescript_sources
 
 
 def main() -> int:
@@ -14,10 +14,11 @@ def main() -> int:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--python-package", type=Path)
     target.add_argument("--typescript-source", type=Path)
+    target.add_argument("--rust-source", type=Path)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    package = args.python_package or args.typescript_source
-    sources = python_sources if args.python_package else typescript_sources
+    package = args.python_package or args.typescript_source or args.rust_source
+    sources = python_sources if args.python_package else typescript_sources if args.typescript_source else rust_sources
     changed = synchronize(package, sources(args.specification), check=args.check)
     for message in changed:
         print(message)

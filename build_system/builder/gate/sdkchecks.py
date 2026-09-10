@@ -55,3 +55,13 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after)
     return (*checks, built, generated)
+
+
+def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
+    settings = config.sdk_rust
+    generated = plan.phase("fast.sdk.rust").add(step(
+        "generate", Run(uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
+                               "--specification", settings.specification, "--rust-source", settings.source)),
+        kind=Kind.LINT, speed=Speed.FAST,
+    ), after=after)
+    return (generated,)

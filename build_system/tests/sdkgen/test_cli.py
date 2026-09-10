@@ -10,7 +10,7 @@ from capsem_builder.sdkgen.__main__ import main
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
-@pytest.mark.parametrize("target", ["--python-package", "--typescript-source"])
+@pytest.mark.parametrize("target", ["--python-package", "--typescript-source", "--rust-source"])
 def test_cli_creates_then_checks_generated_sources(target: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     package = tmp_path / "package"
     args = ["sdkgen", "--specification", str(SPEC), target, str(package)]

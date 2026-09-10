@@ -7,6 +7,7 @@ from pathlib import Path
 from .operations import read_operations
 from .python import render_models
 from .python_operations import render_operations
+from .rust_operations import render_operations as render_rust_operations
 from .schema import read_schemas
 from .typescript import render_models as render_typescript_models
 from .typescript_operations import render_operations as render_typescript_operations
@@ -24,6 +25,10 @@ def typescript_sources(specification: Path) -> dict[str, dict[str, str]]:
     schemas = read_schemas(specification)
     return {"models": render_typescript_models(schemas), "validation": render_validators(schemas),
             "operations": render_typescript_operations(read_operations(specification))}
+
+
+def rust_sources(specification: Path) -> dict[str, dict[str, str]]:
+    return {"generated": render_rust_operations(read_operations(specification))}
 
 
 def synchronize(package: Path, sources: dict[str, dict[str, str]], *, check: bool) -> list[str]:

@@ -3512,6 +3512,14 @@ source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
 
+[sdk_rust]
+project = "sdk/rust"
+manifest = "sdk/rust/Cargo.toml"
+specification = "sdk/specification/openapi.json"
+source = "sdk/rust/src/operations"
+tests = "sdk/rust/src"
+build_output = "cache/target/sdk/rust"
+
 [sdk_typescript]
 project = "sdk/typescript"
 manifest = "sdk/typescript/package.json"

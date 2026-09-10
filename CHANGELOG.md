@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Generated Rust SDK operations for the gateway OpenAPI contract, with shared typed
+  responses, enum parameters, binary transfers, and enforced generation drift checks.
+
 - Rust SDK HTTP transport with shared gateway DTOs, explicit bearer authentication,
   bounded requests, cancellation by dropping futures, and typed HTTP errors.
 

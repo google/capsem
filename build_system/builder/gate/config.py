@@ -119,6 +119,7 @@ class GateConfig(Strict):
     modules: ModulesConfig
     sdk_python: SdkConfig
     sdk_typescript: SdkConfig
+    sdk_rust: SdkConfig
     imagebuild: ImageBuildConfig
     hostimage: HostImageConfig
     sbom: SbomConfig

@@ -6,12 +6,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from capsem_builder.sdkgen.generation import python_sources, synchronize, typescript_sources
+from capsem_builder.sdkgen.generation import (
+    python_sources,
+    rust_sources,
+    synchronize,
+    typescript_sources,
+)
 
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
-@pytest.mark.parametrize("render", [python_sources, typescript_sources])
+@pytest.mark.parametrize("render", [python_sources, typescript_sources, rust_sources])
 def test_generation_is_deterministic_and_check_does_not_write(
     tmp_path: Path, render: Callable[[Path], dict[str, dict[str, str]]],
 ) -> None:
@@ -26,7 +31,7 @@ def test_generation_is_deterministic_and_check_does_not_write(
 
 
 @pytest.mark.parametrize("mutation", ["edit", "delete", "stale"])
-@pytest.mark.parametrize("extension", ["py", "ts"])
+@pytest.mark.parametrize("extension", ["py", "ts", "rs"])
 def test_every_generated_source_change_is_detected_and_repaired(tmp_path: Path, mutation: str, extension: str) -> None:
     sources = {"models": {f"item.{extension}": "value = 1\n"}, "_operations": {f"call.{extension}": "value = 2\n"}}
     synchronize(tmp_path, sources, check=False)

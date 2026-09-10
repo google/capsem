@@ -5,10 +5,14 @@ from __future__ import annotations
 import re
 import tomllib
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
+from capsem_builder.gate import sdkchecks
+from capsem_builder.gate.plan import Plan
 from citadel.test_sdk_ci import _documents
 from citadel.test_sdk_quality import CONFIG, ROOT, SDK_RATIONALE
+from helpers.gate import gate_plan
 
 
 def _assert_owners(manifest: dict, floors: dict, ci: dict, coverage: dict) -> None:
@@ -44,6 +48,23 @@ def test_rust_sdk_has_native_coverage_and_ci_owners() -> None:
         assert "--workspace" in command and "--exclude" not in command, SDK_RATIONALE
     for path in (ROOT / "sdk/rust/src").rglob("*.rs"):
         assert not re.search(r"#\s*\[\s*(?:allow|expect|ignore|coverage)\b|cfg.*coverage", path.read_text()), SDK_RATIONALE
+
+
+def test_rust_generation_is_enforced_in_the_fast_plan() -> None:
+    (expected,) = sdkchecks.rust_fragment(Plan("Rust SDK"), CONFIG, after=())
+    actual = gate_plan("test-fast")
+    assert expected.label in actual.labels, SDK_RATIONALE
+    assert expected.render() == actual.step_named(expected.label).render(), SDK_RATIONALE
+    assert "--rust-source sdk/rust/src/operations" in " ".join(expected.render()), SDK_RATIONALE
+
+
+def test_removing_rust_generation_from_plan_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    actual = gate_plan("test-fast")
+    incomplete = SimpleNamespace(labels=[label for label in actual.labels if label != "fast.sdk.rust.generate"],
+                                 step_named=actual.step_named)
+    monkeypatch.setitem(globals(), "gate_plan", lambda *_args: incomplete)
+    with pytest.raises(AssertionError, match="SDK code"):
+        test_rust_generation_is_enforced_in_the_fast_plan()
 
 
 @pytest.mark.parametrize("mutation", ["floor", "lints", "tests", "doctests", "runtime", "ci", "report", "paths", "generated"])
