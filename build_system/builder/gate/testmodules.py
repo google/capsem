@@ -22,6 +22,7 @@ from . import (
     digestreport,
     pytestsuite,
     sandbox,
+    sdkchecks,
     sourcechecks,
     toolchain,
     webaudits,
@@ -139,6 +140,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # independent steps, so a Ruff failure no longer hides what Ty would have
     # said and each is timed under its own name.
     checked = sourcechecks.fragment(plan, config, after=(syntax,))
+    sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
     # Importing every test module is a source-shape proof of the same kind, and
     # the Python counterpart of what `rustinventory` does for nextest: a suite
     # that cannot be collected is a suite the gate would otherwise discover it
@@ -187,6 +189,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     return (
         *audited,
         *checked,
+        *sdk_checked,
         collected,
         guarded,
         formatted,

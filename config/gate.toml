@@ -865,7 +865,7 @@ invalid-method-override = 1
 invalid-return-type = 4
 no-matching-overload = 6
 not-iterable = 2
-not-subscriptable = 144
+not-subscriptable = 143
 unresolved-attribute = 77
 unresolved-import = 3
 unsupported-operator = 4
@@ -1763,6 +1763,7 @@ max_skill_body_lines = 600
 cache_stage = "audit-results"
 lockfiles = [
     "build_system/uv.lock",
+    "sdk/python/uv.lock",
     "web/app/pnpm-lock.yaml",
     "web/docs/pnpm-lock.yaml",
     "web/marketing/pnpm-lock.yaml",
@@ -1842,6 +1843,12 @@ max_lines = 20
 name = "python"
 pattern = "*.py"
 enforced_by = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
+
+[[lint_surfaces]]
+name = "python-sdk"
+pattern = "sdk/python/*.py"
+enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
+checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build"]
 
 [[lint_surfaces]]
 name = "yaml"
@@ -3477,3 +3484,10 @@ digest = "e71e2ff726f6"
 where = "web/marketing/public/install.sh"
 subject = "return 0"
 reason = "a trap handler returning success on a path where the failure has already been reported"
+
+[sdk_python]
+project = "sdk/python"
+manifest = "sdk/python/pyproject.toml"
+source = "sdk/python/capsem"
+tests = "sdk/python/tests"
+build_output = "cache/target/sdk/python"

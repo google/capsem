@@ -24,6 +24,14 @@ from .configschema import SafeToken, Strict
 from .releaseschema import ReleasePairingEnvironment
 
 
+class PythonSdkConfig(Strict):
+    project: str
+    manifest: str
+    source: str
+    tests: str
+    build_output: str
+
+
 class ModulesConfig(Strict):
     build_chain_artifact_tests: tuple[str, ...]
     release_suites: tuple[str, ...]

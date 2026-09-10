@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python SDK transport foundation with authenticated HTTP, typed request handling,
+  isolated package builds, and enforced line and branch coverage.
+
 - Typed stop, pause, and delete acknowledgements in the gateway OpenAPI contract.
 
 - Typed detailed VM statistics, including model costs, activity events, and
