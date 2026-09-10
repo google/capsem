@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Async Python `Hypervisor` and `VM` clients with typed lifecycle results,
+  name/id selection, profile resource defaults, and copy/snapshots/stats helpers.
+
 - Generated Python models and async HTTP operations for the gateway's OpenAPI
   contract, with runtime validation and enforced generation drift checks.
 
