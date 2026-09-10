@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stopped persistent VM file listings resolve canonical VM IDs consistently
+  with other gateway routes; file transfer still requires the running security ledger.
+
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using

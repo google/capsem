@@ -401,25 +401,9 @@ use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize
 // answered at all: an upload to `notes.txt -> ~/.ssh/authorized_keys` landed
 // on the host.
 
-fn session_dir_for(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
-    let instances = state.instances.lock().unwrap();
-    if let Some(info) = instances.get(id) {
-        return Ok(info.session_dir.clone());
-    }
-    drop(instances);
-    // Check persistent registry for stopped VMs
-    let reg = state.persistent_registry.lock().unwrap();
-    reg.data
-        .vms
-        .get(id)
-        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-        .map(|e| e.session_dir.clone())
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
-}
-
 /// Open the workspace root of sandbox `id` as a containment handle.
 pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
-    let session_dir = session_dir_for(state, id)?;
+    let session_dir = resolve_session_dir(state, id)?;
     let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
     ContainedDir::open_root(&root).map_err(|e| {
         AppError(

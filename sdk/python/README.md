@@ -48,6 +48,9 @@ A VM selected by name resolves once, then retains its canonical ID. Handles
 returned by `create` and `fork` share their parent's connection. Close the
 owning client with `async with` or `await close()`; closing a shared VM handle
 does not close sibling handles. Closing a client does not stop or delete VMs.
+File import/export requires a running VM's security ledger; copying from or to
+a stopped VM returns `HttpError` with status 409. Stopped workspace listing and
+snapshot comparisons remain available.
 
 This initial SDK does not yet expose managed hypervisor restart, snapshot
 creation/restoration, mounts, port exposure, or subnet management.

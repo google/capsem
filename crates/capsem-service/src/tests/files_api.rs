@@ -3,6 +3,44 @@ use capsem_foundation::unix::contained::ContainedOpenOptions;
 use capsem_service::fs_utils::sanitize_file_path;
 use std::io::{Read as _, Write as _};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session = dir.path().join("stopped-session");
+    let workspace = session.join("guest/workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("existing.txt"), b"retained").unwrap();
+    let entry = test_persistent_entry("display-name", session);
+    let id = entry.id.clone();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+    let app = build_service_router(state);
+    let request = |method, path: String, body| axum::http::Request::builder()
+        .method(method).uri(path).body(body).unwrap();
+    let listed = app.clone().oneshot(request(
+        axum::http::Method::GET, format!("/vms/{id}/files/list"), Body::empty(),
+    )).await.unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let body = to_bytes(listed.into_body(), usize::MAX).await.unwrap();
+    let files: api::FileListResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(files.entries[0].name, "existing.txt");
+    for (method, path) in [
+        (axum::http::Method::POST, "new.txt"),
+        (axum::http::Method::GET, "existing.txt"),
+    ] {
+        let response = app.clone().oneshot(request(
+            method, format!("/vms/{id}/files/content?path={path}"), Body::from("new bytes"),
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("running sandbox security ledger"));
+    }
+    assert!(!workspace.join("new.txt").exists());
+    let missing = app.oneshot(request(
+        axum::http::Method::GET, "/vms/unknown-id/files/list".into(), Body::empty(),
+    )).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
 // -----------------------------------------------------------------------
 // Download / Upload via resolve_workspace_path
 // -----------------------------------------------------------------------
