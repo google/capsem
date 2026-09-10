@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK HTTP transport with explicit bearer authentication, request
+  cancellation and deadlines, binary bodies, and no mutation retries or redirects.
+
 - TypeScript gateway models and runtime validators, with strict package checks,
   enforced coverage, generation drift checks, and clean package builds.
 
