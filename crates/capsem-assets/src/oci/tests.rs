@@ -1,5 +1,13 @@
 use super::*;
 
+pub(super) fn private_dir() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap()
+}
+
 #[test]
 fn explicit_images_work_across_registries() {
     for (input, registry, repository) in [

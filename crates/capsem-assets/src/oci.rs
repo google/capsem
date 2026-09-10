@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
 use oci_client::Reference;
 use serde::Deserialize;
 
+mod cache;
 mod pull;
 pub use oci_client::secrets::RegistryAuth;
 pub use pull::{ImageLayout, Puller};

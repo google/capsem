@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -16,7 +17,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use super::{digest_hex, image_reference, verify_platform};
+use super::{cache::BlobCache, digest_hex, image_reference, verify_platform};
 
 const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
@@ -48,11 +49,14 @@ pub struct Puller {
     authentication: RegistryAuth,
     architecture: String,
     scheme: &'static str,
+    cache: Option<BlobCache>,
 }
 
 impl Puller {
     pub fn new(architecture: &str, authentication: RegistryAuth) -> Result<Self> {
-        Self::configured(architecture, authentication, ClientProtocol::Https)
+        let mut puller = Self::configured(architecture, authentication, ClientProtocol::Https)?;
+        puller.cache = Some(BlobCache::installed()?);
+        Ok(puller)
     }
 
     fn configured(architecture: &str, authentication: RegistryAuth, protocol: ClientProtocol) -> Result<Self> {
@@ -78,6 +82,7 @@ impl Puller {
             authentication,
             architecture: architecture.into(),
             scheme: if secure { "https" } else { "http" },
+            cache: None,
         })
     }
 
@@ -89,6 +94,9 @@ impl Puller {
 
     async fn pull_inner(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
         let reference = image_reference(reference)?;
+        if let Some(cache) = &self.cache {
+            cache.prepare().await?;
+        }
         let token = self
             .registry
             .auth(&reference, &self.authentication, RegistryOperation::Pull)
@@ -133,8 +141,13 @@ impl Puller {
             serde_json::from_slice(&bytes).context("expected platform image manifest")?;
         validate_manifest(&mut manifest)?;
         let parent = parent.to_owned();
-        let directory =
-            tokio::task::spawn_blocking(move || tempfile::Builder::new().prefix("oci-").tempdir_in(parent)).await??;
+        let directory = tokio::task::spawn_blocking(move || {
+            tempfile::Builder::new()
+                .prefix("oci-")
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in(parent)
+        })
+        .await??;
         let blob_dir = directory.path().join("blobs/sha256");
         tokio::fs::create_dir_all(&blob_dir).await?;
         self.blob(&reference, &manifest.config, &blob_dir).await?;
@@ -146,7 +159,11 @@ impl Puller {
             .iter()
             .map(|layer| (layer.digest.clone(), layer))
             .collect();
-        stream::iter(layers.values().map(|layer| self.blob(&reference, layer, &blob_dir)))
+        let downloads: Vec<_> = layers
+            .values()
+            .map(|layer| self.blob(&reference, layer, &blob_dir))
+            .collect();
+        stream::iter(downloads)
             .buffer_unordered(4)
             .try_collect::<Vec<_>>()
             .await?;
@@ -232,6 +249,22 @@ impl Puller {
     }
 
     async fn blob(&self, reference: &Reference, descriptor: &OciDescriptor, directory: &Path) -> Result<()> {
+        let destination = directory.join(digest_hex(&descriptor.digest)?);
+        let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
+        let _lease = match &cache {
+            Some(cache) => {
+                let lease = cache.lease(&descriptor.digest).await?;
+                if cache
+                    .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                    .await?
+                {
+                    tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
+                    return Ok(());
+                }
+                Some(lease)
+            }
+            None => None,
+        };
         let mut chunks = self.registry.pull_blob_stream(reference, descriptor).await?;
         ensure!(
             chunks.content_length.is_none_or(|size| size == descriptor.size as u64),
@@ -240,7 +273,7 @@ impl Puller {
         let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(directory.join(digest_hex(&descriptor.digest)?))
+            .open(&destination)
             .await?;
         let mut count = 0u64;
         let mut digest = Sha256::new();
@@ -256,6 +289,10 @@ impl Puller {
             "blob digest mismatch"
         );
         file.flush().await?;
+        drop(file);
+        if let Some(cache) = &cache {
+            cache.publish(&descriptor.digest, &destination).await?;
+        }
         Ok(())
     }
 }

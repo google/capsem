@@ -450,3 +450,42 @@ This is ARM64 execution evidence. The x86_64 package list is aligned, but its
 new rootfs has not been built or executed. Installed service/profile state was
 not replaced. `capsem run IMAGE`, retained OCI caching and TCP publishing are
 still open Sprinty work; these tests do not claim those product paths exist.
+
+## Native OCI pull cache foundation
+
+The assets library now retains verified blobs using the `oci-images` entry in
+`config/cache.toml`. The shipped Rust owner binds that policy beneath the
+installation home (`cache/oci-images`); developer cache tooling binds the same
+entry beneath its resolved repository authority. Neither calls Python from
+the shipped runtime. The initial 4 GiB warm / 8 GiB maximum budget retains one
+maximum-size accepted image with room for its replacement, with a seven-day
+age policy. This is an explicit storage budget, not a filesystem-capacity guess.
+
+Every pull authenticates and refreshes the manifest. Cache identities include
+the registry/repository and blob digest: a manifest from another repository
+must not expose private cached bytes merely by naming their digest. Both this
+attack and cross-registry reuse were exercised against hermetic HTTP servers.
+The original cross-registry attack passed unexpectedly; the scoped-key fix
+makes it fail while ordinary same-repository reuse still succeeds.
+
+Four layer downloads may run concurrently per pull. Native file locks coalesce
+equal blobs across callers. Cache hits verify bytes while copying from an open
+descriptor into a private disposable layout; retained and staged files do not
+share writable inodes. Publication and pruning use the configured mutation
+lock, with complete temporary-file replacement. Disk publication is serialized;
+large-image disk throughput has not yet been benchmarked. Cancellation while
+downloading leaves no staged partial blob or held download lock.
+
+Evidence: 83 `capsem-assets` library tests passed, including mutable tags,
+concurrent/new-client reuse, corruption recovery, scoped private-image access,
+cancellation, permission refusal, abandoned partial cleanup and retention.
+The full Python cache suite passed 125 tests, and 34 focused source-boundary
+checks passed. Formatting, focused Ruff/Ty and asset Clippy passed.
+
+`just cache verify` has **not** passed: it found five existing unclassified
+release/integration-proof outputs in the shared checkout cache. Their legacy
+source producers are tracked as S02-007; no evidence directories were deleted.
+The before inventory is `cache/target/tests/oci-cache-before.json`.
+
+This remains a library foundation. `capsem run IMAGE` and its port publication
+path still need implementation and real-VM CLI proof.
