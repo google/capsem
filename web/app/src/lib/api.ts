@@ -4,6 +4,8 @@ import { recordWsEvent } from './tauri-log';
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList } from '@capsem/sdk';
+import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
+export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse,
   SnapshotInfo as SnapshotSlotStatus, SnapshotsStatus as SnapshotStatusResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
@@ -187,27 +189,6 @@ export interface CredentialBrokerInfo {
   inventory: BrokeredCredentialStatus[];
   grants: CredentialBrokerGrantStatus;
   corp_constraints: CredentialBrokerCorpConstraint[];
-}
-
-export interface ProfileSummary {
-  id: string;
-  name: string;
-  description: string;
-  icon_svg?: string | null;
-  availability: {
-    web: boolean;
-    shell: boolean;
-    mobile: boolean;
-  };
-  source: string;
-  rule_count: number;
-  default_rule_count: number;
-  plugin_count: number;
-  mcp_server_count: number;
-}
-
-export interface ProfilesListResponse {
-  profiles: ProfileSummary[];
 }
 
 export interface ProfileObomInfo {
@@ -901,8 +882,7 @@ export async function saveSettings(changes: Record<string, unknown>): Promise<Se
 // -- Profiles --
 
 export async function listProfiles(): Promise<ProfilesListResponse> {
-  const resp = await _get('/profiles/list');
-  return await resp.json();
+  return _sdk.call(gateway.listProfiles);
 }
 
 export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
@@ -1202,8 +1182,7 @@ export async function ensureAssets(profileId: string): Promise<AssetStatusRespon
 // -- Release channel / updates --
 
 export async function getUpdateStatus(): Promise<UpdateStatusResponse> {
-  const resp = await _get('/update/status');
-  return await resp.json();
+  return _sdk.call(gateway.getUpdateStatus);
 }
 
 export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise<UpdateActionResponse> {
@@ -1212,10 +1191,9 @@ export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise
 }
 
 export async function applyUpdate(
-  opts: { dry_run?: boolean; confirmed?: boolean } = {},
+  opts: UpdateApplyRequest = {},
 ): Promise<UpdateActionResponse> {
-  const resp = await _post('/update/apply', opts);
-  return await resp.json();
+  return _sdk.call(transport => gateway.updateHypervisor(transport, { body: opts }));
 }
 
 // -- App actions --

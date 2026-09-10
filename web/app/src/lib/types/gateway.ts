@@ -21,93 +21,13 @@ export interface TokenResponse {
   token: string;
 }
 
-// GET /update/status
-export interface UpdateStatusResponse {
-  checked_at?: number | null;
-  channel_url?: string | null;
-  channel_hash?: string | null;
-  validation_status?: string | null;
-  validation_error?: string | null;
-  stale: boolean;
-  last_error?: string | null;
-  binary: UpdateTrackStatus;
-  assets: UpdateTrackStatus;
-  profiles: UpdateTrackStatus;
-  images: UpdateTrackStatus;
-  supply_chain?: SupplyChainEvidence;
-}
+export type { UpdateStatusResponse, UpdateApplyRequest, UpdateActionResponse, UpdateCommandPlan,
+  UpdateTrackStatus, SupplyChainEvidence, SupplyChainManifestEvidence, SupplyChainChannelEvidence,
+  SupplyChainReference, UpdateTrackState, UpdateCompatibilityState } from '@capsem/sdk';
 
 export interface UpdateCheckRequest {
   dry_run?: boolean;
 }
-
-export interface UpdateApplyRequest {
-  dry_run?: boolean;
-  confirmed?: boolean;
-}
-
-export interface UpdateCommandPlan {
-  program: string;
-  args: string[];
-}
-
-export interface UpdateActionResponse {
-  status: string;
-  command: UpdateCommandPlan;
-  exit_code?: number | null;
-  stdout?: string | null;
-  stderr?: string | null;
-}
-
-export interface UpdateTrackStatus {
-  current?: string | null;
-  latest?: string | null;
-  blocked_reason?: string | null;
-  update_available: boolean;
-  state: UpdateTrackState;
-  compatibility: UpdateCompatibilityState;
-}
-
-export interface SupplyChainEvidence {
-  manifest: SupplyChainManifestEvidence;
-  channel_index: SupplyChainChannelEvidence;
-  host_sbom: SupplyChainReference;
-  vm_obom: SupplyChainReference;
-  attestations: SupplyChainReference[];
-}
-
-export interface SupplyChainManifestEvidence {
-  origin?: string | null;
-  source?: string | null;
-  path: string;
-  blake3?: string | null;
-}
-
-export interface SupplyChainChannelEvidence {
-  url?: string | null;
-  sha256?: string | null;
-}
-
-export interface SupplyChainReference {
-  name: string;
-  format?: string | null;
-  scope?: string | null;
-  generator?: string | null;
-  release_artifact?: string | null;
-  route?: string | null;
-  workflow?: string | null;
-}
-
-export type UpdateTrackState =
-  | 'current'
-  | 'update_available'
-  | 'unknown'
-  | 'not_published';
-
-export type UpdateCompatibilityState =
-  | 'compatible'
-  | 'unknown'
-  | 'not_applicable';
 
 export type { ProvisionRequest, ProvisionResponse, ForkRequest, ForkResponse } from "@capsem/sdk";
 

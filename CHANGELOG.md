@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UI profile discovery and update status/application use the typed SDK contract,
+  including profile update semantics and validated update evidence and results.
+
 - UI file browsing and transfers use typed SDK operations, including validated
   file metadata, byte-preserving uploads/downloads and bounded token refresh.
 

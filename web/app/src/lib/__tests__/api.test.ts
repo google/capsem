@@ -1,3 +1,4 @@
+import { profile, updateStatusFixture } from './sdk-catalog-fixtures';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock fetch globally before importing api.
@@ -427,20 +428,7 @@ describe('api', () => {
     });
 
     it('listProfiles sends GET /profiles/list', async () => {
-      const profiles = {
-        profiles: [
-          {
-            id: 'code',
-            name: 'Default',
-            description: 'Built-in Capsem developer profile.',
-            source: 'effective',
-            rule_count: 3,
-            default_rule_count: 2,
-            plugin_count: 1,
-            mcp_server_count: 0,
-          },
-        ],
-      };
+      const profiles = { profiles: [profile] };
       mockFetch.mockReturnValueOnce(jsonResponse(profiles));
       const result = await api.listProfiles();
       expect(result).toEqual(profiles);
@@ -1144,7 +1132,7 @@ describe('api', () => {
       expect(result.assets.latest).toBe('assets-2');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/update/status');
-      expect(call[1].headers.Authorization).toBe('Bearer tok');
+      expect(new Headers(call[1].headers).get('Authorization')).toBe('Bearer tok');
     });
   });
 
@@ -1276,35 +1264,3 @@ describe('api', () => {
     });
   });
 });
-
-function updateStatusFixture() {
-  return {
-    checked_at: 1718444400,
-    channel_url: 'https://release.capsem.org/assets/stable/manifest.json',
-    stale: false,
-    binary: {
-      current: '1.4.0',
-      latest: '1.4.1',
-      update_available: true,
-      state: 'update_available',
-      compatibility: 'compatible',
-    },
-    assets: {
-      current: 'assets-1',
-      latest: 'assets-2',
-      update_available: true,
-      state: 'update_available',
-      compatibility: 'compatible',
-    },
-    profiles: {
-      update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
-    },
-    images: {
-      update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
-    },
-  };
-}
