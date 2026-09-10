@@ -1,5 +1,7 @@
 //! Fixed records and owned SCM_RIGHTS descriptors for the confined router.
 //! Cancellation poisons the socket rather than resuming a partial record.
+//! Senders retain socket owners until the receiver acknowledges adoption;
+//! Darwin may flush sockets referenced only by queued SCM_RIGHTS messages.
 use std::io::{self, ErrorKind};
 use std::mem::{size_of, size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};

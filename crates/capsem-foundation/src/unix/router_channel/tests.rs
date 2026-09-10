@@ -1,10 +1,37 @@
 use super::*;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 
 fn async_stream(stream: UnixStream) -> tokio::net::UnixStream {
     stream.set_nonblocking(true).unwrap();
     tokio::net::UnixStream::from_std(stream).unwrap()
+}
+
+#[tokio::test]
+async fn acknowledged_socket_remains_usable_after_sender_drops_original() {
+    let (parent, child) = UnixStream::pair().unwrap();
+    let sender = Sender::new(parent).unwrap();
+    let receiver = Receiver::new(child).unwrap();
+    let mut peers = Vec::new();
+    for _ in 0..32 {
+        let (data, peer) = UnixStream::pair().unwrap();
+        sender.send(&[7; FRAME_SIZE], &[data.as_raw_fd()]).await.unwrap();
+        peers.push((data, async_stream(peer)));
+    }
+    for (original, mut peer) in peers {
+        let mut frame = receiver.recv().await.unwrap();
+        let mut adopted = async_stream(UnixStream::from(frame.fds.pop().unwrap()));
+        // Adoption is the receiver's acknowledgement boundary. Darwin's UNIX
+        // socket GC can flush a socket held only by queued SCM_RIGHTS messages.
+        drop(original);
+        peer.write_all(b"ping").await.unwrap();
+        let mut buffer = [0; 4];
+        adopted.read_exact(&mut buffer).await.unwrap();
+        assert_eq!(&buffer, b"ping");
+        adopted.write_all(b"pong").await.unwrap();
+        peer.read_exact(&mut buffer).await.unwrap();
+        assert_eq!(&buffer, b"pong");
+    }
 }
 
 #[test]

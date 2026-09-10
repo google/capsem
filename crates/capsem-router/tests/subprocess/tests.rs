@@ -1,7 +1,7 @@
 use capsem_foundation::unix::router_channel::Sender;
 use capsem_router::{send_grant, Event, Grant, MAX_CONNECTIONS};
 use std::net::Ipv4Addr;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,6 +13,7 @@ struct Router {
     child: Child,
     sender: Option<Sender>,
     events: Option<UnixStream>,
+    retained: std::collections::HashMap<u64, (OwnedFd, OwnedFd)>,
 }
 impl Router {
     async fn start() -> Self {
@@ -32,6 +33,7 @@ impl Router {
             child,
             sender: Some(sender),
             events: Some(UnixStream::from_std(parent).unwrap()),
+            retained: std::collections::HashMap::new(),
         };
         router.grant(Grant::Hello).await;
         assert_eq!(router.event().await, Event::Ready);
@@ -44,12 +46,16 @@ impl Router {
             .unwrap();
     }
     async fn event(&mut self) -> Event {
-        timeout(Duration::from_secs(5), Event::read(self.events.as_mut().unwrap()))
+        let event = timeout(Duration::from_secs(5), Event::read(self.events.as_mut().unwrap()))
             .await
             .unwrap()
-            .unwrap()
+            .unwrap();
+        if let Event::Accepted(id) | Event::Refused(id) = event {
+            self.retained.remove(&id);
+        }
+        event
     }
-    async fn pair(&self, id: u64) -> (TcpStream, UnixStream) {
+    async fn pair(&mut self, id: u64) -> (TcpStream, UnixStream) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
         let (source, _) = listener.accept().await.unwrap();
@@ -61,6 +67,8 @@ impl Router {
             destination: destination.as_fd(),
         })
         .await;
+        self.retained
+            .insert(id, (source.into_std().unwrap().into(), destination.into()));
         (client, UnixStream::from_std(peer).unwrap())
     }
     async fn close(&mut self) {

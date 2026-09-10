@@ -21,6 +21,7 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
     let router = tokio::spawn(relay(receiver, UnixStream::from_std(child).unwrap()));
     assert_eq!(Event::read(&mut events).await.unwrap(), Event::Ready);
     let mut peers = tokio::task::JoinSet::new();
+    let mut retained = HashMap::new();
     for id in 1..=32 {
         let (source, mut client) = stream_pair();
         let (destination, mut server) = stream_pair();
@@ -34,6 +35,7 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
         )
         .await
         .unwrap();
+        retained.insert(id, (source, destination));
         peers.spawn(async move {
             let payload = vec![id as u8; 32 * 1024];
             let echo = tokio::spawn(async move {
@@ -58,7 +60,10 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
             .unwrap()
             .unwrap()
         {
-            Event::Accepted(_) => accepted += 1,
+            Event::Accepted(id) => {
+                retained.remove(&id).expect("acknowledged unknown handoff");
+                accepted += 1;
+            }
             Event::Closed(_) => closed += 1,
             other => panic!("unexpected {other:?}"),
         }
