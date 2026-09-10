@@ -175,10 +175,13 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # `mcp_export` build in front of it for a mock that only `__tests__` files
     # import.
     consumer = config.websurfaces.needs_generated_settings
+    sdk_built = next(check for check in typescript_checked if check.label.endswith(".build"))
     surfaces = [
         phase.add(
             surface,
-            after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
+            after=(syntax, node)
+            + ((settings,) if surface.label.endswith(consumer) else ())
+            + ((sdk_built,) if surface.label.endswith((consumer, config.frontend.build_target)) else ()),
         )
         for surface in webaudits.surfaces(config)
     ]

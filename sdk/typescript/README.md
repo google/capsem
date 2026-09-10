@@ -54,3 +54,9 @@ Managed restart, snapshot create/restore, mounts and port exposure are pending.
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the
 package tarball and verifies generation against `sdk/specification/openapi.json`.
+
+The `@capsem/sdk/operations` and `@capsem/sdk/transport` exports expose generated
+endpoint functions for applications that already own their connection flow.
+The UI links this package and reads its compiled `dist` exports. Gate commands
+and CI install and build the SDK before frontend checks or bundles. When running
+frontend commands directly, first install dependencies and run `pnpm build` here.

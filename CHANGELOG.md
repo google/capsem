@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK operation and transport package exports, with explicit SDK
+  build prerequisites for the UI's local, development and CI build paths.
+
 - TUI overview and profile discovery use the Rust SDK's shared gateway types,
   including combined update status and explicit incompatible-VM state.
 

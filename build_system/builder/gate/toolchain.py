@@ -116,7 +116,10 @@ def node(config: GateConfig, workspaces: tuple[str, ...] | None = None) -> Step:
     """
     settings = config.toolchain
     actions: list[Action] = []
-    for workspace in workspaces or settings.node_workspaces:
+    selected = list(workspaces or settings.node_workspaces)
+    if config.frontend.workspace in selected and config.sdk_typescript.project not in selected:
+        selected.insert(0, config.sdk_typescript.project)
+    for workspace in selected:
         root = config.path(workspace)
         actions.extend(
             (

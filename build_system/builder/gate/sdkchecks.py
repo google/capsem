@@ -65,3 +65,12 @@ def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) ->
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after)
     return (generated,)
+
+
+def typescript_bundle(config: GateConfig) -> Step:
+    """Compile the linked SDK before a standalone frontend consumer starts."""
+    return step(
+        "sdk.typescript.bundle",
+        Run(["pnpm", "run", "build"], cwd=config.path(config.sdk_typescript.project)),
+        kind=Kind.COMPILE, speed=Speed.FAST,
+    )

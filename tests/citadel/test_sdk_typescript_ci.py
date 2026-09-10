@@ -15,7 +15,7 @@ def _assert_owners(fast: dict, ci: dict, coverage: dict) -> None:
     sealed = next(index for index, step in enumerate(steps) if step.get("run") == "just fast-test")
     assert prewarm < sealed, RATIONALE
     steps = ci["jobs"]["test"]["steps"]
-    test = next(step for step in steps if step.get("working-directory") == "sdk/typescript")
+    test = next(step for step in steps if step.get("name") == "TypeScript SDK tests with coverage")
     assert test["run"].splitlines() == ["pnpm install --frozen-lockfile", (
         "pnpm test --reporter=default --reporter=junit "
         "--outputFile=../../cache/target/coverage/junit/typescript-sdk.xml"

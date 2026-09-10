@@ -18,6 +18,9 @@ importers:
       '@astrojs/svelte':
         specifier: ^9.0.1
         version: 9.0.1(astro@7.3.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(jiti@1.21.7)(yaml@2.9.0))(esbuild@0.28.1)(jiti@1.21.7)(svelte@5.56.2(@typescript-eslint/types@8.58.1))(typescript@5.9.3)(yaml@2.9.0)
+      '@capsem/sdk':
+        specifier: link:../../sdk/typescript
+        version: link:../../sdk/typescript
       '@shikijs/langs':
         specifier: 4.0.2
         version: 4.0.2

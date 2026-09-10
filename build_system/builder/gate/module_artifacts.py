@@ -12,6 +12,7 @@ from pathlib import Path
 from . import (
     assetplan,
     pytestsuite,
+    sdkchecks,
     toolchain,
     webaudits,
 )
@@ -105,7 +106,10 @@ def artifacts(
         toolchain.node(config, (config.frontend.workspace,)), after=after
     )
     prerequisites = (*after, installed) if node is not None else (installed,)
-    frontend = bundled or phase.add(webaudits.frontend_bundle(config), after=prerequisites)
+    if bundled is None:
+        sdk = phase.add(sdkchecks.typescript_bundle(config), after=prerequisites)
+        bundled = phase.add(webaudits.frontend_bundle(config), after=(sdk,))
+    frontend = bundled
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",

@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@capsem/sdk": "link:../../sdk/typescript",
     "@astrojs/svelte": "^9.0.1",
     "@shikijs/langs": "4.0.2",
     "@shikijs/themes": "4.0.2",

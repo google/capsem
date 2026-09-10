@@ -226,6 +226,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             web/app/pnpm-lock.yaml
+            sdk/typescript/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
@@ -239,6 +240,11 @@ jobs:
       - run: bash build_system/scripts/test/prepare-install-test-assets.sh
       - run: bash build_system/scripts/build/materialize-config.sh
       - run: cd web/app && pnpm install --frozen-lockfile
+      - name: Build TypeScript SDK for frontend consumers
+        working-directory: sdk/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
       - name: Build frontend bundle
         run: bash build_system/scripts/web/check-web-surface.sh frontend-build
       - name: Install release site dependencies

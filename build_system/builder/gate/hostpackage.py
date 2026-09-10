@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from . import host
+from . import host, sdkchecks, toolchain
 from .actions import Action, Run, Script
 from .command import GateCommand
 from .config import GateConfig
@@ -221,12 +221,15 @@ class BuildUiCommand(
                 f"unknown build profile {profile!r}; expected one of {', '.join(settings.profiles)}"
             )
 
+        installed = plan.add(toolchain.node(config, (settings.workspace,)))
+        sdk = plan.add(sdkchecks.typescript_bundle(config), after=(installed,))
         bundle = plan.add(
             step("frontend", Run(["bash", settings.build_script, settings.build_target]),
                 kind=Kind.COMPILE,
                 needs=frozenset({Needs.DISK}),
                 speed=Speed.SLOW,
-            )
+            ),
+            after=(sdk,),
         )
         argv = ["cargo", "build", "-p", settings.app_crate]
         if profile != settings.profiles[0]:
