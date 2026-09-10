@@ -1195,6 +1195,7 @@ name = "capsem-tui"
 version = "0.6.3"
 dependencies = [
  "anyhow",
+ "capsem-sdk",
  "clap",
  "crossterm 0.29.0",
  "futures",

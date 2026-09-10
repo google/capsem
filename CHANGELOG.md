@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TUI VM actions use the Rust SDK's typed gateway contract; forks focus the
+  returned canonical VM ID and unnamed TUI workspaces retain service-generated names.
+
 - Rust `Hypervisor` and `VM` clients with shared HTTP connections, canonical name
   resolution, profile defaults, and typed lifecycle/copy/snapshots/stats helpers.
 

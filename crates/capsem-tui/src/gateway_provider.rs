@@ -392,86 +392,6 @@ async fn invoke_action(
     match action {
         ControlAction::StartService => start_service().await,
         ControlAction::Update => update_with_binary(&capsem_binary()).await,
-        ControlAction::CreateSession { name, profile_id } => {
-            let mut body = serde_json::json!({
-                "persistent": true,
-                "profile_id": profile_id,
-            });
-            if let Some(name) = name {
-                body["name"] = serde_json::Value::String(name.clone());
-            }
-            let response = client
-                .post(join_url(base_url, &["vms", "create"])?)
-                .bearer_auth(token)
-                .json(&body)
-                .send()
-                .await
-                .context("create capsem session")?;
-            let body = response_json(response).await?;
-            let id = body.get("id").and_then(|value| value.as_str()).unwrap_or("session");
-            Ok(ActionOutcome {
-                message: name
-                    .as_deref()
-                    .map_or_else(|| "created session".to_string(), |name| format!("created {name}")),
-                focus_session: Some(id.to_string()),
-            })
-        }
-        ControlAction::Fork { id, name } => {
-            let response = client
-                .post(join_url(base_url, &["vms", id, "fork"])?)
-                .bearer_auth(token)
-                .json(&serde_json::json!({ "name": name }))
-                .send()
-                .await
-                .with_context(|| format!("fork capsem session {id}"))?;
-            let body = response_json(response).await?;
-            let fork_name = body.get("name").and_then(|value| value.as_str()).unwrap_or(name);
-            Ok(ActionOutcome {
-                message: format!("forked {fork_name}"),
-                focus_session: Some(fork_name.to_string()),
-            })
-        }
-        ControlAction::Resume { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "resume"]).await?;
-            Ok(ActionOutcome {
-                message: format!("resumed {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Checkpoint { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
-            Ok(ActionOutcome {
-                message: format!("checkpointed {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Suspend { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
-            Ok(ActionOutcome {
-                message: format!("suspended {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Stop { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "stop"]).await?;
-            Ok(ActionOutcome {
-                message: format!("stopped {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Delete { id, label } => {
-            let response = client
-                .delete(join_url(base_url, &["vms", id, "delete"])?)
-                .bearer_auth(token)
-                .send()
-                .await
-                .with_context(|| format!("delete capsem session {id}"))?;
-            response_json(response).await?;
-            Ok(ActionOutcome {
-                message: format!("deleted {label}"),
-                focus_session: None,
-            })
-        }
         ControlAction::Purge { all } => {
             let response = client
                 .post(join_url(base_url, &["purge"])?)
@@ -496,6 +416,9 @@ async fn invoke_action(
                 focus_session: None,
             })
         }
+        action => crate::sdk_actions::invoke(base_url, token, action)
+            .await
+            .map_err(crate::sdk_actions::display_error),
     }
 }
 
@@ -576,21 +499,6 @@ fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-async fn post_empty(
-    client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
-    path_segments: &[&str],
-) -> Result<serde_json::Value> {
-    let response = client
-        .post(join_url(base_url, path_segments)?)
-        .bearer_auth(token)
-        .send()
-        .await
-        .with_context(|| format!("post gateway action /{}", path_segments.join("/")))?;
-    response_json(response).await
 }
 
 async fn response_json(response: reqwest::Response) -> Result<serde_json::Value> {
