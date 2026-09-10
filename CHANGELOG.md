@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Both profiles include `runc`; guest kernels support offline OCI process
+  namespaces and cgroup CPU, memory, and process limits.
+
 ### Changed
 
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
