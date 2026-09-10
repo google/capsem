@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 @asynccontextmanager
-async def gateway() -> AsyncIterator[tuple[str, list[tuple[str, str, bytes, dict[str, str]]]]]:
+async def gateway(response: bytes | None = None) -> AsyncIterator[tuple[str, list[tuple[str, str, bytes, dict[str, str]]]]]:
     received: list[tuple[str, str, bytes, dict[str, str]]] = []
 
     async def handle(request: web.Request) -> web.Response:
@@ -23,7 +23,7 @@ async def gateway() -> AsyncIterator[tuple[str, list[tuple[str, str, bytes, dict
             return web.Response(status=307, headers={"Location": "/unexpected"})
         if request.path == "/wait":
             await asyncio.sleep(0.1)
-        return web.Response(body=payload or b'{"success":true}', content_type="application/octet-stream")
+        return web.Response(body=response if response is not None else payload or b'{"success":true}', content_type="application/octet-stream")
 
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handle)

@@ -27,6 +27,7 @@ from .releaseschema import ReleasePairingEnvironment
 class PythonSdkConfig(Strict):
     project: str
     manifest: str
+    specification: str
     source: str
     tests: str
     build_output: str

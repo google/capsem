@@ -6,6 +6,7 @@ from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
+from .pythonenv import uv_run
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
@@ -17,6 +18,8 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
         kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
     ), after=after)
     commands = {
+        "generate": uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
+                           "--specification", settings.specification, "--python-package", settings.source),
         "lint": [*prefix, "ruff", "check", "--config", config.suites.pytest.project_manifest,
                  settings.source, settings.tests],
         "types": [*prefix, "ty", "check", "--project", settings.project, "--error-on-warning",

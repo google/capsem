@@ -1848,7 +1848,7 @@ enforced_by = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
 name = "python-sdk"
 pattern = "sdk/python/*.py"
 enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
-checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build"]
+checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
 
 [[lint_surfaces]]
 name = "yaml"
@@ -3489,6 +3489,7 @@ reason = "a trap handler returning success on a path where the failure has alrea
 [sdk_python]
 project = "sdk/python"
 manifest = "sdk/python/pyproject.toml"
+specification = "sdk/specification/openapi.json"
 source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"

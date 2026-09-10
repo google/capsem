@@ -83,13 +83,13 @@ def test_sdk_checks_are_in_the_real_fast_plan() -> None:
         assert check.label in actual.labels, SDK_RATIONALE
         assert actual.step_named(check.label).render() == check.render(), SDK_RATIONALE
     rendered = "\n".join(line for check in leaves for line in check.render())
-    for command in ("ruff check", "ty check", "--error-on-warning", "pytest", "uv build"):
+    for command in ("ruff check", "ty check", "--error-on-warning", "pytest", "uv build", "capsem_builder.sdkgen", "--check"):
         assert command in rendered, SDK_RATIONALE
     assert "--ignore" not in rendered and "--exit-zero" not in rendered, SDK_RATIONALE
     assert "sdk/python/uv.lock" in CONFIG.audits.dependency_policy.lockfiles, SDK_RATIONALE
 
 
-@pytest.mark.parametrize("missing", ["lint", "types", "tests", "build"])
+@pytest.mark.parametrize("missing", ["lint", "types", "tests", "build", "generate"])
 def test_omitting_an_sdk_check_is_rejected(missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
     actual = gate_plan("test-fast")
     incomplete = SimpleNamespace(
