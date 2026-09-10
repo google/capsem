@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from tests.citadel.source_enum_literals import contract_enums, reference_source
+
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("web_benchmark_boundary_debt.toml")
 SELF = "tests/citadel/test_web_benchmark_boundary.py"
@@ -99,24 +101,7 @@ def _text_sources(tracked: tuple[str, ...]) -> dict[str, str]:
 
 
 def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
-    def source_text(path: str, text: str) -> str:
-        if path.endswith(".json"):
-            try:
-                document = json.loads(text)
-            except json.JSONDecodeError:
-                return text
-            if isinstance(document, dict) and "openapi" in document:
-                # Schema enums are wire values, not repository paths. Keep
-                # defaults, examples, descriptions and actual path fields.
-                def without_enums(value: Any) -> Any:
-                    if isinstance(value, dict):
-                        return {key: without_enums(child) for key, child in value.items() if key != "enum"}
-                    if isinstance(value, list):
-                        return [without_enums(child) for child in value]
-                    return value
-                return json.dumps(without_enums(document), indent=2)
-        return text
-
+    enums = contract_enums(sources)
     return tuple(
         sorted(
             json.dumps(
@@ -129,7 +114,7 @@ def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
                 separators=(",", ":"),
             )
             for path, text in sources.items()
-            for line in source_text(path, text).splitlines()
+            for line in reference_source(path, text, enums).splitlines()
             for family, pattern in REFERENCE_PATTERNS.items()
             if pattern.search(line)
         )
@@ -379,6 +364,20 @@ def test_openapi_wire_enums_are_not_repository_paths() -> None:
     assert not _legacy_references({"contract.json": json.dumps(document)})
     document["example"] = "frontend/missing.ts"
     assert _legacy_references({"contract.json": json.dumps(document)})
+
+
+@pytest.mark.parametrize(("path", "source"), [
+    ("model.py", 'from enum import StrEnum\nclass Source(StrEnum):\n    FRONTEND = "frontend"\n'),
+    ("model.ts", 'export enum Source {\n  FRONTEND = "frontend",\n}\n'),
+])
+def test_typed_wire_enums_keep_surrounding_path_checks(path: str, source: str) -> None:
+    contract = {"contract.json": json.dumps({"openapi": "3.1.0", "components": {
+        "schemas": {"Source": {"type": "string", "enum": ["frontend"]}},
+    }})}
+    assert _legacy_references({path: source})  # Ordinary path enums remain visible.
+    assert not _legacy_references({**contract, path: source})
+    assert _legacy_references({**contract, path: source + '\nlegacy_path = "frontend"\n'})
+    assert _legacy_references({**contract, path: source.replace('"frontend"', '"frontend" # docs/guide')})
 
 
 def test_coverage_mapping_fingerprint_ignores_unrelated_line_movement() -> None:
