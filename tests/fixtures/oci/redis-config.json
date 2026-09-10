@@ -1,0 +1,19 @@
+{
+  "ExposedPorts": {
+    "6379/tcp": {}
+  },
+  "Env": [
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "REDIS_VERSION=7.4.11"
+  ],
+  "Entrypoint": [
+    "docker-entrypoint.sh"
+  ],
+  "Cmd": [
+    "redis-server"
+  ],
+  "Volumes": {
+    "/data": {}
+  },
+  "WorkingDir": "/data"
+}

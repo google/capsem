@@ -8,7 +8,7 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use futures::{stream, StreamExt, TryStreamExt};
 use oci_client::{
-    client::{ClientConfig, ClientProtocol},
+    client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol},
     manifest::*,
     secrets::RegistryAuth,
     Client, Reference, RegistryOperation,
@@ -54,28 +54,60 @@ pub struct Puller {
 
 impl Puller {
     pub fn new(architecture: &str, authentication: RegistryAuth) -> Result<Self> {
-        let mut puller = Self::configured(architecture, authentication, ClientProtocol::Https)?;
+        Self::new_with_root_certificate(architecture, authentication, None)
+    }
+
+    pub fn new_with_root_certificate(
+        architecture: &str,
+        authentication: RegistryAuth,
+        certificate: Option<&[u8]>,
+    ) -> Result<Self> {
+        let mut puller = Self::configured(architecture, authentication, ClientProtocol::Https, certificate)?;
         puller.cache = Some(BlobCache::installed()?);
         Ok(puller)
     }
 
-    fn configured(architecture: &str, authentication: RegistryAuth, protocol: ClientProtocol) -> Result<Self> {
+    fn configured(
+        architecture: &str,
+        authentication: RegistryAuth,
+        protocol: ClientProtocol,
+        certificate: Option<&[u8]>,
+    ) -> Result<Self> {
         ensure!(
             matches!(architecture, "arm64" | "amd64"),
             "unsupported container architecture"
         );
         let secure = matches!(protocol, ClientProtocol::Https);
+        let roots = certificate
+            .map(reqwest::Certificate::from_pem_bundle)
+            .transpose()?
+            .unwrap_or_default();
+        ensure!(
+            certificate.is_none() || !roots.is_empty(),
+            "registry CA file contains no certificates"
+        );
         let registry = Client::try_from(ClientConfig {
             protocol,
             read_timeout: Some(Duration::from_secs(30)),
             connect_timeout: Some(Duration::from_secs(10)),
+            extra_root_certificates: certificate
+                .map(|pem| {
+                    vec![Certificate {
+                        encoding: CertificateEncoding::Pem,
+                        data: pem.to_vec(),
+                    }]
+                })
+                .unwrap_or_default(),
             ..ClientConfig::default()
         })?;
-        let http = reqwest::Client::builder()
+        let mut http = reqwest::Client::builder()
             .https_only(secure)
             .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
-            .build()?;
+            .connect_timeout(Duration::from_secs(10));
+        for root in roots {
+            http = http.add_root_certificate(root);
+        }
+        let http = http.build()?;
         Ok(Self {
             registry,
             http,

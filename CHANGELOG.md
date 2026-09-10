@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem run docker://IMAGE` (or a qualified registry reference) pulls and caches
+  verified OCI images, runs the image command in an image-named VM with live logs,
+  and removes the VM on completion, timeout, or interruption. Registry-specific
+  CA trust and username/token authentication are supported.
 - Both profiles include `runc`; guest kernels support offline OCI process
   namespaces and cgroup CPU, memory, and process limits.
 - Both profiles include `umoci` for OCI image layer unpacking inside the VM.

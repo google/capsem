@@ -10,8 +10,14 @@ use axum::{
     Router,
 };
 use oci_client::{client::ClientProtocol, secrets::RegistryAuth};
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+#[test]
+fn invalid_additional_registry_certificate_is_refused() {
+    assert!(Puller::new_with_root_certificate("arm64", RegistryAuth::Anonymous, Some(b"not a certificate")).is_err());
+}
 
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
@@ -40,6 +46,7 @@ async fn another_registry_cannot_retrieve_cached_private_blobs_by_digest() {
         "arm64",
         RegistryAuth::Basic("user".into(), "secret".into()),
         ClientProtocol::Http,
+        None,
     )
     .unwrap();
     authorized.cache = Some(cache.clone());
@@ -171,7 +178,7 @@ impl Registry {
     }
 
     fn puller(&self) -> Puller {
-        Puller::configured("arm64", RegistryAuth::Anonymous, ClientProtocol::Http).unwrap()
+        Puller::configured("arm64", RegistryAuth::Anonymous, ClientProtocol::Http, None).unwrap()
     }
 
     fn reference(&self) -> String {
@@ -339,6 +346,7 @@ async fn scoped_basic_credentials_apply_to_manifest_and_blobs() {
         "arm64",
         RegistryAuth::Basic("user".into(), "secret".into()),
         ClientProtocol::Http,
+        None,
     )
     .unwrap();
     let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();

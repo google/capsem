@@ -487,5 +487,72 @@ release/integration-proof outputs in the shared checkout cache. Their legacy
 source producers are tracked as S02-007; no evidence directories were deleted.
 The before inventory is `cache/target/tests/oci-cache-before.json`.
 
-This remains a library foundation. `capsem run IMAGE` and its port publication
-path still need implementation and real-VM CLI proof.
+### Real CLI image workload proof (2026-09-10)
+
+`capsem run docker://redis:7.4.11-alpine` now pulls the native image, creates a
+VM named from its repository, uploads verified blobs in bounded chunks, unpacks
+with packaged umoci inside the guest, and runs the image's Entrypoint/Cmd.
+Qualified references such as `ghcr.io/team/image:tag` also select image mode.
+Ordinary shell commands retain the existing `capsem run 'command'` behavior.
+Container arguments replace Cmd and preserve Entrypoint; `--env` overrides
+image environment values. `--registry-ca` adds explicit PEM trust for this
+pull, and `--registry-user` reads the password/token from
+`CAPSEM_REGISTRY_PASSWORD`. Credentials stay on the host.
+
+Private IPC streams raw output through a bounded queue and reports the guest's
+exit status after the final bytes. Attached logs currently combine stdout and
+stderr because the existing guest exec transport combines them. Ctrl-C exits
+130, SIGTERM exits 143, and `--timeout` exits 124; these paths delete the VM and
+its workspace, root overlay, container mounts, cgroups and runtime state.
+
+Ironbank uses a local TLS distribution registry built from the previously
+recorded Redis export. The fixture assembles an OCI manifest/config without
+extracting image files on the host. Its derived manifest is
+`sha256:560c849ae08f0976d13d9424dcd3db8cc2755c0b19e4536d1fb177edd1a2a3bf`;
+this is a hermetic derivative, not the upstream registry manifest digest.
+The registry refuses trust without its CA. A real CLI run then reaches Redis's
+`Ready to accept connections tcp`, answers namespace-local PING with `+PONG`,
+and disappears after Ctrl-C. Repeated CLI runs create fresh VMs while fetching
+the two fixture blobs only once. Additional real-VM tests prove binary bytes
+and exit 7, all 12 MiB of output followed by exit 9, timeout with descendants,
+missing-command exit 127, and failed runc startup cleanup.
+
+Reproduce after the existing Redis fixture prefetch and supported local asset
+build/materialization rails:
+
+```sh
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 600 -- \
+  cargo build -p capsem -p capsem-service -p capsem-process -p capsem-gateway
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 240 -- \
+  env CAPSEM_RELEASE_BIN_DIR=/Users/elie/git/capsem/cache/target/cargo/debug \
+  uv run --project build_system --frozen pytest -c build_system/pyproject.toml \
+  --rootdir . tests/ironbank/test_container_run.py -q
+```
+
+Build the communicating binaries together: one attempt used a stale service
+schema (`a2e993e88339bcf3`) against process schema `8b23a35234eaf8fa`. The
+handshake correctly refused it; retained logs identified the mismatch. An
+earlier attempt exposed that create's launch signal precedes workspace
+readiness; the CLI now uses the existing exec readiness path before upload.
+The missing-command test initially expected 1, but the image's entrypoint
+correctly returns 127. The test now checks that authoritative status.
+
+Evidence: `cache/target/tests/container-run-full` contains six passing tests
+(38.76s); `container-run-shell` adds the unchanged shell path and stronger CA
+rejection check (two passing tests, 5.71s). Native checks pass: 340 CLI tests,
+84 asset tests, focused Clippy, Rust formatting, Ruff and Ty. Streaming's
+foundation separately passed 153 process tests and 231 protocol tests plus a
+doc test. The rebuilt ARM64 initrd came from supported gate run
+`20260910-053936-bbe0b9-pack-initrd` (7/7, 1m23s), SHA-256
+`b97d513369e5c2bc9b5284925cace7fdb44d073634d80773d0929b63eb1bf677`.
+Kernel/rootfs identities remain those recorded above. No x86_64 container
+execution is claimed. Installed profiles and services were not changed.
+
+Limitations: port publishing is the next item and is not yet implemented.
+Container networking remains isolated. Volumes are bounded empty tmpfs mounts;
+Docker volume copy-up, persistent container data, general Docker compatibility
+and Inspect support are not implemented. The CLI explicitly deletes a named
+VM on handled exits; forcibly killing the CLI with SIGKILL while using an
+existing service can leave that VM for explicit deletion. Automatic naming
+checks existing names; simultaneous creates may race and one can be refused
+by the service's collision check. No Redis throughput claim is made yet.
