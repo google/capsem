@@ -138,17 +138,7 @@ export interface VmOperationStatusResponse {
 
 export type { ProvisionRequest, ProvisionResponse, ForkRequest, ForkResponse } from "@capsem/sdk";
 
-// POST /vms/{id}/exec
-export interface ExecRequest {
-  command: string;
-  timeout_secs?: number;
-}
-
-export interface ExecResponse {
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-}
+export type { ExecRequest, ExecResponse } from '@capsem/sdk';
 
 // POST /vms/{id}/files/read
 export interface ReadFileRequest {

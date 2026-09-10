@@ -2,8 +2,10 @@
 
 import { recordWsEvent } from './tauri-log';
 import * as gateway from '@capsem/sdk/operations';
-import { NetworkError, ServiceAvailability } from '@capsem/sdk';
-import type { StopResponse, VmActionResponse } from '@capsem/sdk';
+import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
+import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList } from '@capsem/sdk';
+export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse,
+  SnapshotInfo as SnapshotSlotStatus, SnapshotsStatus as SnapshotStatusResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
@@ -602,20 +604,12 @@ export async function forkVm(id: string, opts: ForkRequest): Promise<ForkRespons
 
 // -- VM inspection --
 
-/** Raw log response from GET /vms/{id}/logs. */
-export interface RawLogsResponse {
-  logs: string;
-  serial_logs: string | null;
-  process_logs: string | null;
-}
-
-export async function getVmLogs(id: string): Promise<RawLogsResponse> {
+export async function getVmLogs(id: string): Promise<LogsResponse> {
   if (!_connected) return { logs: '', serial_logs: null, process_logs: null };
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/logs`);
-    return await resp.json();
+    return await _sdk.call(transport => gateway.getVmLogs(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return { logs: '', serial_logs: null, process_logs: null };
     }
@@ -626,10 +620,10 @@ export async function getVmLogs(id: string): Promise<RawLogsResponse> {
 export async function getServiceLogs(): Promise<string> {
   if (!_connected) return '';
   try {
-    const resp = await _get('/service-logs');
-    return await resp.text();
+    const result = await _sdk.call(transport => gateway.getHypervisorLogs(transport, { name: HostLogSource.SERVICE }));
+    return result.text;
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return '';
     }
@@ -642,14 +636,10 @@ export async function execCommand(
   command: string,
   timeoutSecs?: number,
 ): Promise<ExecResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/exec`, {
-    command,
-    timeout_secs: timeoutSecs,
-  });
-  return await resp.json();
+  return _sdk.call(transport => gateway.execVm(transport, {
+    id, body: { command, ...(timeoutSecs === undefined ? {} : { timeout_secs: timeoutSecs }) },
+  }));
 }
-
-export type StatsDetailRow = Record<string, unknown>;
 
 const EMPTY_VM_STATS_SUMMARY: VmStatsSummary = {
   total_requests: 0,
@@ -675,19 +665,6 @@ export async function getVmStatsSummary(id: string): Promise<VmStatsSummary> {
   }
 }
 
-export interface VmStatsDetailResponse {
-  model_stats: StatsDetailRow[];
-  model_events: StatsDetailRow[];
-  tool_events: StatsDetailRow[];
-  http_events: StatsDetailRow[];
-  dns_events: StatsDetailRow[];
-  file_events: StatsDetailRow[];
-  process_events: StatsDetailRow[];
-  audit_events: StatsDetailRow[];
-  credential_events: StatsDetailRow[];
-  body_blobs: Record<string, StatsDetailRow[]>;
-}
-
 export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {
   const empty: VmStatsDetailResponse = {
     model_stats: [],
@@ -703,10 +680,9 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
   };
   if (!_connected) return empty;
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats/detail`);
-    return { ...empty, ...(await resp.json()) };
+    return await _sdk.call(transport => gateway.getVmStatsDetail(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return empty;
     }
@@ -1256,33 +1232,14 @@ export async function callMcpTool(
   return await resp.json();
 }
 
-export interface SnapshotSlotStatus {
-  checkpoint: string;
-  slot: number;
-  origin: 'auto' | 'manual' | string;
-  name?: string | null;
-  timestamp: string;
-  hash?: string | null;
-}
-
-export interface SnapshotStatusResponse {
-  total: number;
-  auto_count: number;
-  manual_count: number;
-  manual_available: number;
-  snapshots: SnapshotSlotStatus[];
-}
-
 /** Get VM recovery snapshot state through the service route, never session.db. */
-export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotStatusResponse> {
-  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/status`);
-  return await resp.json();
+export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotsStatus> {
+  return _sdk.call(transport => gateway.getVmSnapshotsStatus(transport, { id: vmId }));
 }
 
 /** Get the VM recovery snapshot list through the service route. */
-export async function listVmSnapshots(vmId: string): Promise<{ total: number; snapshots: SnapshotSlotStatus[] }> {
-  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/list`);
-  return await resp.json();
+export async function listVmSnapshots(vmId: string): Promise<SnapshotsList> {
+  return _sdk.call(transport => gateway.listVmSnapshots(transport, { id: vmId }));
 }
 
 // -- Assets --

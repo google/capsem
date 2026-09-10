@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UI logs, detailed stats, snapshot inspection and command execution use typed
+  SDK operations. Invalid responses are rejected without discarding the connection.
+
 - UI overview, VM information and stats summaries use SDK response validation and
   shared enum types. Invalid payloads surface as errors instead of offline results.
 
