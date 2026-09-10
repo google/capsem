@@ -14,6 +14,11 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: process entry before descriptor owners or threads exist.
     unsafe { router_sandbox::close_inherited_descriptors()? };
+    let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+        service: "capsem-router",
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
+        default_filter: "capsem_router=info",
+    })?;
     let args = Args::parse();
     capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -27,9 +32,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let grants = Receiver::new(socket.try_clone()?)?;
         let mut events = tokio::net::UnixStream::from_std(socket)?;
         if let Err(error) = router_sandbox::confine() {
+            tracing::error!(%error, "router confinement failed");
             Event::ConfinementFailed.write(&mut events).await?;
             return Err(error);
         }
+        tracing::info!("router confinement installed");
         let hello = tokio::time::timeout(Duration::from_secs(5), grants.recv()).await??;
         if !matches!(Grant::decode(hello)?, Grant::Hello) {
             return Err(io::Error::new(

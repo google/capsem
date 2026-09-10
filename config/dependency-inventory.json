@@ -785,12 +785,14 @@
  "capsem-agent": {
   "build_script": false,
   "dependencies": [
+   "capsem-foundation",
    "capsem-proto",
    "nix",
    "rmp-serde",
    "serde",
    "serde_json",
-   "tokio"
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-app": {

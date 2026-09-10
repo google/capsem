@@ -47,18 +47,29 @@ pub fn connect(id: u64, port: u16) -> io::Result<()> {
                     let result = async {
                         let mut vsock = AsyncVsock::new(vsock.into_raw_fd())?;
                         let mut tcp = tokio::net::TcpStream::from_std(tcp)?;
-                        tokio::io::copy_bidirectional(&mut tcp, &mut vsock).await?;
+                        let result = capsem_foundation::unix::router_stream::copy(
+                            &mut tcp,
+                            &mut vsock,
+                            capsem_foundation::unix::router_stream::Limits::default(),
+                        )
+                        .await;
+                        tracing::debug!(connection_id = id, reason = ?result.reason,
+                            from_source = result.from_source, to_source = result.to_source,
+                            error = ?result.error, "guest router stream ended");
+                        if let Some(error) = result.error {
+                            return Err(error);
+                        }
                         Ok::<_, io::Error>(())
                     }
                     .await;
                     if let Err(error) = result {
-                        eprintln!("[capsem-agent] published connection {id}: {error}");
+                        tracing::debug!(connection_id = id, %error, "guest published connection ended");
                     }
                 });
                 Ok::<_, io::Error>(())
             })();
             if let Err(error) = result {
-                eprintln!("[capsem-agent] publication setup {id}: {error}");
+                tracing::debug!(connection_id = id, %error, "guest publication setup refused");
             }
         })?;
     Ok(())

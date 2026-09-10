@@ -20,19 +20,26 @@ After runtime initialization, the companion installs Seatbelt on macOS or
 seccomp on Linux before reporting readiness. It closes unrelated inherited
 descriptors, receives a cleared environment, and exits when its parent dies.
 It receives no virtualization entitlement. Two Tokio workers relay at most
-128 connections per companion. Published mappings currently each own a child.
+64 expose and 64 private connections per companion, without borrowing between
+classes. Published mappings currently each own a child; private routing is not
+yet connected to the VM broker.
 
 The parent retains shutdown handles for both endpoints until the child reports
 closure. Guest setup has an eight-second deadline and pair acknowledgement a
 two-second deadline. Control failure shuts down both sides even if the child
 holds duplicate FDs. Cancellation closes partial records and received FDs.
-The relay uses 16 KiB per direction and preserves TCP half-close. Its tasks and
+The sender retains its original descriptors through acknowledgement: on Darwin,
+a socket referenced only by queued descriptor messages can be garbage collected.
+The relay uses 16 KiB per direction and preserves TCP half-close. Each successful
+write renews a 60-second stall deadline; no deadline applies to quiet reads. After
+one direction drains and sends FIN, the reverse direction has 60 seconds to
+finish. Host and guest reuse the same bounded copier. Its tasks and
 control reader belong to JoinSets and are cancelled and joined on control failure.
 
 ## Networking extension boundary
 
 Subsequent networking work will put connection admission through the existing
-SecurityEvent pipeline, add separate ingress/egress quotas and stream deadlines,
+SecurityEvent pipeline, enforce class quotas across setup and all VM listeners,
 and carry private VM traffic through the existing guest net-proxy and DNS paths.
 Those behaviors are not provided by the descriptor handoff alone.
 

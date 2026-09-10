@@ -84,7 +84,7 @@ impl Publisher {
             .current_dir("/")
             .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_socket)))
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
             .context("start confined port router")?;

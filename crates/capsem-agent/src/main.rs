@@ -193,6 +193,12 @@ fn current_boot_trace_id() -> String {
 // ---------------------------------------------------------------------------
 
 fn main() {
+    let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+        service: "capsem-pty-agent",
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
+        default_filter: "capsem_pty_agent=info",
+    })
+    .expect("initialize guest telemetry");
     eprintln!("[capsem-agent] starting (pid {})", process::id());
 
     // Open boot log (persists after boot for diagnosis).

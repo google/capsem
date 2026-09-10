@@ -99,7 +99,7 @@ pub(super) async fn serve(
                             flow.connection = Some(connection);
                             flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
                             tokio::time::timeout(Duration::from_secs(2), send_grant(&sender, Grant::Connected {
-                                id, source: flow.source.as_fd(), destination: destination.as_fd()
+                                id, class: capsem_router::Class::Expose, source: flow.source.as_fd(), destination: destination.as_fd()
                             })).await??;
                             active.insert(id, flow);
                         }

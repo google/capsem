@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Container port forwarding closes stalled writes and half-closed peers after
+  60 seconds while preserving quiet connections and trailing response bytes.
 - Published TCP listeners stay with the VM owner. The confined router receives
   only connected descriptor pairs; bounded acknowledgements and control failure
   close both endpoints even when the router retains duplicate descriptors.

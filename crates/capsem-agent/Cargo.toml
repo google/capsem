@@ -35,6 +35,8 @@ rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
+capsem-foundation = { path = "../capsem-foundation" }
+tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lints]

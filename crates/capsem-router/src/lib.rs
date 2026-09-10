@@ -2,21 +2,31 @@
 use capsem_foundation::unix::{
     fd,
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
+    router_stream,
 };
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
-const VERSION: u8 = 1;
+pub const CONNECTIONS_PER_CLASS: usize = 64;
+const VERSION: u8 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    Expose,
+    Private,
+}
 
 pub enum Grant<Socket = OwnedFd> {
     Hello,
     Connected {
         id: u64,
+        class: Class,
         source: Socket,
         destination: Socket,
     },
@@ -46,11 +56,12 @@ impl Grant {
     pub fn decode(mut frame: Frame) -> io::Result<Self> {
         match (decode(frame.bytes)?, frame.fds.len()) {
             ((0, 0), 0) => Ok(Self::Hello),
-            ((1, id), 2) if id != 0 => {
+            ((kind @ (1 | 3), id), 2) if id != 0 => {
                 let destination = frame.fds.pop().unwrap();
                 let source = frame.fds.pop().unwrap();
                 Ok(Self::Connected {
                     id,
+                    class: if kind == 1 { Class::Expose } else { Class::Private },
                     source,
                     destination,
                 })
@@ -65,11 +76,15 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
         Grant::Hello => sender.send(&encode(0, 0), &[]).await?,
         Grant::Connected {
             id,
+            class,
             source,
             destination,
         } => {
             sender
-                .send(&encode(1, id), &[source.as_raw_fd(), destination.as_raw_fd()])
+                .send(
+                    &encode(if class == Class::Expose { 1 } else { 3 }, id),
+                    &[source.as_raw_fd(), destination.as_raw_fd()],
+                )
                 .await?
         }
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
@@ -130,6 +145,10 @@ impl Drop for Stream {
 }
 
 pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
+    let slots = [
+        Arc::new(tokio::sync::Semaphore::new(CONNECTIONS_PER_CLASS)),
+        Arc::new(tokio::sync::Semaphore::new(CONNECTIONS_PER_CLASS)),
+    ];
     let mut jobs = tokio::task::JoinSet::new();
     let mut active = HashMap::new();
     let mut readers = tokio::task::JoinSet::new();
@@ -149,13 +168,18 @@ pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
         loop {
             tokio::select! {
                 message = messages.recv() => match message.ok_or_else(|| invalid("router grant channel closed"))?? {
-                    Grant::Connected { id, source, destination } => {
+                    Grant::Connected { id, class, source, destination } => {
                         if id <= last_id { return Err(invalid("reused router connection id")); }
                         last_id = id;
-                        if active.len() >= MAX_CONNECTIONS {
-                            Event::Refused(id).write(&mut events).await?;
-                            continue;
-                        }
+                        let index = usize::from(class == Class::Private);
+                        let permit = match slots[index].clone().try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                tracing::debug!(connection_id = id, ?class, "router class quota exhausted");
+                                Event::Refused(id).write(&mut events).await?;
+                                continue;
+                            }
+                        };
                         let pair = Stream::new(source).and_then(|source| Stream::new(destination).map(|destination| (source, destination)));
                         let (mut source, mut destination) = match pair {
                             Ok(pair) => pair,
@@ -168,8 +192,10 @@ pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
                         // Acknowledgement precedes forwarding and is bounded.
                         Event::Accepted(id).write(&mut events).await?;
                         let task = jobs.spawn(async move {
-                            let result = tokio::io::copy_bidirectional_with_sizes(&mut source.0, &mut destination.0, 16 * 1024, 16 * 1024).await;
-                            if let Err(error) = result { tracing::debug!(connection_id = id, %error, "router stream ended"); }
+                            let _permit = permit;
+                            let result = router_stream::copy(&mut source.0, &mut destination.0, router_stream::Limits::default()).await;
+                            tracing::debug!(connection_id = id, ?class, reason = ?result.reason, from_source = result.from_source,
+                                to_source = result.to_source, error = ?result.error, "router stream ended");
                             id
                         });
                         active.insert(id, task);
