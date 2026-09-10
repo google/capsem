@@ -152,25 +152,29 @@ impl Event {
 struct Stream {
     socket: UnixStream,
     graceful: bool,
+    tcp: bool,
 }
 impl Stream {
     fn new(socket: OwnedFd) -> io::Result<Self> {
         fd::validate_connected_stream(socket.as_fd())?;
         fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
+        let tcp = fd::tcp_reset_on_close(socket.as_fd())?;
         fd::set_nonblocking(socket.as_fd(), true)?;
         Ok(Self {
             socket: UnixStream::from_std(std::os::unix::net::UnixStream::from(socket))?,
             graceful: false,
+            tcp,
         })
     }
 }
 impl Drop for Stream {
     fn drop(&mut self) {
-        if !self.graceful {
-            match fd::tcp_reset_on_close(self.socket.as_fd()) {
-                Ok(true) => return,
-                Ok(false) => {}
-                Err(error) => tracing::error!(%error, "router TCP reset configuration failed"),
+        if self.tcp {
+            if !self.graceful {
+                return;
+            }
+            if let Err(error) = fd::tcp_clear_reset_on_close(self.socket.as_fd()) {
+                tracing::error!(%error, "router graceful TCP close configuration failed");
             }
         }
         if let Err(error) = fd::shutdown(self.socket.as_fd(), fd::SocketShutdown::Both) {

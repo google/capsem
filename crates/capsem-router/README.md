@@ -67,8 +67,9 @@ flow, including queued setup. Cleanup joins host setup before sending the batch,
 so a late connect cannot overtake its abort. Invalid child closes retain the
 guest cancellation identity until cleanup. Host control I/O is asynchronous,
 with five-second write and started-frame deadlines and an owned reader.
-Abnormal exits mark child TCP descriptors for abortive close, without sending
-an early FIN. The trusted owner immediately revokes its TCP endpoint using
+TCP descriptors are armed for abortive close before setup/handoff and again at
+child adoption, covering SIGKILL without relying on destructors. Normal Complete
+clears that setting; other exits avoid an early FIN. The trusted owner immediately revokes its TCP endpoint using
 linger-zero plus `disconnectx` on macOS or `connect(AF_UNSPEC)` on Linux; this
 also revokes a malicious child's retained copies. The child retains no connect
 authority. Guest cancellation resets the container TCP endpoint. Normal Complete

@@ -113,6 +113,7 @@ impl Bridge {
                     .map_err(io::Error::other)?;
                     drop(setup_permit);
                     let (tcp, vsock) = endpoints?;
+                    capsem_foundation::unix::fd::tcp_reset_on_close(tcp.as_fd())?;
                     if *stop.borrow() || *cancelled.borrow() {
                         capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
                         return Ok(());
@@ -138,6 +139,8 @@ impl Bridge {
                         error = ?outcome.error, "guest router stream ended");
                     if outcome.reason != capsem_proto::router::CloseReason::Complete {
                         capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
+                    } else {
+                        capsem_foundation::unix::fd::tcp_clear_reset_on_close(tcp.as_fd())?;
                     }
                     Ok::<_, io::Error>(())
                 }

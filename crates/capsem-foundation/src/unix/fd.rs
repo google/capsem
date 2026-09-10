@@ -64,6 +64,10 @@ pub fn shutdown(fd: BorrowedFd<'_>, how: SocketShutdown) -> io::Result<()> {
 /// Mark a TCP socket for reset when its last descriptor closes. Returns false
 /// for other stream families. Every holder must close without first sending FIN.
 pub fn tcp_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    configure_tcp_linger(fd, true)
+}
+
+fn configure_tcp_linger(fd: BorrowedFd<'_>, enabled: bool) -> io::Result<bool> {
     use socket::SockaddrLike;
     if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {
         return Err(io::Error::new(
@@ -79,7 +83,7 @@ pub fn tcp_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
         return Ok(false);
     }
     let linger = libc::linger {
-        l_onoff: 1,
+        l_onoff: i32::from(enabled),
         l_linger: 0,
     };
     retry_eintr(|| socket::setsockopt(&fd, socket::sockopt::Linger, &linger)).map_err(errno::io)?;
@@ -115,6 +119,11 @@ pub fn reset_tcp(fd: BorrowedFd<'_>) -> io::Result<bool> {
     })
     .map_err(errno::io)?;
     Ok(true)
+}
+
+/// Restore default close behavior after a TCP stream completed normally.
+pub fn tcp_clear_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    configure_tcp_linger(fd, false)
 }
 
 /// Fix socket queue sizes instead of allowing TCP receive/send autotuning.

@@ -17,6 +17,27 @@ struct Router {
 }
 
 #[tokio::test]
+async fn process_kill_resets_tcp_without_running_stream_destructors() {
+    let mut router = Router::start().await;
+    let (mut client, _peer) = router.pair(1).await;
+    assert_eq!(router.event().await, Event::Accepted(1));
+    router.child.start_kill().unwrap();
+    timeout(Duration::from_secs(2), router.child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    router.close().await;
+}
+
+#[tokio::test]
 async fn abort_resets_tcp_after_the_parent_releases_its_shutdown_handle() {
     let mut router = Router::start().await;
     let (mut client, _peer) = router.pair(1).await;

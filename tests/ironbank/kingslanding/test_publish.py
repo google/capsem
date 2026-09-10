@@ -231,7 +231,15 @@ def test_shutdown_under_load(redis, service):
 def test_vm_owner_death_removes_router_and_listener(redis):
     import os
 
-    os.kill(redis["vm"]["pid"], signal.SIGKILL)
+    with (
+        socket.create_connection(("127.0.0.1", redis["port"]), timeout=5) as connection,
+        connection.makefile("rb") as stream,
+    ):
+        connection.sendall(b"PING\r\n")
+        assert stream.readline(16) == b"+PONG\r\n"
+        os.kill(redis["vm"]["pid"], signal.SIGKILL)
+        with pytest.raises(ConnectionResetError):
+            stream.read(1)
     assert redis["process"].wait(timeout=15) != 0
 
     # Fixture teardown verifies both listeners can be rebound and the VM is gone.

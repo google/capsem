@@ -24,6 +24,7 @@ pub(super) fn connect(flow: capsem_proto::router::FlowKey, port: u16) -> io::Res
             tcp.as_fd(),
             capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
         )?;
+        capsem_foundation::unix::fd::tcp_reset_on_close(tcp.as_fd())?;
         Ok(tcp)
     });
     let header = flow.data_header(tcp.is_ok());

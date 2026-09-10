@@ -17,7 +17,8 @@ impl Drop for Active {
     fn drop(&mut self) {
         self.setup.abort();
         let shutdown = if self.graceful {
-            self.source.shutdown(std::net::Shutdown::Both)
+            capsem_foundation::unix::fd::tcp_clear_reset_on_close(self.source.as_fd())
+                .and_then(|_| self.source.shutdown(std::net::Shutdown::Both))
         } else {
             capsem_foundation::unix::fd::reset_tcp(self.source.as_fd()).map(|_| ())
         };
@@ -62,6 +63,7 @@ pub(super) async fn serve(
                     source.set_nodelay(true)?;
                     capsem_foundation::unix::fd::set_stream_buffers(source.as_fd(),
                         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
+                    capsem_foundation::unix::fd::tcp_reset_on_close(source.as_fd())?;
                     let source = source.into_std()?;
                     let (pending, receiver) = owner.request()?;
                     let id = pending.id;

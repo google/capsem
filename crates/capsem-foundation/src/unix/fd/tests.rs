@@ -61,6 +61,21 @@ fn tcp_reset_revokes_retained_copies_without_waiting_for_their_close() {
 }
 
 #[test]
+fn clearing_armed_reset_restores_graceful_tcp_close() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+        .unwrap();
+    let (server, _) = listener.accept().unwrap();
+    assert!(super::tcp_reset_on_close(server.as_fd()).unwrap());
+    let cleared = super::tcp_clear_reset_on_close(server.as_fd()).unwrap();
+    drop(server);
+    assert_eq!(client.read(&mut [0]).unwrap(), 0);
+    assert!(cleared);
+}
+
+#[test]
 fn stream_buffer_limits_replace_large_kernel_queues() {
     use nix::sys::socket::{getsockopt, setsockopt, sockopt};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

@@ -268,6 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TCP reset is armed before router handoff, so forced process death also
+  closes published connections abruptly; normal completion restores graceful close.
 - Abnormal published-connection cleanup resets TCP and revokes socket copies
   retained by the router, while normal completion preserves half-close and trailing bytes.
 - Removing an exposed port or losing its router now cancels its guest flows,
