@@ -313,11 +313,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("control bridge: active");
-            let Some(mut writer_fd) = clone_fd(&conn, "duplicate-control-vsock-writer") else {
-                continue;
-            };
-            let Some(mut reader_fd) = clone_fd(&conn, "duplicate-control-vsock-reader") else {
-                continue;
+            let mut control = match capsem_core::vm::control::Connection::new(conn) {
+                Ok(control) => control,
+                Err(error) => {
+                    error!(%error, "control bridge: connection setup failed");
+                    continue;
+                }
             };
 
             // Re-write every pending (unacked) message on the fresh conn.
@@ -331,38 +332,25 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 );
                 let mut replay_failed = false;
                 for msg in &to_replay {
-                    if let Err(e) = write_control_msg(&mut writer_fd, msg) {
+                    let frame = match proto::encode_host_msg(msg) {
+                        Ok(frame) => frame,
+                        Err(error) => {
+                            error!(%error, "control bridge: invalid replay frame");
+                            replay_failed = true;
+                            break;
+                        }
+                    };
+                    if let Err(e) = control.write(&frame).await {
                         error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
                         break;
                     }
                 }
                 if replay_failed {
+                    control.close().await;
                     continue;
                 }
             }
-
-            let (msg_tx, mut msg_rx) = mpsc::channel::<Result<GuestToHost>>(32);
-
-            // Reader thread. An oversized guest frame is discarded and the
-            // stream realigned by read_control_msg; dropping the connection
-            // for it made the guest replay the same frame on every reconnect.
-            std::thread::spawn(move || loop {
-                let res = read_control_msg(&mut reader_fd);
-                if let Err(too_large) = res
-                    .as_ref()
-                    .map_err(|e| e.downcast_ref::<capsem_core::ControlFrameTooLarge>())
-                {
-                    if let Some(too_large) = too_large {
-                        error!(%too_large, "control bridge: oversized guest frame discarded");
-                        continue;
-                    }
-                }
-                let is_err = res.is_err();
-                if msg_tx.blocking_send(res).is_err() || is_err {
-                    break;
-                }
-            });
 
             loop {
                 tokio::select! {
@@ -383,7 +371,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         if let Some(id) = ackable_id(&msg) {
                             pending.pending_acks.lock().unwrap().insert(id, msg.clone());
                         }
-                        if let Err(e) = writer_fd.write_all(&frame) {
+                        if let Err(e) = control.write(&frame).await {
                             error!(error = %e, "control bridge: write failed");
                             break;
                         }
@@ -395,14 +383,16 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // back so the agent's symmetric pending_responses
                     // map can drop the entry; without this the agent
                     // would replay every response on every rekey.
-                    res = msg_rx.recv() => {
+                    res = control.recv() => {
                         match res {
                             Some(Ok(GuestToHost::Ack { id })) => {
                                 pending.pending_acks.lock().unwrap().remove(&id);
                             }
                             Some(Ok(msg)) => {
                                 if let Some(id) = ackable_response_id(&msg) {
-                                    if let Err(e) = write_control_msg(&mut writer_fd, &HostToGuest::AckReply { id }) {
+                                    let frame = proto::encode_host_msg(&HostToGuest::AckReply { id })
+                                        .expect("fixed-size control acknowledgement");
+                                    if let Err(e) = control.write(&frame).await {
                                         error!(error = %e, "control bridge: AckReply write failed");
                                         break;
                                     }
@@ -426,6 +416,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
             }
+            control.close().await;
         }
     });
 

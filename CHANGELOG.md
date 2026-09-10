@@ -268,6 +268,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest control connections use async I/O with bounded frame deadlines and
+  joined reader cleanup on reconnect, so a stalled guest cannot block a host Tokio worker.
+
 - Linux router startup no longer races thread-local libc registration when
   installing confinement; creating new threads remains forbidden.
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
