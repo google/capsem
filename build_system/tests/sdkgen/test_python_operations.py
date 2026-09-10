@@ -66,11 +66,11 @@ def package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleT
 @pytest.mark.parametrize(("route", "outcome"), [
     pytest.param(route, outcome, id=f"{route.operation.operation_id}-{outcome}")
     for route in ROUTES for outcome in ("success", "http_error", "malformed")
-    if outcome != "malformed" or route.operation.responses["200"].media_type == "application/json"
+    if outcome != "malformed" or route.operation.success.media_type == "application/json"
 ])
 def test_operation_matches_the_wire_contract(route: Route, outcome: str, package: ModuleType) -> None:
     operation = route.operation
-    response = operation.responses["200"]
+    response = operation.success
     expected = b"\x00\xff" if response.media_type == "application/octet-stream" else sample(response.schema)
     arguments = {}
     expected_path = route.path
@@ -107,7 +107,8 @@ def test_operation_matches_the_wire_contract(route: Route, outcome: str, package
                 return web.Response(status=403, text="denied")
             if outcome == "malformed":
                 return web.Response(body=b"{")
-            return web.Response(body=expected) if isinstance(expected, bytes) else web.json_response(expected)
+            status = int(operation.success_status)
+            return web.Response(body=expected, status=status) if isinstance(expected, bytes) else web.json_response(expected, status=status)
 
         app = web.Application()
         app.router.add_route("*", "/{tail:.*}", handle)

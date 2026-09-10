@@ -61,7 +61,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 kind = type_name(schema)
                 lines.append(f"    pub {key}: {kind if key in required else f'Option<{kind}>'},")
             lines += ["}", ""]
-        result = type_name(op.responses["200"].schema)
+        result = type_name(op.success.schema)
         arguments = ["transport: &Transport"]
         if properties:
             arguments.append(f"input: &{params}")
@@ -92,7 +92,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             lines.append(f"        body: Some({'input.body.clone()' if binary else 'serde_json::to_vec(&input.body)?'}),")
             if binary:
                 lines.append("        content_type: crate::transport::MediaType::Binary,")
-        binary = op.responses["200"].media_type == "application/octet-stream"
+        binary = op.success.media_type == "application/octet-stream"
         if binary:
             lines.append("        accept: crate::transport::MediaType::Binary,")
         lines += ["        options,", "        ..Default::default()", "    };"]

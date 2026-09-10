@@ -36,12 +36,24 @@ def test_upload_download_and_csv_parameters_are_preserved() -> None:
     assert layer.style == "form" and layer.explode is False
 
 
+def test_a_single_accepted_response_preserves_its_schema(tmp_path: Path) -> None:
+    document = json.loads(SPEC.read_text())
+    operation = document["paths"]["/vms/{id}/info"]["get"]
+    success = operation["responses"].pop("200")
+    operation["responses"]["202"] = success
+    path = tmp_path / "accepted.json"
+    path.write_text(json.dumps(document))
+    parsed = next(route.operation for route in read_operations(path) if route.operation.operation_id == "getVmInfo")
+    assert parsed.success_status == "202"
+    assert parsed.success.model_dump(by_alias=True, exclude_unset=True) == success
+
+
 @pytest.mark.parametrize("mutation", [
     "missing_path_parameter", "optional_path_parameter", "duplicate_parameter", "header_parameter",
     "duplicate_operation", "unsupported_method", "missing_security", "unknown_response",
     "multiple_success", "unknown_schema", "unsupported_media", "missing_operation_id",
     "empty_paths", "query_in_route", "csv_style", "missing_default", "ambiguous_media",
-    "plain_success", "plain_request",
+    "plain_success", "plain_request", "ambiguous_accepted",
 ])
 def test_contract_changes_that_cannot_be_rendered_fail(mutation: str, tmp_path: Path) -> None:
     document = json.loads(SPEC.read_text())
@@ -65,6 +77,8 @@ def test_contract_changes_that_cannot_be_rendered_fail(mutation: str, tmp_path: 
             operation["responses"]["200"]["content"]["application/json"]["schema"] = {}
         case "multiple_success":
             operation["responses"]["201"] = operation["responses"]["200"]
+        case "ambiguous_accepted":
+            operation["responses"]["202"] = operation["responses"]["200"]
         case "unknown_schema":
             operation["responses"]["200"]["content"]["application/json"]["schema"] = {
                 "$ref": "#/components/schemas/Missing",

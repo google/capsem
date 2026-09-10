@@ -17,7 +17,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         name = module_name(operation.operation_id)
         if keyword.iskeyword(name):
             raise ValueError(f"unsupported operation identifier: {name}")
-        response = operation.responses["200"]
+        response = operation.success
         binary = response.media_type == "application/octet-stream"
         schemas = [parameter.schema_ for parameter in operation.parameters] + [response.schema]
         arguments = []

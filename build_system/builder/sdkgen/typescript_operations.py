@@ -35,7 +35,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 raise ValueError("request body collides with parameter")
             properties["body"] = operation.request_body.schema
             required.append("body")
-        response = operation.responses["200"]
+        response = operation.success
         binary = response.media_type == "application/octet-stream"
         schemas = [*properties.values(), response.schema]
         arguments = ""
