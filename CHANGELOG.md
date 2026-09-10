@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UI VM lifecycle calls use validated TypeScript SDK responses and preserve
+  bounded gateway token refresh. Fork confirmation keeps the entered name and
+  opens the returned canonical VM ID.
+
 - TypeScript SDK operation and transport package exports, with explicit SDK
   build prerequisites for the UI's local, development and CI build paths.
 

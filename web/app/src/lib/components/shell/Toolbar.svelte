@@ -96,6 +96,7 @@
     if (!active?.vmId) return;
     const id = active.vmId;
     const kind = modalKind;
+    const name = modalInput.trim();
     closeModal();
     switch (kind) {
       case 'stop':
@@ -105,10 +106,9 @@
         await vmStore.delete(id);
         break;
       case 'fork': {
-        if (!modalInput.trim()) break;
-        const result = await vmStore.fork(id, { name: modalInput.trim() });
-        const forked = vmStore.vms.find(v => v.name === result.name);
-        if (forked) tabStore.openVM(forked.id, forked.name ?? result.name);
+        if (!name) break;
+        const result = await vmStore.fork(id, { name });
+        tabStore.openVM(result.id, result.name);
         break;
       }
     }

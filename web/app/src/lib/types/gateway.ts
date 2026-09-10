@@ -228,27 +228,7 @@ export interface VmOperationStatusResponse {
   message?: string;
 }
 
-// POST /vms/create, POST /run
-export interface ProvisionRequest {
-  profile_id: string;
-  name?: string;
-  ram_mb?: number;
-  cpus?: number;
-  persistent: boolean;
-  env?: Record<string, string>;
-  from?: string;
-}
-
-export interface ProvisionResponse {
-  id: string;
-  name: string;
-  profile_id: string;
-  status: VmLifecycleState;
-  persistent: boolean;
-  can_resume: boolean;
-  available_actions: VmAction[];
-  uds_path?: string;
-}
+export type { ProvisionRequest, ProvisionResponse, ForkRequest, ForkResponse } from "@capsem/sdk";
 
 // POST /vms/{id}/exec
 export interface ExecRequest {
@@ -277,16 +257,6 @@ export interface WriteFileRequest {
   content: string;
 }
 
-// POST /vms/{id}/fork
-export interface ForkRequest {
-  name: string;
-  description?: string;
-}
-
-export interface ForkResponse {
-  name: string;
-  size_bytes: number;
-}
 
 // Error shape used by gateway and service
 export interface ErrorResponse {

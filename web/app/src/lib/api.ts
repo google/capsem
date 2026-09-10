@@ -1,6 +1,9 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import { recordWsEvent } from './tauri-log';
+import * as gateway from '@capsem/sdk/operations';
+import type { StopResponse, VmActionResponse } from '@capsem/sdk';
+import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
   SandboxInfo,
@@ -57,6 +60,7 @@ function _detectBaseUrl(): string {
 }
 
 let _baseUrl = _detectBaseUrl();
+const _sdk = new GatewaySdk({ url: () => _baseUrl, token: () => _token, refreshToken: _refreshToken });
 
 // -- Public getters --
 
@@ -435,20 +439,6 @@ export async function healthCheck(): Promise<boolean> {
 
 // -- HTTP helpers (private) --
 
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    public body: string,
-  ) {
-    super(`API error ${status}: ${body}`);
-    this.name = 'ApiError';
-  }
-}
-
-function _isAuthRefreshStatus(status: number): boolean {
-  return status === 401 || status === 429;
-}
-
 async function _request(method: string, path: string, body?: unknown, retryAuth = true): Promise<Response> {
   const init: RequestInit = {
     headers: {
@@ -463,7 +453,7 @@ async function _request(method: string, path: string, body?: unknown, retryAuth 
   const resp = await fetch(`${_baseUrl}${path}`, {
     ...init,
   });
-  if (!resp.ok && retryAuth && _isAuthRefreshStatus(resp.status) && await _refreshToken()) {
+  if (!resp.ok && retryAuth && isAuthRefreshStatus(resp.status) && await _refreshToken()) {
     return _request(method, path, body, false);
   }
   if (!resp.ok) {
@@ -584,11 +574,7 @@ function emptyStatus(): StatusResponse {
 // -- VM lifecycle --
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
-  console.log('[api] provisionVm(%o) connected=%s', opts, _connected);
-  const resp = await _post('/vms/create', opts);
-  const result = await resp.json();
-  console.log('[api] provisionVm result:', result);
-  return result;
+  return _sdk.call(transport => gateway.createVm(transport, { body: opts }));
 }
 
 export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
@@ -596,16 +582,16 @@ export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> 
   return await resp.json();
 }
 
-export async function stopVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/stop`);
+export async function stopVm(id: string): Promise<StopResponse> {
+  return _sdk.call(transport => gateway.stopVm(transport, { id }));
 }
 
-export async function suspendVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/pause`);
+export async function suspendVm(id: string): Promise<VmActionResponse> {
+  return _sdk.call(transport => gateway.pauseVm(transport, { id }));
 }
 
-export async function deleteVm(id: string): Promise<void> {
-  await _delete(`/vms/${encodeURIComponent(id)}/delete`);
+export async function deleteVm(id: string): Promise<VmActionResponse> {
+  return _sdk.call(transport => gateway.deleteVm(transport, { id }));
 }
 
 export async function purge(): Promise<Record<string, unknown>> {
@@ -613,13 +599,12 @@ export async function purge(): Promise<Record<string, unknown>> {
   return await resp.json();
 }
 
-export async function resumeVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/resume`);
+export async function resumeVm(id: string): Promise<ProvisionResponse> {
+  return _sdk.call(transport => gateway.resumeVm(transport, { id }));
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/fork`, opts);
-  return await resp.json();
+  return _sdk.call(transport => gateway.forkVm(transport, { id, body: opts }));
 }
 
 // -- VM inspection --
