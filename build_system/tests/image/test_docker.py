@@ -2723,7 +2723,9 @@ class TestBuildAllArchitectures:
                 repo_root=PROJECT_ROOT,
             )
 
-        checksums.assert_called_once_with(tmp_path, "0.13.0")
+        checksums.assert_called_once_with(
+            tmp_path, "0.13.0", arches=list(real_config.build.architectures)
+        )
 
 
 # ---------------------------------------------------------------------------

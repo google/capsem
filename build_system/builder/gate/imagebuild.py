@@ -167,7 +167,7 @@ class BuildAssetsCommand(
             assets = config.path(config.imagebuild.output)
             targets = {name: (assets / name / config.artifacts.initrd,) for name in names}
             packed = plan.add(initrd.repack_step(config, targets), after=images)
-            initrd.finalize(plan, config, assets=assets, after=(packed,))
+            initrd.finalize(plan, config, assets=assets, arches=names, after=(packed,))
         return plan
 
 

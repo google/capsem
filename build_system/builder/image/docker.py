@@ -1581,7 +1581,9 @@ def _hash_filename(logical_name: str, digest: str) -> str:
     return f"{logical_name}-{prefix}"
 
 
-def _restore_canonical_assets_from_existing_manifest(output_dir: Path) -> None:
+def _restore_canonical_assets_from_existing_manifest(
+    output_dir: Path, arches: list[str] | None = None
+) -> None:
     manifest_path = output_dir / "manifest.json"
     if not manifest_path.is_file():
         return
@@ -1591,6 +1593,8 @@ def _restore_canonical_assets_from_existing_manifest(output_dir: Path) -> None:
         return
     for release in manifest.get("assets", {}).get("releases", {}).values():
         for arch_name, assets in release.get("arches", {}).items():
+            if arches is not None and arch_name not in arches:
+                continue
             arch_dir = output_dir / arch_name
             if not arch_dir.is_dir():
                 continue
@@ -1611,12 +1615,22 @@ def _restore_canonical_assets_from_existing_manifest(output_dir: Path) -> None:
                 auditfs.stage(alias, canonical)
 
 
-def generate_checksums(output_dir: Path, version: str) -> Path:
-    """Generate BLAKE3 checksums and manifest.json for all assets."""
-    _restore_canonical_assets_from_existing_manifest(output_dir)
+def generate_checksums(
+    output_dir: Path, version: str, *, arches: list[str] | None = None
+) -> Path:
+    """Generate checksums for selected architectures, or all assets if omitted."""
+    if arches is not None and (
+        not arches or any(arch not in {"arm64", "x86_64"} for arch in arches)
+    ):
+        raise ValueError("select at least one supported asset architecture")
+    _restore_canonical_assets_from_existing_manifest(output_dir, arches)
 
     # Collect all asset files across arch subdirs
-    arch_dirs = [d for d in output_dir.iterdir() if d.is_dir() and d.name != "current"]
+    arch_dirs = (
+        [output_dir / arch for arch in arches]
+        if arches is not None
+        else [d for d in output_dir.iterdir() if d.is_dir() and d.name != "current"]
+    )
     all_files: list[str] = []
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
@@ -1626,7 +1640,7 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             or (arch_dir / OBOM_ASSET).is_file()
             or any((arch_dir / filename).is_file() for filename in BOOT_ASSETS)
         )
-        if arch_has_assets:
+        if arch_has_assets or arches is not None:
             for filename in BOOT_ASSETS:
                 if not (arch_dir / filename).is_file():
                     raise FileNotFoundError(f"{arch_dir / filename}")
@@ -2206,4 +2220,4 @@ def build_all_architectures(
     if template != "kernel":
         version = get_project_version(repo_root)
         print(f"\nGenerating checksums (version {version})...")
-        generate_checksums(output_dir, version)
+        generate_checksums(output_dir, version, arches=list(config.build.architectures))

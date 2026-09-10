@@ -58,6 +58,7 @@ def finalize(
     config: GateConfig,
     *,
     assets: Path,
+    arches: tuple[str, ...],
     after: tuple[Step, ...],
     phase_name: str | None = None,
 ) -> Step:
@@ -72,6 +73,7 @@ def finalize(
                     str(assets),
                     "--version",
                     workspace_version(config.root),
+                    *(argument for arch in arches for argument in ("--arch", arch)),
                 ]
             ),
             # `config.initrd.manifest` is `cargo run -p capsem-admin`, so this
@@ -185,6 +187,7 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
         plan,
         config,
         assets=config.path(config.imagebuild.output),
+        arches=(arch,),
         after=(packed,),
         phase_name="initrd",
     )
