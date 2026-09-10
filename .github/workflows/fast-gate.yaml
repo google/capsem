@@ -70,6 +70,7 @@ jobs:
       - name: Materialize locked qualification dependencies
         run: |
           uv sync --project build_system --frozen
+          uv sync --project sdk/python --frozen
           cargo fetch --locked
           for workspace in web/app web/docs web/marketing build_system/release_site; do
             pnpm --dir "$workspace" install --frozen-lockfile

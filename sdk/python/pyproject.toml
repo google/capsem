@@ -18,7 +18,7 @@ dev = ["pytest>=9", "pytest-cov>=6", "ruff>=0.15.16", "ty>=0.0.46", "build>=1.2"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error"]
-addopts = "--cov=capsem --cov-report=term-missing:skip-covered"
+addopts = "--cov=capsem --cov-report=term-missing:skip-covered --cov-report=xml"
 
 [tool.coverage.run]
 branch = true
@@ -28,6 +28,9 @@ data_file = "../../cache/target/coverage/sdk-python.coverage"
 [tool.coverage.report]
 precision = 2
 fail_under = 90
+
+[tool.coverage.xml]
+output = "../../cache/target/coverage/python-sdk/coverage.xml"
 
 [tool.ty.environment]
 python-version = "3.11"

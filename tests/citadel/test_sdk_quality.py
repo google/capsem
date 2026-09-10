@@ -30,13 +30,15 @@ def _coverage_problems(project: dict) -> list[str]:
         problems.append("SDK source and branches must be measured")
     if coverage["report"].get("fail_under", 0) < 90 or coverage["report"].get("precision", 0) < 2:
         problems.append("SDK coverage floor cannot be lowered")
+    if coverage.get("xml", {}).get("output") != "../../cache/target/coverage/python-sdk/coverage.xml":
+        problems.append("SDK coverage report must reach its CI upload owner")
     if any(coverage[section].get(key) for section, key in (
         ("run", "omit"), ("report", "exclude_lines"), ("report", "exclude_also"),
         ("report", "partial_branches"),
     )):
         problems.append("SDK generation cannot be excluded from coverage")
     options = pytest_config.get("addopts", "").split()
-    if options != ["--cov=capsem", "--cov-report=term-missing:skip-covered"]:
+    if options != ["--cov=capsem", "--cov-report=term-missing:skip-covered", "--cov-report=xml"]:
         problems.append("tests must measure SDK coverage with the configured floor")
     if pytest_config.get("testpaths") != ["tests"]:
         problems.append("the full SDK test directory must run")
@@ -52,7 +54,7 @@ def test_python_sdk_coverage_is_enforced_without_exclusions() -> None:
         assert not re.search(r"#\s*(noqa|type:\s*ignore|ty:\s*ignore)\b", path.read_text()), SDK_RATIONALE
 
 
-@pytest.mark.parametrize("mutation", ["branch", "floor", "omit", "unmeasured", "override", "partial", "no_cov"])
+@pytest.mark.parametrize("mutation", ["branch", "floor", "omit", "unmeasured", "override", "partial", "no_cov", "xml"])
 def test_coverage_weakening_is_rejected(mutation: str) -> None:
     project = tomllib.loads(CONFIG.path(CONFIG.sdk_python.manifest).read_text())
     coverage = project["tool"]["coverage"]
@@ -72,6 +74,8 @@ def test_coverage_weakening_is_rejected(mutation: str) -> None:
             pytest_config["testpaths"] = ["tests/one_test.py"]
         case "no_cov":
             pytest_config["addopts"] += " --no-cov"
+        case "xml":
+            coverage["xml"]["output"] = "unpublished.xml"
     assert _coverage_problems(project), SDK_RATIONALE
 
 

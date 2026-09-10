@@ -22,6 +22,10 @@ coverage:
         target: auto
         flags:
           - e2e
+      python-sdk:
+        target: 90%
+        flags:
+          - python-sdk
     patch:
       default:
         target: 90%
@@ -34,6 +38,10 @@ comment:
   require_head: yes
 
 flags:
+  python-sdk:
+    paths:
+      - sdk/python/capsem/**
+    carryforward: true
   unit:
     paths:
       - crates/**
@@ -66,6 +74,11 @@ component_management:
         target: 90%
 
   individual_components:
+    - component_id: python-sdk
+      name: Python SDK
+      paths:
+        - sdk/python/capsem/**
+
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/
     # except policy_config.

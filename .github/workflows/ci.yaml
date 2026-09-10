@@ -291,6 +291,12 @@ jobs:
         run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
 
       # Python schema tests with coverage
+      - name: Python SDK tests with coverage
+        working-directory: sdk/python
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/cache/target/coverage/python-sdk/.coverage
+        run: uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/python-sdk.xml
+
       - name: Python lint and type check
         run: |
           uv run --project build_system --frozen capsem-gate lint
@@ -360,6 +366,15 @@ jobs:
             web/app/src/lib/mock-settings.generated.ts
 
       # Upload coverage with flags
+      - name: Upload Python SDK coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: cache/target/coverage/python-sdk/coverage.xml
+          flags: python-sdk
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -401,7 +416,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
