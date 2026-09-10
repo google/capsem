@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::service_client::ServiceClient;
@@ -38,69 +38,10 @@ impl StatusCache {
     }
 }
 
-#[derive(Serialize, Clone)]
-pub struct StatusResponse {
-    pub service: String,
-    pub gateway_version: String,
-    pub vm_count: usize,
-    pub vms: Vec<VmSummary>,
-    pub resource_summary: Option<ResourceSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<serde_json::Value>,
-}
-
-pub use capsem_api::{VmAction, VmLifecycleState};
-
-#[derive(Serialize, Clone)]
-pub struct VmSummary {
-    pub id: String,
-    pub name: Option<String>,
-    pub status: VmLifecycleState,
-    pub persistent: bool,
-    pub profile_id: String,
-    // Telemetry (present for running VMs, absent for stopped)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uptime_secs: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_input_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_output_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_estimated_cost: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_tool_calls: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_requests: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_requests: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub denied_requests: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_file_events: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_call_count: Option<u64>,
-    #[serde(default)]
-    pub can_resume: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resume_blocked_reason: Option<String>,
-    /// Why a crashed VM died: the `process.log` tail the service captured.
-    /// The service splits the two on purpose -- a defunct session carries its
-    /// reason here and leaves `resume_blocked_reason` empty -- so a consumer
-    /// that reads only the latter has nothing to show for the one state where
-    /// the user most needs a reason.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    pub available_actions: Vec<VmAction>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct ResourceSummary {
-    pub total_ram_mb: u64,
-    pub total_cpus: u32,
-    pub running_count: usize,
-    pub stopped_count: usize,
-    pub suspended_count: usize,
-}
+pub use capsem_api::{
+    HypervisorInfo as StatusResponse, ProfileCatalogStatus, ResourceSummary, ServiceAvailability, UpdateStatusResponse,
+    VmAction, VmLifecycleState, VmSummary,
+};
 
 /// GET /status -- aggregated system health for tray polling.
 ///
@@ -201,17 +142,19 @@ struct SessionInfo {
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
     let unavailable = StatusResponse {
-        service: "unavailable".into(),
+        service: ServiceAvailability::Unavailable,
         gateway_version: env!("CARGO_PKG_VERSION").into(),
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
         profiles: None,
+        updates: None,
     };
 
-    let (list_body, profiles) = tokio::join!(
+    let (list_body, profiles, updates) = tokio::join!(
         uds_get(&state.service_client, "/vms/list"),
         fetch_profiles_status(state),
+        fetch_update_status(state),
     );
     let list = match list_body {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
@@ -266,7 +209,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
     }
 
     StatusResponse {
-        service: "running".into(),
+        service: ServiceAvailability::Running,
         gateway_version: env!("CARGO_PKG_VERSION").into(),
         vm_count: vms.len(),
         vms,
@@ -278,12 +221,18 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             suspended_count: suspended,
         }),
         profiles,
+        updates,
     }
 }
 
-async fn fetch_profiles_status(state: &AppState) -> Option<serde_json::Value> {
+async fn fetch_profiles_status(state: &AppState) -> Option<ProfileCatalogStatus> {
     let body = uds_get(&state.service_client, "/profiles/status").await.ok()?;
-    serde_json::from_slice::<serde_json::Value>(&body).ok()
+    serde_json::from_slice::<ProfileCatalogStatus>(&body).ok()
+}
+
+async fn fetch_update_status(state: &AppState) -> Option<UpdateStatusResponse> {
+    let body = uds_get(&state.service_client, "/update/status").await.ok()?;
+    serde_json::from_slice(&body).ok()
 }
 
 /// One GET to the service over the pooled client, bounded in time and size.
@@ -299,6 +248,9 @@ async fn uds_get_inner(client: &ServiceClient, path: &str) -> anyhow::Result<Byt
         .uri(format!("http://localhost{path}"))
         .body(axum::body::Body::empty())?;
     let res = client.request(req).await?;
+    if !res.status().is_success() {
+        anyhow::bail!("status source {path} returned {}", res.status());
+    }
     Ok(Limited::new(res.into_body(), STATUS_RESPONSE_MAX_BODY_SIZE)
         .collect()
         .await

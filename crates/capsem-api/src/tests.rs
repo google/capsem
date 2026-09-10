@@ -3,6 +3,22 @@ use serde_json::json;
 use utoipa::PartialSchema;
 
 #[test]
+fn management_categories_are_closed_enums() {
+    assert!(serde_json::from_value::<ServiceAvailability>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<UpdateActionStatus>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<ValidationStatus>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<ProfileCatalogSource>(json!("directory")).is_err());
+    assert_eq!(
+        serde_json::to_value(UpdateActionStatus::Succeeded).unwrap(),
+        "succeeded"
+    );
+    assert_eq!(
+        serde_json::to_value(ValidationStatus::FetchError).unwrap(),
+        "fetch_error"
+    );
+}
+
+#[test]
 fn checked_in_openapi_matches_the_rust_contract() {
     let exported: serde_json::Value =
         serde_json::from_str(include_str!("../../../sdk/specification/openapi.json")).unwrap();

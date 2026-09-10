@@ -119,6 +119,9 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["manifest"], manifest);
     assert_eq!(body["manifest_metadata"], metadata);
+    let profiles: capsem_api::ProfileCatalogStatus = serde_json::from_value(body["profiles"].clone())
+        .expect("the real profile status response must satisfy the generated SDK contract");
+    assert!(profiles.profiles.iter().any(|profile| profile.id == "code"));
     let code = body["profiles"]["profiles"]
         .as_array()
         .unwrap()

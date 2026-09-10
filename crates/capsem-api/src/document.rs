@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 /// Build the same contract served by the gateway and exported for SDK generation.
 pub fn openapi() -> OpenApi {
     let mut doc = Document::default();
+    doc.get::<HypervisorInfo>("/status", "getHypervisorInfo");
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");

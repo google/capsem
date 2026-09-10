@@ -293,7 +293,7 @@ pub(super) async fn handle_update_apply(
 
 pub(super) fn planned_update_response(plan: api::UpdateCommandPlan) -> api::UpdateActionResponse {
     api::UpdateActionResponse {
-        status: "planned".to_string(),
+        status: api::UpdateActionStatus::Planned,
         command: plan,
         exit_code: None,
         stdout: None,
@@ -315,7 +315,7 @@ pub(super) async fn execute_update_apply(
 ) -> Result<api::UpdateActionResponse, AppError> {
     let _update_guard = state.update_lock.lock().await;
     let response = execute_update_command_unlocked(plan).await?;
-    if response.status == "succeeded" {
+    if response.status == api::UpdateActionStatus::Succeeded {
         reload_activated_update_runtime(state)?;
     }
     Ok(response)
@@ -334,9 +334,13 @@ pub(super) async fn execute_update_command_unlocked(
                 format!("failed to start update command: {error}"),
             )
         })?;
-    let status = if output.status.success() { "succeeded" } else { "failed" };
+    let status = if output.status.success() {
+        api::UpdateActionStatus::Succeeded
+    } else {
+        api::UpdateActionStatus::Failed
+    };
     Ok(api::UpdateActionResponse {
-        status: status.to_string(),
+        status,
         command: plan,
         exit_code: output.status.code(),
         stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
@@ -411,7 +415,7 @@ pub(super) async fn run_automatic_update_once(state: &ServiceState) -> Automatic
         Ok(response) => response,
         Err(error) => return AutomaticUpdateOutcome::Failed(error.1),
     };
-    if response.status != "succeeded" {
+    if response.status != api::UpdateActionStatus::Succeeded {
         let detail = response
             .stderr
             .as_deref()

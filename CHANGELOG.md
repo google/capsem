@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The gateway overview includes typed profile readiness and update availability
+  alongside VM state, resources, and binary version information.
 - Authenticated gateway OpenAPI export for the initial SDK operations, derived
   from shared Rust request and response contracts.
 

@@ -43,7 +43,9 @@ async fn authenticated_schema_matches_the_export_without_a_service() {
 #[tokio::test]
 async fn every_documented_operation_is_forwarded_by_the_real_gateway_router() {
     let (_, state) = crate::tests::health_app("/tmp/capsem-schema-no-service.sock");
-    let app = crate::service_proxy_routes().with_state(state);
+    let app = crate::service_proxy_routes()
+        .route("/status", axum::routing::get(crate::status::handle_status))
+        .with_state(state);
     let document = serde_json::to_value(capsem_api::openapi()).unwrap();
     for (path, methods) in document["paths"].as_object().unwrap() {
         for method in methods.as_object().unwrap().keys() {
@@ -59,10 +61,15 @@ async fn every_documented_operation_is_forwarded_by_the_real_gateway_router() {
                 )
                 .await
                 .unwrap();
+            let expected = if path == "/status" {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
             assert_eq!(
                 response.status(),
-                StatusCode::BAD_GATEWAY,
-                "{method} {path} must reach the proxy"
+                expected,
+                "{method} {path} must reach its production handler"
             );
         }
     }

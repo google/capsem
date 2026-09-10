@@ -48,7 +48,7 @@ pub(super) struct UpdateCheckCache {
     #[serde(default)]
     channel_hash: Option<String>,
     #[serde(default)]
-    validation_status: Option<String>,
+    validation_status: Option<api::ValidationStatus>,
     #[serde(default)]
     validation_error: Option<String>,
 }
@@ -74,7 +74,7 @@ pub(super) fn update_status_response_from_paths(
         .and_then(|cache| cache.source.clone())
         .or(manifest_channel);
     let channel_hash = cache.as_ref().and_then(|cache| cache.channel_hash.clone());
-    let validation_status = cache.as_ref().and_then(|cache| cache.validation_status.clone());
+    let validation_status = cache.as_ref().and_then(|cache| cache.validation_status);
     let validation_error = cache.as_ref().and_then(|cache| cache.validation_error.clone());
     let last_error = parse_error.or_else(|| validation_error.clone());
     let supply_chain = supply_chain_evidence_from_paths(assets_dir, channel_url.clone(), channel_hash.clone());

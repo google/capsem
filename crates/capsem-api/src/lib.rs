@@ -3,6 +3,10 @@
 
 mod document;
 pub use document::openapi;
+mod hypervisor;
+pub use hypervisor::*;
+mod profile_status;
+pub use profile_status::*;
 
 mod lifecycle;
 pub use lifecycle::*;

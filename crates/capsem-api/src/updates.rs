@@ -1,5 +1,14 @@
+use crate::ValidationStatus;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateActionStatus {
+    Planned,
+    Succeeded,
+    Failed,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
 pub struct UpdateStatusResponse {
@@ -10,7 +19,7 @@ pub struct UpdateStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub validation_status: Option<String>,
+    pub validation_status: Option<ValidationStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validation_error: Option<String>,
     pub stale: bool,
@@ -47,7 +56,7 @@ pub struct UpdateCommandPlan {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
 pub struct UpdateActionResponse {
-    pub status: String,
+    pub status: UpdateActionStatus,
     pub command: UpdateCommandPlan,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
