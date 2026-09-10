@@ -78,70 +78,66 @@ All services and VMs belong to test fixtures; installed services and profiles ar
 untouched. Throughput results are exploratory measurements, not a release threshold.
 
 A named VM retains its image and command. Closing the client detaches. Workload
-exit or timeout stops the VM, and explicit delete removes it. Existing restart
+exit or timeout stops the VM while the CLI is attached, and explicit delete removes it. Existing restart
 restores the command and host bindings; fork copies the workload and workspace
 without copying host ports. Redis memory and image-declared tmpfs volumes are
 fresh on cold boot, so this does not promise database persistence across restart.
 
 ## Artifact identities and evidence
 
-Kingslanding native ARM64 run: **23 passed in 128.95s**, using the rebuilt
-`container-lifecycle-binaries` cohort. Evidence is under
-`cache/target/tests/kingslanding-native/`. The lifecycle RED cases are recorded in
-Sprinty S04-001; suite ownership and cache RED cases are in S04-003.
-The first sandboxed gate run exposed a stale shared-cache kernel; S04-004
-records the selection fix and the complete ARM64 profile rebuild
-`20260910-132119-a0c2a3-build-assets` (10 steps, 7m11s).
+Supported ARM64 `code` profile proof: **23 passed in 123.47s** at
+`2ade1feeccce7981442093fbcae6f661c3dc9be1`, with no source changes during execution.
+`just focus-test kingslanding` completed all 20 steps in 4m17s under the enforced
+macOS gate sandbox. The journal is
+`cache/target/gate-runs/20260910-135721-6b567b-focus-test/run.jsonl`.
+The suite includes eight in-guest adversarial OCI cases and nine existing guest
+hardening diagnostics; none of those checks were skipped.
 
-The measurements below predate the lifecycle changes and are retained as
-historical spike evidence.
+The preceding failures were investigated and fixed:
 
-Earlier ARM64 rebuild: `20260910-070738-84e38e-pack-initrd`, seven steps passed in
-1m38s. The manifest step rebuilt the changed native dependency graph, explaining
-its increase from the earlier 14.8s median to 27.4s.
+- `20260910-131254-63da2a`: shared-cache assets replaced the rebuilt OCI kernel.
+  S04-004 records the selection regression and full ARM64 profile rebuild
+  `20260910-132119-a0c2a3-build-assets` (10 steps, 7m11s).
+- `20260910-133003-c0ac3b`: macOS refused nested Seatbelt initialization.
+  The gate now hands off only named self-confining children; the router installs
+  its stricter profile before accepting data. Native subprocess tests still deny
+  files, control sockets, outbound connects, execution and parent signalling;
+  ordinary gate children remain unable to reach public networking.
+- `20260910-134751-93e25e`: 22 cases passed, but a short shell command lost output.
+  The CLI now flushes Tokio stdout/stderr before exiting. Its regression passes
+  within the final complete Kingslanding run.
+
+Final asset and fixture SHA-256 identities:
 
 | Artifact | SHA-256 |
 |---|---|
 | Kernel | `b1d8357da3005ef29c9dd2797e83177b85ad25494b13802a78603b2f0b843892` |
-| Initrd | `9ab41d785d688510c2d7f92470637027ee73328e2ca950116037b2c9b128ffc9` |
-| Rootfs | `a41d85bb3cfdc624f47be2e80706d7b2d16e5417beebc8546b8514f377cc388e` |
-| Upstream Redis 7.4.11-alpine ARM64 manifest | `f8d15882ba108587477ce13c00ab0551933a84138427b7cc9abadfbe45ffd973` |
-| Exported Redis rootfs gzip | `9fc9018f96d3e34e341f813d7a2eafc85d0801b25d13328d198ad1f0a166ad71` |
-| Hermetic registry OCI manifest | `560c849ae08f0976d13d9424dcd3db8cc2755c0b19e4536d1fb177edd1a2a3bf` |
+| Initrd | `3f8252afc6482295b7f7fd34b16a57eb7cf35e7ae5dba053a1a798dc92b25464` |
+| Rootfs | `205741b3389b118f02c373ea249c4763b71c76d84307a4be49120c0c81a88940` |
+| Upstream Redis ARM64 manifest | `f8d15882ba108587477ce13c00ab0551933a84138427b7cc9abadfbe45ffd973` |
+| Exported Redis rootfs gzip | `46ad10323cb8da8717d3c72a92f64d8a49ecfd114c824d6f0450791f38b51908` |
+| Hermetic registry OCI manifest | `1b770cc2a7abe65129973814d1112d4be5cb05597d9d48484e249ca4fc25a555` |
 
-`cache/target/tests/container-final` contains the final real-VM test run and
-benchmark artifacts: 19 tests passed in 145.81 seconds against the rebuilt cohort. Earlier RED/green evidence remains in the `container-run-*`
-and `container-publish-*` directories and Sprinty items S02-002/008/009/010 and
-S03-001/002/003. Source-only guards, native tests and package tests are separate
-from actual VM execution. macOS package assembly/signing tests run locally;
-Linux router execution is in a sealed native ARM64 Linux container. Router line
-coverage is 93/136 (68.38%); confined children intentionally cannot write profiling
-files. The final source-guard/coverage/package run passed 928 checks in 35.16s;
-15 Linux packaging checks were skipped on macOS. An earlier path-ownership
-failure was fixed before that rerun. Cargo clippy passed
-for the eight affected runtime crates. Linux package assembly is not proven on
-this macOS host. Two failed Linux diagnostic containers outlived their client
-timeouts; they were identified by their worktree mounts and test commands and
-explicitly removed during final cleanup. Successful Linux tests left no container.
+The gate automatically retained the benchmark under
+`cache/target/tests/benchmarks/kingslanding/redis-8tq_d6cl/`: 18 raw trials,
+`identity.json` with source/asset/binary identities and executed commands,
+`doctor.json` with machine fitness, `benchmarks.db`, and `report.txt`.
+Each lane ran three repetitions. Medians in PING/s:
 
-The offline suite proves separate stdout/stderr, exit status, all byte values,
-read-only root, inaccessible unmounted guest files, isolated networking, denied
-VSOCK, memory OOM, process EAGAIN and CPU throttling. Timeout/cancellation check
-descendants, runtime directories, mounts and cgroups; fresh VMs cannot share files.
-The CLI suite adds default Redis startup, live output above 10 MiB, shell-run
-compatibility, image failures, scoped TLS trust and client detachment.
-Publication tests add 64 clients using 32 workers, binary Redis SET/GET, guest-root
-versus container namespace isolation, port collisions, router crash, VM-owner death
-and teardown with slow consumers.
+| Clients / pipeline | Host published port | Guest container loopback |
+|---|---:|---:|
+| 1 / 1 | 9,947 | 35,236 |
+| 32 / 1 | 83,741 | 387,435 |
+| 32 / 16 | 1,267,753 | 3,933,010 |
 
-Benchmark output is owned by `capsem-bench-rs`, on both host and guest. Each lane
-runs three repetitions: C1/P1 with 10,000 PINGs, C32/P1 with 100,000 and C32/P16
-with 800,000. Raw JSON, commands, binary/asset hashes, machine fitness, SQLite
-statistics and a report are retained. Latency is measured per pipeline batch.
-The final run produced host medians of 9,743, 87,443 and 1,279,009 PING/s
-respectively; guest-local medians were 35,567, 396,397 and 3,952,411 PING/s. This is exploratory throughput, not a release baseline:
-`doctor` flags already-running Capsem processes, and the short trials do not
-establish sustained performance or a regression threshold.
+These are exploratory measurements, not a sustained-performance guarantee or
+release baseline. The fitness check reports pre-existing Capsem processes.
+Focused Rust tests and clippy, Ruff, strict gate Ty, formatting, and source guards
+passed. The final sandbox/Citadel cohort passed 936 checks with five platform
+skips. Earlier native Linux ARM64 router tests and macOS packaging checks remain
+separate evidence in Sprinty; Linux package assembly and complete release
+qualification are not claimed by this local gate. Historical router line coverage
+was 93/136 (68.38%); confined children cannot write profiling files.
 
 ## Limits and next work
 
@@ -153,10 +149,11 @@ separate, but the surrounding VM still carries the profile's development tools.
 - IPv4 loopback TCP publication only; no UDP, LAN binding, container egress, SDK,
   OpenAPI endpoint or Inspect integration. This does not claim Docker compatibility.
 - One container workload per named VM. Client termination detaches. Workload
-  completion and timeout stop the VM; deletion remains explicit. Cold boot reruns
+  completion and timeout stop the VM while the CLI remains attached; after
+  detachment its deadline no longer runs, and VM control is explicit. Cold boot reruns
   the saved image command and does not restore process memory or tmpfs contents.
-- CLI logs currently merge stdout/stderr. The existing captured exec API and offline
-  fixture still prove them separately. Automatic image-derived names can race;
+- The host exec transport and CLI combine stdout/stderr. The offline OCI fixture
+  tests separate subprocess pipes inside the guest. Automatic image-derived names can race;
   the service rejects a collision instead of silently attaching to another VM.
 - Read-only images needing additional writable paths can fail. Declared writable
   volumes are bounded ephemeral tmpfs, with no persistent volume or mount API.
