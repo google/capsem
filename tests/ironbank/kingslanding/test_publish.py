@@ -127,11 +127,7 @@ def test_guest_tcp_reset_crosses_vsock_without_becoming_fin(redis, service):
     # A root-owned test peer joins only the workload's network namespace. Its
     # socket emits a real Linux TCP RST after an acknowledged binary exchange.
     peer = """
-import os, socket, struct
-pid = open('/var/tmp/capsem-container/workload.pid').read().strip()
-fd = os.open(f'/proc/{pid}/ns/net', os.O_RDONLY)
-os.setns(fd, os.CLONE_NEWNET)
-os.close(fd)
+import socket, struct
 with socket.socket() as listener:
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', 9099))
@@ -145,10 +141,21 @@ with socket.socket() as listener:
         assert stream.read(4) == b'FAIL'
         connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
 """
+    # The profile supplies Python3.11 and util-linux. Replace this owned job
+    # with nsenter instead of assuming Python3.12's os.setns is available.
+    enter = (
+        "import os; pid=open('/var/tmp/capsem-container/workload.pid').read().strip(); "
+        "assert pid.isascii() and pid.isdigit(); "
+        "os.execvp('nsenter', ['nsenter', '--net=/proc/'+pid+'/ns/net', '--', "
+        "'python3', '-c', " + repr(peer) + "])"
+    )
 
     # Retry refused setup while the exec job starts. After PONG the protocol
     # succeeds or fails exactly once; its reset assertion is never retried.
     def exchange():
+        if running.done():
+            response = running.result()
+            raise AssertionError(f"namespace peer exited before PONG: {response}")
         with socket.create_connection(
             ("127.0.0.1", redis["other_port"]), timeout=5
         ) as connection:
@@ -167,7 +174,7 @@ with socket.socket() as listener:
         running = executor.submit(
             service.client().post,
             f"/vms/{redis['vm']['id']}/exec",
-            {"command": "python3 -c " + shlex.quote(peer), "timeout_secs": 15},
+            {"command": "python3 -c " + shlex.quote(enter), "timeout_secs": 15},
         )
         wait_for(exchange, "guest TCP reset propagated over VSOCK", timeout=10)
         response = running.result(timeout=20)
