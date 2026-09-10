@@ -1,3 +1,6 @@
+mod gateway_fixtures;
+use gateway_fixtures::*;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -890,19 +893,18 @@ fn gateway_status_json_maps_to_tui_state() {
     assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
     assert_eq!(active.stats.tokens, 38_912);
     assert_eq!(active.stats.cost_micros, 215_000);
-    assert!(
-        active.attention.is_empty(),
-        "current profile status should not be marked stale"
-    );
+    assert!(active.attention.is_empty(), "a running VM should not be marked stale");
 
     let attention = &state.sessions[1];
     assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
     assert!(attention.attention.contains(&Attention::PolicyDeny));
-    assert_eq!(attention.profile_status.as_deref(), Some("corrupted"));
-    assert!(
-        attention.attention.contains(&Attention::CredentialIssue),
-        "corrupted profile status should be surfaced as a credential/profile issue"
+    assert_eq!(attention.profile_status, None);
+    assert_eq!(attention.branch, None);
+    assert_eq!(
+        attention.resume_blocked_reason.as_deref(),
+        Some("profile payload hash drift")
     );
+    assert!(!attention.attention.contains(&Attention::CredentialIssue));
 }
 
 #[test]
@@ -1153,13 +1155,16 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
     let state = state_from_status_json_for_test(
         r#"{
             "service": "running",
+            "gateway_version": "test",
+            "vm_count": 1,
+            "resource_summary": null,
             "vms": [{
                 "id": "stale-vm",
                 "name": "Stale VM",
                 "status": "Stopped",
                 "persistent": true,
                 "profile_id": "code",
-                "profile_status": "current",
+                "available_actions": [],
                 "can_resume": false,
                 "resume_blocked_reason": "profile payload hash drift"
             }]
@@ -1231,26 +1236,24 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..4 {
+        for _ in 0..3 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else if request.contains("GET /status ") {
-                write_json_response(&mut stream, gateway_empty_status_body()).await;
-            } else if request.contains("GET /profiles/list ") {
-                write_json_response(&mut stream, gateway_profiles_body()).await;
+                let mut overview: serde_json::Value = serde_json::from_str(gateway_empty_status_body()).unwrap();
+                overview["updates"] = serde_json::from_str(gateway_update_status_body()).unwrap();
+                write_json_response(&mut stream, &overview.to_string()).await;
             } else {
                 assert!(
-                    request.contains("GET /update/status "),
+                    request.contains("GET /profiles/list "),
                     "unexpected request: {request:?}"
                 );
-                assert!(
-                    request.contains("authorization: Bearer test-token")
-                        || request.contains("Authorization: Bearer test-token"),
-                    "missing bearer auth: {request:?}"
-                );
-                write_json_response(&mut stream, gateway_update_status_body()).await;
+                assert!(request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token"));
+                write_json_response(&mut stream, gateway_profiles_body()).await;
             }
         }
     });
@@ -1365,8 +1368,7 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         let mut token_requests = 0;
         let mut status_requests = 0;
         let mut profile_requests = 0;
-        let mut update_requests = 0;
-        for _ in 0..7 {
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
@@ -1375,9 +1377,6 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
             } else if request.contains("GET /profiles/list ") {
                 profile_requests += 1;
                 write_json_response(&mut stream, gateway_profiles_body()).await;
-            } else if request.contains("GET /update/status ") {
-                update_requests += 1;
-                write_json_response(&mut stream, gateway_update_current_status_body()).await;
             } else {
                 status_requests += 1;
                 assert!(request.contains("GET /status "), "unexpected request: {request:?}");
@@ -1392,10 +1391,6 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
         assert_eq!(profile_requests, 2, "profile list should stay live across refreshes");
-        assert_eq!(
-            update_requests, 2,
-            "update status should use the cached token across refreshes"
-        );
     });
 
     let provider = GatewayProvider::new(format!("http://{addr}"));
@@ -1565,340 +1560,4 @@ pub(crate) async fn write_response(stream: &mut tokio::net::TcpStream, status: &
         body
     );
     stream.write_all(response.as_bytes()).await.expect("write response");
-}
-
-fn gateway_status_body() -> &'static str {
-    r#"{
-        "service": "running",
-        "gateway_version": "test",
-        "vm_count": 2,
-        "resource_summary": null,
-        "vms": [
-            {
-                "id": "vm-1",
-                "name": "profile-main",
-                "status": "Running",
-                "persistent": true,
-                "profile_id": "profile-v2",
-                "profile_revision": "main",
-                "profile_status": "current",
-                "uptime_secs": 2840,
-                "total_input_tokens": 30000,
-                "total_output_tokens": 8912,
-                "total_estimated_cost": 0.215,
-                "total_tool_calls": 7,
-                "total_requests": 11,
-                "total_file_events": 3
-            },
-            {
-                "id": "vm-2",
-                "status": "Suspended",
-                "persistent": true,
-                "profile_id": "linux-os",
-                "profile_status": "corrupted",
-                "uptime_secs": 7860,
-                "total_input_tokens": 10000,
-                "total_output_tokens": 2900,
-                "total_estimated_cost": 0.076,
-                "denied_requests": 1
-            }
-        ]
-    }"#
-}
-
-fn gateway_empty_status_body() -> &'static str {
-    r#"{
-        "service": "running",
-        "gateway_version": "test",
-        "vm_count": 0,
-        "resource_summary": null,
-        "vms": []
-    }"#
-}
-
-fn gateway_update_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.1",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-2",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_current_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_blocked_profile_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "current": "profiles-2030.0101.0",
-            "latest": "profiles-2030.0101.1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible",
-            "blocked_reason": "requires binary 1.4.1 or newer"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_blocked_asset_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "2026.0627.1",
-            "latest": "2030.0101.1",
-            "update_available": false,
-            "state": "unknown",
-            "compatibility": "unknown",
-            "blocked_reason": "requires binary 99.99.99 or newer"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_binary_with_blocked_profile_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.1",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "current": "profiles-2030.0101.0",
-            "latest": "profiles-2030.0101.1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible",
-            "blocked_reason": "requires binary 1.4.1 or newer"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_matrix_body(
-    binary_update: bool,
-    asset_update: bool,
-    profile_update: bool,
-    last_error: Option<&str>,
-) -> String {
-    let binary_latest = if binary_update { "1.4.1" } else { "1.4.0" };
-    let asset_latest = if asset_update { "assets-2" } else { "assets-1" };
-    let profile_latest = if profile_update {
-        "profiles-2030.0101.1"
-    } else {
-        "profiles-2030.0101.0"
-    };
-    let error_field = last_error
-        .map(|error| format!(r#","last_error":"{error}""#))
-        .unwrap_or_default();
-    format!(
-        r#"{{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false{error_field},
-        "binary": {{
-            "current": "1.4.0",
-            "latest": "{binary_latest}",
-            "update_available": {binary_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "assets": {{
-            "current": "assets-1",
-            "latest": "{asset_latest}",
-            "update_available": {asset_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "profiles": {{
-            "current": "profiles-2030.0101.0",
-            "latest": "{profile_latest}",
-            "update_available": {profile_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "images": {{
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }}
-    }}"#
-    )
-}
-
-fn gateway_profiles_body() -> &'static str {
-    r#"{
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "description": "Optimized for coding and long-running agents.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 3,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            },
-            {
-                "id": "co-work",
-                "name": "Co-work",
-                "description": "Shared profile for collaborative agent sessions.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 4,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            }
-        ]
-    }"#
-}
-
-fn gateway_profiles_with_unlaunchable_body() -> &'static str {
-    r#"{
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "description": "Optimized for coding and long-running agents.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 3,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            },
-            {
-                "id": "web-only",
-                "name": "Web Only",
-                "description": "browser-only workflow",
-                "availability": { "web": true, "shell": false, "mobile": false },
-                "source": "corp",
-                "rule_count": 1,
-                "default_rule_count": 1,
-                "plugin_count": 0,
-                "mcp_server_count": 0
-            },
-            {
-                "id": "mobile-only",
-                "name": "Mobile Only",
-                "description": "mobile-only workflow",
-                "availability": { "web": false, "shell": false, "mobile": true },
-                "source": "corp",
-                "rule_count": 1,
-                "default_rule_count": 1,
-                "plugin_count": 0,
-                "mcp_server_count": 0
-            }
-        ]
-    }"#
 }

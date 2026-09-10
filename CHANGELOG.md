@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TUI overview and profile discovery use the Rust SDK's shared gateway types,
+  including combined update status and explicit incompatible-VM state.
+
 - TUI VM actions use the Rust SDK's typed gateway contract; forks focus the
   returned canonical VM ID and unnamed TUI workspaces retain service-generated names.
 
