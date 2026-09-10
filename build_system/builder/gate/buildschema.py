@@ -24,7 +24,7 @@ from .configschema import SafeToken, Strict
 from .releaseschema import ReleasePairingEnvironment
 
 
-class PythonSdkConfig(Strict):
+class SdkConfig(Strict):
     project: str
     manifest: str
     specification: str

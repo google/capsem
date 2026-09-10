@@ -33,8 +33,8 @@ from .buildschema import (
     InitrdConfig,
     LogsConfig,
     ModulesConfig,
-    PythonSdkConfig,
     SbomConfig,
+    SdkConfig,
     SigningConfig,
     WebSurfacesConfig,
 )
@@ -117,7 +117,8 @@ class GateConfig(Strict):
     toolchain: ToolchainConfig
     functional: FunctionalConfig
     modules: ModulesConfig
-    sdk_python: PythonSdkConfig
+    sdk_python: SdkConfig
+    sdk_typescript: SdkConfig
     imagebuild: ImageBuildConfig
     hostimage: HostImageConfig
     sbom: SbomConfig

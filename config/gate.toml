@@ -1225,7 +1225,7 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
-node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
+node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site", "sdk/typescript"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -1764,6 +1764,7 @@ cache_stage = "audit-results"
 lockfiles = [
     "build_system/uv.lock",
     "sdk/python/uv.lock",
+    "sdk/typescript/pnpm-lock.yaml",
     "web/app/pnpm-lock.yaml",
     "web/docs/pnpm-lock.yaml",
     "web/marketing/pnpm-lock.yaml",
@@ -1849,6 +1850,23 @@ name = "python-sdk"
 pattern = "sdk/python/*.py"
 enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
 checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
+
+[[lint_surfaces]]
+name = "typescript-sdk"
+pattern = "sdk/typescript/*.ts"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
+checked_by = ["fast.sdk.typescript.tests", "fast.sdk.typescript.build", "fast.sdk.typescript.generate"]
+
+[[lint_surfaces]]
+name = "typescript-sdk-tools"
+pattern = "sdk/typescript/*.mjs"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
+checked_by = ["fast.sdk.typescript.build"]
+
+[[lint_surfaces]]
+name = "typescript-sdk-config"
+pattern = "sdk/typescript/*.js"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
 
 [[lint_surfaces]]
 name = "yaml"
@@ -3493,3 +3511,11 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
+
+[sdk_typescript]
+project = "sdk/typescript"
+manifest = "sdk/typescript/package.json"
+specification = "sdk/specification/openapi.json"
+source = "sdk/typescript/src"
+tests = "sdk/typescript/tests"
+build_output = "cache/target/sdk/typescript"

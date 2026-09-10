@@ -1,4 +1,4 @@
-"""Python SDK checks use its own locked install and the shared gate graph."""
+"""SDK packages have isolated language checks in the shared gate graph."""
 
 from __future__ import annotations
 
@@ -35,3 +35,23 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(synced,))
     return (*checks, tested)
+
+
+def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
+    settings = config.sdk_typescript
+    phase = plan.phase("fast.sdk.typescript")
+    root = config.path(settings.project)
+    checks = tuple(phase.add(step(
+        label, Run(["pnpm", "run", command], cwd=root),
+        kind=Kind.UNIT_TEST if label == "tests" else Kind.LINT, speed=Speed.FAST,
+    ), after=after) for label, command in (("lint", "lint"), ("types", "check"), ("tests", "test")))
+    built = phase.add(step(
+        "build", Run(["pnpm", "pack", "--pack-destination", str(config.path(settings.build_output))], cwd=root),
+        kind=Kind.PACKAGE, speed=Speed.FAST,
+    ), after=after)
+    generated = phase.add(step(
+        "generate", Run(uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
+                               "--specification", settings.specification, "--typescript-source", settings.source)),
+        kind=Kind.LINT, speed=Speed.FAST,
+    ), after=after)
+    return (*checks, built, generated)

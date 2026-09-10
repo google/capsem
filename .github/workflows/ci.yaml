@@ -302,6 +302,12 @@ jobs:
           uv run --project build_system --frozen capsem-gate lint
           uv run --project build_system --frozen capsem-builder validate-skills skills
 
+      - name: TypeScript SDK tests with coverage
+        working-directory: sdk/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/typescript-sdk.xml
+
       - name: Cross-system Python schema tests with coverage
         run: >-
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir .
@@ -366,6 +372,15 @@ jobs:
             web/app/src/lib/mock-settings.generated.ts
 
       # Upload coverage with flags
+      - name: Upload TypeScript SDK coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: cache/target/coverage/typescript-sdk/lcov.info
+          flags: typescript-sdk
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Upload Python SDK coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -416,7 +431,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/typescript-sdk.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 

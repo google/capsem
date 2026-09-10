@@ -141,6 +141,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # said and each is timed under its own name.
     checked = sourcechecks.fragment(plan, config, after=(syntax,))
     sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
+    typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
     # Importing every test module is a source-shape proof of the same kind, and
     # the Python counterpart of what `rustinventory` does for nextest: a suite
     # that cannot be collected is a suite the gate would otherwise discover it
@@ -190,6 +191,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *audited,
         *checked,
         *sdk_checked,
+        *typescript_checked,
         collected,
         guarded,
         formatted,

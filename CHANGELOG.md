@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript gateway models and runtime validators, with strict package checks,
+  enforced coverage, generation drift checks, and clean package builds.
+
 - Async Python `Hypervisor` and `VM` clients with typed lifecycle results,
   name/id selection, profile resource defaults, and copy/snapshots/stats helpers.
 

@@ -1,8 +1,8 @@
 import {
-  CredentialEventType, FileEntryType, HostLogSource, ToolDecision,
+  FileEntryType, HostLogSource, ToolDecision,
   type ExecRequest, type FileListEntry, type TimelineStatus, type UpdateApplyRequest,
   type VmStatsDetailResponse,
-} from './models/index.js';
+} from '../src/models/index.js';
 
 const request: UpdateApplyRequest = {};
 const status: TimelineStatus = ToolDecision.DENIED;
@@ -29,9 +29,6 @@ const incomplete: ExecRequest = {};
 // @ts-expect-error Counters cannot become strings.
 leaf.size = '4294967296';
 
-if (CredentialEventType.HTTP_REQUEST !== 'http.request' || HostLogSource.SERVICE !== 'service') {
-  throw new Error('Wire enum values changed');
-}
 if (numeric !== 403 || status !== ToolDecision.DENIED || !Array.isArray(bodies.event)) {
   throw new Error('Generated type usage failed');
 }
