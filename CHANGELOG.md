@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Python SDK workspace listings treat `/` as the gateway's workspace root.
+
 - Stopped persistent VM file listings resolve canonical VM IDs consistently
   with other gateway routes; file transfer still requires the running security ledger.
 

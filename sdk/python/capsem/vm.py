@@ -91,7 +91,7 @@ class VM(Client):
         return await api.get_vm_history(self._transport, id=await self._resolve(), limit=limit, offset=offset, search=search, layer=layer)
 
     async def list(self, path: str = "/", *, depth: int | None = None) -> models.FileListResponse:
-        return await api.list_vm_files(self._transport, id=await self._resolve(), path=path, depth=depth)
+        return await api.list_vm_files(self._transport, id=await self._resolve(), path=None if path == "/" else path, depth=depth)
 
     async def changes(self, checkpoint: str, *, limit: int | None = None,
                       offset: int | None = None) -> models.ChangesResponse:

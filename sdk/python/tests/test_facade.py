@@ -59,6 +59,8 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert "layers=exec%2Cmodel" in state.requests[-1][1]
             await vm.timeline()
             assert isinstance(await vm.list("/work", depth=2), models.FileListResponse)
+            await vm.list()
+            assert state.requests[-1][1] == "/vms/vm-0/files/list"
             assert isinstance(await vm.changes("cp-10", limit=3, offset=1), models.ChangesResponse)
             assert isinstance(await vm.stats.summary(), models.VmStatsSummaryResponse)
             assert isinstance(await vm.stats.details(), models.VmStatsDetailResponse)
