@@ -151,6 +151,14 @@ pub struct SandboxInfo {
     pub storage: Option<StorageDiagnostics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_db: Option<SessionDbStatus>,
+    /// Session summaries returned by /info when the ledger is ready.
+    /// Missing summaries are accompanied by session_db readiness/error details.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai: Option<crate::VmAiInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::VmNetworkInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<crate::VmFilesInfo>,
     // -- Telemetry (populated by explicit stats/status aggregation surfaces,
     // omitted from hot lifecycle routes such as /vms/{id}/info) --
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,6 +221,9 @@ impl SandboxInfo {
             size_bytes: None,
             storage: None,
             session_db: None,
+            ai: None,
+            network: None,
+            files: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,

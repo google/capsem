@@ -5,6 +5,8 @@ mod document;
 pub use document::openapi;
 mod hypervisor;
 pub use hypervisor::*;
+mod vm_info;
+pub use vm_info::*;
 mod profile_status;
 pub use profile_status::*;
 

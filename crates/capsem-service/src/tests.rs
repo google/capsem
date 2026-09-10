@@ -623,6 +623,7 @@ mod settings_files;
 mod system_contracts;
 mod transcript;
 mod update_routes;
+mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
 use settings_files::{

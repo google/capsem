@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- VM information includes typed model/MCP usage, network totals, and filesystem
+  activity summaries from the session ledger, with explicit readiness errors.
 - Typed JSON host logs and shared grep, tail, and byte-limit options for host
   and VM logs, including retained serial/process logs after failed boots.
 - The gateway overview includes typed profile readiness and update availability

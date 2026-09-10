@@ -988,6 +988,35 @@
           }
         }
       },
+      "FileActionCount": {
+        "type": "object",
+        "required": [
+          "action",
+          "count"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FileEventAction"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "FileEventAction": {
+        "type": "string",
+        "enum": [
+          "created",
+          "modified",
+          "deleted",
+          "restored",
+          "read",
+          "imported",
+          "exported"
+        ]
+      },
       "FileListEntry": {
         "type": "object",
         "description": "A single entry in a workspace file listing.",
@@ -1217,6 +1246,92 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "McpUsage": {
+        "type": "object",
+        "required": [
+          "tool_name",
+          "call_count",
+          "duration_ms",
+          "bytes_sent",
+          "bytes_received"
+        ],
+        "properties": {
+          "bytes_received": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ModelUsage": {
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "call_count",
+          "input_tokens",
+          "output_tokens",
+          "estimated_cost_usd",
+          "duration_ms"
+        ],
+        "properties": {
+          "call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider identifiers and model names are open namespaces."
           }
         }
       },
@@ -1683,6 +1798,17 @@
           "available_actions"
         ],
         "properties": {
+          "ai": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmAiInfo",
+                "description": "Session summaries returned by /info when the ledger is ready.\nMissing summaries are accompanied by session_db readiness/error details."
+              }
+            ]
+          },
           "allowed_requests": {
             "type": [
               "integer",
@@ -1729,6 +1855,16 @@
               "null"
             ]
           },
+          "files": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmFilesInfo"
+              }
+            ]
+          },
           "forked_from": {
             "type": [
               "string",
@@ -1757,6 +1893,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "network": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmNetworkInfo"
+              }
             ]
           },
           "persistent": {
@@ -2321,6 +2467,86 @@
           "delete"
         ]
       },
+      "VmAiInfo": {
+        "type": "object",
+        "description": "Recorded model and tool activity for this VM's session.",
+        "required": [
+          "model_call_count",
+          "total_input_tokens",
+          "total_thinking_tokens",
+          "total_output_tokens",
+          "total_tool_calls",
+          "total_estimated_cost_usd",
+          "models",
+          "mcp"
+        ],
+        "properties": {
+          "mcp": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpUsage"
+            },
+            "description": "Recorded MCP tool calls, grouped by server and tool identity."
+          },
+          "model_call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Models observed in the session, grouped by provider and model identity."
+          },
+          "total_estimated_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_thinking_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_tool_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmFilesInfo": {
+        "type": "object",
+        "description": "Recorded filesystem activity, not a recursive workspace inventory.",
+        "required": [
+          "total_events",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileActionCount"
+            }
+          },
+          "total_events": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "VmLifecycleState": {
         "type": "string",
         "enum": [
@@ -2330,6 +2556,49 @@
           "Defunct",
           "Incompatible"
         ]
+      },
+      "VmNetworkInfo": {
+        "type": "object",
+        "required": [
+          "total_requests",
+          "allowed_requests",
+          "denied_requests",
+          "errors",
+          "bytes_sent",
+          "bytes_received"
+        ],
+        "properties": {
+          "allowed_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_received": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "denied_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "VmStatsSummaryResponse": {
         "type": "object",

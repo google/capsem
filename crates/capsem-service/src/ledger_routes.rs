@@ -1,4 +1,6 @@
 use super::*;
+mod vm_info;
+pub(super) use vm_info::populate_vm_info;
 
 /// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=tool,exec,...`
 /// -- unified time-ordered event stream for one session. Used by the
@@ -1329,54 +1331,6 @@ pub(super) fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), A
         AppError(status, format!("failed to build profile status cache: {message}"))
     })?;
     Ok(())
-}
-
-pub(super) async fn apply_session_db_status(state: &ServiceState, info: &mut SandboxInfo, session_dir: &StdPath) {
-    let db_path = session_db_path_for_session_dir(session_dir);
-    if !db_path.exists() {
-        info.session_db = Some(api::SessionDbStatus {
-            ready: false,
-            error: Some("session.db absent".to_string()),
-        });
-        info!(
-            vm_id = info.id.as_str(),
-            operation = "session_db_status",
-            db_path = %db_path.display(),
-            ready = false,
-            "session DB absent while building session status"
-        );
-        return;
-    }
-    match open_ready_session_db(state, &info.id, "session status", &db_path).await {
-        Ok(_) => {
-            info.session_db = Some(api::SessionDbStatus {
-                ready: true,
-                error: None,
-            });
-            info!(
-                vm_id = info.id.as_str(),
-                operation = "session_db_status",
-                db_path = %db_path.display(),
-                ready = true,
-                "session DB ready for session status"
-            );
-        }
-        Err(error) => {
-            let message = error.1;
-            info.session_db = Some(api::SessionDbStatus {
-                ready: false,
-                error: Some(message.clone()),
-            });
-            warn!(
-                vm_id = info.id.as_str(),
-                operation = "session_db_status",
-                db_path = %db_path.display(),
-                ready = false,
-                error = %message,
-                "session DB not ready for session status"
-            );
-        }
-    }
 }
 
 pub(super) async fn security_latest_for_vm(

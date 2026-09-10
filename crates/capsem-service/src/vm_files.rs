@@ -1302,7 +1302,7 @@ pub(super) async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
-            apply_session_db_status(&state, &mut info, &dir).await;
+            populate_vm_info(&state, &mut info, &dir).await?;
             info.storage = state
                 .off_worker(move |state| state.storage_diagnostics_cached(&dir))
                 .await?;
@@ -1352,7 +1352,7 @@ pub(super) async fn handle_info(
                     None
                 }
             };
-        apply_session_db_status(&state, &mut info, &entry.session_dir).await;
+        populate_vm_info(&state, &mut info, &entry.session_dir).await?;
         let session_dir = entry.session_dir.clone();
         info.storage = state
             .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
