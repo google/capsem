@@ -1117,15 +1117,15 @@ fn control_loop(
     let mut publications: Option<port_bridge::Bridge> = None;
     loop {
         match recv_host_msg(control_fd) {
-            Ok(HostToGuest::ConnectPort { id, port }) => {
+            Ok(HostToGuest::ConnectPort { flow, port }) => {
                 let result = (|| {
                     if publications.is_none() {
                         publications = Some(port_bridge::Bridge::new()?);
                     }
-                    publications.as_mut().unwrap().connect(id, port)
+                    publications.as_mut().unwrap().connect(flow, port)
                 })();
                 if let Err(error) = result {
-                    tracing::debug!(connection_id = id, %error, "guest publication refused");
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");
                 }
             }
             Ok(HostToGuest::AckReply { id }) => {

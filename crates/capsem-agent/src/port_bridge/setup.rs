@@ -6,7 +6,7 @@ use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-pub(super) fn connect(id: u64, port: u16) -> io::Result<(TcpStream, UnixStream)> {
+pub(super) fn connect(flow: capsem_proto::router::FlowKey, port: u16) -> io::Result<(TcpStream, UnixStream)> {
     let deadline = Instant::now() + Duration::from_secs(3);
     let fd = vsock_io::vsock_connect_with_timeout(
         VSOCK_HOST_CID,
@@ -26,9 +26,7 @@ pub(super) fn connect(id: u64, port: u16) -> io::Result<(TcpStream, UnixStream)>
         )?;
         Ok(tcp)
     });
-    let mut header = [0; 9];
-    header[..8].copy_from_slice(&id.to_be_bytes());
-    header[8] = u8::from(tcp.is_ok());
+    let header = flow.data_header(tcp.is_ok());
     vsock.set_write_timeout(Some(remaining(deadline)?))?;
     vsock.write_all(&header)?;
     Ok((tcp?, vsock))

@@ -33,11 +33,11 @@ impl Bridge {
         })
     }
 
-    pub fn connect(&mut self, id: u64, port: u16) -> io::Result<()> {
-        if id == 0 || port == 0 {
+    pub fn connect(&mut self, flow: capsem_proto::router::FlowKey, port: u16) -> io::Result<()> {
+        if !flow.is_valid() || port == 0 {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
-        self.connect_with(id, move || setup::connect(id, port))
+        self.connect_with(flow.id, move || setup::connect(flow, port))
     }
 
     fn connect_with(

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Published connections carry the VM owner's boot generation so stale streams
+  cannot consume reused request IDs after restart.
 - Container port forwarding uses fixed kernel socket queues, including guest
   VSOCK credit limits, to propagate backpressure from stalled peers.
 - Guest published connections are canceled and joined on control disconnect,

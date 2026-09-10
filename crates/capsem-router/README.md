@@ -32,7 +32,10 @@ of 16. Setup waits count against the eight-second deadline. Cancelling a queued
 request returns its permits and preserves rate credit; pacing owns no refill task.
 
 The parent retains shutdown handles for both endpoints until the child reports
-closure. Guest setup has an eight-second deadline and pair acknowledgement a
+closure. Guest data handshakes include a fresh owner generation as well as the
+request ID. A stale generation is rejected before pending work is consumed,
+so a restarted VM cannot attach an old stream to a reused numeric request ID.
+Guest setup has an eight-second deadline and pair acknowledgement a
 two-second deadline. Control failure shuts down both sides even if the child
 holds duplicate FDs. Cancellation closes partial records and received FDs.
 The sender retains its original descriptors through acknowledgement: on Darwin,

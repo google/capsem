@@ -25,6 +25,7 @@ mod companion;
 mod saved;
 
 pub struct Publisher {
+    generation: u64,
     saved: Option<saved::Mappings>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<VsockConnection>>>>,
     next_id: AtomicU64,
@@ -42,6 +43,8 @@ pub struct Publisher {
 impl Default for Publisher {
     fn default() -> Self {
         Self {
+            // The UUID variant bits make its low half nonzero.
+            generation: uuid::Uuid::new_v4().as_u128() as u64,
             saved: None,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -171,12 +174,14 @@ impl Publisher {
                 let socket = StdUnixStream::from(connection.try_clone_fd()?);
                 socket.set_nonblocking(true)?;
                 let mut stream = UnixStream::from_std(socket)?;
-                let mut header = [0; 9];
+                let mut header = [0; capsem_proto::router::DATA_HEADER_SIZE];
                 tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut header)).await??;
-                let id = u64::from_be_bytes(header[..8].try_into().unwrap());
+                let (flow, connected) =
+                    capsem_proto::router::FlowKey::read_data_header(header).map_err(anyhow::Error::msg)?;
                 let owner = owner.upgrade().context("VM router owner closed")?;
-                if let Some(sender) = owner.pending.lock().unwrap().remove(&id) {
-                    let result = if header[8] == 1 {
+                ensure!(flow.generation == owner.generation, "stale guest data generation");
+                if let Some(sender) = owner.pending.lock().unwrap().remove(&flow.id) {
+                    let result = if connected {
                         Ok(connection)
                     } else {
                         Err(anyhow::anyhow!("guest refused container TCP connection"))

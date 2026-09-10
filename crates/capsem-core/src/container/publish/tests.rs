@@ -3,6 +3,50 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+#[tokio::test]
+async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
+    let owner = Arc::new(Publisher::default());
+    let (pending, receiver) = owner.request().unwrap();
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    let mut header = [0; 17];
+    header[..8].copy_from_slice(&pending.id.to_be_bytes());
+    header[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    header[16] = 1;
+    peer.write_all(&header).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), peer.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert!(
+        owner.pending.lock().unwrap().contains_key(&pending.id),
+        "a stale boot consumed a current request with the same numeric ID"
+    );
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    let flow = capsem_proto::router::FlowKey {
+        generation: owner.generation,
+        id: pending.id,
+    };
+    peer.write_all(&flow.data_header(true)).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    let accepted = tokio::time::timeout(Duration::from_secs(1), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(owner.pending.lock().unwrap().is_empty());
+    drop(accepted);
+    drop(pending);
+    owner.shutdown().await;
+}
+
 async fn serve_fixture(
     owner: Arc<Publisher>,
     guest_port: u16,
@@ -129,21 +173,19 @@ async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
         CancellationToken::new(),
     ));
     let _first = tokio::net::TcpStream::connect(address).await.unwrap();
-    let ServiceToProcess::ConnectPort { id: first, .. } = requests.recv().await.unwrap() else {
+    let ServiceToProcess::ConnectPort { flow: first, .. } = requests.recv().await.unwrap() else {
         panic!("missing first setup");
     };
     let _second = tokio::net::TcpStream::connect(address).await.unwrap();
-    let ServiceToProcess::ConnectPort { id: second, .. } = requests.recv().await.unwrap() else {
+    let ServiceToProcess::ConnectPort { flow: second, .. } = requests.recv().await.unwrap() else {
         panic!("missing second setup");
     };
     let mut peers = Vec::new();
-    for (expected_grant, request_id) in [(1, second), (2, first)] {
+    for (expected_grant, flow) in [(1, second), (2, first)] {
         let (connection, peer) = StdUnixStream::pair().unwrap();
         peer.set_nonblocking(true).unwrap();
         let mut peer = UnixStream::from_std(peer).unwrap();
-        let mut header = [0; 9];
-        header[..8].copy_from_slice(&request_id.to_be_bytes());
-        header[8] = 1;
+        let header = flow.data_header(true);
         peer.write_all(&header).await.unwrap();
         owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
         let frame = receiver.recv().await.unwrap();
@@ -184,19 +226,17 @@ async fn missing_pair_ack_shuts_down_retained_descriptors() {
         CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-    let ServiceToProcess::ConnectPort { id, .. } = requests.recv().await.unwrap() else {
+    let ServiceToProcess::ConnectPort { flow, .. } = requests.recv().await.unwrap() else {
         panic!("missing guest setup");
     };
     let (connection, peer) = StdUnixStream::pair().unwrap();
     peer.set_nonblocking(true).unwrap();
     let mut peer = UnixStream::from_std(peer).unwrap();
-    let mut header = [0; 9];
-    header[..8].copy_from_slice(&id.to_be_bytes());
-    header[8] = 1;
+    let header = flow.data_header(true);
     peer.write_all(&header).await.unwrap();
     owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
     let granted = Grant::decode(receiver.recv().await.unwrap()).unwrap();
-    assert!(matches!(granted, Grant::Connected { id: granted_id, .. } if granted_id == id));
+    assert!(matches!(granted, Grant::Connected { id: 1, .. }));
     assert!(tokio::time::timeout(Duration::from_secs(4), broker)
         .await
         .unwrap()

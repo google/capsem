@@ -56,7 +56,11 @@ fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
     assert!(bridge.tasks.is_empty());
     assert_eq!(bridge.connections.available_permits(), 64);
     assert_eq!(bridge.setups.available_permits(), 8);
-    assert_eq!(bridge.connect(2, 6379).unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    let flow = capsem_proto::router::FlowKey { generation: 1, id: 2 };
+    assert_eq!(
+        bridge.connect(flow, 6379).unwrap_err().kind(),
+        io::ErrorKind::BrokenPipe
+    );
 }
 
 #[test]
@@ -83,7 +87,9 @@ fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_pe
         started.recv_timeout(Duration::from_millis(30)),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout)
     ));
-    assert!(bridge.connect(65, 6379).is_err());
+    assert!(bridge
+        .connect(capsem_proto::router::FlowKey { generation: 1, id: 65 }, 6379)
+        .is_err());
     bridge.stop.send_replace(true);
     for release in releases {
         // Queued setup closures may already be dropped by cancellation.

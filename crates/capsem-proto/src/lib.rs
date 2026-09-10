@@ -47,7 +47,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Version 2 adds router flow keys tied to the owner generation.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -429,7 +430,7 @@ pub enum HostToGuest {
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
     /// Connect to loopback in the active container's network namespace.
-    ConnectPort { id: u64, port: u16 },
+    ConnectPort { flow: router::FlowKey, port: u16 },
 }
 
 /// A single boot timing measurement from the guest init script.

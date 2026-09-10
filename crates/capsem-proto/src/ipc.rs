@@ -79,7 +79,7 @@ pub enum ServiceToProcess {
     /// Publish one loopback host TCP port into this VM's container namespace.
     PublishPort { id: u64, host_port: u16, guest_port: u16 },
     /// Internal VM-owner request for one declared publication data stream.
-    ConnectPort { id: u64, port: u16 },
+    ConnectPort { flow: crate::router::FlowKey, port: u16 },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.

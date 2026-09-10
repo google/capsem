@@ -55,6 +55,7 @@ pub(super) async fn serve(
                     let source = source.into_std()?;
                     let (pending, receiver) = owner.request()?;
                     let id = pending.id;
+                    let flow = capsem_proto::router::FlowKey { generation: owner.generation, id };
                     let control = control.clone();
                     let slots = owner.setups.clone();
                     let rate = owner.setup_rate.clone();
@@ -63,7 +64,7 @@ pub(super) async fn serve(
                         let result = tokio::time::timeout(Duration::from_secs(8), async {
                             let _setup = slots.acquire_owned().await.context("guest setup admission closed")?;
                             rate.acquire().await;
-                            control.send(ServiceToProcess::ConnectPort { id, port: guest_port }).await
+                            control.send(ServiceToProcess::ConnectPort { flow, port: guest_port }).await
                                 .context("guest control closed")?;
                             receiver.await.context("guest connection cancelled")?
                         }).await.context("guest connection timed out").and_then(|result| result);
