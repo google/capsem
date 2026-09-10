@@ -3,6 +3,29 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+async fn serve_fixture(
+    owner: Arc<Publisher>,
+    guest_port: u16,
+    listener: TcpListener,
+    control: mpsc::Sender<ServiceToProcess>,
+    sender: capsem_foundation::unix::router_channel::Sender,
+    events: UnixStream,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    let router = Arc::new(companion::Router::new(0, sender, CancellationToken::new()));
+    let monitor = router.clone();
+    let mut readers = tokio::task::JoinSet::new();
+    readers.spawn(async move {
+        let result = monitor.read_events(events).await;
+        monitor.closed.cancel();
+        result
+    });
+    let result = broker::serve(owner, guest_port, listener, control, router.clone(), cancellation).await;
+    router.closed.cancel();
+    let events = readers.join_next().await.unwrap().unwrap();
+    result.and(events)
+}
+
 #[tokio::test]
 async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
     let owner = Arc::new(Publisher::default());
@@ -43,7 +66,7 @@ async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
-    let broker = tokio::spawn(broker::serve(
+    let broker = tokio::spawn(serve_fixture(
         owner.clone(),
         6379,
         listener,
@@ -98,7 +121,7 @@ async fn missing_pair_ack_shuts_down_retained_descriptors() {
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
-    let broker = tokio::spawn(broker::serve(
+    let broker = tokio::spawn(serve_fixture(
         owner.clone(),
         6379,
         listener,
@@ -142,7 +165,7 @@ async fn compromised_router_cannot_request_destination_connections() {
     let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let broker = tokio::spawn(broker::serve(
+    let broker = tokio::spawn(serve_fixture(
         owner.clone(),
         6379,
         listener,
@@ -174,7 +197,7 @@ async fn malformed_child_record_cannot_allocate_or_dial() {
     let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let broker = tokio::spawn(broker::serve(
+    let broker = tokio::spawn(serve_fixture(
         owner,
         6379,
         listener,
@@ -202,7 +225,7 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
-    let broker = tokio::spawn(broker::serve(
+    let broker = tokio::spawn(serve_fixture(
         owner.clone(),
         6379,
         listener,

@@ -116,6 +116,12 @@ def test_redis_host_tcp_concurrent_roundtrips(redis):
         list(executor.map(client, range(64)))
 
 
+def test_all_published_ports_share_one_confined_router(redis):
+    assert len(set(redis["router_pids"])) == 1, (
+        "A VM must share one confined router across its published ports"
+    )
+
+
 def test_binary_values_and_guest_namespace_isolation(redis, service):
     value = bytes(range(256)) * 16
     with (

@@ -21,8 +21,9 @@ seccomp on Linux before reporting readiness. It closes unrelated inherited
 descriptors, receives a cleared environment, and exits when its parent dies.
 It receives no virtualization entitlement. Two Tokio workers relay at most
 64 expose and 64 private connections per companion, without borrowing between
-classes. Published mappings currently each own a child; private routing is not
-yet connected to the VM broker.
+classes. Published mappings share one VM-owned child; private routing is not
+yet connected to the VM broker. Core serializes grants across all mappings and
+dispatches bounded acknowledgements to the broker retaining each endpoint pair.
 
 The parent retains shutdown handles for both endpoints until the child reports
 closure. Guest setup has an eight-second deadline and pair acknowledgement a
@@ -35,6 +36,9 @@ write renews a 60-second stall deadline; no deadline applies to quiet reads. Aft
 one direction drains and sends FIN, the reverse direction has 60 seconds to
 finish. Host and guest reuse the same bounded copier. Its tasks and
 control reader belong to JoinSets and are cancelled and joined on control failure.
+Publication removal cancels its broker and aborts its flows; late acknowledgements
+are discarded until Closed without interrupting other publications. VM shutdown
+joins the brokers, guest handshake readers, and child monitor before log draining.
 
 ## Networking extension boundary
 

@@ -20,6 +20,7 @@ use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 mod broker;
+mod companion;
 mod saved;
 
 pub struct Publisher {
@@ -31,6 +32,7 @@ pub struct Publisher {
     tasks: Mutex<tokio::task::JoinSet<()>>,
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
+    router: tokio::sync::Mutex<Option<Arc<companion::Router>>>,
 }
 
 impl Default for Publisher {
@@ -44,6 +46,7 @@ impl Default for Publisher {
             tasks: Mutex::new(tokio::task::JoinSet::new()),
             cancellation: CancellationToken::new(),
             drain: tokio::sync::Mutex::new(()),
+            router: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -111,6 +114,7 @@ impl Publisher {
         guest_port: u16,
         control: mpsc::Sender<ServiceToProcess>,
     ) -> Result<Publication> {
+        let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
         ensure!(guest_port != 0, "guest port must be nonzero");
         let permit = self
@@ -123,56 +127,23 @@ impl Publisher {
         let host_port = listener.local_addr()?.port();
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
-        let binary = std::env::current_exe()?.with_file_name("capsem-router");
-        let (parent, child_socket) = StdUnixStream::pair()?;
-        let mut child = tokio::process::Command::new(binary)
-            .args(["--parent-pid", &std::process::id().to_string()])
-            .env_clear()
-            .current_dir("/")
-            .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_socket)))
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .context("start confined port router")?;
-        let router_pid = child.id().context("router exited during startup")?;
-        parent.set_nonblocking(true)?;
-        let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone()?)?;
-        let mut events = UnixStream::from_std(parent)?;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            send_grant(&sender, Grant::Hello).await?;
-            match Event::read(&mut events).await.context("read router startup response")? {
-                Event::Ready => {}
-                Event::ConfinementFailed => anyhow::bail!("port router could not install its sandbox"),
-                _ => anyhow::bail!("router did not confirm confinement"),
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .context("router startup timed out")??;
+        let mut current = self.router.lock().await;
+        if current.as_ref().is_none_or(|router| router.closed.is_cancelled()) {
+            *current = Some(companion::start(self).await?);
+        }
+        let router = current.as_ref().unwrap().clone();
+        drop(current);
+        let router_pid = router.pid;
         let owner = self.clone();
         let cancellation = self.cancellation.child_token();
         let stop = cancellation.clone();
         let task = self.spawn(async move {
             let _permit = permit;
-            let broker = broker::serve(owner, guest_port, listener, control, sender, events, stop.clone());
-            tokio::pin!(broker);
-            tokio::select! {
-                result = &mut broker => {
-                    if let Err(error) = result { tracing::warn!(%error, host_port, "publication router disconnected"); }
-                }
-                status = child.wait() => {
-                    tracing::info!(?status, host_port, "publication router exited");
-                    stop.cancel();
-                    if let Err(error) = broker.await { tracing::debug!(%error, host_port, "publication cleanup after router exit"); }
-                }
-            }
-            match child.try_wait() {
-                Ok(Some(_)) => {}
-                Ok(None) => if let Err(error) = child.kill().await { tracing::error!(%error, "router termination failed"); },
-                Err(error) => tracing::error!(%error, "router exit status unavailable"),
+            if let Err(error) = broker::serve(owner, guest_port, listener, control, router, stop).await {
+                tracing::warn!(%error, host_port, "publication broker ended");
             }
         })?;
+        drop(lifecycle);
         Ok(Publication {
             host_port,
             router_pid,
