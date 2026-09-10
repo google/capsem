@@ -235,8 +235,10 @@ def test_shell_run_still_uses_existing_command_path(service):
         timeout=45,
         check=False,
     )
-    # The existing guest exec transport combines the child's two streams.
+    # The existing guest exec transport combines independent stdout/stderr
+    # pipes. Each short write must survive, but their relative arrival order
+    # is not guaranteed. Keep exact bytes, exit status, and cleanup assertions.
     assert result.returncode == 3, result.stderr
-    assert result.stdout == b"shell-proofshell-error"
+    assert result.stdout in (b"shell-proofshell-error", b"shell-errorshell-proof")
     assert result.stderr == b""
     assert service.client().get("/vms/list")["sandboxes"] == []
