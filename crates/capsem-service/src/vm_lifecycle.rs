@@ -263,7 +263,7 @@ pub(super) async fn shutdown_vm_process(
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
     // Teardown must not overlap save/restore, but independent cold starts may.
-    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
 
     // Serialize teardown: VZ, WAL checkpoint, and socket cleanup contend; a
@@ -356,7 +356,7 @@ pub(super) async fn handle_suspend(
 ) -> Result<Json<api::VmActionResponse>, AppError> {
     // Apple VZ can corrupt a sibling VirtioFS overlay when save/restore calls
     // overlap. Hold the service-wide lock until exit and checkpoint durability.
-    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_guard = state.lifecycle.vz.write().await;
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
@@ -836,7 +836,7 @@ pub(super) async fn handle_run(
     let version = state.current_version.clone();
     let env = payload.env.clone();
     {
-        let _vz_guard = state.save_restore_lock.read().await;
+        let _vz_guard = state.lifecycle.vz.read().await;
         let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
         let provision_result = tokio::task::spawn_blocking(move || {
             state_clone.provision_sandbox(ProvisionOptions {

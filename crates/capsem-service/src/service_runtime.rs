@@ -273,7 +273,7 @@ pub(super) async fn run_service() -> Result<()> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),

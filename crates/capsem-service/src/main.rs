@@ -314,12 +314,12 @@ struct ServiceState {
     /// One-entry hot evaluate cache for repeated probes with the same exact
     /// body. Checked before allocating the multi-entry cache key.
     evaluate_last_response_cache: Mutex<Option<CachedEvaluateResponse>>,
-    /// Guards Apple VZ lifecycle edges across all VMs managed by this
-    /// service. Cold starts and teardown take a read guard; save/restore take
-    /// a write guard. That keeps checkpoint edges exclusive without
-    /// serializing independent cold boots and breaking the boot latency gate.
+    /// Coordinates launch admission and Apple VZ lifecycle edges. Cold starts
+    /// and teardown take a VZ read guard; save/restore take a write guard.
+    /// Blocking launch workers also retain admission through registration,
+    /// excluding restart without serializing independent cold boots.
     /// See web/docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
-    save_restore_lock: tokio::sync::RwLock<()>,
+    lifecycle: capsem_service::lifecycle::VmLifecycle,
     /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
     /// across all VMs managed by this service. N concurrent shutdowns starve
     /// each other of the resources each capsem-process needs to (a) let VZ
@@ -328,7 +328,7 @@ struct ServiceState {
     /// single teardown can exceed `wait_for_process_exit`'s 1s fast-path
     /// budget -- at which point the service SIGKILLs capsem-process mid-
     /// checkpoint, leaving a non-empty WAL and (in the worst case) orphaned
-    /// sockets. Same serialization pattern as `save_restore_lock`: one
+    /// sockets. Same serialization pattern as `lifecycle.vz`: one
     /// critical-section operation in flight at a time, in-process only,
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.

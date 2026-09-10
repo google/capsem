@@ -22,6 +22,43 @@ fn provision_persistent_validates_name() {
         err.contains("must start with") || err.contains("must contain only"),
         "expected name validation error, got: {err}"
     );
+    state
+        .lifecycle
+        .begin_restart(|| !state.instances.lock().unwrap().is_empty())
+        .unwrap();
+}
+
+#[test]
+fn accepted_restart_refuses_both_launch_paths_before_any_session_mutation() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    state
+        .lifecycle
+        .begin_restart(|| !state.instances.lock().unwrap().is_empty())
+        .unwrap();
+    let provision = state.provision_sandbox(ProvisionOptions {
+        id: "never-started",
+        name: "never-started",
+        profile_id: "code".into(),
+        ram_mb: 2048,
+        cpus: 2,
+        scratch_disk_size_gb: 16,
+        version_override: None,
+        persistent: true,
+        env: None,
+        from: None,
+        description: None,
+    });
+    let resume = state.resume_sandbox("never-started", None, None);
+    for error in [provision.unwrap_err(), resume.unwrap_err()] {
+        assert_eq!(
+            error.downcast_ref::<capsem_service::lifecycle::RestartDenied>(),
+            Some(&capsem_service::lifecycle::RestartDenied::AlreadyRequested),
+        );
+    }
+    assert!(state.instances.lock().unwrap().is_empty());
+    assert!(!state.persistent_registry.lock().unwrap().contains("never-started"));
+    assert!(!state.run_dir.join("persistent/never-started").exists());
+    assert!(!state.run_dir.join("sessions/never-started").exists());
 }
 
 #[test]
@@ -126,7 +163,7 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
     let uds_path = state.instance_socket_path(&id).unwrap();
     std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
 
-    let resume = state.save_restore_lock.write().await;
+    let resume = state.lifecycle.vz.write().await;
     let child = tokio::process::Command::new("sh")
         .args(["-c", "exit 0"])
         .spawn()
@@ -191,7 +228,7 @@ async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
     let session_dir = state.run_dir.join("persistent").join(id);
     std::fs::create_dir_all(&session_dir).unwrap();
     let uds_path = state.instance_socket_path(id).unwrap();
-    let resume = state.save_restore_lock.write().await;
+    let resume = state.lifecycle.vz.write().await;
     let child = tokio::process::Command::new("sh")
         .args(["-c", "exit 3"])
         .spawn()

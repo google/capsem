@@ -2,6 +2,7 @@ use super::*;
 
 impl ServiceState {
     pub(crate) fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
+        let _launch = self.lifecycle.admit()?;
         let ProvisionOptions {
             id,
             name,

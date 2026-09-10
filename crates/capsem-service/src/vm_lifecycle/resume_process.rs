@@ -9,6 +9,7 @@ impl ServiceState {
         ram_mb_override: Option<u64>,
         cpus_override: Option<u32>,
     ) -> Result<String> {
+        let _launch = self.lifecycle.admit()?;
         self.cleanup_stale_instances();
         self.reconcile_persistent_defunct_from_logs();
 

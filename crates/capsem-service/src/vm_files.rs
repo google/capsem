@@ -1013,7 +1013,7 @@ pub(super) async fn provision_attempt(
     // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
     // starts take the shared rail so independent boots can overlap, but they
     // still wait behind any in-flight save/restore checkpoint edge.
-    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
         Ok(guard) => guard,
         Err(e) => {

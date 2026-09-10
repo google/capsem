@@ -50,7 +50,7 @@ pub(super) fn spawn_exit_reaper(
         // Publish the exit before waiting: restore holds the write guard
         // while readiness polls this registry to detect a crashed child.
         // Filesystem/DB cleanup must not overlap the replacement's launch.
-        let _lifecycle_guard = state.save_restore_lock.read().await;
+        let _lifecycle_guard = state.lifecycle.vz.read().await;
         if state.instances.lock().unwrap().contains_key(&id) {
             tracing::debug!(
                 id,
