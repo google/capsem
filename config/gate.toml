@@ -1040,13 +1040,15 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging"]
-suffixes = [".py", ".sh"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript"]
+suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
 # Only Git-tracked files in the first-party roots above are considered. That
-# excludes build-generated output and vendored dependency trees by rule while
-# still catching suffix-less package scripts through their shebang.
+# excludes untracked build output and vendored dependency trees by rule while
+# still catching suffix-less package scripts through their shebang. Checked-in
+# SDK generation is maintained source and has the same ceiling as hand-written
+# Python/TypeScript; generated files do not receive oversized-debt entries.
 # Rust, at a ceiling read from its own distribution rather than borrowed from
 # Python. Rust's median tracked file is 232 lines and p90 is 1265; a 300-line
 # ceiling would flag 169 of 388 files, which is a rewrite mandate rather than
@@ -1055,14 +1057,13 @@ max_lines = 300
 #
 # The entire workspace is covered. Every file above the ceiling is exact debt:
 # it may shrink, but any growth or stale entry fails. New crates enter this
-# boundary automatically because the root is `crates`, so a workspace split
-# cannot silently create an unguarded source tree.
+# boundary under `crates` and `sdk/rust`, including checked-in generation.
 #
 # The exact debt ratchets every outlier below its present line count. The hard
 # limit separately records the completed workspace-wide milestone, so nobody
 # can make a larger file fit by merely raising or adding a debt entry.
 [boundary.rust]
-roots = ["crates"]
+roots = ["crates", "sdk/rust"]
 suffixes = [".rs"]
 max_lines = 1000
 must_stay_below_lines = 3000

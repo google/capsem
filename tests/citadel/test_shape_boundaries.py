@@ -185,10 +185,10 @@ def test_only_tracked_first_party_files_enter_the_inventory(family: str) -> None
 
 
 def test_only_tracked_first_party_programs_are_measured(tmp_path: Path) -> None:
-    """Untracked, generated and vendored files stay out, by rule.
+    """Untracked output and files outside first-party roots stay out, by rule.
 
     `git ls-files` decides, not a glob: a generated file that happens to sit in
-    `scripts/` is not first-party source, and a pattern-based rule would have
+    `scripts/` is untracked output, and a pattern-based rule would have
     to keep chasing new output paths.
 
     A suffix-less file with a shebang is still a program and is counted, so the
