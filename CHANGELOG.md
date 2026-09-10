@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust `Hypervisor` and `VM` clients with shared HTTP connections, canonical name
+  resolution, profile defaults, and typed lifecycle/copy/snapshots/stats helpers.
+
 - Generated Rust SDK operations for the gateway OpenAPI contract, with shared typed
   responses, enum parameters, binary transfers, and enforced generation drift checks.
 

@@ -1,9 +1,7 @@
 use super::*;
 use crate::transport::CallOptions;
 
-#[path = "fixture.rs"]
-mod fixture;
-use fixture::Case;
+use crate::test_contract::Case;
 
 macro_rules! operation {
     ($name:ident, $id:literal $(, $params:ty)?) => {

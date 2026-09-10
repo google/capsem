@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 use crate::test_gateway::Server;
 
 static CONTRACT: LazyLock<Value> =
-    LazyLock::new(|| serde_json::from_str(include_str!("../../../specification/openapi.json")).unwrap());
+    LazyLock::new(|| serde_json::from_str(include_str!("../../specification/openapi.json")).unwrap());
 
 fn sample(schema: &Value, full: bool) -> Value {
     if let Some(reference) = schema["$ref"].as_str() {

@@ -1,6 +1,8 @@
 /// Errors retain HTTP status and response bytes without exposing credentials.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("expected one VM named {name:?}, found {matches}")]
+    VmLookup { name: String, matches: usize },
     #[error("invalid SDK input: {0}")]
     InvalidInput(&'static str),
     #[error("gateway request failed: {0}")]
