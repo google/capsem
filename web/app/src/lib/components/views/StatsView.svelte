@@ -169,16 +169,16 @@
         api.getVmDetectionLatest(vmId, 200),
         api.getVmEnforcementLatest(vmId, 200),
       ]);
-      modelStats = detailRows.model_stats as Row[];
-      modelRows = detailRows.model_events as Row[];
-      toolRows = detailRows.tool_events as Row[];
-      httpRows = detailRows.http_events as Row[];
-      dnsRows = detailRows.dns_events as Row[];
-      fileRows = detailRows.file_events as Row[];
-      processRows = detailRows.process_events as Row[];
-      auditRows = detailRows.audit_events as Row[];
-      substitutionRows = detailRows.credential_events as Row[];
-      bodyBlobs = detailRows.body_blobs as Record<string, Row[]>;
+      modelStats = detailRows.model_stats;
+      modelRows = detailRows.model_events;
+      toolRows = detailRows.tool_events;
+      httpRows = detailRows.http_events;
+      dnsRows = detailRows.dns_events;
+      fileRows = detailRows.file_events;
+      processRows = detailRows.process_events;
+      auditRows = detailRows.audit_events;
+      substitutionRows = detailRows.credential_events;
+      bodyBlobs = detailRows.body_blobs;
       securityLatest = secLatest;
       securityStatus = secStatus;
       detectionLatest = detLatest;

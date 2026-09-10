@@ -30,7 +30,7 @@ impl Drop for EnvGuard {
     }
 }
 
-fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
+pub(crate) fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test".into(),
         uds_path: uds_path.into(),

@@ -311,8 +311,15 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: web/app/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/app/pnpm-lock.yaml
+            sdk/typescript/pnpm-lock.yaml
       - run: cd web/app && pnpm install --frozen-lockfile
+      - name: Build TypeScript SDK for frontend consumers
+        working-directory: sdk/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Build frontend
         run: bash build_system/scripts/web/check-web-surface.sh frontend-build

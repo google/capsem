@@ -156,6 +156,15 @@ async fn history_routes_read_history_ledger_from_session_db() {
     .await;
     assert_eq!(status, StatusCode::OK, "{history}");
     assert_eq!(history["total"], 2);
+    let typed: api::HistoryResponse = serde_json::from_value(history.clone()).unwrap();
+    assert!(typed
+        .commands
+        .iter()
+        .any(|entry| matches!(entry.details, api::HistoryDetails::Exec(_))));
+    assert!(typed
+        .commands
+        .iter()
+        .any(|entry| matches!(entry.details, api::HistoryDetails::Audit(_))));
     let commands = history["commands"].as_array().unwrap();
     assert_eq!(commands.len(), 2, "{history}");
     assert!(commands.iter().any(|entry| entry["layer"] == "exec"
@@ -164,6 +173,32 @@ async fn history_routes_read_history_ledger_from_session_db() {
     assert!(commands.iter().any(|entry| entry["layer"] == "audit"
         && entry["command"].as_str().unwrap().contains(marker)
         && entry["details"]["exe"] == "/usr/bin/bash"));
+
+    for (query, total, length, has_more) in [
+        ("layer=exec&limit=1", 1, 1, false),
+        ("layer=all&limit=1", 2, 1, true),
+        ("layer=audit&offset=18446744073709551615", 1, 0, false),
+    ] {
+        let (status, body) = route_request(
+            app.clone(),
+            axum::http::Method::GET,
+            &format!("/vms/history-vm/history?{query}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["total"], total);
+        assert_eq!(body["commands"].as_array().unwrap().len(), length);
+        assert_eq!(body["has_more"], has_more);
+    }
+    let (status, _) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/history-vm/history?layer=net",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let (status, processes) =
         route_request(app, axum::http::Method::GET, "/vms/history-vm/history/processes", None).await;
@@ -325,31 +360,21 @@ async fn timeline_route_reads_timeline_ledger_from_session_db() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{timeline}");
-    assert_eq!(
-        timeline["columns"],
-        json!([
-            "timestamp",
-            "layer",
-            "ref",
-            "summary",
-            "status",
-            "duration_ms",
-            "trace_id"
-        ])
-    );
-    let rows = timeline["rows"].as_array().unwrap();
-    assert!(rows.iter().any(|row| row[1] == "exec"
-        && row[2] == 77
-        && row[3] == "echo timeline-marker"
-        && row[4] == 0
-        && row[5] == 11
-        && row[6] == "trace-timeline"));
-    assert!(rows.iter().any(|row| row[1] == "net"
-        && row[2] == 1
-        && row[3] == "POST 127.0.0.1/echo"
-        && row[4] == 200
-        && row[5] == 9
-        && row[6] == "trace-timeline"));
+    let typed: capsem_api::TimelineResponse = serde_json::from_value(timeline.clone()).unwrap();
+    assert!(!typed.events.is_empty());
+    let rows = timeline["events"].as_array().unwrap();
+    assert!(rows.iter().any(|row| row["layer"] == "exec"
+        && row["ref"] == 77
+        && row["summary"] == "echo timeline-marker"
+        && row["status"] == 0
+        && row["duration_ms"] == 11
+        && row["trace_id"] == "trace-timeline"));
+    assert!(rows.iter().any(|row| row["layer"] == "net"
+        && row["ref"] == 1
+        && row["summary"] == "POST 127.0.0.1/echo"
+        && row["status"] == 200
+        && row["duration_ms"] == 9
+        && row["trace_id"] == "trace-timeline"));
 }
 
 #[tokio::test]
@@ -759,24 +784,25 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{timeline}");
-    let rows = timeline["rows"].as_array().unwrap();
+    let rows = timeline["events"].as_array().unwrap();
     assert!(
-        rows.iter().any(|row| row[1] == "exec" && row[3] == "echo winterfell"),
+        rows.iter()
+            .any(|row| row["layer"] == "exec" && row["summary"] == "echo winterfell"),
         "{timeline}"
     );
     assert!(
         rows.iter()
-            .any(|row| row[1] == "net" && row[3] == "POST mock.capsem.test/v1/responses"),
+            .any(|row| row["layer"] == "net" && row["summary"] == "POST mock.capsem.test/v1/responses"),
         "{timeline}"
     );
     assert!(
         rows.iter()
-            .any(|row| row[1] == "model" && row[3] == "openai/gpt-5-nano"),
+            .any(|row| row["layer"] == "model" && row["summary"] == "openai/gpt-5-nano"),
         "{timeline}"
     );
     assert!(
-        rows.iter().any(|row| row[1] == "tool"
-            && row[3]
+        rows.iter().any(|row| row["layer"] == "tool"
+            && row["summary"]
                 .as_str()
                 .is_some_and(|summary| summary.contains("Write") && summary.contains("tool-winterfell"))),
         "{timeline}"

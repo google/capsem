@@ -1,3 +1,4 @@
+import { profile, updateStatusFixture } from './sdk-catalog-fixtures';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock fetch globally before importing api.
@@ -38,22 +39,12 @@ vi.stubGlobal('WebSocket', MockWebSocket);
 // Import after mocks are in place.
 const api = await import('../api');
 
-function jsonResponse(body: unknown, status = 200) {
-  return Promise.resolve({
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body),
-    text: () => Promise.resolve(JSON.stringify(body)),
-  });
+function jsonResponse(body: unknown, status = 200): Promise<Response> {
+  return Promise.resolve(new Response(JSON.stringify(body), { status }));
 }
 
-function textResponse(text: string, status = 200) {
-  return Promise.resolve({
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(JSON.parse(text)),
-    text: () => Promise.resolve(text),
-  });
+function textResponse(text: string, status = 200): Promise<Response> {
+  return Promise.resolve(new Response(text, { status }));
 }
 
 describe('api', () => {
@@ -84,7 +75,7 @@ describe('api', () => {
       expect(result.reason).toBe('ok');
       expect(api.isConnected()).toBe(true);
       expect(mockFetch.mock.calls[2][0]).toContain('/status');
-      expect(mockFetch.mock.calls[2][1].headers.Authorization).toBe('Bearer tok123');
+      expect(new Headers(mockFetch.mock.calls[2][1].headers).get('Authorization')).toBe('Bearer tok123');
     });
 
     it('returns connected=false when gateway is reachable but service status is unavailable', async () => {
@@ -222,6 +213,7 @@ describe('api', () => {
 
       mockFetch.mockReturnValueOnce(jsonResponse({
         id: 'session 1',
+        profile_id: 'code',
         name: 'Demo',
         pid: 123,
         status: 'Running',
@@ -245,122 +237,6 @@ describe('api', () => {
     });
   });
 
-  // ---- VM lifecycle ----
-
-  describe('VM lifecycle', () => {
-    beforeEach(async () => {
-      // Connect first.
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
-        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
-      await api.init();
-    });
-
-    it('provisionVm sends POST /vms/create', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-1' }));
-      const result = await api.provisionVm({
-        profile_id: 'code',
-        name: 'code-dev',
-        ram_mb: 2048,
-        cpus: 2,
-        persistent: true,
-      });
-      expect(result.id).toBe('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/create');
-      expect(call[1].method).toBe('POST');
-      expect(JSON.parse(call[1].body).profile_id).toBe('code');
-    });
-
-    it('provisionVm accepts profile-owned resource defaults', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ id: 'code-1' }));
-      const result = await api.provisionVm({
-        profile_id: 'code',
-        persistent: true,
-      });
-
-      expect(result.id).toBe('code-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body).toEqual({
-        profile_id: 'code',
-        persistent: true,
-      });
-      expect(body).not.toHaveProperty('ram_mb');
-      expect(body).not.toHaveProperty('cpus');
-    });
-
-    it('refreshes a rotated gateway token and retries VM creation once', async () => {
-      mockFetch
-        .mockReturnValueOnce(textResponse('{"error":"unauthorized"}', 401))
-        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
-        .mockReturnValueOnce(jsonResponse({ id: 'vm-fresh' }));
-
-      const result = await api.provisionVm({
-        profile_id: 'code',
-        name: 'code-dev',
-        ram_mb: 2048,
-        cpus: 2,
-        persistent: true,
-      });
-
-      expect(result.id).toBe('vm-fresh');
-      const createCalls = mockFetch.mock.calls.filter(call => String(call[0]).includes('/vms/create'));
-      expect(createCalls).toHaveLength(2);
-      expect(createCalls[0][1].headers.Authorization).toBe('Bearer tok');
-      expect(createCalls[1][1].headers.Authorization).toBe('Bearer fresh-token');
-      expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
-    });
-
-    it('runVm sends POST /run', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-2' }));
-      const result = await api.runVm({
-        profile_id: 'code',
-        ram_mb: 4096,
-        cpus: 4,
-        persistent: true,
-      });
-      expect(result.id).toBe('vm-2');
-    });
-
-    it('stopVm sends POST /vms/{id}/stop', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.stopVm('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/stop');
-    });
-
-    it('deleteVm sends DELETE /vms/{id}/delete', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.deleteVm('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/delete');
-      expect(call[1].method).toBe('DELETE');
-    });
-
-    it('suspendVm sends POST', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.suspendVm('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/pause');
-    });
-
-    it('resumeVm sends POST', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.resumeVm('11111111-1111-4111-8111-111111111111');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/11111111-1111-4111-8111-111111111111/resume');
-    });
-
-    it('forkVm sends POST with body', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ name: 'fork-1', size_bytes: 1024 }));
-      const result = await api.forkVm('vm-1', { name: 'fork-1' });
-      expect(result.name).toBe('fork-1');
-      expect(result.size_bytes).toBe(1024);
-    });
-  });
-
   // ---- VM inspection ----
 
   describe('VM inspection', () => {
@@ -381,27 +257,10 @@ describe('api', () => {
       expect(result.exit_code).toBe(0);
     });
 
-    it('readFile sends POST /vms/{id}/files/read', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ content: 'file contents' }));
-      const result = await api.readFile('vm-1', '/etc/hosts');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/files/read');
-      expect(result.content).toBe('file contents');
-    });
-
-    it('writeFile sends POST /vms/{id}/files/write', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.writeFile('vm-1', '/tmp/test', 'data');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/files/write');
-      const body = JSON.parse(call[1].body);
-      expect(body.path).toBe('/tmp/test');
-      expect(body.content).toBe('data');
-    });
-
     it('getVmStatsDetail sends GET /vms/{id}/stats/detail', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({
-        model_stats: [{ provider: 'google', call_count: 1 }],
+        interactions: { items: [], bodies: [] },
+        model_stats: [{ provider: 'google', model: 'fixture-model', call_count: 1, duration_ms: 25, input_tokens: 12, output_tokens: 7, estimated_cost_usd: 0.001 }],
         model_events: [],
         tool_events: [],
         http_events: [],
@@ -570,20 +429,7 @@ describe('api', () => {
     });
 
     it('listProfiles sends GET /profiles/list', async () => {
-      const profiles = {
-        profiles: [
-          {
-            id: 'code',
-            name: 'Default',
-            description: 'Built-in Capsem developer profile.',
-            source: 'effective',
-            rule_count: 3,
-            default_rule_count: 2,
-            plugin_count: 1,
-            mcp_server_count: 0,
-          },
-        ],
-      };
+      const profiles = { profiles: [profile] };
       mockFetch.mockReturnValueOnce(jsonResponse(profiles));
       const result = await api.listProfiles();
       expect(result).toEqual(profiles);
@@ -663,7 +509,7 @@ describe('api', () => {
     });
 
     it('profile skill helpers use profile-scoped routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+      mockFetch.mockImplementation(() => jsonResponse({ ok: true }));
 
       await api.getProfileSkillsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/info');
@@ -685,7 +531,7 @@ describe('api', () => {
     });
 
     it('profile asset, plugin, and mcp info helpers use profile-scoped routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+      mockFetch.mockImplementation(() => jsonResponse({ ok: true }));
 
       await api.getProfileAssetsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/info');
@@ -819,7 +665,7 @@ describe('api', () => {
     });
 
     it('uses service-wide security, enforcement, and detection ledger routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ total: 0, sessions: [] }));
+      mockFetch.mockImplementation(() => jsonResponse({ total: 0, sessions: [] }));
 
       await api.getSecurityLatest();
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/security/latest');
@@ -1177,66 +1023,6 @@ describe('api', () => {
     });
   });
 
-  // ---- VM state ----
-
-  describe('VM state', () => {
-    it('vmStatus returns not created when disconnected', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      await api.init();
-      const state = await api.vmStatus();
-      expect(state).toBe('not created');
-    });
-
-    it('vmStatus returns running VM status when connected', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
-        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({
-        service: 'running',
-        gateway_version: '1.0.0',
-        vm_count: 1,
-        vms: [{ id: 'vm-1', name: 'code-dev', status: 'Running', persistent: true }],
-        resource_summary: null,
-      }));
-      const state = await api.vmStatus();
-      expect(state).toBe('running');
-    });
-
-    it('getVmState returns empty when disconnected', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      await api.init();
-      const state = await api.getVmState();
-      expect(state.state).toBe('not created');
-      expect(state.history).toEqual([]);
-      expect(state.elapsed_ms).toBe(0);
-    });
-
-    it('getVmState with id sends GET /vms/{id}/status', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
-        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({
-        status: 'running',
-        elapsed_ms: 3100,
-        history: [{ from: 'booting', to: 'running', trigger: 'boot_complete', duration_ms: 3100, timestamp: '2026-01-01' }],
-      }));
-      const state = await api.getVmState('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/status');
-      expect(state.state).toBe('running');
-      expect(state.elapsed_ms).toBe(3100);
-      expect(state.history).toHaveLength(1);
-    });
-  });
-
-  // ---- Events (WebSocket) ----
-
   describe('onVmStateChanged / onDownloadProgress', () => {
     it('onVmStateChanged returns unsubscribe function', () => {
       const cb = vi.fn();
@@ -1347,7 +1133,7 @@ describe('api', () => {
       expect(result.assets.latest).toBe('assets-2');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/update/status');
-      expect(call[1].headers.Authorization).toBe('Bearer tok');
+      expect(new Headers(call[1].headers).get('Authorization')).toBe('Bearer tok');
     });
   });
 
@@ -1479,35 +1265,3 @@ describe('api', () => {
     });
   });
 });
-
-function updateStatusFixture() {
-  return {
-    checked_at: 1718444400,
-    channel_url: 'https://release.capsem.org/assets/stable/manifest.json',
-    stale: false,
-    binary: {
-      current: '1.4.0',
-      latest: '1.4.1',
-      update_available: true,
-      state: 'update_available',
-      compatibility: 'compatible',
-    },
-    assets: {
-      current: 'assets-1',
-      latest: 'assets-2',
-      update_available: true,
-      state: 'update_available',
-      compatibility: 'compatible',
-    },
-    profiles: {
-      update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
-    },
-    images: {
-      update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
-    },
-  };
-}

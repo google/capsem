@@ -10,7 +10,7 @@ of the argument it was given, which used to make the *dispatch* attacker-chosen.
 
 from __future__ import annotations
 
-from . import imagebuild
+from . import imagebuild, sdkchecks, toolchain
 from .actions import Run
 from .command import GateCommand
 from .errors import GateError
@@ -60,6 +60,11 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                 f"unknown surface {surface!r}; expected one of {', '.join(settings.surfaces)}"
             )
 
+        prerequisites = ()
+        if surface != "tui":
+            installed = plan.add(toolchain.node(config, (config.frontend.workspace,)))
+            sdk = plan.add(sdkchecks.typescript_bundle(config), after=(installed,))
+            prerequisites = (sdk,)
         if surface == "frontend":
             plan.add(
                 step(
@@ -68,7 +73,8 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                     kind=Kind.COMPILE,
                     needs=frozenset({Needs.DISK}),
                     speed=Speed.FAST,
-                )
+                ),
+                after=prerequisites,
             )
         elif surface == "tui":
             plan.add(step(surface, Run([*settings.tui, *self._args.args]),
@@ -87,6 +93,7 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                     kind=Kind.COMPILE,
                     needs=frozenset({Needs.DISK}),
                     speed=Speed.FAST,
-                )
+                ),
+                after=prerequisites,
             )
         return plan

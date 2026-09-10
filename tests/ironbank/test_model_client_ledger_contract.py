@@ -930,7 +930,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert route_row["tool_name"] == db_row["tool_name"]
             assert route_row["call_id"] == db_row["call_id"]
             assert route_row["model_call_id"] == db_row["model_call_id"]
-            assert route_row["model_parent_missing"] == 0
+            assert route_row["model_parent_missing"] is False
             assert route_row["decision"] == db_row["decision"]
             assert json.loads(route_row["arguments"]) == json.loads(db_row["arguments"])
             assert route_row["source"] == db_row["origin"]

@@ -22,6 +22,7 @@ from . import (
     digestreport,
     pytestsuite,
     sandbox,
+    sdkchecks,
     sourcechecks,
     toolchain,
     webaudits,
@@ -139,6 +140,9 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # independent steps, so a Ruff failure no longer hides what Ty would have
     # said and each is timed under its own name.
     checked = sourcechecks.fragment(plan, config, after=(syntax,))
+    sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
+    typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
+    rust_sdk_checked = sdkchecks.rust_fragment(plan, config, after=(syntax,))
     # Importing every test module is a source-shape proof of the same kind, and
     # the Python counterpart of what `rustinventory` does for nextest: a suite
     # that cannot be collected is a suite the gate would otherwise discover it
@@ -171,10 +175,13 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # `mcp_export` build in front of it for a mock that only `__tests__` files
     # import.
     consumer = config.websurfaces.needs_generated_settings
+    sdk_built = next(check for check in typescript_checked if check.label.endswith(".build"))
     surfaces = [
         phase.add(
             surface,
-            after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
+            after=(syntax, node)
+            + ((settings,) if surface.label.endswith(consumer) else ())
+            + ((sdk_built,) if surface.label.endswith((consumer, config.frontend.build_target)) else ()),
         )
         for surface in webaudits.surfaces(config)
     ]
@@ -187,6 +194,9 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     return (
         *audited,
         *checked,
+        *sdk_checked,
+        *typescript_checked,
+        *rust_sdk_checked,
         collected,
         guarded,
         formatted,

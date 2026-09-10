@@ -7,11 +7,15 @@ pub(crate) async fn handle_resume(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     // See handle_suspend: same lock, same reason. Restore happens in the
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
     // overlap with the restoreMachineStateFromURL call.
-    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_guard = state.lifecycle.vz.write().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);

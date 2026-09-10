@@ -1,3 +1,4 @@
+import { UpdateTrackState, UpdateCompatibilityState } from '@capsem/sdk';
 import type { SupplyChainReference, UpdateStatusResponse, UpdateTrackStatus } from '../types/gateway';
 
 export type UpdateTrackKey = 'binary' | 'assets' | 'profiles' | 'images';
@@ -71,22 +72,22 @@ export function updateTrackVersion(track: UpdateTrackStatus): string {
   const current = track.current ?? 'unknown';
   const latest = track.latest ?? current;
   if (track.update_available) return `${current} -> ${latest}`;
-  if (track.state === 'not_published') return 'not published';
+  if (track.state === UpdateTrackState.NOT_PUBLISHED) return 'not published';
   return current;
 }
 
 export function updateTrackDetail(track: UpdateTrackStatus): string | null {
   if (track.blocked_reason) return track.blocked_reason;
-  if (track.compatibility === 'unknown') return 'Compatibility unknown';
-  if (track.compatibility === 'not_applicable') return null;
+  if (track.compatibility === UpdateCompatibilityState.UNKNOWN) return 'Compatibility unknown';
+  if (track.compatibility === UpdateCompatibilityState.NOT_APPLICABLE) return null;
   return null;
 }
 
 export function updateTrackStateLabel(track: UpdateTrackStatus): string {
   if (track.blocked_reason) return 'Blocked';
   if (track.update_available) return 'Update available';
-  if (track.state === 'not_published') return 'Not published';
-  if (track.state === 'unknown') return 'Unknown';
+  if (track.state === UpdateTrackState.NOT_PUBLISHED) return 'Not published';
+  if (track.state === UpdateTrackState.UNKNOWN) return 'Unknown';
   return 'Current';
 }
 
@@ -136,7 +137,7 @@ function dashboardTrackDetail(
   track: UpdateTrackStatus,
 ): string | null {
   if (track.blocked_reason) return track.blocked_reason;
-  if (track.compatibility === 'unknown') return 'Compatibility unknown';
+  if (track.compatibility === UpdateCompatibilityState.UNKNOWN) return 'Compatibility unknown';
   if (key === 'profiles' && track.update_available) {
     return 'The installed service will apply the verified profile update automatically; existing sessions stay pinned.';
   }
@@ -146,13 +147,13 @@ function dashboardTrackDetail(
   if (key === 'images' && track.update_available) {
     return 'Create or recreate sessions explicitly to use the newer image state.';
   }
-  if (key === 'profiles' && track.state === 'current') {
+  if (key === 'profiles' && track.state === UpdateTrackState.CURRENT) {
     return 'New sessions use the installed profile catalog.';
   }
-  if (key === 'assets' && track.state === 'current') {
+  if (key === 'assets' && track.state === UpdateTrackState.CURRENT) {
     return 'New sessions use the installed VM asset set.';
   }
-  if (track.state === 'not_published') return null;
+  if (track.state === UpdateTrackState.NOT_PUBLISHED) return null;
   return null;
 }
 

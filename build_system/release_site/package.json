@@ -25,7 +25,8 @@
     "overrides": {
       "nanoid": "^3.3.17",
       "js-yaml": "^4.3.2",
-      "svgo": "^4.1.0"
+      "svgo": "^4.1.0",
+      "smol-toml": "1.7.1"
     }
   }
 }

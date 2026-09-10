@@ -1,0 +1,30 @@
+{
+  "name": "@capsem/sdk",
+  "version": "0.6.3",
+  "description": "Typed async client for the Capsem HTTP gateway",
+  "type": "module",
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"},
+    "./models": {"types": "./dist/models/index.d.ts", "import": "./dist/models/index.js"},
+    "./operations": {"types": "./dist/operations/index.d.ts", "import": "./dist/operations/index.js"},
+    "./transport": {"types": "./dist/transport.d.ts", "import": "./dist/transport.js"}
+  },
+  "scripts": {
+    "lint": "eslint src tests tools eslint.config.js vitest.config.ts --max-warnings 0",
+    "check": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.browser.json",
+    "build": "node tools/build.mjs",
+    "prepack": "pnpm run build",
+    "test": "vitest run --coverage"
+  },
+  "dependencies": {"zod": "4.6.1"},
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "eslint": "10.10.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "4.1.11"
+  }
+}

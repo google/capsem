@@ -29,27 +29,46 @@ class Coverage(NamedTuple):
         return 100.0 * self.hit / self.found if self.found else 0.0
 
 
-def workspace_crates(root: Path, crate_root: Path) -> dict[str, str]:
-    """Map a workspace crate directory to its package name."""
+def workspace_crates(root: Path, workspace_manifest: Path) -> dict[str, str]:
+    """Map declared workspace member paths to names, independent of layout."""
+    document = tomllib.loads((root / workspace_manifest).read_text())
+    workspace = document["workspace"]
+    excluded = {
+        path.relative_to(root).as_posix()
+        for pattern in workspace.get("exclude", [])
+        for path in root.glob(pattern)
+    }
+    directories = {root} if "package" in document else set()
+    for pattern in workspace.get("members", []):
+        matches = set(root.glob(pattern))
+        if not matches:
+            raise ValueError(f"workspace member pattern matches nothing: {pattern}")
+        directories.update(matches)
     crates: dict[str, str] = {}
-    for manifest in sorted((root / crate_root).glob("*/Cargo.toml")):
-        package = tomllib.loads(manifest.read_text())["package"]["name"]
-        crates[manifest.parent.name] = package
+    for directory in sorted(directories):
+        relative = directory.relative_to(root).as_posix()
+        if relative in excluded:
+            continue
+        package = tomllib.loads((directory / "Cargo.toml").read_text())["package"]["name"]
+        if package in crates.values():
+            raise ValueError(f"duplicate workspace package name: {package}")
+        crates[relative] = package
+    if not crates:
+        raise ValueError("workspace contains no packages")
     return crates
 
 
 def lcov_by_crate(
     report: Path,
     root: Path,
-    crate_root: Path,
     crates: dict[str, str],
 ) -> dict[str, Coverage]:
     """Read unique source-line hits, grouped by owning workspace crate."""
     lines: dict[str, dict[tuple[str, int], int]] = defaultdict(dict)
     owner: str | None = None
     source = ""
-    crate_root_names = set(crates)
-    crate_root_parts = crate_root.parts
+    # Most specific owner wins for nested members and a root package.
+    directories = sorted(crates, key=lambda path: len(Path(path).parts), reverse=True)
 
     for raw in report.read_text().splitlines():
         if raw.startswith("SF:"):
@@ -60,15 +79,11 @@ def lcov_by_crate(
                 except ValueError:
                     owner = None
                     continue
-            parts = source_path.parts
-            prefix_len = len(crate_root_parts)
-            owner = (
-                parts[prefix_len]
-                if len(parts) >= prefix_len + 2 and parts[:prefix_len] == crate_root_parts
-                else None
+            owner = next(
+                (directory for directory in directories if source_path.is_relative_to(directory)),
+                None,
             )
-            if owner not in crate_root_names:
-                owner = None
+            if owner is None:
                 continue
             source = source_path.as_posix()
         elif owner is not None and raw.startswith("DA:"):
@@ -138,7 +153,7 @@ def violations(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", required=True, type=Path)
-    parser.add_argument("--crate-root", required=True, type=Path)
+    parser.add_argument("--workspace-manifest", required=True, type=Path)
     parser.add_argument("--config", default=Path("config/gate.toml"), type=Path)
     return parser.parse_args(argv)
 
@@ -169,8 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     max_headroom = float(settings["rust_coverage_ratchet_headroom"])
     minimum_floor = float(settings["rust_coverage_crate_minimum"])
-    crates = workspace_crates(root, args.crate_root)
-    measured = lcov_by_crate(root / args.report, root, args.crate_root, crates)
+    crates = workspace_crates(root, args.workspace_manifest)
+    measured = lcov_by_crate(root / args.report, root, crates)
     problems = violations(
         measured,
         set(crates.values()),

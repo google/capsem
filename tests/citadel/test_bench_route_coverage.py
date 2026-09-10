@@ -160,7 +160,9 @@ def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
     """
     coverage = _config()
     unmeasured = len(coverage["unmeasured"])
-    assert unmeasured <= 101, (
+    # Restart adds one explicitly unmeasured supervisor mutation. Preserve the
+    # six routes already removed from debt instead of retaining old headroom.
+    assert unmeasured <= 95, (
         f"{unmeasured} routes are unmeasured, more than when this guard was "
         "written. A new route should be measured, not added to the debt."
     )

@@ -245,13 +245,13 @@ debt = "none: obsolete root data placeholder removed in T4"
 reason = "Generated assets, packages, test evidence, and configuration converge under ignored target."
 
 [[surface]]
-id = "sdk-reservation"
-state = "reserved"
-current = []
+id = "sdk"
+state = "retained"
+current = ["sdk/"]
 targets = ["sdk/"]
-lint = ["next SDK sprint must install a declared fast checker before adding files"]
-tests = ["next SDK sprint must install unit and integration owners before adding files"]
+lint = ["fast.sdk.python.lint", "fast.sdk.python.types", "fast.sdk.typescript.lint", "fast.sdk.typescript.types", "fast.clippy", "fast.audit.source-syntax"]
+tests = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.typescript.tests", "fast.sdk.typescript.build", "static.rust-coverage", "static.rust-doctests", "tests/citadel/test_sdk_quality.py", "build_system/tests/sdkgen"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
-coverage = "next SDK sprint must install a Codecov component and threshold before adding files"
-debt = "none: sdk/ must remain absent throughout repository cleanup"
-reason = "The SDK is the immediately following product sprint, enabled by freeing the capsem package name first."
+coverage = "Python and TypeScript line/branch coverage floors; Rust workspace and per-package measured ratchets. Generation has the same coverage ownership as handwritten SDK source."
+debt = "none: generated SDK sources obey the same size and quality checks"
+reason = "Gateway-only clients and the shared OpenAPI contract have executable language, package and contract owners."

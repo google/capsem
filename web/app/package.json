@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@capsem/sdk": "link:../../sdk/typescript",
     "@astrojs/svelte": "^9.0.1",
     "@shikijs/langs": "4.0.2",
     "@shikijs/themes": "4.0.2",
@@ -39,7 +40,8 @@
       "fast-uri": "^3.1.6",
       "nanoid": "^3.3.17",
       "js-yaml": "^4.3.2",
-      "svgo": "^4.1.0"
+      "svgo": "^4.1.0",
+      "smol-toml": "1.7.1"
     }
   }
 }

@@ -1,3 +1,4 @@
+import { UpdateTrackState, UpdateCompatibilityState } from '@capsem/sdk';
 import { describe, expect, it } from 'vitest';
 import {
   profileDashboardUpdateRows,
@@ -18,8 +19,8 @@ function currentTrack(current = '1.4.0'): UpdateTrackStatus {
     current,
     latest: current,
     update_available: false,
-    state: 'current',
-    compatibility: 'compatible',
+    state: UpdateTrackState.CURRENT,
+    compatibility: UpdateCompatibilityState.COMPATIBLE,
   };
 }
 
@@ -28,17 +29,18 @@ function updateStatus(patch: Partial<UpdateStatusResponse> = {}): UpdateStatusRe
     checked_at: 1718444400,
     channel_url: 'https://release.capsem.org/assets/stable/manifest.json',
     stale: false,
+    supply_chain: { manifest: { path: '' }, channel_index: {}, host_sbom: { name: 'host' }, vm_obom: { name: 'vm' }, attestations: [] },
     binary: currentTrack(),
     assets: currentTrack('assets-1'),
     profiles: {
       update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
+      state: UpdateTrackState.NOT_PUBLISHED,
+      compatibility: UpdateCompatibilityState.NOT_APPLICABLE,
     },
     images: {
       update_available: false,
-      state: 'not_published',
-      compatibility: 'not_applicable',
+      state: UpdateTrackState.NOT_PUBLISHED,
+      compatibility: UpdateCompatibilityState.NOT_APPLICABLE,
     },
     ...patch,
   };
@@ -51,22 +53,22 @@ describe('update status model', () => {
         current: '1.4.0',
         latest: '1.4.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       assets: {
         current: 'assets-1',
         latest: 'assets-2',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       images: {
         current: 'images-1',
         latest: 'images-2',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
     });
 
@@ -81,15 +83,15 @@ describe('update status model', () => {
         current: '1.4.0',
         latest: '1.4.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       assets: {
         current: 'assets-1',
         latest: 'assets-2',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
     });
 
@@ -112,8 +114,8 @@ describe('update status model', () => {
         current: 'profiles-2030.0101.0',
         latest: 'profiles-2030.0101.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
     });
 
@@ -132,22 +134,22 @@ describe('update status model', () => {
         current: '1.4.0',
         latest: '1.4.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       profiles: {
         current: 'profiles-2030.0101.0',
         latest: 'profiles-2030.0101.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       assets: {
         current: '2030.0101.0',
         latest: '2030.0101.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
     });
 
@@ -170,8 +172,8 @@ describe('update status model', () => {
         current: 'profiles-2030.0101.0',
         latest: 'profiles-2030.0101.1',
         update_available: false,
-        state: 'current',
-        compatibility: 'compatible',
+        state: UpdateTrackState.CURRENT,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
         blocked_reason: 'requires binary 1.4.1 or newer',
       },
     });
@@ -189,15 +191,15 @@ describe('update status model', () => {
         current: '1.4.0',
         latest: '1.4.1',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       profiles: {
         current: 'profiles-2030.0101.0',
         latest: 'profiles-2030.0101.1',
         update_available: false,
-        state: 'current',
-        compatibility: 'compatible',
+        state: UpdateTrackState.CURRENT,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
         blocked_reason: 'requires binary 1.4.1 or newer',
       },
     });
@@ -214,8 +216,8 @@ describe('update status model', () => {
         current: '2026.0627.1',
         latest: '2030.0101.1',
         update_available: false,
-        state: 'unknown',
-        compatibility: 'unknown',
+        state: UpdateTrackState.UNKNOWN,
+        compatibility: UpdateCompatibilityState.UNKNOWN,
         blocked_reason: 'requires binary 99.99.99 or newer',
       },
     });
@@ -235,15 +237,15 @@ describe('update status model', () => {
         current: 'assets-1',
         latest: 'assets-2',
         update_available: true,
-        state: 'update_available',
-        compatibility: 'compatible',
+        state: UpdateTrackState.UPDATE_AVAILABLE,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
       },
       profiles: {
         current: 'profiles-2030.0101.0',
         latest: 'profiles-2030.0101.1',
         update_available: false,
-        state: 'current',
-        compatibility: 'compatible',
+        state: UpdateTrackState.CURRENT,
+        compatibility: UpdateCompatibilityState.COMPATIBLE,
         blocked_reason: 'requires binary 1.4.1 or newer',
       },
     });
@@ -262,8 +264,8 @@ describe('update status model', () => {
     expect(updateTrackStateLabel(updateStatus().profiles)).toBe('Not published');
     expect(updateTrackStateLabel({
       update_available: false,
-      state: 'unknown',
-      compatibility: 'unknown',
+      state: UpdateTrackState.UNKNOWN,
+      compatibility: UpdateCompatibilityState.UNKNOWN,
     })).toBe('Unknown');
   });
 
@@ -271,7 +273,7 @@ describe('update status model', () => {
     expect(updateTrackDetail(currentTrack())).toBeNull();
     expect(updateTrackDetail({
       ...currentTrack(),
-      compatibility: 'unknown',
+      compatibility: UpdateCompatibilityState.UNKNOWN,
     })).toBe('Compatibility unknown');
     expect(updateTrackDetail({
       ...currentTrack(),

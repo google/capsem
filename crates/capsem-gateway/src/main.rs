@@ -2,6 +2,7 @@ mod auth;
 mod cors;
 mod listener;
 mod proxy;
+mod schema;
 mod service_client;
 mod status;
 mod terminal;
@@ -150,6 +151,7 @@ async fn main() -> Result<()> {
         .route("/status", get(status::handle_status))
         .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .route("/events", get(handle_events_ws))
+        .merge(schema::routes())
         .merge(service_proxy_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -201,6 +203,7 @@ fn gateway_run_dir(args: &Args) -> PathBuf {
 fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
+        .route("/restart", post(proxy::handle_proxy))
         .route("/update/status", get(proxy::handle_proxy))
         .route("/system/status", get(proxy::handle_proxy))
         .route("/update/check", post(proxy::handle_proxy))
@@ -211,6 +214,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
+        .route("/vms/{id}/changes", get(proxy::handle_proxy))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
         .route("/vms/{id}/files/write", post(proxy::handle_proxy))

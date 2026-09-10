@@ -865,7 +865,7 @@ invalid-method-override = 1
 invalid-return-type = 4
 no-matching-overload = 6
 not-iterable = 2
-not-subscriptable = 144
+not-subscriptable = 143
 unresolved-attribute = 77
 unresolved-import = 3
 unsupported-operator = 4
@@ -1040,13 +1040,15 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging"]
-suffixes = [".py", ".sh"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript"]
+suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
 # Only Git-tracked files in the first-party roots above are considered. That
-# excludes build-generated output and vendored dependency trees by rule while
-# still catching suffix-less package scripts through their shebang.
+# excludes untracked build output and vendored dependency trees by rule while
+# still catching suffix-less package scripts through their shebang. Checked-in
+# SDK generation is maintained source and has the same ceiling as hand-written
+# Python/TypeScript; generated files do not receive oversized-debt entries.
 # Rust, at a ceiling read from its own distribution rather than borrowed from
 # Python. Rust's median tracked file is 232 lines and p90 is 1265; a 300-line
 # ceiling would flag 169 of 388 files, which is a rewrite mandate rather than
@@ -1055,14 +1057,13 @@ max_lines = 300
 #
 # The entire workspace is covered. Every file above the ceiling is exact debt:
 # it may shrink, but any growth or stale entry fails. New crates enter this
-# boundary automatically because the root is `crates`, so a workspace split
-# cannot silently create an unguarded source tree.
+# boundary under `crates` and `sdk/rust`, including checked-in generation.
 #
 # The exact debt ratchets every outlier below its present line count. The hard
 # limit separately records the completed workspace-wide milestone, so nobody
 # can make a larger file fit by merely raising or adding a debt entry.
 [boundary.rust]
-roots = ["crates"]
+roots = ["crates", "sdk/rust"]
 suffixes = [".rs"]
 max_lines = 1000
 must_stay_below_lines = 3000
@@ -1077,7 +1078,6 @@ must_stay_below_lines = 3000
 "crates/capsem-agent/src/main.rs" = 1397
 "crates/capsem-agent/src/tests.rs" = 1688
 "crates/capsem-assets/src/asset_manager.rs" = 1355
-"crates/capsem-core/src/auto_snapshot.rs" = 1011
 "crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1031
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
@@ -1102,14 +1102,14 @@ must_stay_below_lines = 3000
 "crates/capsem-mock-server/src/main.rs" = 1565
 "crates/capsem-process/src/vsock.rs" = 1672
 "crates/capsem-proto/src/tests.rs" = 1505
-"crates/capsem-service/src/ledger_routes.rs" = 2920
-"crates/capsem-service/src/main.rs" = 2111
+"crates/capsem-service/src/ledger_routes.rs" = 2452
+"crates/capsem-service/src/main.rs" = 1551
 "crates/capsem-service/src/profile_routes.rs" = 2202
-"crates/capsem-service/src/vm_files.rs" = 1901
+"crates/capsem-service/src/vm_files.rs" = 1665
 "crates/capsem-service/src/tests/assets_registry.rs" = 1600
-"crates/capsem-service/src/tests/lifecycle.rs" = 2396
+"crates/capsem-service/src/tests/lifecycle.rs" = 2220
 "crates/capsem-service/src/tests/profile_routes.rs" = 2682
-"crates/capsem-tui/src/tests.rs" = 2190
+"crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
 "crates/capsem/src/main.rs" = 2491
 "crates/capsem/src/support_bundle.rs" = 1047
@@ -1225,7 +1225,7 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
-node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
+node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site", "sdk/typescript"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -1763,6 +1763,8 @@ max_skill_body_lines = 600
 cache_stage = "audit-results"
 lockfiles = [
     "build_system/uv.lock",
+    "sdk/python/uv.lock",
+    "sdk/typescript/pnpm-lock.yaml",
     "web/app/pnpm-lock.yaml",
     "web/docs/pnpm-lock.yaml",
     "web/marketing/pnpm-lock.yaml",
@@ -1819,7 +1821,7 @@ max_lines = 20
 [boundary.shell_bodies.oversized_line_counts]
 "release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
-"release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
+"release.yaml:build-app-macos:23:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
 "release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
@@ -1842,6 +1844,29 @@ max_lines = 20
 name = "python"
 pattern = "*.py"
 enforced_by = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
+
+[[lint_surfaces]]
+name = "python-sdk"
+pattern = "sdk/python/*.py"
+enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
+checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
+
+[[lint_surfaces]]
+name = "typescript-sdk"
+pattern = "sdk/typescript/*.ts"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
+checked_by = ["fast.sdk.typescript.tests", "fast.sdk.typescript.build", "fast.sdk.typescript.generate"]
+
+[[lint_surfaces]]
+name = "typescript-sdk-tools"
+pattern = "sdk/typescript/*.mjs"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
+checked_by = ["fast.sdk.typescript.build"]
+
+[[lint_surfaces]]
+name = "typescript-sdk-config"
+pattern = "sdk/typescript/*.js"
+enforced_by = ["fast.sdk.typescript.lint", "fast.sdk.typescript.types"]
 
 [[lint_surfaces]]
 name = "yaml"
@@ -2250,7 +2275,7 @@ rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib
 rust_coverage_floors = ["--fail-under-lines=67", "--fail-under-functions=66", "--fail-under-regions=65"]
 rust_coverage_report = "cache/target/coverage/rust-workspace.lcov"
 rust_coverage_ratchet = "build_system/scripts/test/rust-coverage-ratchet.py"
-rust_coverage_crate_root = "crates"
+rust_coverage_workspace_manifest = "Cargo.toml"
 # No workspace member may hide behind the aggregate. This minimum is repeated
 # in the Citadel contract so lowering the policy is a deliberate guard change.
 rust_coverage_crate_minimum = 40.0
@@ -2258,7 +2283,7 @@ rust_coverage_crate_minimum = 40.0
 # absorbs small measurement variation; once added tests improve coverage past
 # it, the same patch must raise the floor instead of leaving stale headroom.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.73, capsem-sdk = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
@@ -2815,6 +2840,7 @@ slowest_steps = 10
 [benchmark.routes]
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
 measured = [
+    "/vms/{id}/changes",
     "/status",
     "/version",
     "/vms/list",
@@ -2825,6 +2851,9 @@ measured = [
     "/update/status",
 ]
 unmeasured = [
+    # Restart needs a disposable supervisor; the read-only route collector
+    # cannot time accepted restarts. Its functional proof owns that lifecycle.
+    "/restart",
     "/corp/edit",
     "/corp/info",
     "/corp/reload",
@@ -3477,3 +3506,27 @@ digest = "e71e2ff726f6"
 where = "web/marketing/public/install.sh"
 subject = "return 0"
 reason = "a trap handler returning success on a path where the failure has already been reported"
+
+[sdk_python]
+project = "sdk/python"
+manifest = "sdk/python/pyproject.toml"
+specification = "sdk/specification/openapi.json"
+source = "sdk/python/capsem"
+tests = "sdk/python/tests"
+build_output = "cache/target/sdk/python"
+
+[sdk_rust]
+project = "sdk/rust"
+manifest = "sdk/rust/Cargo.toml"
+specification = "sdk/specification/openapi.json"
+source = "sdk/rust/src/operations"
+tests = "sdk/rust/src"
+build_output = "cache/target/sdk/rust"
+
+[sdk_typescript]
+project = "sdk/typescript"
+manifest = "sdk/typescript/package.json"
+specification = "sdk/specification/openapi.json"
+source = "sdk/typescript/src"
+tests = "sdk/typescript/tests"
+build_output = "cache/target/sdk/typescript"

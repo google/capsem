@@ -285,10 +285,7 @@ fn settle_is_a_no_op_for_a_directory_already_under_persistent() {
 /// would lose its directory to that reaper's move.
 #[test]
 fn resume_settles_the_session_dir_before_spawning() {
-    let source = include_str!("../main.rs");
-    let start = source.find("    fn resume_sandbox(").expect("resume_sandbox exists");
-    let end = start + source[start..].find("    fn has_existing_resume_checkpoint(").unwrap();
-    let body = &source[start..end];
+    let body = include_str!("../vm_lifecycle/resume_process.rs");
     let settle = body
         .find("settle_persistent_session_dir(")
         .expect("resume settles the session dir");

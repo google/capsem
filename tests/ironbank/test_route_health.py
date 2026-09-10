@@ -695,7 +695,7 @@ def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
         ),
         RouteContract(
             "GET",
-            f"/vms/{session_id}/history?layer=net&limit=50",
+            f"/vms/{session_id}/history?layer=all&limit=50",
             None,
             {"commands", "total"},
             dict,
@@ -716,9 +716,9 @@ def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
         ),
         RouteContract(
             "GET",
-            f"/vms/{session_id}/timeline?layers=net,model,tools,dns,fs,exec,security&limit=100",
+            f"/vms/{session_id}/timeline?layers=net,model,tool,fs,exec&limit=100",
             None,
-            {"columns", "rows"},
+            {"events"},
             dict,
         ),
         RouteContract(

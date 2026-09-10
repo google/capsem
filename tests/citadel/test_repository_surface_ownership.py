@@ -16,8 +16,8 @@ POLICY = Path(__file__).with_name("repository_surface_ownership.toml")
 OWNERSHIP_RATIONALE = """\
 A directory move is incomplete until lint, tests, CI, coverage, and migration
 debt agree on its owner. A source tree without all five can pass locally while
-being absent from CI or coverage. The SDK is intentionally a separate sprint:
-its reserved root must remain empty until that sprint installs its own gates.
+being absent from CI or coverage. SDK sources require active language and
+coverage gates; a reserved surface must remain empty until its owners exist.
 """
 
 EXPECTED_TARGETS = frozenset(
@@ -153,9 +153,13 @@ def _problems(policy: Mapping[str, Any], tracked: Sequence[str]) -> list[str]:
         if len(owners) != 1:
             problems.append(f"{path}: expected exactly one current owner, found {owners}")
 
-    sdk_paths = [path for path in tracked if _matches(path, "sdk/")]
-    if sdk_paths:
-        problems.append(f"sdk/ is reserved for the next sprint but tracks: {sdk_paths}")
+    for row in complete_rows:
+        if row["state"] == "reserved":
+            paths = [path for path in tracked if any(
+                _matches(path, target) for target in row["targets"]
+            )]
+            if paths:
+                problems.append(f"{row['id']}: reserved surface tracks files: {paths}")
     return sorted(set(problems))
 
 
@@ -194,10 +198,12 @@ def test_duplicate_current_owner_fails_closed() -> None:
     assert any("expected exactly one current owner" in problem for problem in _problems(policy, _tracked_paths()))
 
 
-def test_reserved_sdk_rejects_its_first_tracked_file() -> None:
+def test_reserved_surface_rejects_its_first_tracked_file() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
+    sdk = next(row for row in policy["surface"] if "sdk/" in row["targets"])
+    sdk["state"] = "reserved"
     problems = _problems(policy, [*_tracked_paths(), "sdk/README.md"])
-    assert any("sdk/ is reserved" in problem for problem in problems)
+    assert any("reserved surface tracks files" in problem for problem in problems)
 
 
 def test_missing_owner_dimension_fails_closed() -> None:

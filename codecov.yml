@@ -22,6 +22,14 @@ coverage:
         target: auto
         flags:
           - e2e
+      python-sdk:
+        target: 90%
+        flags:
+          - python-sdk
+      typescript-sdk:
+        target: 90%
+        flags:
+          - typescript-sdk
     patch:
       default:
         target: 90%
@@ -34,9 +42,18 @@ comment:
   require_head: yes
 
 flags:
+  typescript-sdk:
+    paths:
+      - sdk/typescript/src/**
+    carryforward: true
+  python-sdk:
+    paths:
+      - sdk/python/capsem/**
+    carryforward: true
   unit:
     paths:
       - crates/**
+      - sdk/rust/src/**
       - web/app/src/**
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
@@ -53,6 +70,7 @@ flags:
   linux-unit:
     paths:
       - crates/**
+      - sdk/rust/src/**
     carryforward: true
 
 # Components tag code paths by functional service.
@@ -66,6 +84,16 @@ component_management:
         target: 90%
 
   individual_components:
+    - component_id: typescript-sdk
+      name: TypeScript SDK
+      paths:
+        - sdk/typescript/src/**
+
+    - component_id: python-sdk
+      name: Python SDK
+      paths:
+        - sdk/python/capsem/**
+
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/
     # except policy_config.
@@ -130,6 +158,17 @@ component_management:
       name: Assets
       paths:
         - crates/capsem-assets/src/**
+
+    # Shared gateway request, response, enum, and OpenAPI contracts.
+    - component_id: api
+      name: Gateway API
+      paths:
+        - crates/capsem-api/src/**
+
+    - component_id: rust-sdk
+      name: Rust SDK
+      paths:
+        - sdk/rust/src/**
 
     # Pure settings, provider, profile, MCP, and security-rule contracts.
     - component_id: config

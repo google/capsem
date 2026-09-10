@@ -7,7 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- SDK detailed statistics expose shared model/MCP interaction objects with typed
+  messages, content blocks, calls and results, structured tool JSON, stable ledger
+  references, and explicit complete, truncated or unknown capture status.
+
+- Python, TypeScript and Rust `Hypervisor.restart()` methods return the typed
+  gateway acknowledgement and its fresh-credential reconnection requirement.
+
+- Gateway `POST /restart` acknowledges an idle managed-service restart with a
+  typed HTTP 202 response. Active launches/VMs and unmanaged processes are refused;
+  the response requires fresh credentials after gateway token rotation.
+
+- UI profile discovery and update status/application use the typed SDK contract,
+  including profile update semantics and validated update evidence and results.
+
+- UI file browsing and transfers use typed SDK operations, including validated
+  file metadata, byte-preserving uploads/downloads and bounded token refresh.
+
+- UI logs, detailed stats, snapshot inspection and command execution use typed
+  SDK operations. Invalid responses are rejected without discarding the connection.
+
+- UI overview, VM information and stats summaries use SDK response validation and
+  shared enum types. Invalid payloads surface as errors instead of offline results.
+
+- TypeScript SDK `NetworkError` distinguishes connection failures from invalid
+  gateway responses while preserving cancellation reasons and request deadlines.
+
+- UI VM lifecycle calls use validated TypeScript SDK responses and preserve
+  bounded gateway token refresh. Fork confirmation keeps the entered name and
+  opens the returned canonical VM ID.
+
+- TypeScript SDK operation and transport package exports, with explicit SDK
+  build prerequisites for the UI's local, development and CI build paths.
+
+- TUI overview and profile discovery use the Rust SDK's shared gateway types,
+  including combined update status and explicit incompatible-VM state.
+
+- TUI VM actions use the Rust SDK's typed gateway contract; forks focus the
+  returned canonical VM ID and unnamed TUI workspaces retain service-generated names.
+
+- Rust `Hypervisor` and `VM` clients with shared HTTP connections, canonical name
+  resolution, profile defaults, and typed lifecycle/copy/snapshots/stats helpers.
+
+- Generated Rust SDK operations for the gateway OpenAPI contract, with shared typed
+  responses, enum parameters, binary transfers, and enforced generation drift checks.
+
+- Rust SDK HTTP transport with shared gateway DTOs, explicit bearer authentication,
+  bounded requests, cancellation by dropping futures, and typed HTTP errors.
+
+- Async TypeScript `Hypervisor` and `VM` clients with typed lifecycle results,
+  canonical name resolution, profile defaults, and copy/snapshots/stats helpers.
+
+- Generated async TypeScript HTTP operations with validated inputs and responses
+  for every endpoint in the gateway OpenAPI contract.
+
+- TypeScript SDK HTTP transport with explicit bearer authentication, request
+  cancellation and deadlines, binary bodies, and no mutation retries or redirects.
+
+- TypeScript gateway models and runtime validators, with strict package checks,
+  enforced coverage, generation drift checks, and clean package builds.
+
+- Async Python `Hypervisor` and `VM` clients with typed lifecycle results,
+  name/id selection, profile resource defaults, and copy/snapshots/stats helpers.
+
+- Generated Python models and async HTTP operations for the gateway's OpenAPI
+  contract, with runtime validation and enforced generation drift checks.
+
+- Python SDK transport foundation with authenticated HTTP, typed request handling,
+  isolated package builds, and enforced line and branch coverage.
+
+- Typed stop, pause, and delete acknowledgements in the gateway OpenAPI contract.
+
+- Typed detailed VM statistics, including model costs, activity events, and
+  captured bodies with boolean flags and enum categories for gateway SDKs.
+
+- Typed history details and timeline events for gateway SDKs. Timeline returns
+  named event objects; history and timeline filters reject unknown layers.
+- Typed snapshot listings and checkpoint-based workspace changes through the
+  gateway, with stable pagination and symlink-safe file comparison.
+- VM information includes typed model/MCP usage, network totals, and filesystem
+  activity summaries from the session ledger, with explicit readiness errors.
+- Typed JSON host logs and shared grep, tail, and byte-limit options for host
+  and VM logs, including retained serial/process logs after failed boots.
+- The gateway overview includes typed profile readiness and update availability
+  alongside VM state, resources, and binary version information.
+- Authenticated gateway OpenAPI export for the initial SDK operations, derived
+  from shared Rust request and response contracts.
+
 ### Changed
+
+- Python SDK workspace listings treat `/` as the gateway's workspace root.
+
+- Stopped persistent VM file listings resolve canonical VM IDs consistently
+  with other gateway routes; file transfer still requires the running security ledger.
 
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
@@ -217,6 +311,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, so it is computed rather than maintained.
 
 ### Fixed
+
+- Service shutdown drains pending replies before gracefully stopping its gateway,
+  with bounded cleanup for stalled requests and unresponsive companion processes.
 
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
   cases, including the built-in security registry measurement, instead of

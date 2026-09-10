@@ -1,11 +1,11 @@
-import type { VmAction, VmSummary } from './types/gateway';
+import { VmAction, VmLifecycleState, type VmSummary } from '@capsem/sdk';
 
 function isTerminalSession(vm: Pick<VmSummary, 'status'>): boolean {
-  return vm.status === 'Defunct' || vm.status === 'Incompatible';
+  return vm.status === VmLifecycleState.DEFUNCT || vm.status === VmLifecycleState.INCOMPATIBLE;
 }
 
 export function hasVmAction(vm: Pick<VmSummary, 'status' | 'available_actions'>, action: VmAction): boolean {
-  if (isTerminalSession(vm) && action !== 'delete') return false;
+  if (isTerminalSession(vm) && action !== VmAction.DELETE) return false;
   return vm.available_actions.includes(action);
 }
 
@@ -14,9 +14,9 @@ export function canOpenSession(vm: Pick<VmSummary, 'status' | 'available_actions
 }
 
 export function startLabel(vm: Pick<VmSummary, 'status'>): string {
-  return vm.status === 'Suspended' ? 'Resume' : 'Start';
+  return vm.status === VmLifecycleState.SUSPENDED ? 'Resume' : 'Start';
 }
 
 export function startAction(vm: Pick<VmSummary, 'status'>): VmAction {
-  return vm.status === 'Suspended' ? 'resume' : 'start';
+  return vm.status === VmLifecycleState.SUSPENDED ? VmAction.RESUME : VmAction.START;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileEntryType } from "@capsem/sdk";
   import { onMount } from 'svelte';
   import FileTree from './FileTree.svelte';
   import FileContent from './FileContent.svelte';
@@ -52,9 +53,9 @@
     fileContent = null;
     fileBlob = null;
 
-    if (entry.type === 'file' && api.isConnected()) {
+    if (entry.type === FileEntryType.FILE && api.isConnected()) {
       try {
-        const result = await api.getFileContent(vmId, entry.path);
+        const result = await api.getFileContent(vmId, entry.path, entry.mime);
         fileContent = result.text;
         fileBlob = result.blob;
       } catch {
@@ -79,7 +80,7 @@
 
   // Determine upload target directory from selection
   function getUploadDir(): string {
-    if (selectedEntry?.type === 'directory') return selectedEntry.path;
+    if (selectedEntry?.type === FileEntryType.DIRECTORY) return selectedEntry.path;
     if (selectedEntry?.path) {
       const lastSlash = selectedEntry.path.lastIndexOf('/');
       return lastSlash > 0 ? selectedEntry.path.substring(0, lastSlash) : '';

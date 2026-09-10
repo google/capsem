@@ -11,7 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
-use nix::fcntl::{openat, AtFlags, OFlag};
+use nix::fcntl::{openat, readlinkat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
 
 /// A handle on one directory below the containment root.
@@ -209,6 +209,17 @@ impl ContainedDir {
         match fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW) {
             Ok(stat) => Ok(Some(kind_of(stat.st_mode))),
             Err(Errno::ENOENT) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Read a symlink's target relative to this directory; never follow it.
+    /// Non-symlink entries return None, including FIFOs and devices.
+    pub fn read_link(&self, name: &OsStr) -> io::Result<Option<OsString>> {
+        check_component(name)?;
+        match readlinkat(Some(self.fd.as_raw_fd()), name) {
+            Ok(target) => Ok(Some(target)),
+            Err(Errno::EINVAL) => Ok(None),
             Err(error) => Err(error.into()),
         }
     }

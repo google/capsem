@@ -735,6 +735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-api"
+version = "0.6.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "capsem-app"
 version = "0.6.3"
 dependencies = [
@@ -909,6 +918,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bytes",
+ "capsem-api",
  "capsem-foundation",
  "capsem-guard",
  "clap",
@@ -1108,6 +1118,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-sdk"
+version = "0.6.3"
+dependencies = [
+ "axum",
+ "capsem-api",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "capsem-service"
 version = "0.6.3"
 dependencies = [
@@ -1115,6 +1138,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "blake3",
+ "capsem-api",
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
@@ -1171,6 +1195,7 @@ name = "capsem-tui"
 version = "0.6.3"
 dependencies = [
  "anyhow",
+ "capsem-sdk",
  "clap",
  "crossterm 0.29.0",
  "futures",
@@ -7648,6 +7673,29 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "utoipa"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "uuid"

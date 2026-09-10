@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import textwrap
 import time
 import uuid
@@ -410,19 +411,12 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             ),
             lambda payload: any(
                 row["summary"].startswith(f"{observed_server}/fixture_lookup")
-                for row in [
-                    dict(zip(payload["columns"], row, strict=True))
-                    for row in payload["rows"]
-                ]
+                for row in payload["events"]
             ),
         )
-        assert set(timeline) == {"columns", "rows"}
-        assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
-            timeline["columns"]
-        )
-        timeline_rows = [
-            dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]
-        ]
+        assert set(timeline) == {"events"}
+        assert all({"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(event) for event in timeline["events"])
+        timeline_rows = timeline["events"]
         timeline_summaries = {row["summary"] for row in timeline_rows}
         assert any(
             summary.startswith(f"{observed_server}/fixture_lookup")
@@ -483,6 +477,18 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         ]
         assert len(mcp_tool_events) == 1
         assert mcp_tool_events[0]["tool_name"] == "fixture_lookup"
+
+        sdk = subprocess.run(
+            ["uv", "run", "--frozen", "python", "-m", "tests.mcp_acceptance"],
+            cwd=PROJECT_ROOT / "sdk/python",
+            env={**{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
+                 "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,
+                 "SDK_VM_ID": vm_id, "SDK_MCP_NONCE": nonce,
+                 "SDK_MCP_EVENT_ID": mcp_tool_events[0]["event_id"]},
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        assert sdk.returncode == 0, sdk.stdout + sdk.stderr
+        assert "SDK_MCP_ACCEPTANCE_OK" in sdk.stdout
 
         gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{vm_id}/delete", timeout=60)

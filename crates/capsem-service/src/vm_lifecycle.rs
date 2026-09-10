@@ -1,6 +1,8 @@
 use super::*;
 
+mod provision;
 mod resume;
+mod resume_process;
 mod session_dirs;
 pub(crate) use resume::handle_resume;
 #[cfg(test)]
@@ -102,29 +104,9 @@ pub(super) async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
-) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!(
-        "history:layer={}:limit={}:offset={}:search={}",
-        params.layer,
-        params.limit,
-        params.offset,
-        params.search.as_deref().unwrap_or("")
-    );
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+) -> Result<Json<api::HistoryResponse>, AppError> {
     let session = history_ledger_for_vm(&state, &id).await?;
-    let response = query_history_ledger(&session, &params);
-    let body = serde_json::to_vec(&response).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize history response: {error}"),
-        )
-    })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
-    Ok(json_bytes_response(Bytes::from(body)))
+    Ok(Json(query_history_ledger(&session, &params)))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.
@@ -281,7 +263,7 @@ pub(super) async fn shutdown_vm_process(
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
     // Teardown must not overlap save/restore, but independent cold starts may.
-    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
 
     // Serialize teardown: VZ, WAL checkpoint, and socket cleanup contend; a
@@ -371,10 +353,10 @@ pub(super) async fn shutdown_vm_process(
 pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Apple VZ can corrupt a sibling VirtioFS overlay when save/restore calls
     // overlap. Hold the service-wide lock until exit and checkpoint durability.
-    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_guard = state.lifecycle.vz.write().await;
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
@@ -502,13 +484,13 @@ pub(super) async fn handle_suspend(
             .await?;
     }
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
 pub(super) async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::StopResponse>, AppError> {
     // shutdown_vm_process now waits for actual process exit and cleans the
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
@@ -520,7 +502,10 @@ pub(super) async fn handle_stop(
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
-        Ok(Json(json!({ "success": true, "persistent": persistent })))
+        Ok(Json(api::StopResponse {
+            success: true,
+            persistent,
+        }))
     } else {
         Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
@@ -529,7 +514,7 @@ pub(super) async fn handle_stop(
 pub(super) async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Delete fast-paths through direct process teardown: the session dir is
     // about to be removed, so guest sync() and bash history don't matter.
     let session_dir =
@@ -587,7 +572,7 @@ pub(super) async fn handle_delete(
             })?;
     }
 
-    Ok(Json(json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
 pub(super) fn provision_response_for_running(
@@ -823,6 +808,10 @@ pub(super) async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
     if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
@@ -851,7 +840,7 @@ pub(super) async fn handle_run(
     let version = state.current_version.clone();
     let env = payload.env.clone();
     {
-        let _vz_guard = state.save_restore_lock.read().await;
+        let _vz_guard = state.lifecycle.vz.read().await;
         let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
         let provision_result = tokio::task::spawn_blocking(move || {
             state_clone.provision_sandbox(ProvisionOptions {

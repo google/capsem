@@ -1,0 +1,5300 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Capsem Gateway",
+    "version": "0.6.3"
+  },
+  "paths": {
+    "/host-logs/{name}": {
+      "get": {
+        "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
+        "operationId": "getHypervisorLogs",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HostLogSource"
+            }
+          },
+          {
+            "name": "grep",
+            "in": "query",
+            "description": "Keep lines containing this literal substring, before applying tail.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Return the last matching lines. Zero returns no lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "description": "Read at most this many bytes per stream, capped at 5 MiB.\nDefaults to 100 KiB for host logs and 5 MiB for VM logs.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded, filtered log tail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLogsResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/list": {
+      "get": {
+        "operationId": "listProfiles",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilesListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/restart": {
+      "post": {
+        "description": "Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation.",
+        "operationId": "restartHypervisor",
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "getHypervisorInfo",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypervisorInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/apply": {
+      "post": {
+        "operationId": "updateHypervisor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/status": {
+      "get": {
+        "operationId": "getUpdateStatus",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/create": {
+      "post": {
+        "operationId": "createVm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/list": {
+      "get": {
+        "operationId": "listVms",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/changes": {
+      "get": {
+        "operationId": "getVmChanges",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "checkpoint",
+            "in": "query",
+            "description": "Checkpoint from snapshots.list(), for example cp-0.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of file changes to skip, in path order.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum returned changes. Defaults to 200, capped at 2000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangesResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/delete": {
+      "delete": {
+        "operationId": "deleteVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/exec": {
+      "post": {
+        "operationId": "execVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/files/content": {
+      "get": {
+        "operationId": "downloadVmFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "uploadVmFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/files/list": {
+      "get": {
+        "operationId": "listVmFiles",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/fork": {
+      "post": {
+        "operationId": "forkVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForkResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/history": {
+      "get": {
+        "operationId": "getVmHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum commands to return. Defaults to 500, capped at 2000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Literal, case-sensitive search over commands, previews and details.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/HistoryLayerFilter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/info": {
+      "get": {
+        "operationId": "getVmInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/logs": {
+      "get": {
+        "operationId": "getVmLogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "grep",
+            "in": "query",
+            "description": "Keep lines containing this literal substring, before applying tail.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Return the last matching lines. Zero returns no lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "description": "Read at most this many bytes per stream, capped at 5 MiB.\nDefaults to 100 KiB for host logs and 5 MiB for VM logs.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/pause": {
+      "post": {
+        "operationId": "pauseVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/resume": {
+      "post": {
+        "operationId": "resumeVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/snapshots/list": {
+      "get": {
+        "operationId": "listVmSnapshots",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotsList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/snapshots/status": {
+      "get": {
+        "operationId": "getVmSnapshotsStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotsStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/start": {
+      "post": {
+        "operationId": "startVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/stats/detail": {
+      "get": {
+        "operationId": "getVmStatsDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmStatsDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/stats/summary": {
+      "get": {
+        "operationId": "getVmStatsSummary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmStatsSummaryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/status": {
+      "get": {
+        "operationId": "getVmStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/stop": {
+      "post": {
+        "operationId": "stopVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/timeline": {
+      "get": {
+        "operationId": "getVmTimeline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "description": "Filter to a trace, also retaining legacy records without a trace ID.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Lookback duration (30m, 1h, 7d) or RFC3339 timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events. Defaults to 200, capped at 2000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "description": "Comma-separated layers. Defaults to all five layers.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/TimelineLayer"
+              }
+            },
+            "style": "form",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AssetManifestStatus": {
+        "type": "object",
+        "required": [
+          "origin",
+          "path",
+          "validation_status"
+        ],
+        "properties": {
+          "assets_current": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binaries_current": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blake3": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "origin": {
+            "type": "string",
+            "description": "Provenance label recorded by the installer or channel metadata."
+          },
+          "origin_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "packaged_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "refresh_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refreshed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation_status": {
+            "$ref": "#/components/schemas/ValidationStatus"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "pid",
+          "ppid",
+          "uid",
+          "exe",
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "type": "string"
+          },
+          "audit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "exe": {
+            "type": "string"
+          },
+          "exec_event_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "parent_exe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ppid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AuditHistoryDetails": {
+        "type": "object",
+        "required": [
+          "pid",
+          "ppid",
+          "uid",
+          "exe"
+        ],
+        "properties": {
+          "audit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exe": {
+            "type": "string"
+          },
+          "parent_exe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ppid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "tty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "BodyDirection": {
+        "type": "string",
+        "enum": [
+          "request",
+          "response"
+        ]
+      },
+      "CaptureStatus": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "truncated",
+          "unknown"
+        ]
+      },
+      "CapturedContent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/JsonContent"
+          },
+          {
+            "$ref": "#/components/schemas/TextContent"
+          },
+          {
+            "$ref": "#/components/schemas/RawContent"
+          }
+        ]
+      },
+      "CapturedPayload": {
+        "type": "object",
+        "required": [
+          "status",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/CapturedContent"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaptureStatus"
+          }
+        }
+      },
+      "ChangesResponse": {
+        "type": "object",
+        "required": [
+          "checkpoint",
+          "changes",
+          "total",
+          "has_more"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileChange"
+            }
+          },
+          "checkpoint": {
+            "type": "string",
+            "description": "The requested baseline. Changes describe UTF-8 file paths and symlinks;\ndirectories are traversed, and symlink targets are never followed.\nA live workspace can change during the comparison."
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CredentialEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "material_class",
+          "source",
+          "verb"
+        ],
+        "properties": {
+          "context_json": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialEventType"
+              }
+            ]
+          },
+          "material_class": {
+            "$ref": "#/components/schemas/MaterialClass"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialEventType"
+              }
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verb": {
+            "$ref": "#/components/schemas/CredentialOutcome"
+          }
+        }
+      },
+      "CredentialEventType": {
+        "type": "string",
+        "description": "Boundary that observed or injected credential material.",
+        "enum": [
+          "http.request",
+          "http.response",
+          "model.call",
+          "mcp.tool_call",
+          "mcp.tool_list",
+          "mcp.event",
+          "dns.query",
+          "file.event",
+          "file.import",
+          "file.export",
+          "process.exec",
+          "process.exec_complete",
+          "process.audit",
+          "credential.substitution",
+          "security.rule",
+          "security.ask"
+        ]
+      },
+      "CredentialOutcome": {
+        "type": "string",
+        "enum": [
+          "captured",
+          "brokered",
+          "injected",
+          "error"
+        ]
+      },
+      "DnsEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "qname",
+          "qtype",
+          "qclass",
+          "rcode",
+          "decision"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/NetworkDecision"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "matched_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qclass": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "qname": {
+            "type": "string"
+          },
+          "qtype": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rcode": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source_proto": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NetworkProtocol"
+              }
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstream_resolver_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "EventBody": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "direction",
+          "original_bytes",
+          "stored_bytes",
+          "truncated",
+          "body_hash",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "body_hash": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/BodyDirection"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "original_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExecHistoryDetails": {
+        "type": "object",
+        "required": [
+          "source",
+          "exec_id"
+        ],
+        "properties": {
+          "exec_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExecSource"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ExecRequest": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ExecResponse": {
+        "type": "object",
+        "required": [
+          "stdout",
+          "stderr",
+          "exit_code"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The guest produced more output than the per-exec cap allows, so\n`stdout` is a prefix. Defaulted so an older client still decodes."
+          }
+        }
+      },
+      "ExecSource": {
+        "type": "string",
+        "enum": [
+          "api",
+          "cli",
+          "mcp",
+          "frontend"
+        ]
+      },
+      "FileActionCount": {
+        "type": "object",
+        "required": [
+          "action",
+          "count"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FileEventAction"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "FileChange": {
+        "type": "object",
+        "required": [
+          "path",
+          "kind",
+          "is_symlink"
+        ],
+        "properties": {
+          "is_symlink": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FileChangeKind"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "FileChangeKind": {
+        "type": "string",
+        "enum": [
+          "created",
+          "modified",
+          "deleted"
+        ]
+      },
+      "FileEntryType": {
+        "type": "string",
+        "enum": [
+          "file",
+          "directory"
+        ]
+      },
+      "FileEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "action",
+          "path"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FileEventAction"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FileEventAction": {
+        "type": "string",
+        "enum": [
+          "created",
+          "modified",
+          "deleted",
+          "restored",
+          "read",
+          "import",
+          "export"
+        ]
+      },
+      "FileListEntry": {
+        "type": "object",
+        "description": "A single entry in a workspace file listing.",
+        "required": [
+          "name",
+          "path",
+          "type",
+          "size",
+          "mtime"
+        ],
+        "properties": {
+          "children": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FileListEntry"
+            }
+          },
+          "is_text": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mime": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mtime": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "type": {
+            "$ref": "#/components/schemas/FileEntryType"
+          }
+        }
+      },
+      "FileListResponse": {
+        "type": "object",
+        "description": "Response for GET /vms/{id}/files/list.",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileListEntry"
+            }
+          }
+        }
+      },
+      "ForkRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ForkResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "size_bytes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HistoryDetails": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ExecHistoryDetails"
+          },
+          {
+            "$ref": "#/components/schemas/AuditHistoryDetails"
+          }
+        ]
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "layer",
+          "command",
+          "details"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/HistoryDetails"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/HistoryLayer"
+          },
+          "stderr_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stdout_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryLayer": {
+        "type": "string",
+        "enum": [
+          "exec",
+          "audit"
+        ]
+      },
+      "HistoryLayerFilter": {
+        "type": "string",
+        "enum": [
+          "all",
+          "exec",
+          "audit"
+        ]
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": [
+          "commands",
+          "total",
+          "has_more"
+        ],
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HostLogSource": {
+        "type": "string",
+        "description": "Symbolic host log streams. Paths supplied by clients are never accepted.",
+        "enum": [
+          "service",
+          "mcp",
+          "gateway",
+          "tray",
+          "app"
+        ]
+      },
+      "HostLogsResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "text"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/HostLogSource"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "HttpEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "domain",
+          "decision"
+        ],
+        "properties": {
+          "bytes_received": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/NetworkDecision"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "matched_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_headers": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_headers": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "HypervisorInfo": {
+        "type": "object",
+        "required": [
+          "service",
+          "gateway_version",
+          "vm_count",
+          "vms"
+        ],
+        "properties": {
+          "gateway_version": {
+            "type": "string"
+          },
+          "profiles": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileCatalogStatus"
+              }
+            ]
+          },
+          "resource_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceSummary"
+              }
+            ]
+          },
+          "service": {
+            "$ref": "#/components/schemas/ServiceAvailability"
+          },
+          "updates": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateStatusResponse"
+              }
+            ]
+          },
+          "vm_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "vms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmSummary"
+            }
+          }
+        }
+      },
+      "Interaction": {
+        "type": "object",
+        "description": "One retained item. IDs refer to the session ledger, never a list position.",
+        "required": [
+          "event_id",
+          "timestamp",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/InteractionContent"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "item_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "model_call_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "model_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when there is no parent or its row is no longer retained."
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InteractionBlock": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/InteractionBlockKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          }
+        }
+      },
+      "InteractionBlockKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "reasoning"
+        ]
+      },
+      "InteractionBody": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "direction",
+          "original_bytes",
+          "stored_bytes",
+          "body_hash",
+          "payload"
+        ],
+        "properties": {
+          "body_hash": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/BodyDirection"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "original_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CapturedPayload"
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "InteractionContent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/InteractionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionMessage"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionToolCall"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionToolResult"
+          }
+        ]
+      },
+      "InteractionMessage": {
+        "type": "object",
+        "required": [
+          "kind",
+          "role",
+          "blocks"
+        ],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionBlock"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionMessageKind"
+          },
+          "role": {
+            "$ref": "#/components/schemas/InteractionRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionMessageKind": {
+        "type": "string",
+        "enum": [
+          "message"
+        ]
+      },
+      "InteractionReport": {
+        "type": "object",
+        "required": [
+          "items",
+          "bodies"
+        ],
+        "properties": {
+          "bodies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionBody"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            },
+            "description": "Latest 200 model items and latest 200 tool calls, in chronological order.\nThis bounded report is not a complete conversation or a pagination API."
+          }
+        }
+      },
+      "InteractionRequest": {
+        "type": "object",
+        "description": "A retained request preview, not an inferred user message.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/InteractionRequestKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionRequestKind": {
+        "type": "string",
+        "enum": [
+          "request_preview"
+        ]
+      },
+      "InteractionRole": {
+        "type": "string",
+        "enum": [
+          "assistant"
+        ]
+      },
+      "InteractionToolCall": {
+        "type": "object",
+        "required": [
+          "kind",
+          "call_id",
+          "tool_name",
+          "origin",
+          "decision"
+        ],
+        "properties": {
+          "arguments": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          },
+          "call_id": {
+            "type": "string",
+            "description": "Provider/server scoped: use the enclosing trace and model IDs to correlate."
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolDecision"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionToolCallKind"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ToolOrigin"
+          },
+          "request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload",
+                "description": "Captured JSON-RPC request when the ledger stored an MCP envelope."
+              }
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InteractionToolResult",
+                "description": "Only the result stored on this call; unrelated call IDs are never joined."
+              }
+            ]
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionToolCallKind": {
+        "type": "string",
+        "enum": [
+          "tool_call"
+        ]
+      },
+      "InteractionToolResult": {
+        "type": "object",
+        "required": [
+          "kind",
+          "call_id"
+        ],
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_error": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Null when the source ledger did not record a result error flag."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionToolResultKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          },
+          "response": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload",
+                "description": "Captured JSON-RPC response when `payload` is its extracted result."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionToolResultKind": {
+        "type": "string",
+        "enum": [
+          "tool_result"
+        ]
+      },
+      "JsonContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/JsonContentKind"
+          },
+          "value": {
+            "description": "Arbitrary tool/provider JSON, including arrays, scalars and JSON null."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JsonContentKind": {
+        "type": "string",
+        "enum": [
+          "json"
+        ]
+      },
+      "ListResponse": {
+        "type": "object",
+        "required": [
+          "sandboxes"
+        ],
+        "properties": {
+          "sandboxes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SandboxInfo"
+            }
+          }
+        }
+      },
+      "LogsResponse": {
+        "type": "object",
+        "required": [
+          "logs"
+        ],
+        "properties": {
+          "logs": {
+            "type": "string"
+          },
+          "process_logs": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial_logs": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MaterialClass": {
+        "type": "string",
+        "enum": [
+          "credential"
+        ]
+      },
+      "McpUsage": {
+        "type": "object",
+        "required": [
+          "tool_name",
+          "call_count",
+          "duration_ms",
+          "bytes_sent",
+          "bytes_received"
+        ],
+        "properties": {
+          "bytes_received": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ModelEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "provider",
+          "method",
+          "path"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "method": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "response_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ModelUsage": {
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "call_count",
+          "input_tokens",
+          "output_tokens",
+          "estimated_cost_usd",
+          "duration_ms"
+        ],
+        "properties": {
+          "call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider identifiers and model names are open namespaces."
+          }
+        }
+      },
+      "NetworkDecision": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "denied",
+          "error",
+          "redirected"
+        ]
+      },
+      "NetworkProtocol": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "udp"
+        ]
+      },
+      "ProcessEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "exec_id",
+          "command",
+          "source"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "exec_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExecSource"
+          },
+          "stderr_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "stdout_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProfileArtifactIssue": {
+        "type": "object",
+        "required": [
+          "kind",
+          "path"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Profile-owned artifact label, not a lifecycle or permission state."
+          },
+          "path": {
+            "type": "string"
+          },
+          "present": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "valid": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProfileAvailabilitySummary": {
+        "type": "object",
+        "required": [
+          "web",
+          "shell",
+          "mobile"
+        ],
+        "properties": {
+          "mobile": {
+            "type": "boolean"
+          },
+          "shell": {
+            "type": "boolean"
+          },
+          "web": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ProfileCatalogSource": {
+        "type": "string",
+        "enum": [
+          "built_in",
+          "profile"
+        ]
+      },
+      "ProfileCatalogStatus": {
+        "type": "object",
+        "required": [
+          "source",
+          "profile_count",
+          "ready_count",
+          "profiles"
+        ],
+        "properties": {
+          "asset_manifest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AssetManifestStatus"
+              }
+            ]
+          },
+          "bytes_done": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "current_asset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "downloaded": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "profile_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileReadiness"
+            }
+          },
+          "ready_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reconcile_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ProfileCatalogSource"
+          }
+        }
+      },
+      "ProfileExistingVmUpdateSemantics": {
+        "type": "string",
+        "enum": [
+          "pinned_until_recreate"
+        ]
+      },
+      "ProfileNewSessionUpdateSemantics": {
+        "type": "string",
+        "enum": [
+          "use_current_profile_catalog"
+        ]
+      },
+      "ProfileReadiness": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "ready",
+          "current_arch",
+          "missing_assets",
+          "invalid_assets",
+          "invalid_files",
+          "errors",
+          "asset_count"
+        ],
+        "properties": {
+          "asset_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "current_arch": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "invalid_assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileArtifactIssue"
+            }
+          },
+          "invalid_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileArtifactIssue"
+            }
+          },
+          "missing_assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileArtifactIssue"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile_payload_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update_semantics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileUpdateSemantics"
+              }
+            ]
+          }
+        }
+      },
+      "ProfileSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "availability",
+          "source",
+          "rule_count",
+          "default_rule_count",
+          "plugin_count",
+          "mcp_server_count",
+          "update_semantics"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/ProfileAvailabilitySummary"
+          },
+          "default_rule_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon_svg": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "mcp_server_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "plugin_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rule_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "update_semantics": {
+            "$ref": "#/components/schemas/ProfileUpdateSemantics"
+          }
+        }
+      },
+      "ProfileUpdateSemantics": {
+        "type": "object",
+        "required": [
+          "new_sessions",
+          "existing_vms",
+          "upgrade_action"
+        ],
+        "properties": {
+          "existing_vms": {
+            "$ref": "#/components/schemas/ProfileExistingVmUpdateSemantics"
+          },
+          "new_sessions": {
+            "$ref": "#/components/schemas/ProfileNewSessionUpdateSemantics"
+          },
+          "upgrade_action": {
+            "$ref": "#/components/schemas/ProfileUpgradeAction"
+          }
+        }
+      },
+      "ProfileUpgradeAction": {
+        "type": "string",
+        "enum": [
+          "recreate_vm"
+        ]
+      },
+      "ProfilesListResponse": {
+        "type": "object",
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSummary"
+            }
+          }
+        }
+      },
+      "ProvisionRequest": {
+        "type": "object",
+        "required": [
+          "profile_id"
+        ],
+        "properties": {
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "CPU count. If absent, service resolves from the selected profile's VM\nresources.",
+            "minimum": 0
+          },
+          "env": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Environment variables to inject into the guest at boot.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sandbox to clone state from. If provided, the new sandbox's session will\nbe cloned from this existing persistent sandbox."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persistent": {
+            "type": "boolean",
+            "description": "When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop."
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "ram_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "RAM in megabytes. If absent, service resolves from the selected\nprofile's VM resources.",
+            "minimum": 0
+          }
+        }
+      },
+      "ProvisionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "profile_id",
+          "status",
+          "available_actions"
+        ],
+        "properties": {
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmAction"
+            }
+          },
+          "can_resume": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "persistent": {
+            "type": "boolean"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VmLifecycleState"
+          },
+          "uds_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The UDS path the per-VM capsem-process is listening on. Clients MUST\nuse this value rather than recomputing it -- the service may fall back\nto a short hashed path under /tmp/capsem-<uid>/ when the preferred path\nwould exceed SUN_LEN. See capsem_foundation::uds::instance_socket_path."
+          }
+        }
+      },
+      "RawContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "raw",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RawContentKind"
+          },
+          "raw": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RawContentReason"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RawContentKind": {
+        "type": "string",
+        "enum": [
+          "raw"
+        ]
+      },
+      "RawContentReason": {
+        "type": "string",
+        "enum": [
+          "truncated",
+          "invalid_json",
+          "unparsed"
+        ]
+      },
+      "ResourceSummary": {
+        "type": "object",
+        "required": [
+          "total_ram_mb",
+          "total_cpus",
+          "running_count",
+          "stopped_count",
+          "suspended_count"
+        ],
+        "properties": {
+          "running_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stopped_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "suspended_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_cpus": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total_ram_mb": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "RestartAuthentication": {
+        "type": "string",
+        "enum": [
+          "new_token_required"
+        ]
+      },
+      "RestartResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "manager",
+          "authentication"
+        ],
+        "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/RestartAuthentication",
+            "description": "The restarted gateway rotates its token. Obtain fresh credentials and\nconstruct a new SDK client; never replay the restart mutation."
+          },
+          "manager": {
+            "$ref": "#/components/schemas/ServiceManager"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RestartStatus"
+          }
+        }
+      },
+      "RestartStatus": {
+        "type": "string",
+        "enum": [
+          "accepted"
+        ]
+      },
+      "SandboxInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "profile_id",
+          "pid",
+          "status",
+          "available_actions"
+        ],
+        "properties": {
+          "ai": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmAiInfo",
+                "description": "Session summaries returned by /info when the ledger is ready.\nMissing summaries are accompanied by session_db readiness/error details."
+              }
+            ]
+          },
+          "allowed_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmAction"
+            }
+          },
+          "can_resume": {
+            "type": "boolean",
+            "description": "True only when an inactive persistent VM can be started/resumed with\nthe currently installed profile and pinned assets."
+          },
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "denied_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmFilesInfo"
+              }
+            ]
+          },
+          "forked_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short tail of `process.log` from the last failed boot. Populated\nonly when `status == VmLifecycleState::Defunct`. Renders in `capsem list` /\n`capsem status` so a crashed VM tells the user *why* without\nrequiring a separate `capsem logs <id>` round-trip."
+          },
+          "model_call_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "network": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmNetworkInfo"
+              }
+            ]
+          },
+          "persistent": {
+            "type": "boolean"
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "ram_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "resume_blocked_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-readable reason `can_resume` is false for an inactive persistent\nVM, e.g. profile payload hash drift after an upgrade."
+          },
+          "session_db": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SessionDbStatus"
+              }
+            ]
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "On-disk size of the session dir in bytes. Populated for /info on\npersistent VMs; useful for verifying that fork produced a compact\noverlay and not a bloated sparse file.",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/VmLifecycleState"
+          },
+          "storage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StorageDiagnostics"
+              }
+            ]
+          },
+          "total_estimated_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "total_file_events": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_thinking_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_tool_calls": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "uptime_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServiceAvailability": {
+        "type": "string",
+        "enum": [
+          "running",
+          "unavailable"
+        ]
+      },
+      "ServiceManager": {
+        "type": "string",
+        "enum": [
+          "launchd",
+          "systemd"
+        ]
+      },
+      "SessionDbStatus": {
+        "type": "object",
+        "required": [
+          "ready"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SnapshotInfo": {
+        "type": "object",
+        "required": [
+          "checkpoint",
+          "slot",
+          "origin",
+          "timestamp"
+        ],
+        "properties": {
+          "checkpoint": {
+            "type": "string"
+          },
+          "hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "slot": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "SnapshotOrigin": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "manual"
+        ]
+      },
+      "SnapshotsList": {
+        "type": "object",
+        "required": [
+          "total",
+          "snapshots"
+        ],
+        "properties": {
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotInfo"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SnapshotsStatus": {
+        "type": "object",
+        "required": [
+          "total",
+          "auto_count",
+          "manual_count",
+          "manual_available",
+          "snapshots"
+        ],
+        "properties": {
+          "auto_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "manual_available": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "manual_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotInfo"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "StopResponse": {
+        "type": "object",
+        "description": "Stop completes after the VM process exits. Persistent workspace state remains.",
+        "required": [
+          "success",
+          "persistent"
+        ],
+        "properties": {
+          "persistent": {
+            "type": "boolean"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StorageDiagnostics": {
+        "type": "object",
+        "required": [
+          "rootfs_image_path",
+          "rootfs_image_logical_bytes",
+          "rootfs_image_physical_bytes",
+          "host_total_bytes",
+          "host_free_bytes",
+          "host_available_bytes",
+          "guest_overlay_device",
+          "guest_overlay_mount"
+        ],
+        "properties": {
+          "guest_overlay_device": {
+            "type": "string"
+          },
+          "guest_overlay_mount": {
+            "type": "string"
+          },
+          "host_available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "host_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "host_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "rootfs_image_logical_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "rootfs_image_path": {
+            "type": "string"
+          },
+          "rootfs_image_physical_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SupplyChainChannelEvidence": {
+        "type": "object",
+        "properties": {
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SupplyChainEvidence": {
+        "type": "object",
+        "required": [
+          "manifest",
+          "channel_index",
+          "host_sbom",
+          "vm_obom",
+          "attestations"
+        ],
+        "properties": {
+          "attestations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SupplyChainReference"
+            }
+          },
+          "channel_index": {
+            "$ref": "#/components/schemas/SupplyChainChannelEvidence"
+          },
+          "host_sbom": {
+            "$ref": "#/components/schemas/SupplyChainReference"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/SupplyChainManifestEvidence"
+          },
+          "vm_obom": {
+            "$ref": "#/components/schemas/SupplyChainReference"
+          }
+        }
+      },
+      "SupplyChainManifestEvidence": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "blake3": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SupplyChainReference": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generator": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "release_artifact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TextContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TextContentKind"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TextContentKind": {
+        "type": "string",
+        "enum": [
+          "text"
+        ]
+      },
+      "TimelineEvent": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "layer",
+          "ref",
+          "summary"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "layer": {
+            "$ref": "#/components/schemas/TimelineLayer"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/TimelineReference"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TimelineStatus",
+                "description": "Exit code for exec, HTTP code for net/model, decision for tool, null for fs."
+              }
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TimelineLayer": {
+        "type": "string",
+        "enum": [
+          "exec",
+          "tool",
+          "net",
+          "fs",
+          "model"
+        ]
+      },
+      "TimelineReference": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "TimelineResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEvent"
+            }
+          }
+        }
+      },
+      "TimelineStatus": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "$ref": "#/components/schemas/ToolDecision"
+          }
+        ]
+      },
+      "ToolDecision": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "denied",
+          "warned",
+          "error"
+        ]
+      },
+      "ToolEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "server_name",
+          "tool_name",
+          "call_id",
+          "model_parent_missing",
+          "decision",
+          "duration_ms",
+          "bytes",
+          "source"
+        ],
+        "properties": {
+          "arguments": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolDecision"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_call_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "model_parent_missing": {
+            "type": "boolean"
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ToolOrigin"
+          },
+          "timestamp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ToolOrigin": {
+        "type": "string",
+        "enum": [
+          "model",
+          "native",
+          "mcp",
+          "builtin",
+          "local",
+          "mcp_proxy"
+        ]
+      },
+      "UpdateActionResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/UpdateCommandPlan"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UpdateActionStatus"
+          },
+          "stderr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stdout": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateActionStatus": {
+        "type": "string",
+        "enum": [
+          "planned",
+          "succeeded",
+          "failed"
+        ]
+      },
+      "UpdateApplyRequest": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateCommandPlan": {
+        "type": "object",
+        "required": [
+          "program",
+          "args"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "program": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateCompatibilityState": {
+        "type": "string",
+        "enum": [
+          "compatible",
+          "unknown",
+          "not_applicable"
+        ]
+      },
+      "UpdateStatusResponse": {
+        "type": "object",
+        "required": [
+          "stale",
+          "binary",
+          "assets",
+          "profiles",
+          "images",
+          "supply_chain"
+        ],
+        "properties": {
+          "assets": {
+            "$ref": "#/components/schemas/UpdateTrackStatus"
+          },
+          "binary": {
+            "$ref": "#/components/schemas/UpdateTrackStatus"
+          },
+          "channel_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "images": {
+            "$ref": "#/components/schemas/UpdateTrackStatus"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profiles": {
+            "$ref": "#/components/schemas/UpdateTrackStatus"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "supply_chain": {
+            "$ref": "#/components/schemas/SupplyChainEvidence"
+          },
+          "validation_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ValidationStatus"
+              }
+            ]
+          }
+        }
+      },
+      "UpdateTrackState": {
+        "type": "string",
+        "enum": [
+          "current",
+          "update_available",
+          "unknown",
+          "not_published"
+        ]
+      },
+      "UpdateTrackStatus": {
+        "type": "object",
+        "required": [
+          "update_available",
+          "state",
+          "compatibility"
+        ],
+        "properties": {
+          "blocked_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "compatibility": {
+            "$ref": "#/components/schemas/UpdateCompatibilityState"
+          },
+          "current": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/UpdateTrackState"
+          },
+          "update_available": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UploadResponse": {
+        "type": "object",
+        "description": "Response for POST /vms/{id}/files/content.",
+        "required": [
+          "success",
+          "size"
+        ],
+        "properties": {
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ValidationStatus": {
+        "type": "string",
+        "enum": [
+          "valid",
+          "invalid",
+          "missing",
+          "fetch_error"
+        ]
+      },
+      "VmAction": {
+        "type": "string",
+        "enum": [
+          "pause",
+          "stop",
+          "start",
+          "resume",
+          "fork",
+          "delete"
+        ]
+      },
+      "VmActionResponse": {
+        "type": "object",
+        "description": "Acknowledgement returned after a VM pause or deletion completes.",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "VmAiInfo": {
+        "type": "object",
+        "description": "Recorded model and tool activity for this VM's session.",
+        "required": [
+          "model_call_count",
+          "total_input_tokens",
+          "total_thinking_tokens",
+          "total_output_tokens",
+          "total_tool_calls",
+          "total_estimated_cost_usd",
+          "models",
+          "mcp"
+        ],
+        "properties": {
+          "mcp": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpUsage"
+            },
+            "description": "Recorded MCP tool calls, grouped by server and tool identity."
+          },
+          "model_call_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Models observed in the session, grouped by provider and model identity."
+          },
+          "total_estimated_cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_thinking_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_tool_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmFilesInfo": {
+        "type": "object",
+        "description": "Recorded filesystem activity, not a recursive workspace inventory.",
+        "required": [
+          "total_events",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileActionCount"
+            }
+          },
+          "total_events": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmLifecycleState": {
+        "type": "string",
+        "enum": [
+          "Running",
+          "Stopped",
+          "Suspended",
+          "Defunct",
+          "Incompatible"
+        ]
+      },
+      "VmNetworkInfo": {
+        "type": "object",
+        "required": [
+          "total_requests",
+          "allowed_requests",
+          "denied_requests",
+          "errors",
+          "bytes_sent",
+          "bytes_received"
+        ],
+        "properties": {
+          "allowed_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_received": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "denied_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmStatsDetailResponse": {
+        "type": "object",
+        "description": "Latest retained events (200 per model/tool/network/file family, 100 per\nprocess/audit/credential family), session model totals, and captured bodies.\nThis is a bounded inspection report; it is not the complete session ledger.",
+        "required": [
+          "interactions",
+          "model_stats",
+          "model_events",
+          "tool_events",
+          "http_events",
+          "dns_events",
+          "file_events",
+          "process_events",
+          "audit_events",
+          "credential_events",
+          "body_blobs"
+        ],
+        "properties": {
+          "audit_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          },
+          "body_blobs": {
+            "type": "object",
+            "description": "Captured request/response bodies grouped by event ID.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/EventBody"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "credential_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CredentialEvent"
+            }
+          },
+          "dns_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsEvent"
+            }
+          },
+          "file_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileEvent"
+            }
+          },
+          "http_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HttpEvent"
+            }
+          },
+          "interactions": {
+            "$ref": "#/components/schemas/InteractionReport"
+          },
+          "model_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelEvent"
+            }
+          },
+          "model_stats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            }
+          },
+          "process_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessEvent"
+            }
+          },
+          "tool_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolEvent"
+            }
+          }
+        }
+      },
+      "VmStatsSummaryResponse": {
+        "type": "object",
+        "required": [
+          "total_requests",
+          "allowed_requests",
+          "denied_requests",
+          "total_input_tokens",
+          "total_thinking_tokens",
+          "total_output_tokens",
+          "total_tool_calls",
+          "total_estimated_cost"
+        ],
+        "properties": {
+          "allowed_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "denied_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_estimated_cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_thinking_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_tool_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmStatusResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "available_actions"
+        ],
+        "properties": {
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmAction"
+            }
+          },
+          "can_resume": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "persistent": {
+            "type": "boolean"
+          },
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "resume_blocked_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/VmLifecycleState"
+          },
+          "storage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StorageDiagnostics"
+              }
+            ]
+          },
+          "uptime_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VmSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "persistent",
+          "profile_id",
+          "available_actions"
+        ],
+        "properties": {
+          "allowed_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmAction"
+            }
+          },
+          "can_resume": {
+            "type": "boolean"
+          },
+          "denied_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a crashed VM died: the `process.log` tail the service captured.\nThe service splits the two on purpose -- a defunct session carries its\nreason here and leaves `resume_blocked_reason` empty -- so a consumer\nthat reads only the latter has nothing to show for the one state where\nthe user most needs a reason."
+          },
+          "model_call_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persistent": {
+            "type": "boolean"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "resume_blocked_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/VmLifecycleState"
+          },
+          "total_estimated_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "total_file_events": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_tool_calls": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "uptime_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

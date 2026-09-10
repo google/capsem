@@ -76,9 +76,17 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     mock that only the tests import, on an `mcp_export` build as well.
     """
     assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend-build")
-    assert _wave_of(FastModule, "fast.web.frontend-verify") >= _wave_of(FastModule, "fast.clippy"), (
-        "clippy waiting on the verify half is the cost the split removed"
-    )
+    # Independent prerequisites can put verify in an earlier wave without
+    # making Clippy depend on it. Inspect dependencies, not incidental waves.
+    plan = _plan(FastModule)
+    pending = list(plan.after_of("fast.clippy"))
+    visited = set()
+    while pending:
+        parent = pending.pop()
+        assert parent != "fast.web.frontend-verify", "Clippy must not wait for frontend verification"
+        if parent not in visited:
+            visited.add(parent)
+            pending.extend(plan.after_of(parent))
 
 
 def test_rust_format_is_a_fast_source_leaf() -> None:

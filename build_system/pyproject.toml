@@ -38,6 +38,7 @@ packages = [
     "capsem_builder.image.tools.bootstrap",
     "capsem_builder.image.tools.build",
     "capsem_builder.policy",
+    "capsem_builder.sdkgen",
     "capsem_builder.release",
     "capsem_builder.release.tools",
 ]
@@ -99,6 +100,7 @@ fail_under = 85
 
 [dependency-groups]
 dev = [
+    "aiohttp>=3.12,<4",
     "psutil>=7.2.2",
     "pygments>=2.20.0",
     "pytest>=9.0.3",

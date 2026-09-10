@@ -1,6 +1,14 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import { recordWsEvent } from './tauri-log';
+import * as gateway from '@capsem/sdk/operations';
+import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
+import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList } from '@capsem/sdk';
+import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
+export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
+export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse,
+  SnapshotInfo as SnapshotSlotStatus, SnapshotsStatus as SnapshotStatusResponse } from '@capsem/sdk';
+import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
   SandboxInfo,
@@ -9,7 +17,6 @@ import type {
   ProvisionRequest,
   ProvisionResponse,
   ExecResponse,
-  ReadFileResponse,
   ForkRequest,
   ForkResponse,
   StatsResponse,
@@ -27,7 +34,6 @@ import type {
   McpServerInfo,
   McpToolInfo,
   ToolPermission,
-  VmStateResponse,
   FileListResponse,
   FileContentResult,
   FileUploadResponse,
@@ -57,6 +63,7 @@ function _detectBaseUrl(): string {
 }
 
 let _baseUrl = _detectBaseUrl();
+const _sdk = new GatewaySdk({ url: () => _baseUrl, token: () => _token, refreshToken: _refreshToken });
 
 // -- Public getters --
 
@@ -182,27 +189,6 @@ export interface CredentialBrokerInfo {
   inventory: BrokeredCredentialStatus[];
   grants: CredentialBrokerGrantStatus;
   corp_constraints: CredentialBrokerCorpConstraint[];
-}
-
-export interface ProfileSummary {
-  id: string;
-  name: string;
-  description: string;
-  icon_svg?: string | null;
-  availability: {
-    web: boolean;
-    shell: boolean;
-    mobile: boolean;
-  };
-  source: string;
-  rule_count: number;
-  default_rule_count: number;
-  plugin_count: number;
-  mcp_server_count: number;
-}
-
-export interface ProfilesListResponse {
-  profiles: ProfileSummary[];
 }
 
 export interface ProfileObomInfo {
@@ -373,16 +359,11 @@ export async function init(): Promise<InitResult> {
 async function _serviceStatusRunning(): Promise<boolean> {
   if (!_token) return false;
   try {
-    const resp = await fetch(`${_baseUrl}/status`, {
-      headers: {
-        Authorization: `Bearer ${_token}`,
-      },
-    });
-    if (!resp.ok) return false;
-    const status: StatusResponse = await resp.json();
-    return status.service === 'running';
-  } catch {
-    return false;
+    const status = await _sdk.call(gateway.getHypervisorInfo);
+    return status.service === ServiceAvailability.RUNNING;
+  } catch (error) {
+    if (error instanceof NetworkError || error instanceof ApiError) return false;
+    throw error;
   }
 }
 
@@ -423,31 +404,16 @@ export async function healthCheck(): Promise<boolean> {
       _connected = false;
       return false;
     }
-    const serviceRunning = await _serviceStatusRunning();
-    _connected = serviceRunning;
-    return serviceRunning;
   } catch {
     _connected = false;
-    
     return false;
   }
+  const serviceRunning = await _serviceStatusRunning();
+  _connected = serviceRunning;
+  return serviceRunning;
 }
 
 // -- HTTP helpers (private) --
-
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    public body: string,
-  ) {
-    super(`API error ${status}: ${body}`);
-    this.name = 'ApiError';
-  }
-}
-
-function _isAuthRefreshStatus(status: number): boolean {
-  return status === 401 || status === 429;
-}
 
 async function _request(method: string, path: string, body?: unknown, retryAuth = true): Promise<Response> {
   const init: RequestInit = {
@@ -463,7 +429,7 @@ async function _request(method: string, path: string, body?: unknown, retryAuth 
   const resp = await fetch(`${_baseUrl}${path}`, {
     ...init,
   });
-  if (!resp.ok && retryAuth && _isAuthRefreshStatus(resp.status) && await _refreshToken()) {
+  if (!resp.ok && retryAuth && isAuthRefreshStatus(resp.status) && await _refreshToken()) {
     return _request(method, path, body, false);
   }
   if (!resp.ok) {
@@ -502,10 +468,9 @@ export async function getStatus(): Promise<StatusResponse> {
     return emptyStatus();
   }
   try {
-    const resp = await _get('/status');
-    return await resp.json();
+    return await _sdk.call(gateway.getHypervisorInfo);
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return emptyStatus();
     }
@@ -515,8 +480,7 @@ export async function getStatus(): Promise<StatusResponse> {
 
 export async function getVmInfo(id: string): Promise<SandboxInfo> {
   if (!_connected) throw new Error('Gateway not connected');
-  const resp = await _get(`/vms/${encodeURIComponent(id)}/info`);
-  return await resp.json();
+  return _sdk.call(transport => gateway.getVmInfo(transport, { id }));
 }
 
 async function routeJson(path: string): Promise<unknown> {
@@ -584,28 +548,19 @@ function emptyStatus(): StatusResponse {
 // -- VM lifecycle --
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
-  console.log('[api] provisionVm(%o) connected=%s', opts, _connected);
-  const resp = await _post('/vms/create', opts);
-  const result = await resp.json();
-  console.log('[api] provisionVm result:', result);
-  return result;
+  return _sdk.call(transport => gateway.createVm(transport, { body: opts }));
 }
 
-export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
-  const resp = await _post('/run', opts);
-  return await resp.json();
+export async function stopVm(id: string): Promise<StopResponse> {
+  return _sdk.call(transport => gateway.stopVm(transport, { id }));
 }
 
-export async function stopVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/stop`);
+export async function suspendVm(id: string): Promise<VmActionResponse> {
+  return _sdk.call(transport => gateway.pauseVm(transport, { id }));
 }
 
-export async function suspendVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/pause`);
-}
-
-export async function deleteVm(id: string): Promise<void> {
-  await _delete(`/vms/${encodeURIComponent(id)}/delete`);
+export async function deleteVm(id: string): Promise<VmActionResponse> {
+  return _sdk.call(transport => gateway.deleteVm(transport, { id }));
 }
 
 export async function purge(): Promise<Record<string, unknown>> {
@@ -613,31 +568,22 @@ export async function purge(): Promise<Record<string, unknown>> {
   return await resp.json();
 }
 
-export async function resumeVm(id: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/resume`);
+export async function resumeVm(id: string): Promise<ProvisionResponse> {
+  return _sdk.call(transport => gateway.resumeVm(transport, { id }));
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/fork`, opts);
-  return await resp.json();
+  return _sdk.call(transport => gateway.forkVm(transport, { id, body: opts }));
 }
 
 // -- VM inspection --
 
-/** Raw log response from GET /vms/{id}/logs. */
-export interface RawLogsResponse {
-  logs: string;
-  serial_logs: string | null;
-  process_logs: string | null;
-}
-
-export async function getVmLogs(id: string): Promise<RawLogsResponse> {
+export async function getVmLogs(id: string): Promise<LogsResponse> {
   if (!_connected) return { logs: '', serial_logs: null, process_logs: null };
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/logs`);
-    return await resp.json();
+    return await _sdk.call(transport => gateway.getVmLogs(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return { logs: '', serial_logs: null, process_logs: null };
     }
@@ -648,10 +594,10 @@ export async function getVmLogs(id: string): Promise<RawLogsResponse> {
 export async function getServiceLogs(): Promise<string> {
   if (!_connected) return '';
   try {
-    const resp = await _get('/service-logs');
-    return await resp.text();
+    const result = await _sdk.call(transport => gateway.getHypervisorLogs(transport, { name: HostLogSource.SERVICE }));
+    return result.text;
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return '';
     }
@@ -664,14 +610,10 @@ export async function execCommand(
   command: string,
   timeoutSecs?: number,
 ): Promise<ExecResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/exec`, {
-    command,
-    timeout_secs: timeoutSecs,
-  });
-  return await resp.json();
+  return _sdk.call(transport => gateway.execVm(transport, {
+    id, body: { command, ...(timeoutSecs === undefined ? {} : { timeout_secs: timeoutSecs }) },
+  }));
 }
-
-export type StatsDetailRow = Record<string, unknown>;
 
 const EMPTY_VM_STATS_SUMMARY: VmStatsSummary = {
   total_requests: 0,
@@ -687,28 +629,14 @@ const EMPTY_VM_STATS_SUMMARY: VmStatsSummary = {
 export async function getVmStatsSummary(id: string): Promise<VmStatsSummary> {
   if (!_connected) return EMPTY_VM_STATS_SUMMARY;
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats/summary`);
-    return await resp.json();
+    return await _sdk.call(transport => gateway.getVmStatsSummary(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return EMPTY_VM_STATS_SUMMARY;
     }
     throw err;
   }
-}
-
-export interface VmStatsDetailResponse {
-  model_stats: StatsDetailRow[];
-  model_events: StatsDetailRow[];
-  tool_events: StatsDetailRow[];
-  http_events: StatsDetailRow[];
-  dns_events: StatsDetailRow[];
-  file_events: StatsDetailRow[];
-  process_events: StatsDetailRow[];
-  audit_events: StatsDetailRow[];
-  credential_events: StatsDetailRow[];
-  body_blobs: Record<string, StatsDetailRow[]>;
 }
 
 export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {
@@ -723,27 +651,18 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
     audit_events: [],
     credential_events: [],
     body_blobs: {},
+    interactions: { items: [], bodies: [] },
   };
   if (!_connected) return empty;
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats/detail`);
-    return { ...empty, ...(await resp.json()) };
+    return await _sdk.call(transport => gateway.getVmStatsDetail(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return empty;
     }
     throw err;
   }
-}
-
-export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/files/read`, { path });
-  return await resp.json();
-}
-
-export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/files/write`, { path, content });
 }
 
 // -- Images --
@@ -879,49 +798,6 @@ export async function onTerminalSourceChanged(cb: (source: string) => void): Pro
   };
 }
 
-// -- VM state --
-
-/** Get the current VM state string. Returns 'not created' in mock mode. */
-export async function vmStatus(): Promise<string> {
-  if (!_connected) return 'not created';
-  try {
-    const status = await getStatus();
-    const running = status.vms.find(v => v.status.toLowerCase() === 'running');
-    if (running) return running.status.toLowerCase();
-    if (status.vms.length > 0) return status.vms[0].status.toLowerCase();
-    return 'not created';
-  } catch {
-    return 'not created';
-  }
-}
-
-/** Get VM state with transition history. */
-export async function getVmState(id?: string): Promise<VmStateResponse> {
-  if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
-  try {
-    const path = id ? `/vms/${encodeURIComponent(id)}/status` : '/status';
-    const resp = await _get(path);
-    const data = await resp.json();
-    // /vms/{id}/status returns runtime state; extract optional transition history.
-    if (id) {
-      return {
-        state: data.status ?? 'not created',
-        elapsed_ms: data.elapsed_ms ?? 0,
-        history: data.history ?? [],
-      };
-    }
-    // /status: synthesize from first VM.
-    const vm = data.vms?.[0];
-    return {
-      state: vm?.status?.toLowerCase() ?? 'not created',
-      elapsed_ms: 0,
-      history: [],
-    };
-  } catch {
-    return { state: 'not created', elapsed_ms: 0, history: [] };
-  }
-}
-
 // -- Real-time events (WebSocket /events) --
 
 interface VmStateEvent {
@@ -1007,8 +883,7 @@ export async function saveSettings(changes: Record<string, unknown>): Promise<Se
 // -- Profiles --
 
 export async function listProfiles(): Promise<ProfilesListResponse> {
-  const resp = await _get('/profiles/list');
-  return await resp.json();
+  return _sdk.call(gateway.listProfiles);
 }
 
 export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
@@ -1279,33 +1154,14 @@ export async function callMcpTool(
   return await resp.json();
 }
 
-export interface SnapshotSlotStatus {
-  checkpoint: string;
-  slot: number;
-  origin: 'auto' | 'manual' | string;
-  name?: string | null;
-  timestamp: string;
-  hash?: string | null;
-}
-
-export interface SnapshotStatusResponse {
-  total: number;
-  auto_count: number;
-  manual_count: number;
-  manual_available: number;
-  snapshots: SnapshotSlotStatus[];
-}
-
 /** Get VM recovery snapshot state through the service route, never session.db. */
-export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotStatusResponse> {
-  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/status`);
-  return await resp.json();
+export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotsStatus> {
+  return _sdk.call(transport => gateway.getVmSnapshotsStatus(transport, { id: vmId }));
 }
 
 /** Get the VM recovery snapshot list through the service route. */
-export async function listVmSnapshots(vmId: string): Promise<{ total: number; snapshots: SnapshotSlotStatus[] }> {
-  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/list`);
-  return await resp.json();
+export async function listVmSnapshots(vmId: string): Promise<SnapshotsList> {
+  return _sdk.call(transport => gateway.listVmSnapshots(transport, { id: vmId }));
 }
 
 // -- Assets --
@@ -1327,8 +1183,7 @@ export async function ensureAssets(profileId: string): Promise<AssetStatusRespon
 // -- Release channel / updates --
 
 export async function getUpdateStatus(): Promise<UpdateStatusResponse> {
-  const resp = await _get('/update/status');
-  return await resp.json();
+  return _sdk.call(gateway.getUpdateStatus);
 }
 
 export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise<UpdateActionResponse> {
@@ -1337,10 +1192,9 @@ export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise
 }
 
 export async function applyUpdate(
-  opts: { dry_run?: boolean; confirmed?: boolean } = {},
+  opts: UpdateApplyRequest = {},
 ): Promise<UpdateActionResponse> {
-  const resp = await _post('/update/apply', opts);
-  return await resp.json();
+  return _sdk.call(transport => gateway.updateHypervisor(transport, { body: opts }));
 }
 
 // -- App actions --
@@ -1366,45 +1220,21 @@ export function sanitizePath(raw: string): string {
 
 /** List files in a VM workspace directory. */
 export async function listFiles(id: string, path?: string, depth?: number): Promise<FileListResponse> {
-  const params = new URLSearchParams();
-  if (path) params.set('path', sanitizePath(path));
-  if (depth != null) params.set('depth', String(depth));
-  const qs = params.toString();
-  const url = `/vms/${encodeURIComponent(id)}/files/list${qs ? `?${qs}` : ''}`;
-  const resp = await _get(url);
-  return await resp.json();
+  return _sdk.call(transport => gateway.listVmFiles(transport, {
+    id, ...(path ? { path: sanitizePath(path) } : {}), ...(depth == null ? {} : { depth }),
+  }));
 }
 
 /** Download a file from a VM workspace. Returns text, blob, and size. */
-export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
-  const sanitized = sanitizePath(path);
-  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new ApiError(resp.status, body);
-  }
-  const blob = await resp.blob();
-  const text = await blob.text();
+export async function getFileContent(id: string, path: string, mime?: string | null): Promise<FileContentResult> {
+  const bytes = await _sdk.call(transport => gateway.downloadVmFile(transport, { id, path: sanitizePath(path) }));
+  const blob = new Blob([new Uint8Array(bytes)], { type: mime ?? 'application/octet-stream' });
+  const text = new TextDecoder().decode(bytes);
   return { text, blob, size: blob.size };
 }
 
 /** Upload a file to a VM workspace. */
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
-  const sanitized = sanitizePath(path);
-  const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${_token}`,
-      'Content-Type': 'application/octet-stream',
-    },
-    body,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return await resp.json();
+  const body = typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(await content.arrayBuffer());
+  return _sdk.call(transport => gateway.uploadVmFile(transport, { id, path: sanitizePath(path), body }));
 }

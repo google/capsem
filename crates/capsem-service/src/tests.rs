@@ -122,7 +122,7 @@ fn make_test_state() -> Arc<ServiceState> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -201,7 +201,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -599,7 +599,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -612,16 +612,22 @@ mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
 mod files_api;
+mod inspection;
+mod interactions;
 mod ledger_routes;
 mod lifecycle;
+mod logs_api;
 mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
+mod restart;
 mod session_identity;
 mod settings_files;
+mod snapshots_api;
 mod system_contracts;
 mod transcript;
 mod update_routes;
+mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
 use settings_files::{

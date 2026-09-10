@@ -16,6 +16,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-config`**: config types, parsing, validation, resolution, and
   provider/MCP identity.
 - **`capsem-credentials`**: credential provider contracts and durable store.
+- **`capsem-api`**: gateway request/response types and OpenAPI schema, shared by clients without service runtime access.
+- **`capsem-sdk`** (`sdk/rust`): async HTTP gateway clients that reuse `capsem-api` DTOs; explicit URL/token, no filesystem discovery or service/core dependencies.
 - **`capsem-proto`**: shared host/guest and service/process wire contracts.
 - **`capsem-core`**: VM, hypervisor, security-engine, host-network, MCP runtime,
   and session/image domain logic.

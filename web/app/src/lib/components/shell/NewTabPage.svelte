@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { VmAction } from "@capsem/sdk";
   import { onMount } from 'svelte';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
@@ -382,12 +383,12 @@
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
-                  {#if hasVmAction(vm, 'pause')}
+                  {#if hasVmAction(vm, VmAction.PAUSE)}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handlePause(e, vm)} aria-label="Pause" title="Pause">
                       <Pause size={16} />
                     </button>
                   {/if}
-                  {#if hasVmAction(vm, 'stop')}
+                  {#if hasVmAction(vm, VmAction.STOP)}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'stop', vm)} aria-label="Stop" title="Stop">
                       <Stop size={16} />
                     </button>
@@ -397,12 +398,12 @@
                       <Play size={16} />
                     </button>
                   {/if}
-                  {#if hasVmAction(vm, 'fork')}
+                  {#if hasVmAction(vm, VmAction.FORK)}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleFork(e, vm)} aria-label="Fork" title="Fork">
                       <GitFork size={16} />
                     </button>
                   {/if}
-                  {#if hasVmAction(vm, 'delete')}
+                  {#if hasVmAction(vm, VmAction.DELETE)}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'delete', vm)} aria-label="Delete" title="Delete">
                       <Trash size={16} />
                     </button>

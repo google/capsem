@@ -1,24 +1,4 @@
-// TypeScript types mirroring Rust structs for Tauri IPC.
-
-/** Response from get_guest_config. */
-export interface GuestConfigResponse {
-  env: Record<string, string>;
-}
-
-/** A single transition in the VM state machine history. */
-export interface TransitionEntry {
-  from: string;
-  to: string;
-  trigger: string;
-  duration_ms: number;
-}
-
-/** Response from get_vm_state. */
-export interface VmStateResponse {
-  state: string;
-  elapsed_ms: number;
-  history: TransitionEntry[];
-}
+// UI and profile configuration types. Gateway SDK types are re-exported below.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
@@ -386,29 +366,7 @@ export interface FileNode {
   sizeBytes?: number;
 }
 
-/** A file entry from the host-side files API (GET /vms/{id}/files/list). */
-export interface FileEntry {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtime: number;
-  mime?: string;
-  label?: string;
-  is_text?: boolean;
-  children?: FileEntry[];
-}
-
-/** Response from GET /vms/{id}/files/list. */
-export interface FileListResponse {
-  entries: FileEntry[];
-}
-
-/** Response from POST /vms/{id}/files/content (upload). */
-export interface FileUploadResponse {
-  success: boolean;
-  size: number;
-}
+export type { FileListEntry as FileEntry, FileListResponse, UploadResponse as FileUploadResponse } from '@capsem/sdk';
 
 /** Result from getFileContent(). */
 export interface FileContentResult {
