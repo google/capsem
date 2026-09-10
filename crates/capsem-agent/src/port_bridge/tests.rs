@@ -4,6 +4,76 @@ use std::net::TcpListener;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+fn key(id: u64) -> FlowKey {
+    FlowKey { generation: 1, id }
+}
+
+#[test]
+fn abort_closes_only_the_matching_generation_and_connection() {
+    let mut bridge = Bridge::new().unwrap();
+    let mut peers = Vec::new();
+    for id in 1..=2 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (tcp, _) = listener.accept().unwrap();
+        let (vsock, mut host) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        bridge.connect_with(key(id), move || Ok((tcp, vsock))).unwrap();
+        host.write_all(b"ready").unwrap();
+        client.read_exact(&mut [0; 5]).unwrap();
+        peers.push((client, host));
+    }
+    bridge
+        .abort(&[capsem_proto::router::FlowKey { generation: 2, id: 1 }])
+        .unwrap();
+    peers[0].1.write_all(b"live").unwrap();
+    peers[0].0.read_exact(&mut [0; 4]).unwrap();
+    bridge
+        .abort(&[capsem_proto::router::FlowKey { generation: 1, id: 1 }])
+        .unwrap();
+    assert_eq!(peers[0].0.read(&mut [0]).unwrap(), 0, "matching flow did not close");
+    peers[1].1.write_all(b"still live").unwrap();
+    peers[1].0.read_exact(&mut [0; 10]).unwrap();
+    bridge.shutdown();
+    assert_eq!(bridge.connections.available_permits(), 64);
+    assert!(bridge.tasks.is_empty());
+}
+
+#[test]
+fn abort_reclaims_queued_setup_without_starting_a_worker() {
+    let mut bridge = Bridge::new().unwrap();
+    let held = bridge.setups.clone().try_acquire_many_owned(8).unwrap();
+    let (entered, starts) = std::sync::mpsc::sync_channel(1);
+    bridge
+        .connect_with(key(1), move || {
+            entered.send(()).unwrap();
+            Err(io::Error::other("canceled setup must never start"))
+        })
+        .unwrap();
+    assert_eq!(
+        bridge.connect_with(key(1), || unreachable!()).unwrap_err().kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert!(bridge
+        .abort(&vec![key(1); capsem_proto::router::MAX_ABORT_FLOWS + 1])
+        .is_err());
+    bridge.abort(&[key(1)]).unwrap();
+    let all = bridge.runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            bridge.connections.clone().acquire_many_owned(64),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    });
+    assert!(starts.try_recv().is_err(), "aborted queued setup started");
+    drop(all);
+    drop(held);
+    bridge.shutdown();
+    assert!(bridge.flows.is_empty());
+}
+
 #[test]
 fn shutdown_closes_live_flows_and_joins_them_before_returning() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -11,7 +81,7 @@ fn shutdown_closes_live_flows_and_joins_them_before_returning() {
     let (tcp, _) = listener.accept().unwrap();
     let (vsock, mut host) = UnixStream::pair().unwrap();
     let mut bridge = Bridge::new().unwrap();
-    bridge.connect_with(1, move || Ok((tcp, vsock))).unwrap();
+    bridge.connect_with(key(1), move || Ok((tcp, vsock))).unwrap();
     host.write_all(b"ready").unwrap();
     client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let mut ready = [0; 5];
@@ -30,7 +100,7 @@ fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
     let (entered, started) = std::sync::mpsc::sync_channel(1);
     let (release, wait) = std::sync::mpsc::sync_channel(1);
     bridge
-        .connect_with(1, move || {
+        .connect_with(key(1), move || {
             entered.send(std::thread::current().name().unwrap().to_owned()).unwrap();
             wait.recv_timeout(Duration::from_secs(2)).unwrap();
             Err(io::Error::from(io::ErrorKind::ConnectionRefused))
@@ -73,7 +143,7 @@ fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_pe
         let (release, wait) = std::sync::mpsc::sync_channel(1);
         releases.push(release);
         bridge
-            .connect_with(id, move || {
+            .connect_with(key(id), move || {
                 entered.send(id).unwrap();
                 wait.recv_timeout(Duration::from_secs(2)).unwrap();
                 Err(io::Error::from(io::ErrorKind::TimedOut))

@@ -208,10 +208,21 @@ async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
 
 #[tokio::test]
 async fn missing_pair_ack_shuts_down_retained_descriptors() {
+    unacknowledged_pair_reclaims_guest(false).await;
+}
+
+#[tokio::test]
+async fn premature_child_close_still_aborts_guest_flow() {
+    unacknowledged_pair_reclaims_guest(true).await;
+}
+
+async fn unacknowledged_pair_reclaims_guest(close_early: bool) {
     let owner = Arc::new(Publisher::default());
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let mut events = UnixStream::from_std(child.try_clone().unwrap()).unwrap();
     let receiver = capsem_foundation::unix::router_channel::Receiver::new(child).unwrap();
     let (control, mut requests) = mpsc::channel(4);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -237,6 +248,19 @@ async fn missing_pair_ack_shuts_down_retained_descriptors() {
     owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
     let granted = Grant::decode(receiver.recv().await.unwrap()).unwrap();
     assert!(matches!(granted, Grant::Connected { id: 1, .. }));
+    if close_early {
+        Event::Closed(
+            1,
+            capsem_proto::router::CloseReport {
+                reason: capsem_proto::router::CloseReason::Reset,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .write(&mut events)
+        .await
+        .unwrap();
+    }
     assert!(tokio::time::timeout(Duration::from_secs(4), broker)
         .await
         .unwrap()
@@ -246,6 +270,8 @@ async fn missing_pair_ack_shuts_down_retained_descriptors() {
     assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
     assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
     assert!(owner.pending.lock().unwrap().is_empty());
+    let abort = requests.recv().await.expect("unacknowledged pair left guest alive");
+    assert!(matches!(abort, ServiceToProcess::AbortPorts { flows } if flows == vec![flow]));
     drop(granted);
 }
 
@@ -328,10 +354,9 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-    assert!(matches!(
-        requests.recv().await.unwrap(),
-        ServiceToProcess::ConnectPort { port: 6379, .. }
-    ));
+    let ServiceToProcess::ConnectPort { flow, port: 6379 } = requests.recv().await.unwrap() else {
+        panic!("expected guest setup");
+    };
     drop(child);
     assert!(tokio::time::timeout(Duration::from_secs(1), broker)
         .await
@@ -339,6 +364,8 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         .unwrap()
         .is_err());
     assert!(owner.pending.lock().unwrap().is_empty());
+    let abort = requests.recv().await.expect("router failure left guest setup alive");
+    assert!(matches!(abort, ServiceToProcess::AbortPorts { flows } if flows == vec![flow]));
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
             .await

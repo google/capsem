@@ -1,5 +1,7 @@
 //! Per-control-connection owner for guest publication setup and streams.
 use crate::vsock_io::AsyncVsock;
+use capsem_proto::router::FlowKey;
+use std::collections::HashMap;
 use std::io;
 use std::net::TcpStream;
 use std::os::fd::IntoRawFd;
@@ -13,13 +15,26 @@ mod setup;
 
 pub struct Bridge {
     runtime: Runtime,
-    tasks: JoinSet<()>,
+    tasks: JoinSet<FlowKey>,
+    flows: HashMap<FlowKey, watch::Sender<bool>>,
     connections: Arc<Semaphore>,
     setups: Arc<Semaphore>,
     stop: watch::Sender<bool>,
 }
 
 impl Bridge {
+    pub fn abort(&mut self, flows: &[FlowKey]) -> io::Result<()> {
+        if flows.len() > capsem_proto::router::MAX_ABORT_FLOWS {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        for flow in flows {
+            if let Some(stop) = self.flows.get(flow) {
+                stop.send_replace(true);
+            }
+        }
+        Ok(())
+    }
+
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
@@ -27,6 +42,7 @@ impl Bridge {
                 .enable_all()
                 .build()?,
             tasks: JoinSet::new(),
+            flows: HashMap::new(),
             connections: Arc::new(Semaphore::new(64)),
             setups: Arc::new(Semaphore::new(8)),
             stop: watch::channel(false).0,
@@ -37,27 +53,41 @@ impl Bridge {
         if !flow.is_valid() || port == 0 {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
-        self.connect_with(flow.id, move || setup::connect(flow, port))
+        self.connect_with(flow, move || setup::connect(flow, port))
     }
 
     fn connect_with(
         &mut self,
-        id: u64,
+        flow: FlowKey,
         setup: impl FnOnce() -> io::Result<(TcpStream, UnixStream)> + Send + 'static,
     ) -> io::Result<()> {
         if *self.stop.borrow() {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        }
+        while let Some(result) = self.tasks.try_join_next() {
+            match result {
+                Ok(flow) => {
+                    self.flows.remove(&flow);
+                }
+                Err(error) => {
+                    self.shutdown();
+                    return Err(io::Error::other(error));
+                }
+            }
+        }
+        if self.flows.contains_key(&flow) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "duplicate publication flow",
+            ));
         }
         let permit = self
             .connections
             .clone()
             .try_acquire_owned()
             .map_err(|_| io::Error::other("publication connection limit reached"))?;
-        while let Some(result) = self.tasks.try_join_next() {
-            if let Err(error) = result {
-                tracing::error!(%error, "guest publication task failed");
-            }
-        }
+        let (cancel, mut cancelled) = watch::channel(false);
+        self.flows.insert(flow, cancel);
         let setups = self.setups.clone();
         let mut stop = self.stop.subscribe();
         self.tasks.spawn_on(
@@ -66,6 +96,7 @@ impl Bridge {
                     let setup_permit = tokio::select! {
                         biased;
                         _ = stop.changed() => return Ok(()),
+                        _ = cancelled.changed() => return Ok(()),
                         permit = setups.acquire_owned() => permit.map_err(io::Error::other)?,
                     };
                     // The blocking pool only joins. Namespace changes happen on a
@@ -82,7 +113,7 @@ impl Bridge {
                     .map_err(io::Error::other)?;
                     drop(setup_permit);
                     let (tcp, vsock) = endpoints?;
-                    if *stop.borrow() {
+                    if *stop.borrow() || *cancelled.borrow() {
                         return Ok(());
                     }
                     tcp.set_nonblocking(true)?;
@@ -94,20 +125,24 @@ impl Bridge {
                         &mut vsock,
                         capsem_foundation::unix::router_stream::Limits::default(),
                         async {
-                            let _ = stop.changed().await;
+                            tokio::select! {
+                                _ = stop.changed() => {},
+                                _ = cancelled.changed() => {},
+                            }
                         },
                     )
                     .await;
-                    tracing::debug!(connection_id = id, reason = ?outcome.reason,
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, reason = ?outcome.reason,
                         from_source = outcome.from_source, to_source = outcome.to_source,
                         error = ?outcome.error, "guest router stream ended");
                     Ok::<_, io::Error>(())
                 }
                 .await;
                 if let Err(error) = result {
-                    tracing::debug!(connection_id = id, %error, "guest publication refused");
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");
                 }
                 drop(permit);
+                flow
             },
             self.runtime.handle(),
         );
@@ -123,6 +158,7 @@ impl Bridge {
                 }
             }
         });
+        self.flows.clear();
     }
 }
 

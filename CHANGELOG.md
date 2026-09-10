@@ -268,6 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Removing an exposed port or losing its router now cancels its guest flows,
+  including queued setup, without interrupting other published ports.
 - Guest control connections use async I/O with bounded frame deadlines and
   joined reader cleanup on reconnect, so a stalled guest cannot block a host Tokio worker.
 

@@ -61,6 +61,13 @@ handshake share a three-second setup deadline. The PID file is opened through
 the existing containment helper and bounded to a small regular-file read, so a
 FIFO or symlink cannot trap the setup worker. Queued and active flows share the
 guest's 64 ingress slots. The guest runtime is drained before it is dropped.
+The owner also sends bounded `AbortPorts` batches over that same control
+connection. Each entry names the generation and request ID; it cancels only that
+flow, including queued setup. Cleanup joins host setup before sending the batch,
+so a late connect cannot overtake its abort. Invalid child closes retain the
+guest cancellation identity until cleanup. Host control I/O is asynchronous,
+with five-second write and started-frame deadlines and an owned reader.
+TCP reset translation and guest close acknowledgements remain subsequent work.
 
 ## Networking extension boundary
 

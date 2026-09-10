@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 use tokio::time::Instant;
 
 struct Active {
+    guest: capsem_proto::router::FlowKey,
     _permit: tokio::sync::OwnedSemaphorePermit,
     setup: tokio::task::AbortHandle,
     source: std::net::TcpStream,
@@ -71,7 +72,7 @@ pub(super) async fn serve(
                         (id, result)
                     });
                     tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
+                    connecting.insert(id, Active { guest: flow, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
                 }
                 event = records.recv() => match event.context("router event reader closed")? {
                     Event::Accepted(id) => {
@@ -80,16 +81,22 @@ pub(super) async fn serve(
                         flow.accepted = true;
                     }
                     Event::Closed(id, report) => {
-                        let flow = active.remove(&id).context("router closed unknown connection")?;
-                        ensure!(flow.accepted, "router closed unacknowledged connection");
+                        ensure!(active.get(&id).is_some_and(|flow| flow.accepted), "router closed unacknowledged connection");
+                        let flow = active.remove(&id).unwrap();
                         tracing::debug!(connection_id = id, reason = ?report.reason,
                             from_source = report.from_source, to_source = report.to_source, "publication closed");
+                        let guest = flow.guest;
                         drop(flow);
+                        if report.reason != capsem_proto::router::CloseReason::Complete {
+                            abort_guest(&control, vec![guest]).await?;
+                        }
                     }
                     Event::Refused(id) => {
-                        let flow = active.remove(&id).context("router refused unknown connection")?;
-                        ensure!(flow.acknowledgement.is_some() && !flow.accepted, "unexpected router refusal");
+                        ensure!(active.get(&id).is_some_and(|flow| flow.acknowledgement.is_some() && !flow.accepted), "unexpected router refusal");
+                        let flow = active.remove(&id).unwrap();
+                        let guest = flow.guest;
                         drop(flow);
+                        abort_guest(&control, vec![guest]).await?;
                     }
                     Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
                 },
@@ -100,17 +107,30 @@ pub(super) async fn serve(
                         Ok(connection) => {
                             // Guest setup completes out of order. The child sees
                             // an independent, monotonic handoff sequence.
-                            let destination = connection.try_clone_fd()?;
-                            capsem_foundation::unix::fd::set_stream_buffers(destination.as_fd(),
-                                capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
-                            flow.connection = Some(connection);
-                            flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
-                            let id = router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await?;
-                            active.insert(id, flow);
+                            let grant = async {
+                                let destination = connection.try_clone_fd()?;
+                                capsem_foundation::unix::fd::set_stream_buffers(destination.as_fd(),
+                                    capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
+                                flow.connection = Some(connection);
+                                flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
+                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await
+                            }.await;
+                            match grant {
+                                Ok(id) => { active.insert(id, flow); }
+                                Err(error) => {
+                                    let guest = flow.guest;
+                                    drop(flow);
+                                    abort_guest(&control, vec![guest]).await
+                                        .with_context(|| format!("after router grant failed: {error:#}"))?;
+                                    return Err(error);
+                                }
+                            }
                         }
                         Err(error) => {
+                            let guest = flow.guest;
                             drop(flow);
                             tracing::debug!(connection_id = id, %error, "publication connection refused");
+                            abort_guest(&control, vec![guest]).await?;
                         }
                     }
                 }
@@ -122,13 +142,47 @@ pub(super) async fn serve(
         }
     }.await;
     let ids: Vec<_> = active.keys().copied().collect();
+    let guests = active
+        .values()
+        .chain(connecting.values())
+        .map(|flow| flow.guest)
+        .collect();
     drop(active);
     drop(connecting);
     setups.shutdown().await;
-    for id in ids {
-        if let Err(error) = router.abort(id).await {
-            tracing::debug!(%error, connection_id = id, "publication abort after cleanup");
+    // Join setup first: no late ConnectPort may overtake this bounded batch.
+    let guest_cleanup = abort_guest(&control, guests).await;
+    let router_cleanup = tokio::time::timeout(Duration::from_secs(2), async {
+        for id in ids {
+            router.abort(id).await?;
         }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("router cleanup timed out")
+    .and_then(|result| result);
+    if router_cleanup.is_err() {
+        router.closed.cancel();
     }
-    result
+    result.and(guest_cleanup).and(router_cleanup)
+}
+
+async fn abort_guest(
+    control: &mpsc::Sender<ServiceToProcess>,
+    flows: Vec<capsem_proto::router::FlowKey>,
+) -> Result<()> {
+    if flows.is_empty() {
+        return Ok(());
+    }
+    ensure!(
+        flows.len() <= capsem_proto::router::MAX_ABORT_FLOWS,
+        "guest abort batch exceeds quota"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        control.send(ServiceToProcess::AbortPorts { flows }),
+    )
+    .await
+    .context("guest abort admission timed out")?
+    .context("guest abort control closed")
 }

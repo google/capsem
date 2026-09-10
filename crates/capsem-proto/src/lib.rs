@@ -431,6 +431,8 @@ pub enum HostToGuest {
     Unfreeze,
     /// Connect to loopback in the active container's network namespace.
     ConnectPort { flow: router::FlowKey, port: u16 },
+    /// Cancel a bounded set of flows from this control connection's VM boot.
+    AbortPorts { flows: Vec<router::FlowKey> },
 }
 
 /// A single boot timing measurement from the guest init script.

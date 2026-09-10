@@ -311,7 +311,9 @@ pub(crate) async fn handle_ipc_connection(
                     capsem_core::try_send!("publication_result", output.send(response).await);
                 });
             }
-            ServiceToProcess::ConnectPort { .. } => anyhow::bail!("publication data requests are VM-owner internal"),
+            ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => {
+                anyhow::bail!("publication data requests are VM-owner internal")
+            }
             ServiceToProcess::WriteFile { id, path, data }
                 if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
                     id,
@@ -907,7 +909,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
         ServiceToProcess::PublishPort { .. } => IpcAction::Job,
-        ServiceToProcess::ConnectPort { .. } => IpcAction::Unexpected,
+        ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => IpcAction::Unexpected,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,

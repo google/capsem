@@ -1128,6 +1128,13 @@ fn control_loop(
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");
                 }
             }
+            Ok(HostToGuest::AbortPorts { flows }) => {
+                if let Some(bridge) = publications.as_mut() {
+                    if let Err(error) = bridge.abort(&flows) {
+                        tracing::warn!(%error, "invalid guest publication abort");
+                    }
+                }
+            }
             Ok(HostToGuest::AckReply { id }) => {
                 // Host received the corresponding ackable response;
                 // drop it from the replay buffer so the next rekey

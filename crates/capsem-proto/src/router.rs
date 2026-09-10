@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const DATA_HEADER_SIZE: usize = 17;
+pub const MAX_ABORT_FLOWS: usize = 128;
 
 /// The trusted VM owner chooses a fresh generation for each process boot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
