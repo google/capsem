@@ -19,6 +19,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+mod admission;
 mod broker;
 mod companion;
 mod saved;
@@ -29,6 +30,9 @@ pub struct Publisher {
     next_id: AtomicU64,
     incoming: Arc<Semaphore>,
     mappings: Arc<Semaphore>,
+    ingress: Arc<Semaphore>,
+    setups: Arc<Semaphore>,
+    setup_rate: Arc<admission::SetupRate>,
     tasks: Mutex<tokio::task::JoinSet<()>>,
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
@@ -43,6 +47,9 @@ impl Default for Publisher {
             next_id: AtomicU64::new(1),
             incoming: Arc::new(Semaphore::new(128)),
             mappings: Arc::new(Semaphore::new(8)),
+            ingress: Arc::new(Semaphore::new(capsem_router::CONNECTIONS_PER_CLASS)),
+            setups: Arc::new(Semaphore::new(8)),
+            setup_rate: Arc::new(admission::SetupRate::default()),
             tasks: Mutex::new(tokio::task::JoinSet::new()),
             cancellation: CancellationToken::new(),
             drain: tokio::sync::Mutex::new(()),

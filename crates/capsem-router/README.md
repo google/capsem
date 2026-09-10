@@ -24,6 +24,10 @@ It receives no virtualization entitlement. Two Tokio workers relay at most
 classes. Published mappings share one VM-owned child; private routing is not
 yet connected to the VM broker. Core serializes grants across all mappings and
 dispatches bounded acknowledgements to the broker retaining each endpoint pair.
+Expose admission is shared across every listener in the VM: 64 queued/active
+connections, eight guest setups, and 32 setup requests per second with a burst
+of 16. Setup waits count against the eight-second deadline. Cancelling a queued
+request returns its permits and preserves rate credit; pacing owns no refill task.
 
 The parent retains shutdown handles for both endpoints until the child reports
 closure. Guest setup has an eight-second deadline and pair acknowledgement a
@@ -43,7 +47,7 @@ joins the brokers, guest handshake readers, and child monitor before log drainin
 ## Networking extension boundary
 
 Subsequent networking work will put connection admission through the existing
-SecurityEvent pipeline, enforce class quotas across setup and all VM listeners,
+SecurityEvent pipeline, extend admission to private setup requests,
 and carry private VM traffic through the existing guest net-proxy and DNS paths.
 Those behaviors are not provided by the descriptor handoff alone.
 

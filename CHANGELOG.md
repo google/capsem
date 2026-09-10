@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Published ports share VM-wide connection and guest setup budgets, with bounded
+  setup pacing across listeners.
 - VM shutdown joins published-port brokers and guest handshake readers before
   draining session logs; publication removal requests cooperative cleanup.
 - Container port forwarding closes stalled writes and half-closed peers after

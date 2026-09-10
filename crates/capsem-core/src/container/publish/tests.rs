@@ -55,6 +55,59 @@ async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
 }
 
 #[tokio::test]
+async fn guest_setup_budget_is_shared_across_publications() {
+    let owner = Arc::new(Publisher::default());
+    let (parent, _child) = StdUnixStream::pair().unwrap();
+    let router = Arc::new(companion::Router::new(
+        0,
+        capsem_foundation::unix::router_channel::Sender::new(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let (control, mut requests) = mpsc::channel(32);
+    let cancellation = CancellationToken::new();
+    let mut brokers = tokio::task::JoinSet::new();
+    let mut clients = Vec::new();
+    for guest_port in [6379, 6380] {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        brokers.spawn(broker::serve(
+            owner.clone(),
+            guest_port,
+            listener,
+            control.clone(),
+            router.clone(),
+            cancellation.clone(),
+        ));
+        for _ in 0..5 {
+            clients.push(tokio::net::TcpStream::connect(address).await.unwrap());
+        }
+    }
+    for _ in 0..8 {
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), requests.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            ServiceToProcess::ConnectPort { .. }
+        ));
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), requests.recv())
+            .await
+            .is_err(),
+        "another mapping bypassed the VM-wide setup budget"
+    );
+    cancellation.cancel();
+    while let Some(result) = brokers.join_next().await {
+        result.unwrap().unwrap();
+    }
+    assert!(owner.pending.lock().unwrap().is_empty());
+    assert_eq!(owner.ingress.available_permits(), capsem_router::CONNECTIONS_PER_CLASS);
+    assert_eq!(owner.setups.available_permits(), 8);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
 async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
     let owner = Arc::new(Publisher::default());
     let (parent, child) = StdUnixStream::pair().unwrap();

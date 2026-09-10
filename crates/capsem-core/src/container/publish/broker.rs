@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 use tokio::time::Instant;
 
 struct Active {
+    _permit: tokio::sync::OwnedSemaphorePermit,
     setup: tokio::task::AbortHandle,
     source: std::net::TcpStream,
     connection: Option<VsockConnection>,
@@ -44,14 +45,22 @@ pub(super) async fn serve(
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
                 accepted = listener.accept(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
                     let (source, peer) = accepted?;
+                    let Ok(permit) = owner.ingress.clone().try_acquire_owned() else {
+                        tracing::debug!(%peer, "VM ingress connection quota exhausted");
+                        continue;
+                    };
                     source.set_nodelay(true)?;
                     let source = source.into_std()?;
                     let (pending, receiver) = owner.request()?;
                     let id = pending.id;
                     let control = control.clone();
+                    let slots = owner.setups.clone();
+                    let rate = owner.setup_rate.clone();
                     let setup = setups.spawn(async move {
                         let _pending = pending;
                         let result = tokio::time::timeout(Duration::from_secs(8), async {
+                            let _setup = slots.acquire_owned().await.context("guest setup admission closed")?;
+                            rate.acquire().await;
                             control.send(ServiceToProcess::ConnectPort { id, port: guest_port }).await
                                 .context("guest control closed")?;
                             receiver.await.context("guest connection cancelled")?
@@ -59,7 +68,7 @@ pub(super) async fn serve(
                         (id, result)
                     });
                     tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { setup, source, connection: None, acknowledgement: None, accepted: false });
+                    connecting.insert(id, Active { _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
                 }
                 event = records.recv() => match event.context("router event reader closed")? {
                     Event::Accepted(id) => {
@@ -70,10 +79,12 @@ pub(super) async fn serve(
                     Event::Closed(id) => {
                         let flow = active.remove(&id).context("router closed unknown connection")?;
                         ensure!(flow.accepted, "router closed unacknowledged connection");
+                        drop(flow);
                     }
                     Event::Refused(id) => {
                         let flow = active.remove(&id).context("router refused unknown connection")?;
                         ensure!(flow.acknowledgement.is_some() && !flow.accepted, "unexpected router refusal");
+                        drop(flow);
                     }
                     Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
                 },
@@ -91,6 +102,7 @@ pub(super) async fn serve(
                             active.insert(id, flow);
                         }
                         Err(error) => {
+                            drop(flow);
                             tracing::debug!(connection_id = id, %error, "publication connection refused");
                         }
                     }
@@ -103,8 +115,8 @@ pub(super) async fn serve(
         }
     }.await;
     let ids: Vec<_> = active.keys().copied().collect();
-    active.clear();
-    connecting.clear();
+    drop(active);
+    drop(connecting);
     setups.shutdown().await;
     for id in ids {
         if let Err(error) = router.abort(id).await {
