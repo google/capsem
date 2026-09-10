@@ -84,12 +84,15 @@ def _project_records(root: Path, tracked: list[str]) -> tuple[list[str], list[st
 
 
 def _old_import_inventory(root: Path, tracked: list[str]) -> tuple[int, str]:
+    from citadel.test_sdk_python_ownership import sdk_modules, unowned_imports
+
     records: list[str] = []
+    modules = sdk_modules(root, tracked)
     for path in tracked:
         if not path.endswith(".py") or path == SELF:
             continue
         text = (root / path).read_text(encoding="utf-8")
-        records.extend(f"{path}\0{match.group(1)}" for match in OLD_IMPORT.finditer(text))
+        records.extend(f"{path}\0{module}" for module in unowned_imports(text, modules))
     payload = "\0".join(sorted(records)).encode()
     return len(records), hashlib.sha256(payload).hexdigest()
 
