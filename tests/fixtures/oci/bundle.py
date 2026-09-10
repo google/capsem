@@ -1,4 +1,4 @@
-"""Guest-only OCI fixture; uses the profile's Python and libraries, never a registry."""
+"""Guest-only OCI fixture; local Python or an explicitly staged rootfs, no registry."""
 
 import contextlib
 import hashlib
@@ -29,7 +29,7 @@ def wait_for(predicate, description, timeout=10):
 
 
 class Bundle:
-    def __init__(self):
+    def __init__(self, rootfs_archive=None):
         self.directory = Path(tempfile.mkdtemp(prefix="oci-", dir="/var/tmp"))
         self.rootfs = self.directory / "rootfs"
         self.scratch = self.directory / "scratch"
@@ -40,15 +40,24 @@ class Bundle:
         self.scratch.chmod(0o777)
         self.rootfs.mkdir()
         self.directory.chmod(0o755)
+        self.python = str(Path(sys.executable).resolve())
+        if rootfs_archive is None:
+            self._python_rootfs()
+        else:
+            # Trusted, digest-checked image exported by prepare_redis.py.
+            # This fixture is not an importer for arbitrary user archives.
+            result = command("tar", "-xzf", str(rootfs_archive), "-C", str(self.rootfs))
+            assert result.returncode == 0, result.stderr
         for name in ("proc", "dev", "scratch", "tmp"):
-            (self.rootfs / name).mkdir()
+            (self.rootfs / name).mkdir(exist_ok=True)
+
+    def _python_rootfs(self):
         stdlib = Path(sysconfig.get_path("stdlib"))
         shutil.copytree(
             stdlib,
             self.rootfs / stdlib.relative_to("/"),
             ignore=shutil.ignore_patterns("__pycache__", "test", "tests"),
         )
-        self.python = str(Path(sys.executable).resolve())
         self._copy(Path(self.python))
         libraries = [Path(self.python), *self.rootfs.rglob("*.so")]
         for library in libraries:
@@ -87,7 +96,9 @@ class Bundle:
             "process": {
                 "terminal": False,
                 "user": {"uid": 65534, "gid": 65534},
-                "args": [self.python, "-B", "-S", "-c", source],
+                "args": [self.python, "-B", "-S", "-c", source]
+                if isinstance(source, str)
+                else source,
                 "cwd": "/scratch",
                 "env": ["PATH=/usr/bin:/bin", "PYTHONHOME=/usr"],
                 "noNewPrivileges": True,

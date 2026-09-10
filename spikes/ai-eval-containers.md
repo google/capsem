@@ -8,6 +8,95 @@ Branch: `worktree/ai-eval-containers`
 Source baseline: `a6dc86a43`
 Sprinty: worktree-local `.sprinty`, baseline `S01-001`, implementation `S02-001`.
 
+## Real Redis image proof
+
+The subsequent Redis sprint proves the upstream `redis:7.4.11-alpine` ARM64 image
+in two real Capsem VMs. It reuses the rebuilt ARM64 assets above; no additional
+kernel, profile, service or installed-package changes were needed. This remains
+an explicitly invoked spike, not yet `capsem run IMAGE` product support.
+
+`tests/fixtures/oci/redis-image.json` pins the platform manifest to
+`sha256:f8d15882ba108587477ce13c00ab0551933a84138427b7cc9abadfbe45ffd973`.
+Host preparation pulls that digest and exports a never-started Docker container,
+removing its temporary container and volume afterward. Redis only executes inside
+Capsem. The offline test stages 1 MiB chunks through the existing file API and
+checks the archive hash in the guest before extracting its trusted rootfs.
+The runtime uses the image's real `redis-server` and `redis-cli`, with explicit
+test arguments instead of its Docker entrypoint script.
+
+Passing behavior:
+
+- `runc exec` runs the image's client: PING/PONG and SET/GET return exact values.
+- SAVE writes an RDB to writable scratch; a graceful TERM and restart reload it.
+- Redis's 8 MiB no-eviction limit rejects writes while PING and GET still work.
+- With Redis's own limit removed, a bounded 128 MiB allocation hits the container's
+  64 MiB limit. Redis exits 137 and the kernel names its cgroup in an OOM-kill event.
+- Forced KILL also exits 137. No runtime entries, cgroups or mounts remain after
+  teardown; the temporary bundle directory is removed.
+- Redis TCP is confined to its own loopback. Exec sees Alpine, UID 65534 and the
+  server's network namespace; it cannot see the initramfs or guest agent.
+- A fresh VM starts with an empty database and cannot see the first VM's saved
+  RDB. The first VM retains that RDB while the second completes independently.
+- The surrounding VM's mount namespace and initramfs remain intact. The execution
+  ledger's result and byte counts match after the database shutdown barrier.
+
+The final Redis proof plus the original OCI suite passed together: **4 tests in
+12.25s**, including the original eight adversarial guest cases.
+
+### Redis reproduction and identities
+
+After the original ARM64 build/materialization prerequisites, run:
+
+```sh
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 240 -- \
+  uv run --project build_system --frozen python tests/fixtures/oci/prepare_redis.py
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 240 -- \
+  env CAPSEM_RELEASE_BIN_DIR=/Users/elie/git/capsem/cache/target/cargo/release \
+  uv run --project build_system --frozen pytest -c build_system/pyproject.toml \
+  --rootdir . tests/ironbank/redis_acceptance.py tests/ironbank/test_oci_container.py \
+  -q --basetemp=cache/target/tests/redis-final
+```
+
+Only preparation requires the registry. Test execution uses local files and real
+isolated `ServiceInstance` VMs. `redis_acceptance.py` deliberately requires an
+explicit pytest path; normal test discovery has no new public-network dependency.
+Generated archives and evidence remain under ignored `cache/target/tests/`.
+
+| Tested artifact | SHA256 |
+|---|---|
+| Exported compressed rootfs | `9fc9018f96d3e34e341f813d7a2eafc85d0801b25d13328d198ad1f0a166ad71` |
+| Image's Redis server executable | `6f95a4ecc8f2da0fea1a4c705ead71d3004e7542c38b985950bf848463da9bff` |
+
+`redis-image/redis-image.json` records the prepared archive identity. Each run's
+`redis-evidence-0.json` and `redis-evidence-1.json` also capture RDB identities,
+memory denial and the kernel OOM event. Export metadata may vary across Docker
+versions; the upstream platform manifest stays pinned and every archive is hashed.
+
+### Findings that the synthetic workload missed
+
+The first upload exceeded the file API body limit; chunking solves staging for
+this test without changing that API. More significantly, Capsem boots its agents
+inside `/newroot` using chroot. A bare runc exec joined the container's mount
+namespace but reached its old initramfs root, instead of the container root.
+The fixture now first enters PID 1's root, creates a private mount namespace,
+makes its mounts private, and moves `/newroot` onto `/`. Runc then creates its
+container underneath this correctly rooted namespace. This only changes the
+fixture's mount namespace. A production container launcher must own this setup;
+bare runc exec from the existing guest shell is not established as safe.
+
+The initial memory assertion also expected a single oversized Redis command to
+be rejected. Redis checks maxmemory before commands, so one command can overshoot;
+the corrected test uses a bounded sequence, then independently proves the kernel
+limit. See [Redis memory-limit semantics](https://redis.io/docs/latest/develop/reference/eviction/).
+Graceful shutdown uses TERM because PID 1 exiting can kill redis-cli SHUTDOWN
+before the client exits. Redis warns about the guest's existing overcommit setting;
+this proof covers synchronous SAVE, not background persistence or replication.
+
+The user's next requested product surface is Docker-style `capsem run IMAGE`:
+resolve an image, run its default command attached to the terminal, and destroy
+the disposable VM afterward. That requires separate image-staging and lifecycle
+implementation; this Redis proof does not claim those are already available.
+
 ## Delivered offline proof
 
 The existing profile builder packages Debian `runc` in both profile package
