@@ -46,7 +46,7 @@ crates/capsem-tui/             Terminal control UI (reads and drives state via t
 crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
 crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
-crates/capsem-port-router/     Confined TCP publication companion (data descriptors only)
+crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
 crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil (musl)

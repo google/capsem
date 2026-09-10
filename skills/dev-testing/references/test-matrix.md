@@ -26,7 +26,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-admin` | Profile/asset/release administration | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-mcp` | Host MCP server | Yes | Compile/no-run | Clippy | Yes |
-| `capsem-port-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
+| `capsem-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
 | `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-mcp-builtin` | Built-in MCP tools | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-gateway` | Authenticated HTTP gateway | Yes | Compile/no-run | Clippy | Yes |

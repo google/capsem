@@ -825,8 +825,8 @@ dependencies = [
  "capsem-credentials",
  "capsem-foundation",
  "capsem-logger",
- "capsem-port-router",
  "capsem-proto",
+ "capsem-router",
  "core-foundation-sys",
  "criterion",
  "dispatch2 0.2.0",
@@ -1079,18 +1079,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "capsem-port-router"
-version = "0.6.3"
-dependencies = [
- "capsem-foundation",
- "capsem-guard",
- "clap",
- "serde",
- "tokio",
- "tokio-unix-ipc",
-]
-
-[[package]]
 name = "capsem-process"
 version = "0.6.3"
 dependencies = [
@@ -1129,6 +1117,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "capsem-router"
+version = "0.6.3"
+dependencies = [
+ "capsem-foundation",
+ "capsem-guard",
+ "clap",
+ "serde",
+ "tokio",
+ "tokio-unix-ipc",
 ]
 
 [[package]]

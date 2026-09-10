@@ -1,8 +1,8 @@
 //! VM owner: bind declared listeners and broker data fds, never route TCP bytes.
 use crate::hypervisor::VsockConnection;
 use anyhow::{ensure, Context, Result};
-use capsem_port_router::{send_grant, Event, Grant};
 use capsem_proto::ipc::ServiceToProcess;
+use capsem_router::{send_grant, Event, Grant};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::os::fd::AsFd;
@@ -74,7 +74,7 @@ impl Publisher {
         let listener =
             std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, host_port)).context("bind publication listener")?;
         let host_port = listener.local_addr()?.port();
-        let binary = std::env::current_exe()?.with_file_name("capsem-port-router");
+        let binary = std::env::current_exe()?.with_file_name("capsem-router");
         let (parent, child_socket) = StdUnixStream::pair()?;
         let mut child = tokio::process::Command::new(binary)
             .args(["--parent-pid", &std::process::id().to_string()])

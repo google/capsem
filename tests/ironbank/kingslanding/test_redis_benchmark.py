@@ -42,7 +42,7 @@ def test_redis_guest_and_published_transport_samples(redis, service):
         "image": redis["reference"],
         "host_binaries": {
             name: hashlib.sha256((BIN_DIR / name).read_bytes()).hexdigest()
-            for name in ("capsem-bench-rs", "capsem-process", "capsem-port-router")
+            for name in ("capsem-bench-rs", "capsem-process", "capsem-router")
         },
         "classification": "exploratory; no release baseline or performance threshold",
         "trials": [],

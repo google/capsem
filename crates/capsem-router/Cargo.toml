@@ -1,5 +1,5 @@
 [package]
-name = "capsem-port-router"
+name = "capsem-router"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

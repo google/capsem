@@ -1,5 +1,5 @@
 use super::*;
-use capsem_port_router::MAX_CONNECTIONS;
+use capsem_router::MAX_CONNECTIONS;
 
 struct Active {
     setup: tokio::task::AbortHandle,

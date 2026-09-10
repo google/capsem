@@ -22,7 +22,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
 | `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
 | `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
-| `capsem-port-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
+| `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
 | `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and file/snapshot (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator. | `main.rs` (rmcp handler) |
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |

@@ -53,7 +53,8 @@ capsem_retire_native_cohort() {
     local kill_command="${CAPSEM_INSTALL_KILL:-/bin/kill}"
     local killed=""
     local name pid
-    for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin; do
+    # Retire the historical router executable when upgrading an older cohort.
+    for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-router capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin; do
         for pid in $(pgrep -u "$target_uid" -f "$name" 2>/dev/null || true); do
             if capsem_process_is_package_owned "$capsem_dir" "$target_uid" "$name" "$pid"; then
                 "$kill_command" -9 "$pid"

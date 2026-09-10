@@ -873,7 +873,7 @@
    "capsem-credentials",
    "capsem-foundation",
    "capsem-logger",
-   "capsem-port-router",
+   "capsem-router",
    "capsem-proto",
    "core-foundation-sys",
    "criterion",
@@ -1117,7 +1117,7 @@
    "tracing-subscriber"
   ]
  },
- "capsem-port-router": {
+ "capsem-router": {
   "build_script": false,
   "dependencies": [
    "capsem-foundation",

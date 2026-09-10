@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The confined network companion is now named `capsem-router`; package signing
+  continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output
   without a trailing newline.
 - Port publication reports sandbox initialization failures explicitly. macOS

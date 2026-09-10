@@ -1,4 +1,4 @@
-use capsem_port_router::{send_grant, Event, Grant, MAX_CONNECTIONS};
+use capsem_router::{send_grant, Event, Grant, MAX_CONNECTIONS};
 use std::net::Ipv4Addr;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
@@ -19,7 +19,7 @@ impl Router {
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let address = listener.local_addr().unwrap();
         let (parent, child) = StdUnixStream::pair().unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_capsem-port-router"))
+        let child = Command::new(env!("CARGO_BIN_EXE_capsem-router"))
             .args(["--parent-pid", &std::process::id().to_string()])
             .env_clear()
             .stdin(Stdio::from(std::os::fd::OwnedFd::from(child)))

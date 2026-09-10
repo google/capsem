@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_port_router_is_signed_without_virtualization_authority(tmp_path):
+def test_router_is_signed_without_virtualization_authority(tmp_path):
     tools = tmp_path / "tools"
     tools.mkdir()
     calls = tmp_path / "calls.jsonl"
@@ -38,14 +38,14 @@ def test_port_router_is_signed_without_virtualization_authority(tmp_path):
         ["bash", "-c", step["run"]], cwd=tmp_path, env=environment, check=True, timeout=10
     )
     signed = [json.loads(line) for line in calls.read_text().splitlines()]
-    router = [args for args in signed if args[-1].endswith("/capsem-port-router")]
+    router = [args for args in signed if args[-1].endswith("/capsem-router")]
     assert len(router) == 1 and "--entitlements" not in router[0]
     assert any(args[-1].endswith("/capsem-process") and "--entitlements" in args for args in signed)
 
     calls.unlink()
     installed = tmp_path / "installed"
     (installed / "bin").mkdir(parents=True)
-    for name in ("capsem-process", "capsem-port-router"):
+    for name in ("capsem-process", "capsem-router"):
         (installed / "bin" / name).touch()
     entitlements = ROOT / "build_system/packaging/macos/entitlements.plist"
     (tmp_path / entitlements.name).write_bytes(entitlements.read_bytes())
@@ -64,6 +64,6 @@ def test_port_router_is_signed_without_virtualization_authority(tmp_path):
         capture_output=True,
     )
     signed = [json.loads(line) for line in calls.read_text().splitlines()]
-    router = [args for args in signed if args[-1].endswith("/capsem-port-router")]
+    router = [args for args in signed if args[-1].endswith("/capsem-router")]
     assert len(router) == 1 and "--entitlements" not in router[0]
-    assert "org.capsem.port-router" in router[0]
+    assert "org.capsem.router" in router[0]

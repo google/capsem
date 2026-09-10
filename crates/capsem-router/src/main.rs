@@ -1,5 +1,5 @@
 use capsem_foundation::unix::{fd, router_sandbox};
-use capsem_port_router::{Event, Grant};
+use capsem_router::{Event, Grant};
 use clap::Parser;
 use std::io;
 use std::os::fd::AsFd;
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::ConfinementFailed.write(&mut events).await?;
             return Err(error);
         }
-        capsem_port_router::relay(listener, grants, events).await
+        capsem_router::relay(listener, grants, events).await
     })?;
     Ok(())
 }

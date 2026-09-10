@@ -70,7 +70,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready caps
 
 # Copy companion binaries from pkg payload
 CAPSEM_INSTALL_PHASE="copy_binaries"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$PKG_SHARE/bin/$bin"
     if [ ! -f "$src" ]; then
         echo "capsem: packaged binary missing: $src" >&2
@@ -89,7 +89,7 @@ codesign_identifier_for_bin() {
         capsem-process) echo "org.capsem.process" ;;
         capsem-tui) echo "org.capsem.tui" ;;
         capsem-mcp) echo "org.capsem.mcp" ;;
-        capsem-port-router) echo "org.capsem.port-router" ;;
+        capsem-router) echo "org.capsem.router" ;;
         capsem-mcp-aggregator) echo "org.capsem.mcp.aggregator" ;;
         capsem-mcp-builtin) echo "org.capsem.mcp.builtin" ;;
         capsem-gateway) echo "org.capsem.gateway" ;;
@@ -111,7 +111,7 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
             if codesign --verify --strict "$bin" 2>/dev/null; then
                 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signature_preserved bin=$(basename "$bin")"
             else
-                if [ "$(basename "$bin")" = capsem-port-router ]; then
+                if [ "$(basename "$bin")" = capsem-router ]; then
                     codesign --sign - --identifier "$identifier" --force "$bin"
                 else
                     codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin"
