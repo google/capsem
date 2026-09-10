@@ -366,6 +366,48 @@
         }
       }
     },
+    "/vms/{id}/delete": {
+      "delete": {
+        "operationId": "deleteVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/exec": {
       "post": {
         "operationId": "execVm",
@@ -830,6 +872,48 @@
         }
       }
     },
+    "/vms/{id}/pause": {
+      "post": {
+        "operationId": "pauseVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/resume": {
       "post": {
         "operationId": "resumeVm",
@@ -1102,6 +1186,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/VmStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/stop": {
+      "post": {
+        "operationId": "stopVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopResponse"
                 }
               }
             }
@@ -3488,6 +3614,22 @@
           }
         }
       },
+      "StopResponse": {
+        "type": "object",
+        "description": "Stop completes after the VM process exits. Persistent workspace state remains.",
+        "required": [
+          "success",
+          "persistent"
+        ],
+        "properties": {
+          "persistent": {
+            "type": "boolean"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
       "StorageDiagnostics": {
         "type": "object",
         "required": [
@@ -4106,6 +4248,18 @@
           "fork",
           "delete"
         ]
+      },
+      "VmActionResponse": {
+        "type": "object",
+        "description": "Acknowledgement returned after a VM pause or deletion completes.",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
       },
       "VmAiInfo": {
         "type": "object",

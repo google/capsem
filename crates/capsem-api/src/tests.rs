@@ -150,6 +150,18 @@ fn openapi_uses_named_schemas_and_bearer_authentication() {
         "bearer"
     );
     assert_eq!(document["security"], json!([{"bearerAuth": []}]));
+    for (action, method, schema) in [
+        ("stop", "post", "StopResponse"),
+        ("pause", "post", "VmActionResponse"),
+        ("delete", "delete", "VmActionResponse"),
+    ] {
+        let operation = &document["paths"][format!("/vms/{{id}}/{action}")][method];
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{schema}")
+        );
+        assert!(operation.get("requestBody").is_none());
+    }
 }
 
 #[test]

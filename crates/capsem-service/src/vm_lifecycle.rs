@@ -351,7 +351,7 @@ pub(super) async fn shutdown_vm_process(
 pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Apple VZ can corrupt a sibling VirtioFS overlay when save/restore calls
     // overlap. Hold the service-wide lock until exit and checkpoint durability.
     let _vz_guard = state.save_restore_lock.write().await;
@@ -482,13 +482,13 @@ pub(super) async fn handle_suspend(
             .await?;
     }
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
 pub(super) async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::StopResponse>, AppError> {
     // shutdown_vm_process now waits for actual process exit and cleans the
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
@@ -500,7 +500,10 @@ pub(super) async fn handle_stop(
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
-        Ok(Json(json!({ "success": true, "persistent": persistent })))
+        Ok(Json(api::StopResponse {
+            success: true,
+            persistent,
+        }))
     } else {
         Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
@@ -509,7 +512,7 @@ pub(super) async fn handle_stop(
 pub(super) async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Delete fast-paths through direct process teardown: the session dir is
     // about to be removed, so guest sync() and bash history don't matter.
     let session_dir =
@@ -567,7 +570,7 @@ pub(super) async fn handle_delete(
             })?;
     }
 
-    Ok(Json(json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
 pub(super) fn provision_response_for_running(

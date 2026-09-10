@@ -20,6 +20,10 @@ pub fn openapi() -> OpenApi {
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/start", "startVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/resume", "resumeVm");
+    doc.empty_post::<StopResponse>("/vms/{id}/stop", "stopVm");
+    doc.empty_post::<VmActionResponse>("/vms/{id}/pause", "pauseVm");
+    let delete = doc.operation::<VmActionResponse>("/vms/{id}/delete", "deleteVm");
+    doc.add("/vms/{id}/delete", HttpMethod::Delete, delete);
     doc.logs();
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
     doc.get::<VmStatsDetailResponse>("/vms/{id}/stats/detail", "getVmStatsDetail");

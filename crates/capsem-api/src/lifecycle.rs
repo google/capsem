@@ -2,6 +2,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
+/// Acknowledgement returned after a VM pause or deletion completes.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct VmActionResponse {
+    pub success: bool,
+}
+
+/// Stop completes after the VM process exits. Persistent workspace state remains.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct StopResponse {
+    pub success: bool,
+    pub persistent: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct ProvisionRequest {
     pub name: Option<String>,

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed stop, pause, and delete acknowledgements in the gateway OpenAPI contract.
+
 - Typed detailed VM statistics, including model costs, activity events, and
   captured bodies with boolean flags and enum categories for gateway SDKs.
 
