@@ -147,21 +147,33 @@ impl Event {
     }
 }
 
-// Explicit shutdown wakes holders of duplicate FDs on cancellation and EOF.
-struct Stream(UnixStream);
+// Successful FIN drain is graceful. Every other exit, including task abort,
+// must not send an early FIN while the parent still holds a TCP descriptor.
+struct Stream {
+    socket: UnixStream,
+    graceful: bool,
+}
 impl Stream {
     fn new(socket: OwnedFd) -> io::Result<Self> {
         fd::validate_connected_stream(socket.as_fd())?;
         fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
         fd::set_nonblocking(socket.as_fd(), true)?;
-        Ok(Self(UnixStream::from_std(std::os::unix::net::UnixStream::from(
-            socket,
-        ))?))
+        Ok(Self {
+            socket: UnixStream::from_std(std::os::unix::net::UnixStream::from(socket))?,
+            graceful: false,
+        })
     }
 }
 impl Drop for Stream {
     fn drop(&mut self) {
-        if let Err(error) = fd::shutdown(self.0.as_fd(), fd::SocketShutdown::Both) {
+        if !self.graceful {
+            match fd::tcp_reset_on_close(self.socket.as_fd()) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => tracing::error!(%error, "router TCP reset configuration failed"),
+            }
+        }
+        if let Err(error) = fd::shutdown(self.socket.as_fd(), fd::SocketShutdown::Both) {
             tracing::debug!(%error, "router endpoint shutdown");
         }
     }
@@ -217,9 +229,15 @@ pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
                         let (stop, stopped) = tokio::sync::oneshot::channel();
                         jobs.spawn(async move {
                             let _permit = permit;
-                            let result = router_stream::copy_until(&mut source.0, &mut destination.0, router_stream::Limits::default(), async {
+                            let result = router_stream::copy_until(&mut source.socket, &mut destination.socket, router_stream::Limits::default(), async {
                                 let _ = stopped.await;
                             }).await;
+                            if result.reason == CloseReason::Complete {
+                                source.graceful = true;
+                                destination.graceful = true;
+                            }
+                            drop(source);
+                            drop(destination);
                             tracing::debug!(connection_id = id, ?class, reason = ?result.reason, from_source = result.from_source,
                                 to_source = result.to_source, error = ?result.error, "router stream ended");
                             (id, result.report())

@@ -61,6 +61,62 @@ pub fn shutdown(fd: BorrowedFd<'_>, how: SocketShutdown) -> io::Result<()> {
     socket::shutdown(fd.as_raw_fd(), how.as_nix()).map_err(errno::io)
 }
 
+/// Mark a TCP socket for reset when its last descriptor closes. Returns false
+/// for other stream families. Every holder must close without first sending FIN.
+pub fn tcp_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    use socket::SockaddrLike;
+    if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "reset requires a stream socket",
+        ));
+    }
+    let address = socket::getsockname::<socket::SockaddrStorage>(fd.as_raw_fd()).map_err(errno::io)?;
+    if !matches!(
+        address.family(),
+        Some(socket::AddressFamily::Inet | socket::AddressFamily::Inet6)
+    ) {
+        return Ok(false);
+    }
+    let linger = libc::linger {
+        l_onoff: 1,
+        l_linger: 0,
+    };
+    retry_eintr(|| socket::setsockopt(&fd, socket::sockopt::Linger, &linger)).map_err(errno::io)?;
+    Ok(true)
+}
+
+/// Revoke a TCP connection immediately, even while another process retains a
+/// duplicate descriptor. The trusted endpoint owner calls this, not the router.
+pub fn reset_tcp(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    if !tcp_reset_on_close(fd)? {
+        return Ok(false);
+    }
+    retry_eintr(|| {
+        #[cfg(target_os = "macos")]
+        // SAFETY: disconnectx acts only on this borrowed socket. Linger zero
+        // makes XNU tcp_disconnect use tcp_drop instead of sending FIN.
+        let result = unsafe { libc::disconnectx(fd.as_raw_fd(), libc::SAE_ASSOCID_ANY, libc::SAE_CONNID_ANY) };
+        #[cfg(target_os = "linux")]
+        let result = {
+            let address = libc::sockaddr {
+                sa_family: libc::AF_UNSPEC as _,
+                sa_data: [0; 14],
+            };
+            // SAFETY: AF_UNSPEC disconnects this existing TCP socket; the
+            // initialized stack address is valid for this synchronous call.
+            unsafe { libc::connect(fd.as_raw_fd(), &address, std::mem::size_of_val(&address) as _) }
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(Errno::last())
+        }
+    })
+    .map_err(errno::io)?;
+    Ok(true)
+}
+
 /// Fix socket queue sizes instead of allowing TCP receive/send autotuning.
 /// Linux accounts up to twice the requested bytes for TCP bookkeeping. VSOCK
 /// uses separate credit-buffer options, so those are fixed as well on Linux.

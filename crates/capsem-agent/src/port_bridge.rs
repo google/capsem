@@ -4,7 +4,7 @@ use capsem_proto::router::FlowKey;
 use std::collections::HashMap;
 use std::io;
 use std::net::TcpStream;
-use std::os::fd::IntoRawFd;
+use std::os::fd::{AsFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -114,6 +114,7 @@ impl Bridge {
                     drop(setup_permit);
                     let (tcp, vsock) = endpoints?;
                     if *stop.borrow() || *cancelled.borrow() {
+                        capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
                         return Ok(());
                     }
                     tcp.set_nonblocking(true)?;
@@ -135,11 +136,14 @@ impl Bridge {
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, reason = ?outcome.reason,
                         from_source = outcome.from_source, to_source = outcome.to_source,
                         error = ?outcome.error, "guest router stream ended");
+                    if outcome.reason != capsem_proto::router::CloseReason::Complete {
+                        capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
+                    }
                     Ok::<_, io::Error>(())
                 }
                 .await;
                 if let Err(error) = result {
-                    tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication failed");
                 }
                 drop(permit);
                 flow

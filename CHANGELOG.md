@@ -268,6 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Abnormal published-connection cleanup resets TCP and revokes socket copies
+  retained by the router, while normal completion preserves half-close and trailing bytes.
 - Removing an exposed port or losing its router now cancels its guest flows,
   including queued setup, without interrupting other published ports.
 - Guest control connections use async I/O with bounded frame deadlines and

@@ -190,7 +190,15 @@ def test_port_collision_does_not_replace_a_listener(service, tmp_path):
 def test_router_crash_cannot_stop_or_control_the_vm(redis, service):
     import os
 
-    os.kill(redis["router_pids"][0], signal.SIGKILL)
+    with (
+        socket.create_connection(("127.0.0.1", redis["port"]), timeout=5) as connection,
+        connection.makefile("rb") as stream,
+    ):
+        connection.sendall(b"PING\r\n")
+        assert stream.readline(16) == b"+PONG\r\n"
+        os.kill(redis["router_pids"][0], signal.SIGKILL)
+        with pytest.raises(ConnectionResetError):
+            stream.read(1)
     response = service.client().post(
         f"/vms/{redis['vm']['id']}/exec",
         {"command": "printf owner-alive", "timeout_secs": 5},

@@ -16,6 +16,33 @@ struct Router {
     retained: std::collections::HashMap<u64, (OwnedFd, OwnedFd)>,
 }
 
+#[tokio::test]
+async fn abort_resets_tcp_after_the_parent_releases_its_shutdown_handle() {
+    let mut router = Router::start().await;
+    let (mut client, _peer) = router.pair(1).await;
+    let retained = router.retained.remove(&1).unwrap();
+    assert_eq!(router.event().await, Event::Accepted(1));
+    router.grant(Grant::Abort { id: 1 }).await;
+    let Event::Closed(1, report) = router.event().await else {
+        panic!("missing close report")
+    };
+    assert_eq!(report.reason, capsem_router::CloseReason::Cancelled);
+    assert!(
+        timeout(Duration::from_millis(30), client.read(&mut [0])).await.is_err(),
+        "child sent FIN before the last descriptor holder could reset TCP"
+    );
+    drop(retained);
+    assert_eq!(
+        timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    router.close().await;
+}
+
 fn resident_bytes(pid: u32) -> usize {
     #[cfg(target_os = "linux")]
     {
@@ -234,8 +261,9 @@ async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
             timeout(Duration::from_secs(2), client.read(&mut [0]))
                 .await
                 .unwrap()
-                .unwrap(),
-            0
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::ConnectionReset
         );
         assert_eq!(
             timeout(Duration::from_secs(2), peer.read(&mut [0]))
@@ -262,8 +290,9 @@ async fn duplicate_id_aborts_router_and_all_granted_endpoints() {
         timeout(Duration::from_secs(2), client.read(&mut [0]))
             .await
             .unwrap()
-            .unwrap(),
-        0
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
     );
 }
 

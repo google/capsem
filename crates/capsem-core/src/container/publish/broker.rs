@@ -5,6 +5,7 @@ use tokio::time::Instant;
 
 struct Active {
     guest: capsem_proto::router::FlowKey,
+    graceful: bool,
     _permit: tokio::sync::OwnedSemaphorePermit,
     setup: tokio::task::AbortHandle,
     source: std::net::TcpStream,
@@ -15,8 +16,16 @@ struct Active {
 impl Drop for Active {
     fn drop(&mut self) {
         self.setup.abort();
-        if let Err(error) = self.source.shutdown(std::net::Shutdown::Both) {
+        let shutdown = if self.graceful {
+            self.source.shutdown(std::net::Shutdown::Both)
+        } else {
+            capsem_foundation::unix::fd::reset_tcp(self.source.as_fd()).map(|_| ())
+        };
+        if let Err(error) = shutdown {
             tracing::debug!(%error, "publication source shutdown");
+            if let Err(error) = self.source.shutdown(std::net::Shutdown::Both) {
+                tracing::debug!(%error, "publication source fallback shutdown");
+            }
         }
         if let Some(connection) = &self.connection {
             if let Err(error) = connection.shutdown_both() {
@@ -72,7 +81,7 @@ pub(super) async fn serve(
                         (id, result)
                     });
                     tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { guest: flow, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
+                    connecting.insert(id, Active { guest: flow, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
                 }
                 event = records.recv() => match event.context("router event reader closed")? {
                     Event::Accepted(id) => {
@@ -82,7 +91,8 @@ pub(super) async fn serve(
                     }
                     Event::Closed(id, report) => {
                         ensure!(active.get(&id).is_some_and(|flow| flow.accepted), "router closed unacknowledged connection");
-                        let flow = active.remove(&id).unwrap();
+                        let mut flow = active.remove(&id).unwrap();
+                        flow.graceful = report.reason == capsem_proto::router::CloseReason::Complete;
                         tracing::debug!(connection_id = id, reason = ?report.reason,
                             from_source = report.from_source, to_source = report.to_source, "publication closed");
                         let guest = flow.guest;

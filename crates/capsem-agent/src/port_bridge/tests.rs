@@ -31,7 +31,11 @@ fn abort_closes_only_the_matching_generation_and_connection() {
     bridge
         .abort(&[capsem_proto::router::FlowKey { generation: 1, id: 1 }])
         .unwrap();
-    assert_eq!(peers[0].0.read(&mut [0]).unwrap(), 0, "matching flow did not close");
+    assert_eq!(
+        peers[0].0.read(&mut [0]).unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset,
+        "matching flow did not reset"
+    );
     peers[1].1.write_all(b"still live").unwrap();
     peers[1].0.read_exact(&mut [0; 10]).unwrap();
     bridge.shutdown();
@@ -90,7 +94,10 @@ fn shutdown_closes_live_flows_and_joins_them_before_returning() {
     host.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
     bridge.shutdown();
     assert_eq!(host.read(&mut [0]).unwrap(), 0);
-    assert_eq!(client.read(&mut [0]).unwrap(), 0);
+    assert_eq!(
+        client.read(&mut [0]).unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset
+    );
     assert!(bridge.tasks.is_empty());
 }
 

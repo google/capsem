@@ -267,7 +267,10 @@ async fn unacknowledged_pair_reclaims_guest(close_early: bool) {
         .unwrap()
         .is_err());
     // The hostile child still owns its copies; owner shutdown must wake peers.
-    assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
+    assert_eq!(
+        client.read(&mut [0]).await.unwrap_err().kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
     assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
     assert!(owner.pending.lock().unwrap().is_empty());
     let abort = requests.recv().await.expect("unacknowledged pair left guest alive");
@@ -370,7 +373,8 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
             .await
             .unwrap()
-            .unwrap(),
-        0
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
     );
 }
