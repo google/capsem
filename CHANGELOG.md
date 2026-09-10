@@ -268,6 +268,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest TCP resets propagate across VSOCK with generation-bound close reports
+  and acknowledgments; bounded replay credits prevent stalled control traffic
+  from accumulating network reports.
 - TCP reset is armed before router handoff, so forced process death also
   closes published connections abruptly; normal completion restores graceful close.
 - Abnormal published-connection cleanup resets TCP and revokes socket copies

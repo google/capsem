@@ -5,13 +5,15 @@ use tokio::time::Instant;
 
 struct Active {
     guest: capsem_proto::router::FlowKey,
+    _pending: Pending,
     graceful: bool,
     _permit: tokio::sync::OwnedSemaphorePermit,
     setup: tokio::task::AbortHandle,
-    source: std::net::TcpStream,
+    source: Arc<std::net::TcpStream>,
     connection: Option<VsockConnection>,
     acknowledgement: Option<Instant>,
     accepted: bool,
+    close_deadline: Option<Instant>,
 }
 impl Drop for Active {
     fn drop(&mut self) {
@@ -48,6 +50,7 @@ pub(super) async fn serve(
     let mut connecting: HashMap<u64, Active> = HashMap::new();
     let mut setups = tokio::task::JoinSet::new();
     let (queue, mut records) = mpsc::channel(MAX_CONNECTIONS);
+    let (guest_close, mut guest_records) = mpsc::channel(MAX_CONNECTIONS);
     let mut acknowledgements = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         loop {
@@ -64,15 +67,14 @@ pub(super) async fn serve(
                     capsem_foundation::unix::fd::set_stream_buffers(source.as_fd(),
                         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                     capsem_foundation::unix::fd::tcp_reset_on_close(source.as_fd())?;
-                    let source = source.into_std()?;
-                    let (pending, receiver) = owner.request()?;
+                    let source = Arc::new(source.into_std()?);
+                    let (pending, receiver) = owner.request(&source, guest_close.clone())?;
                     let id = pending.id;
                     let flow = capsem_proto::router::FlowKey { generation: owner.generation, id };
                     let control = control.clone();
                     let slots = owner.setups.clone();
                     let rate = owner.setup_rate.clone();
                     let setup = setups.spawn(async move {
-                        let _pending = pending;
                         let result = tokio::time::timeout(Duration::from_secs(8), async {
                             let _setup = slots.acquire_owned().await.context("guest setup admission closed")?;
                             rate.acquire().await;
@@ -83,7 +85,16 @@ pub(super) async fn serve(
                         (id, result)
                     });
                     tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { guest: flow, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false });
+                    connecting.insert(id, Active { guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
+                }
+                Some((guest, report)) = guest_records.recv() => {
+                    if report.reason != capsem_proto::router::CloseReason::Complete {
+                        // report_close already revoked TCP before its control ACK.
+                        if let Some((&id, flow)) = active.iter_mut().find(|(_, flow)| flow.guest == guest) {
+                            flow.close_deadline = Some(Instant::now() + Duration::from_secs(2));
+                            router.cancel(id).await?;
+                        }
+                    }
                 }
                 event = records.recv() => match event.context("router event reader closed")? {
                     Event::Accepted(id) => {
@@ -149,10 +160,17 @@ pub(super) async fn serve(
                 _ = acknowledgements.tick() => {
                     ensure!(!active.values().any(|flow| flow.acknowledgement.is_some_and(|deadline| deadline <= Instant::now())),
                         "router acknowledgement timed out");
+                    ensure!(!active.values().any(|flow| flow.close_deadline.is_some_and(|deadline| deadline <= Instant::now())),
+                        "router close acknowledgement timed out");
                 }
             }
         }
     }.await;
+    if result.is_err() {
+        // An invalid record or missing ACK means the child cannot be trusted to
+        // relinquish its copies. Terminate the shared child, not just this broker.
+        router.closed.cancel();
+    }
     let ids: Vec<_> = active.keys().copied().collect();
     let guests = active
         .values()

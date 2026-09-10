@@ -48,7 +48,7 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
 /// Version 2 adds router flow keys tied to the owner generation.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -433,6 +433,8 @@ pub enum HostToGuest {
     ConnectPort { flow: router::FlowKey, port: u16 },
     /// Cancel a bounded set of flows from this control connection's VM boot.
     AbortPorts { flows: Vec<router::FlowKey> },
+    /// Receipt of a terminal flow report; distinct from exec/file job IDs.
+    PortCloseAck { flow: router::FlowKey },
 }
 
 /// A single boot timing measurement from the guest init script.
@@ -624,6 +626,11 @@ pub enum GuestToHost {
     ShutdownComplete,
     /// Quiescence ack: filesystem frozen, safe to snapshot.
     SnapshotReady,
+    /// Terminal guest endpoint report. Replayed until PortCloseAck.
+    PortClosed {
+        flow: router::FlowKey,
+        report: router::CloseReport,
+    },
 }
 
 // ---------------------------------------------------------------------------

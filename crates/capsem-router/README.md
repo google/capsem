@@ -73,8 +73,20 @@ clears that setting; other exits avoid an early FIN. The trusted owner immediate
 linger-zero plus `disconnectx` on macOS or `connect(AF_UNSPEC)` on Linux; this
 also revokes a malicious child's retained copies. The child retains no connect
 authority. Guest cancellation resets the container TCP endpoint. Normal Complete
-still drains both directions. Guest-initiated reset propagation and close
-acknowledgements remain subsequent work.
+still drains both directions. Guest `PortClosed` reports keep their VSOCK stream
+open after abnormal termination until `PortCloseAck`: the host revokes TCP before
+acknowledging, so stream EOF cannot race an unintended FIN through the copier.
+The control actor accepts reports only for the owning generation and flow lease,
+but acknowledges retired duplicates to release guest credits. Child cancellation
+retains its observer for final byte counts; a missing close ACK terminates the child.
+Guest counters are diagnostic and do not become authoritative host audit counts.
+
+The existing control writer reserves one of 64 network report credits before
+setup. Active streams, terminal reports, queued copies and reconnect snapshots
+retain that credit until both queue drain and host acknowledgment. Network messages
+cannot enter the legacy queue without a credit. A five-second missing guest close
+ACK fails its control lease; the writer checks this between bounded writes. Control
+disconnect revokes all live TCP endpoints while leaving declared listeners available.
 
 ## Networking extension boundary
 

@@ -27,7 +27,7 @@ mod saved;
 pub struct Publisher {
     generation: u64,
     saved: Option<saved::Mappings>,
-    pending: Mutex<HashMap<u64, oneshot::Sender<Result<VsockConnection>>>>,
+    pending: Mutex<HashMap<u64, GuestFlow>>,
     next_id: AtomicU64,
     incoming: Arc<Semaphore>,
     mappings: Arc<Semaphore>,
@@ -38,6 +38,15 @@ pub struct Publisher {
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
     router: tokio::sync::Mutex<Option<Arc<companion::Router>>>,
+}
+
+type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
+
+struct GuestFlow {
+    data: Option<oneshot::Sender<Result<VsockConnection>>>,
+    close: mpsc::Sender<GuestClose>,
+    report: Option<capsem_proto::router::CloseReason>,
+    source: std::sync::Weak<std::net::TcpStream>,
 }
 
 impl Default for Publisher {
@@ -81,6 +90,51 @@ impl Drop for Publication {
 }
 
 impl Publisher {
+    /// A lost control lease invalidates every current guest endpoint. Keep the
+    /// declared listeners, but revoke sockets before accepting a replacement lease.
+    pub fn control_lost(&self) {
+        let flows: Vec<_> = {
+            let mut pending = self.pending.lock().unwrap();
+            pending
+                .iter_mut()
+                .map(|(&id, entry)| {
+                    if let Some(data) = entry.data.take() {
+                        let _ = data.send(Err(anyhow::anyhow!("guest control connection closed")));
+                    }
+                    let close = match entry.report {
+                        None | Some(capsem_proto::router::CloseReason::Complete) => {
+                            entry.report = Some(capsem_proto::router::CloseReason::Cancelled);
+                            Some(entry.close.clone())
+                        }
+                        _ => None,
+                    };
+                    (id, entry.source.upgrade(), close)
+                })
+                .collect()
+        };
+        for (id, source, close) in flows {
+            if let Some(source) = source {
+                if let Err(error) = capsem_foundation::unix::fd::reset_tcp(source.as_fd()) {
+                    tracing::debug!(connection_id = id, %error, "control disconnect TCP cleanup");
+                }
+            }
+            if let Some(close) = close {
+                let flow = capsem_proto::router::FlowKey {
+                    generation: self.generation,
+                    id,
+                };
+                let report = capsem_proto::router::CloseReport {
+                    reason: capsem_proto::router::CloseReason::Cancelled,
+                    from_source: 0,
+                    to_source: 0,
+                };
+                if let Err(error) = close.try_send((flow, report)) {
+                    tracing::error!(connection_id = id, %error, "control disconnect report admission failed");
+                }
+            }
+        }
+    }
+
     pub async fn shutdown(&self) {
         let _drain = self.drain.lock().await;
         self.cancellation.cancel();
@@ -180,7 +234,13 @@ impl Publisher {
                     capsem_proto::router::FlowKey::read_data_header(header).map_err(anyhow::Error::msg)?;
                 let owner = owner.upgrade().context("VM router owner closed")?;
                 ensure!(flow.generation == owner.generation, "stale guest data generation");
-                if let Some(sender) = owner.pending.lock().unwrap().remove(&flow.id) {
+                if let Some(sender) = owner
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .get_mut(&flow.id)
+                    .and_then(|entry| entry.data.take())
+                {
                     let result = if connected {
                         Ok(connection)
                     } else {
@@ -203,13 +263,64 @@ impl Publisher {
         }
     }
 
-    fn request(self: &Arc<Self>) -> Result<(Pending, oneshot::Receiver<Result<VsockConnection>>)> {
+    /// The control actor ACKs every report, including stale/retired duplicates.
+    /// Only an existing generation-bound lease may deliver one to a broker.
+    pub fn report_close(
+        &self,
+        flow: capsem_proto::router::FlowKey,
+        report: capsem_proto::router::CloseReport,
+    ) -> Result<()> {
+        if flow.generation != self.generation {
+            return Ok(());
+        }
+        let mut pending = self.pending.lock().unwrap();
+        let Some(entry) = pending.get_mut(&flow.id) else {
+            return Ok(());
+        };
+        if entry.report.is_some() {
+            return Ok(());
+        }
+        entry.report = Some(report.reason);
+        let close = entry.close.clone();
+        let source = entry.source.upgrade();
+        if report.reason != capsem_proto::router::CloseReason::Complete {
+            if let Some(data) = entry.data.take() {
+                let _ = data.send(Err(anyhow::anyhow!("guest endpoint closed during setup")));
+            }
+        }
+        drop(pending);
+        // Apply the reset before the control actor ACKs. The guest keeps its
+        // VSOCK endpoint open until that ACK, preventing EOF from racing a FIN
+        // through the confined copier ahead of this TCP reset.
+        if report.reason != capsem_proto::router::CloseReason::Complete {
+            if let Some(source) = source {
+                capsem_foundation::unix::fd::reset_tcp(source.as_fd())?;
+            }
+        }
+        close
+            .try_send((flow, report))
+            .context("guest close report admission failed")
+    }
+
+    fn request(
+        self: &Arc<Self>,
+        source: &Arc<std::net::TcpStream>,
+        close: mpsc::Sender<GuestClose>,
+    ) -> Result<(Pending, oneshot::Receiver<Result<VsockConnection>>)> {
         let id = self
             .next_id
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| anyhow::anyhow!("publication connection ids exhausted"))?;
         let (sender, receiver) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, sender);
+        self.pending.lock().unwrap().insert(
+            id,
+            GuestFlow {
+                data: Some(sender),
+                close,
+                report: None,
+                source: Arc::downgrade(source),
+            },
+        );
         Ok((
             Pending {
                 owner: self.clone(),

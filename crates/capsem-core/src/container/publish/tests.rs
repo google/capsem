@@ -3,10 +3,156 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+fn source_fixture() -> Arc<std::net::TcpStream> {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    Arc::new(listener.accept().unwrap().0)
+}
+
+#[tokio::test]
+async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broker() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(Publisher::default());
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, data) = owner.request(&source, close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation,
+        id: pending.id,
+    };
+    owner
+        .report_close(
+            flow,
+            CloseReport {
+                reason: CloseReason::Reset,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .unwrap();
+    // No broker has read the report or relinquished its shutdown handle yet.
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    assert!(data.await.unwrap().is_err());
+    assert_eq!(reports.try_recv().unwrap().0, flow);
+    drop(pending);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_complete() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(Publisher::default());
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, data) = owner.request(&source, close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation,
+        id: pending.id,
+    };
+    owner
+        .report_close(
+            flow,
+            CloseReport {
+                reason: CloseReason::Complete,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .unwrap();
+    reports.try_recv().unwrap();
+    owner.control_lost();
+    assert_eq!(
+        reports
+            .try_recv()
+            .expect("normal report disabled later control-loss cleanup")
+            .1
+            .reason,
+        CloseReason::Cancelled
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    assert!(data.await.unwrap().is_err());
+    drop(pending);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_report_survives_data_adoption_and_is_delivered_once_per_generation() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(Publisher::default());
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation,
+        id: pending.id,
+    };
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    peer.write_all(&flow.data_header(true)).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    let data = tokio::time::timeout(Duration::from_secs(1), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let report = CloseReport {
+        reason: CloseReason::Reset,
+        from_source: 17,
+        to_source: 19,
+    };
+    owner
+        .report_close(
+            FlowKey {
+                generation: flow.generation ^ 1,
+                ..flow
+            },
+            report,
+        )
+        .unwrap();
+    assert!(reports.try_recv().is_err());
+    owner.report_close(flow, report).unwrap();
+    assert_eq!(
+        reports
+            .try_recv()
+            .expect("data adoption discarded the close-report lease"),
+        (flow, report)
+    );
+    owner.report_close(flow, report).unwrap();
+    assert!(reports.try_recv().is_err());
+    drop(pending);
+    owner.report_close(flow, report).unwrap();
+    assert!(owner.pending.lock().unwrap().is_empty());
+    drop(data);
+    owner.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
     let owner = Arc::new(Publisher::default());
-    let (pending, receiver) = owner.request().unwrap();
+    let (close, _reports) = mpsc::channel(1);
+    let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
     let (connection, peer) = StdUnixStream::pair().unwrap();
     peer.set_nonblocking(true).unwrap();
     let mut peer = UnixStream::from_std(peer).unwrap();
@@ -41,7 +187,7 @@ async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(owner.pending.lock().unwrap().is_empty());
+    assert!(owner.pending.lock().unwrap().get(&pending.id).unwrap().data.is_none());
     drop(accepted);
     drop(pending);
     owner.shutdown().await;
@@ -208,15 +354,26 @@ async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
 
 #[tokio::test]
 async fn missing_pair_ack_shuts_down_retained_descriptors() {
-    unacknowledged_pair_reclaims_guest(false).await;
+    unacknowledged_pair_reclaims_guest(ChildFault::MissingAccept).await;
 }
 
 #[tokio::test]
 async fn premature_child_close_still_aborts_guest_flow() {
-    unacknowledged_pair_reclaims_guest(true).await;
+    unacknowledged_pair_reclaims_guest(ChildFault::PrematureClose).await;
 }
 
-async fn unacknowledged_pair_reclaims_guest(close_early: bool) {
+#[tokio::test]
+async fn missing_child_close_ack_reclaims_the_flow_and_terminates_the_companion() {
+    unacknowledged_pair_reclaims_guest(ChildFault::MissingClose).await;
+}
+
+enum ChildFault {
+    MissingAccept,
+    PrematureClose,
+    MissingClose,
+}
+
+async fn unacknowledged_pair_reclaims_guest(fault: ChildFault) {
     let owner = Arc::new(Publisher::default());
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
@@ -248,7 +405,7 @@ async fn unacknowledged_pair_reclaims_guest(close_early: bool) {
     owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
     let granted = Grant::decode(receiver.recv().await.unwrap()).unwrap();
     assert!(matches!(granted, Grant::Connected { id: 1, .. }));
-    if close_early {
+    if matches!(fault, ChildFault::PrematureClose) {
         Event::Closed(
             1,
             capsem_proto::router::CloseReport {
@@ -260,6 +417,29 @@ async fn unacknowledged_pair_reclaims_guest(close_early: bool) {
         .write(&mut events)
         .await
         .unwrap();
+    }
+    if matches!(fault, ChildFault::MissingClose) {
+        Event::Accepted(1).write(&mut events).await.unwrap();
+        owner
+            .report_close(
+                flow,
+                capsem_proto::router::CloseReport {
+                    reason: capsem_proto::router::CloseReason::Reset,
+                    from_source: 0,
+                    to_source: 0,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            Grant::decode(
+                tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap(),
+            Grant::Abort { id: 1 }
+        ));
     }
     assert!(tokio::time::timeout(Duration::from_secs(4), broker)
         .await

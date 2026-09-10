@@ -388,6 +388,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             Some(Ok(GuestToHost::Ack { id })) => {
                                 pending.pending_acks.lock().unwrap().remove(&id);
                             }
+                            Some(Ok(GuestToHost::PortClosed { flow, report })) => {
+                                if let Err(error) = js.publisher.report_close(flow, report) {
+                                    error!(%error, "guest close report rejected");
+                                    break;
+                                }
+                                let frame = proto::encode_host_msg(&HostToGuest::PortCloseAck { flow })
+                                    .expect("fixed-size flow acknowledgement");
+                                if let Err(error) = control.write(&frame).await {
+                                    error!(%error, "flow close acknowledgement failed");
+                                    break;
+                                }
+                            }
                             Some(Ok(msg)) => {
                                 if let Some(id) = ackable_response_id(&msg) {
                                     let frame = proto::encode_host_msg(&HostToGuest::AckReply { id })
@@ -416,6 +428,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
             }
+            js.publisher.control_lost();
             control.close().await;
         }
     });

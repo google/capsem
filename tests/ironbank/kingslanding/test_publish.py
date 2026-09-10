@@ -6,6 +6,7 @@ Kingslanding uses a pinned native image prepared before hermetic execution.
 import concurrent.futures
 import contextlib
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -120,6 +121,57 @@ def test_all_published_ports_share_one_confined_router(redis):
     assert len(set(redis["router_pids"])) == 1, (
         "A VM must share one confined router across its published ports"
     )
+
+
+def test_guest_tcp_reset_crosses_vsock_without_becoming_fin(redis, service):
+    # A root-owned test peer joins only the workload's network namespace. Its
+    # socket emits a real Linux TCP RST after an acknowledged binary exchange.
+    peer = """
+import os, socket, struct
+pid = open('/var/tmp/capsem-container/workload.pid').read().strip()
+fd = os.open(f'/proc/{pid}/ns/net', os.O_RDONLY)
+os.setns(fd, os.CLONE_NEWNET)
+os.close(fd)
+with socket.socket() as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(('127.0.0.1', 9099))
+    listener.listen(1)
+    listener.settimeout(10)
+    connection, _ = listener.accept()
+    with connection, connection.makefile('rb') as stream:
+        connection.settimeout(5)
+        assert stream.read(4) == b'PING'
+        connection.sendall(b'PONG')
+        assert stream.read(4) == b'FAIL'
+        connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+"""
+
+    # Retry refused setup while the exec job starts. After PONG the protocol
+    # succeeds or fails exactly once; its reset assertion is never retried.
+    def exchange():
+        with socket.create_connection(
+            ("127.0.0.1", redis["other_port"]), timeout=5
+        ) as connection:
+            try:
+                connection.sendall(b"PING")
+                pong = connection.recv(4, socket.MSG_WAITALL)
+            except ConnectionResetError:
+                return False
+            assert pong == b"PONG"
+            connection.sendall(b"FAIL")
+            with pytest.raises(ConnectionResetError):
+                connection.recv(1)
+            return True
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            service.client().post,
+            f"/vms/{redis['vm']['id']}/exec",
+            {"command": "python3 -c " + shlex.quote(peer), "timeout_secs": 15},
+        )
+        wait_for(exchange, "guest TCP reset propagated over VSOCK", timeout=10)
+        response = running.result(timeout=20)
+        assert response.get("exit_code") == 0, response
 
 
 def test_binary_values_and_guest_namespace_isolation(redis, service):

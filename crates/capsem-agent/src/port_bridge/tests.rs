@@ -9,8 +9,48 @@ fn key(id: u64) -> FlowKey {
 }
 
 #[test]
+fn destination_reset_reports_reason_and_bytes_before_releasing_admission() {
+    use capsem_proto::router::CloseReason;
+    let (control, reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control.clone()).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let (tcp, _) = listener.accept().unwrap();
+    let (vsock, mut host) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    bridge.connect_with(key(1), move || Ok((tcp, vsock))).unwrap();
+    host.write_all(b"request").unwrap();
+    client.read_exact(&mut [0; 7]).unwrap();
+    client.write_all(b"reply").unwrap();
+    host.read_exact(&mut [0; 5]).unwrap();
+    capsem_foundation::unix::fd::reset_tcp(client.as_fd()).unwrap();
+    let queued = reports.lock().unwrap().recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(queued.message, capsem_proto::GuestToHost::PortClosed {
+        flow, report: capsem_proto::router::CloseReport {
+            reason: CloseReason::Reset, from_source: 7, to_source: 5,
+        }
+    } if flow == key(1)));
+    drop(queued);
+    host.set_read_timeout(Some(Duration::from_millis(30))).unwrap();
+    assert!(
+        matches!(
+            host.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ),
+        "VSOCK EOF escaped before reset acknowledgement"
+    );
+    control.network.acknowledge(key(1));
+    host.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    assert_eq!(host.read(&mut [0]).unwrap(), 0);
+    bridge.shutdown();
+    drop(bridge);
+}
+
+#[test]
 fn abort_closes_only_the_matching_generation_and_connection() {
-    let mut bridge = Bridge::new().unwrap();
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control).unwrap();
     let mut peers = Vec::new();
     for id in 1..=2 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -41,11 +81,13 @@ fn abort_closes_only_the_matching_generation_and_connection() {
     bridge.shutdown();
     assert_eq!(bridge.connections.available_permits(), 64);
     assert!(bridge.tasks.is_empty());
+    drop(bridge);
 }
 
 #[test]
 fn abort_reclaims_queued_setup_without_starting_a_worker() {
-    let mut bridge = Bridge::new().unwrap();
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control).unwrap();
     let held = bridge.setups.clone().try_acquire_many_owned(8).unwrap();
     let (entered, starts) = std::sync::mpsc::sync_channel(1);
     bridge
@@ -76,6 +118,7 @@ fn abort_reclaims_queued_setup_without_starting_a_worker() {
     drop(held);
     bridge.shutdown();
     assert!(bridge.flows.is_empty());
+    drop(bridge);
 }
 
 #[test]
@@ -84,7 +127,8 @@ fn shutdown_closes_live_flows_and_joins_them_before_returning() {
     let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (tcp, _) = listener.accept().unwrap();
     let (vsock, mut host) = UnixStream::pair().unwrap();
-    let mut bridge = Bridge::new().unwrap();
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control).unwrap();
     bridge.connect_with(key(1), move || Ok((tcp, vsock))).unwrap();
     host.write_all(b"ready").unwrap();
     client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
@@ -99,13 +143,16 @@ fn shutdown_closes_live_flows_and_joins_them_before_returning() {
         io::ErrorKind::ConnectionReset
     );
     assert!(bridge.tasks.is_empty());
+    drop(bridge);
 }
 
 #[test]
 fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
-    let mut bridge = Bridge::new().unwrap();
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
     let (entered, started) = std::sync::mpsc::sync_channel(1);
     let (release, wait) = std::sync::mpsc::sync_channel(1);
+    let (done, completed) = std::sync::mpsc::sync_channel(1);
+    let mut bridge = Bridge::new(control).unwrap();
     bridge
         .connect_with(key(1), move || {
             entered.send(std::thread::current().name().unwrap().to_owned()).unwrap();
@@ -117,19 +164,19 @@ fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
         started.recv_timeout(Duration::from_secs(1)).unwrap(),
         "capsem-port-connect"
     );
-    let (done, completed) = std::sync::mpsc::sync_channel(1);
-    let owner = std::thread::spawn(move || {
-        bridge.shutdown();
-        done.send(()).unwrap();
-        bridge
+    std::thread::scope(|scope| {
+        let owner = scope.spawn(|| {
+            bridge.shutdown();
+            done.send(()).unwrap();
+        });
+        assert!(matches!(
+            completed.recv_timeout(Duration::from_millis(30)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.send(()).unwrap();
+        completed.recv_timeout(Duration::from_secs(1)).unwrap();
+        owner.join().unwrap();
     });
-    assert!(matches!(
-        completed.recv_timeout(Duration::from_millis(30)),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-    ));
-    release.send(()).unwrap();
-    completed.recv_timeout(Duration::from_secs(1)).unwrap();
-    let mut bridge = owner.join().unwrap();
     assert!(bridge.tasks.is_empty());
     assert_eq!(bridge.connections.available_permits(), 64);
     assert_eq!(bridge.setups.available_permits(), 8);
@@ -138,11 +185,13 @@ fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
         bridge.connect(flow, 6379).unwrap_err().kind(),
         io::ErrorKind::BrokenPipe
     );
+    drop(bridge);
 }
 
 #[test]
 fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_permit() {
-    let mut bridge = Bridge::new().unwrap();
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control).unwrap();
     let (entered, started) = std::sync::mpsc::sync_channel(64);
     let mut releases = Vec::new();
     for id in 1..=64 {
@@ -177,4 +226,5 @@ fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_pe
     assert!(bridge.tasks.is_empty());
     assert_eq!(bridge.connections.available_permits(), 64);
     assert_eq!(bridge.setups.available_permits(), 8);
+    drop(bridge);
 }

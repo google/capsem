@@ -70,6 +70,11 @@ impl Router {
             *observer = None;
             drop(observers);
         }
+        self.cancel(id).await
+    }
+
+    /// Cooperative close while retaining the observer for authoritative counts.
+    pub async fn cancel(&self, id: u64) -> Result<()> {
         let writer = self.writer.lock().await;
         ensure!(!self.closed.is_cancelled(), "VM router is closed");
         let result =

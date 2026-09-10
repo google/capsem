@@ -14,6 +14,7 @@ use tokio::task::JoinSet;
 mod setup;
 
 pub struct Bridge {
+    control: crate::control_writer::CtrlSender,
     runtime: Runtime,
     tasks: JoinSet<FlowKey>,
     flows: HashMap<FlowKey, watch::Sender<bool>>,
@@ -35,8 +36,9 @@ impl Bridge {
         Ok(())
     }
 
-    pub fn new() -> io::Result<Self> {
+    pub(crate) fn new(control: crate::control_writer::CtrlSender) -> io::Result<Self> {
         Ok(Self {
+            control,
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
@@ -86,12 +88,17 @@ impl Bridge {
             .clone()
             .try_acquire_owned()
             .map_err(|_| io::Error::other("publication connection limit reached"))?;
+        let credit = self.control.network.reserve()?;
+        let control = self.control.clone();
         let (cancel, mut cancelled) = watch::channel(false);
         self.flows.insert(flow, cancel);
         let setups = self.setups.clone();
         let mut stop = self.stop.subscribe();
         self.tasks.spawn_on(
             async move {
+                use capsem_proto::router::{CloseReason, CloseReport};
+                let mut report = CloseReport { reason: CloseReason::Cancelled, from_source: 0, to_source: 0 };
+                let mut transport = None;
                 let result = async {
                     let setup_permit = tokio::select! {
                         biased;
@@ -121,10 +128,10 @@ impl Bridge {
                     tcp.set_nonblocking(true)?;
                     tcp.set_nodelay(true)?;
                     let mut tcp = tokio::net::TcpStream::from_std(tcp)?;
-                    let mut vsock = AsyncVsock::new(vsock.into_raw_fd())?;
+                    let vsock = transport.insert(AsyncVsock::new(vsock.into_raw_fd())?);
                     let outcome = capsem_foundation::unix::router_stream::copy_until(
                         &mut tcp,
-                        &mut vsock,
+                        vsock,
                         capsem_foundation::unix::router_stream::Limits::default(),
                         async {
                             tokio::select! {
@@ -134,6 +141,9 @@ impl Bridge {
                         },
                     )
                     .await;
+                    // Host source is the client; this hop's copier source is
+                    // the destination TCP server, so its counters are reversed.
+                    report = CloseReport { reason: outcome.reason, from_source: outcome.to_source, to_source: outcome.from_source };
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, reason = ?outcome.reason,
                         from_source = outcome.from_source, to_source = outcome.to_source,
                         error = ?outcome.error, "guest router stream ended");
@@ -147,7 +157,29 @@ impl Bridge {
                 .await;
                 if let Err(error) = result {
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication failed");
+                    if matches!(report.reason, CloseReason::Complete | CloseReason::Cancelled) {
+                        report.reason = CloseReason::Io;
+                    }
                 }
+                match control.send_closed(flow, report, credit) {
+                    Ok(acknowledged) if report.reason != CloseReason::Complete && !*stop.borrow() && !*cancelled.borrow() => {
+                        let applied = tokio::select! {
+                            _ = stop.changed() => true,
+                            _ = cancelled.changed() => true,
+                            result = tokio::time::timeout(std::time::Duration::from_secs(5), acknowledged.notified()) => result.is_ok(),
+                        };
+                        if !applied {
+                            tracing::error!(connection_id = flow.id, generation = flow.generation, "guest close acknowledgement timed out");
+                            control.network.fail();
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!(connection_id = flow.id, generation = flow.generation, %error, "guest close report failed");
+                        control.network.fail();
+                    }
+                }
+                drop(transport);
                 drop(permit);
                 flow
             },

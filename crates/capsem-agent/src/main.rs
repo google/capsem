@@ -1120,7 +1120,7 @@ fn control_loop(
             Ok(HostToGuest::ConnectPort { flow, port }) => {
                 let result = (|| {
                     if publications.is_none() {
-                        publications = Some(port_bridge::Bridge::new()?);
+                        publications = Some(port_bridge::Bridge::new(ctrl_tx.clone())?);
                     }
                     publications.as_mut().unwrap().connect(flow, port)
                 })();
@@ -1143,6 +1143,7 @@ fn control_loop(
                 // actually did land twice).
                 pending_responses.lock().unwrap().remove(&id);
             }
+            Ok(HostToGuest::PortCloseAck { flow }) => ctrl_tx.network.acknowledge(flow),
             Ok(HostToGuest::Resize { cols, rows }) => {
                 eprintln!("[capsem-agent] resize: {cols}x{rows}");
                 set_winsize(master_fd, cols, rows);
