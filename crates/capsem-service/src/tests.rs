@@ -620,6 +620,7 @@ mod profile_mutations;
 mod profile_routes;
 mod session_identity;
 mod settings_files;
+mod snapshots_api;
 mod system_contracts;
 mod transcript;
 mod update_routes;

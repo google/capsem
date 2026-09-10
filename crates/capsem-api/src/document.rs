@@ -22,6 +22,12 @@ pub fn openapi() -> OpenApi {
     doc.empty_post::<ProvisionResponse>("/vms/{id}/resume", "resumeVm");
     doc.logs();
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
+    doc.get::<SnapshotsStatus>("/vms/{id}/snapshots/status", "getVmSnapshotsStatus");
+    doc.get::<SnapshotsList>("/vms/{id}/snapshots/list", "listVmSnapshots");
+    let changes = doc
+        .operation::<ChangesResponse>("/vms/{id}/changes", "getVmChanges")
+        .parameters(Some(ChangesQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/changes", HttpMethod::Get, changes);
     doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
     doc.post::<UpdateApplyRequest, UpdateActionResponse>("/update/apply", "updateHypervisor");

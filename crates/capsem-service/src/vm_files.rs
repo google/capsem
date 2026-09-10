@@ -1,4 +1,8 @@
+mod snapshots;
 use super::*;
+#[cfg(test)]
+pub(super) use snapshots::snapshot_status_from_session_dir;
+pub(super) use snapshots::{handle_vm_changes, handle_vm_snapshots_list, handle_vm_snapshots_status};
 
 mod diagnostics;
 mod launch;
@@ -537,7 +541,7 @@ pub(super) fn list_dir_recursive(
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
-                entry_type: "directory".into(),
+                entry_type: api::FileEntryType::Directory,
                 size: 0,
                 mtime: item.mtime_secs,
                 mime: None,
@@ -553,7 +557,7 @@ pub(super) fn list_dir_recursive(
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
-                entry_type: "file".into(),
+                entry_type: api::FileEntryType::File,
                 size: item.size,
                 mtime: item.mtime_secs,
                 mime: Some(mime),
@@ -1437,82 +1441,6 @@ pub(super) async fn handle_vm_status(
     }
 
     Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
-}
-
-pub(super) async fn handle_vm_snapshots_status(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<capsem_proto::ipc::SnapshotStatus>, AppError> {
-    if let Some(uds_path) = {
-        let instances = state.instances.lock().unwrap();
-        instances.get(&id).map(|instance| instance.uds_path.clone())
-    } {
-        let request_id = state.job_counter.fetch_add(1, Ordering::SeqCst);
-        let response = send_ipc_command(&uds_path, ServiceToProcess::SnapshotStatus { id: request_id }, Some(5))
-            .await
-            .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
-        return match response {
-            ProcessToService::SnapshotStatusResult {
-                id: response_id,
-                status,
-            } if response_id == request_id => Ok(Json(status)),
-            other => Err(AppError(
-                StatusCode::BAD_GATEWAY,
-                format!("unexpected snapshot status IPC response: {other:?}"),
-            )),
-        };
-    }
-
-    let session_dir = resolve_session_dir(&state, &id)?;
-    Ok(Json(snapshot_status_from_session_dir(&session_dir)))
-}
-
-pub(super) async fn handle_vm_snapshots_list(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let Json(status) = handle_vm_snapshots_status(State(state), Path(id)).await?;
-    Ok(Json(serde_json::json!({
-        "total": status.total,
-        "snapshots": status.snapshots,
-    })))
-}
-
-pub(super) fn snapshot_status_from_session_dir(session_dir: &std::path::Path) -> capsem_proto::ipc::SnapshotStatus {
-    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-        session_dir.to_path_buf(),
-        10,
-        12,
-        std::time::Duration::from_secs(300),
-    );
-    let snapshots = scheduler.list_snapshots();
-    let auto_count = snapshots
-        .iter()
-        .filter(|slot| slot.origin == capsem_core::auto_snapshot::SnapshotOrigin::Auto)
-        .count();
-    let manual_count = snapshots.len().saturating_sub(auto_count);
-    let snapshots = snapshots
-        .into_iter()
-        .map(|slot| capsem_proto::ipc::SnapshotSlotStatus {
-            checkpoint: format!("cp-{}", slot.slot),
-            slot: slot.slot,
-            origin: match slot.origin {
-                capsem_core::auto_snapshot::SnapshotOrigin::Auto => "auto",
-                capsem_core::auto_snapshot::SnapshotOrigin::Manual => "manual",
-            }
-            .to_string(),
-            name: slot.name,
-            timestamp: humantime::format_rfc3339(slot.timestamp).to_string(),
-            hash: slot.hash,
-        })
-        .collect();
-    capsem_proto::ipc::SnapshotStatus {
-        total: auto_count + manual_count,
-        auto_count,
-        manual_count,
-        manual_available: scheduler.available_manual_slots(),
-        snapshots,
-    }
 }
 
 pub(super) async fn vm_operation_status(

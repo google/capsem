@@ -328,15 +328,15 @@ fn list_dir_returns_correct_structure() {
     // Should have src/ dir and README.md file
     assert!(entries.len() >= 2);
     let dir_entry = entries.iter().find(|e| e.name == "src").unwrap();
-    assert_eq!(dir_entry.entry_type, "directory");
+    assert_eq!(dir_entry.entry_type, api::FileEntryType::Directory);
     assert!(dir_entry.children.is_some());
     let children = dir_entry.children.as_ref().unwrap();
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].name, "main.rs");
-    assert_eq!(children[0].entry_type, "file");
+    assert_eq!(children[0].entry_type, api::FileEntryType::File);
 
     let file_entry = entries.iter().find(|e| e.name == "README.md").unwrap();
-    assert_eq!(file_entry.entry_type, "file");
+    assert_eq!(file_entry.entry_type, api::FileEntryType::File);
     assert!(file_entry.size > 0);
 }
 

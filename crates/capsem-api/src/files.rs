@@ -1,13 +1,20 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileEntryType {
+    File,
+    Directory,
+}
+
 /// A single entry in a workspace file listing.
 #[derive(Serialize, Debug, Clone, Deserialize, ToSchema)]
 pub struct FileListEntry {
     pub name: String,
     pub path: String,
     #[serde(rename = "type")]
-    pub entry_type: String,
+    pub entry_type: FileEntryType,
     pub size: u64,
     pub mtime: u64,
     #[serde(skip_serializing_if = "Option::is_none")]

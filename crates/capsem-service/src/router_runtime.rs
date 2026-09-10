@@ -17,6 +17,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/status", get(handle_vm_status))
         .route("/vms/{id}/snapshots/status", get(handle_vm_snapshots_status))
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
+        .route("/vms/{id}/changes", get(handle_vm_changes))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/exec", post(handle_exec))
         .route("/vms/{id}/files/write", post(handle_write_file))

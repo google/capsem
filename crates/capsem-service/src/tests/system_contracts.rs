@@ -180,7 +180,8 @@ fn snapshot_status_from_session_dir_reads_snapshot_metadata_without_db() {
     assert!(status
         .snapshots
         .iter()
-        .any(|snapshot| snapshot.origin == "manual" && snapshot.name.as_deref() == Some("manual_check")));
+        .any(|snapshot| snapshot.origin == api::SnapshotOrigin::Manual
+            && snapshot.name.as_deref() == Some("manual_check")));
 
     let db_path = session.join("session.db");
     assert!(!db_path.exists(), "snapshot route backing must not require session.db");

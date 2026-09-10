@@ -180,6 +180,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/vms/test-vm/status"),
         ("GET", "/vms/test-vm/snapshots/status"),
         ("GET", "/vms/test-vm/snapshots/list"),
+        ("GET", "/vms/test-vm/changes?checkpoint=cp-0"),
         ("GET", "/vms/test-vm/logs"),
         ("POST", "/vms/test-vm/exec"),
         ("POST", "/vms/test-vm/files/write"),

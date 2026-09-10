@@ -7,6 +7,24 @@ use nix::sys::stat::Mode;
 
 use super::*;
 
+#[test]
+fn link_reads_are_relative_to_the_open_directory_after_an_ancestor_is_replaced() {
+    let tree = tree();
+    let original = tree.root_path.join("child");
+    std::fs::create_dir(&original).unwrap();
+    symlink("original-target", original.join("link")).unwrap();
+    symlink("outside-target", tree.outside.join("link")).unwrap();
+    let child = tree.root.descend(OsStr::new("child")).unwrap();
+    std::fs::rename(&original, tree.root_path.join("saved")).unwrap();
+    symlink(&tree.outside, &original).unwrap();
+    assert_eq!(
+        child.read_link(OsStr::new("link")).unwrap(),
+        Some("original-target".into())
+    );
+    assert!(child.read_link(OsStr::new("../link")).is_err());
+    assert_eq!(tree.root.read_link(OsStr::new("saved")).unwrap(), None);
+}
+
 struct Tree {
     _temporary: tempfile::TempDir,
     root: ContainedDir,

@@ -16,6 +16,8 @@ mod execution;
 pub use execution::*;
 mod files;
 pub use files::*;
+mod snapshots;
+pub use snapshots::*;
 mod logs;
 pub use logs::*;
 mod updates;

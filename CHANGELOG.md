@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed snapshot listings and checkpoint-based workspace changes through the
+  gateway, with stable pagination and symlink-safe file comparison.
 - VM information includes typed model/MCP usage, network totals, and filesystem
   activity summaries from the session ledger, with explicit readiness errors.
 - Typed JSON host logs and shared grep, tail, and byte-limit options for host
