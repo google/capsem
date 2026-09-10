@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Registry pulls use the existing WebPKI TLS trust stack without platform
+  keychain verification dependencies.
 - Single-architecture asset builds and initrd repacks generate manifests for
   the selected architecture, preserving incomplete builds for other targets.
 - Release rehearsal reads Debian package identity, embedded manifest metadata,

@@ -14,7 +14,7 @@ anyhow = { workspace = true }
 blake3 = "1"
 capsem-foundation = { path = "../capsem-foundation" }
 futures = { workspace = true }
-oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
+oci-client = { version = "0.15", default-features = false, features = ["rustls-tls"] }
 reqwest = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
