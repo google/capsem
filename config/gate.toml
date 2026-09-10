@@ -2557,6 +2557,8 @@ egress_max_message_bytes = 8388608
 
 network_reason = "No mid-run fetch. This is the rule the whole profile exists for."
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
+self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter router profile before handling data; ordinary test children retain the gate network denial."
+self_confined_executables = ["capsem-port-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first

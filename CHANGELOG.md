@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Port publication reports sandbox initialization failures explicitly. macOS
+  gate tests hand off the named router to its own stricter sandbox.
 - Local focused tests preserve the invoking checkout's assembled VM assets
   instead of replacing them with another branch's cached kernel or rootfs.
 

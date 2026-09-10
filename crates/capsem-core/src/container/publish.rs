@@ -98,10 +98,11 @@ impl Publisher {
                 },
             )
             .await?;
-            ensure!(
-                Event::read(&mut events).await? == Event::Ready,
-                "router did not confirm confinement"
-            );
+            match Event::read(&mut events).await.context("read router startup response")? {
+                Event::Ready => {}
+                Event::ConfinementFailed => anyhow::bail!("port router could not install its sandbox"),
+                _ => anyhow::bail!("router did not confirm confinement"),
+            }
             Ok::<_, anyhow::Error>(())
         })
         .await

@@ -38,7 +38,6 @@ def redis(service, tmp_path):
             stderr=stderr,
         )
         ports = []
-        vm_id = None
         try:
 
             def ready():
@@ -59,7 +58,6 @@ def redis(service, tmp_path):
             ports = [int(row[0]) for row in mappings]
             rows = service.client().get("/vms/list")["sandboxes"]
             assert len(rows) == 1
-            vm_id = rows[0]["id"]
             yield {
                 "port": ports[0],
                 "other_port": ports[1],
@@ -78,11 +76,10 @@ def redis(service, tmp_path):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-            if vm_id and any(
-                row["id"] == vm_id
-                for row in service.client().get("/vms/list")["sandboxes"]
-            ):
-                service.client().delete(f"/vms/{vm_id}/delete")
+            # This fixture owns a private service, including VMs created before
+            # startup failed. Clean those too, preserving the original failure.
+            for row in service.client().get("/vms/list")["sandboxes"]:
+                service.client().delete(f"/vms/{row['id']}/delete")
             assert service.client().get("/vms/list")["sandboxes"] == []
             for port in ports:
 

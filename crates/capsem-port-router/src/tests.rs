@@ -64,7 +64,7 @@ async fn relay_preserves_binary_half_close_and_concurrent_connections() {
                 });
             }
             Event::Closed(_) => closed += 1,
-            Event::Ready => panic!("duplicate ready"),
+            Event::Ready | Event::ConfinementFailed => panic!("unexpected startup event"),
         }
     }
     while let Some(result) = clients.join_next().await {
@@ -80,6 +80,23 @@ async fn relay_preserves_binary_half_close_and_concurrent_connections() {
 async fn hostile_event_is_rejected_after_nine_bytes() {
     let (mut writer, mut reader) = tokio::io::duplex(9);
     writer.write_all(&[255; 9]).await.unwrap();
+    assert_eq!(
+        Event::read(&mut reader).await.unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
+#[tokio::test]
+async fn startup_confinement_failure_is_bounded_and_distinct_from_ready() {
+    let (mut writer, mut reader) = tokio::io::duplex(9);
+    writer.write_all(&[3, 0, 0, 0, 0, 0, 0, 0, 0]).await.unwrap();
+    let failure = Event::read(&mut reader).await.unwrap();
+    assert_ne!(failure, Event::Ready);
+    failure.write(&mut writer).await.unwrap();
+    let mut frame = [0; 9];
+    reader.read_exact(&mut frame).await.unwrap();
+    assert_eq!(frame, [3, 0, 0, 0, 0, 0, 0, 0, 0]);
+    writer.write_all(&[3, 0, 0, 0, 0, 0, 0, 0, 1]).await.unwrap();
     assert_eq!(
         Event::read(&mut reader).await.unwrap_err().kind(),
         io::ErrorKind::InvalidData

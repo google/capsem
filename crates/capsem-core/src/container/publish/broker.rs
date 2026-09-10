@@ -56,7 +56,7 @@ pub(super) async fn serve(
                 Event::Closed(id) => {
                     ensure!(active.remove(&id).is_some(), "router closed an unknown connection");
                 }
-                Event::Ready => anyhow::bail!("duplicate router ready event"),
+                Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
             },
             completed = setups.join_next(), if !setups.is_empty() => {
                 let (id, result) = match completed.unwrap() {

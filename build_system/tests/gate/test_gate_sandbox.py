@@ -1007,3 +1007,15 @@ def test_cancelling_the_outer_runner_reaps_the_bubblewrap_session(tmp_path: Path
         time.sleep(0.01)
     else:
         pytest.fail(f"sandboxed process {pid} survived cancellation")
+
+
+@pytest.mark.parametrize("report", [False, True])
+def test_only_named_self_confining_children_replace_the_inherited_profile(report):
+    text = sandbox.profile(CONFIG, report=report)
+    handoffs = [line for line in text.splitlines() if "no-sandbox" in line]
+    assert len(handoffs) == 2
+    assert any("/capsem\\-port\\-router$" in line for line in handoffs)
+    assert any("/capsem\\-router\\-confinement\\-test$" in line for line in handoffs)
+    assert all("(regex" in line for line in handoffs)
+    if not report:
+        assert "(deny network*)" in text

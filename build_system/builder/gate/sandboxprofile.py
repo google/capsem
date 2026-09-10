@@ -30,6 +30,11 @@ def profile(config: GateConfig, *, report: bool) -> str:
         "(allow default)",
         f"{_COMMENT} {settings.network_reason}",
     ]
+    lines.append(f"{_COMMENT} {settings.self_confinement_reason}")
+    for executable in settings.self_confined_executables:
+        lines.append(
+            f'(allow process-exec (with no-sandbox) (regex #"/{re.escape(executable)}$"))'
+        )
 
     if report:
         # `(with report)` is a modifier on *allow*, not on deny -- `sandbox-exec:

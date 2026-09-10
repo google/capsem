@@ -1,5 +1,5 @@
 use capsem_foundation::unix::{fd, router_sandbox};
-use capsem_port_router::Grant;
+use capsem_port_router::{Event, Grant};
 use clap::Parser;
 use std::io;
 use std::os::fd::AsFd;
@@ -38,8 +38,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
-        let events = tokio::net::UnixStream::from_std(socket)?;
-        router_sandbox::confine(address.port())?;
+        let mut events = tokio::net::UnixStream::from_std(socket)?;
+        if let Err(error) = router_sandbox::confine(address.port()) {
+            Event::ConfinementFailed.write(&mut events).await?;
+            return Err(error);
+        }
         capsem_port_router::relay(listener, grants, events).await
     })?;
     Ok(())

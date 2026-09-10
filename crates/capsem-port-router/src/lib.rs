@@ -44,6 +44,7 @@ pub enum Event {
     Ready,
     Open(u64),
     Closed(u64),
+    ConfinementFailed,
 }
 
 impl Event {
@@ -56,6 +57,7 @@ impl Event {
             (0, 0) => Ok(Self::Ready),
             (1, id) if id != 0 => Ok(Self::Open(id)),
             (2, id) if id != 0 => Ok(Self::Closed(id)),
+            (3, 0) => Ok(Self::ConfinementFailed),
             _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid router event")),
         }
     }
@@ -65,6 +67,7 @@ impl Event {
             Self::Ready => (0, 0u64),
             Self::Open(id) => (1, *id),
             Self::Closed(id) => (2, *id),
+            Self::ConfinementFailed => (3, 0),
         };
         let mut frame = [0; 9];
         frame[0] = kind;
