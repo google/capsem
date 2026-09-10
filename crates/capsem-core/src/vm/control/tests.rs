@@ -80,11 +80,12 @@ async fn drop_wakes_peer_even_while_reader_waits_on_a_partial_frame() {
     let (connection, mut peer) = pair();
     peer.write_all(&[0, 0]).await.unwrap();
     drop(connection);
-    assert_eq!(
-        tokio::time::timeout(IO_DEADLINE, peer.read(&mut [0]))
-            .await
-            .unwrap()
-            .unwrap(),
-        0
-    );
+    // Linux resets an abandoned Unix stream with unread bytes; Darwin sends
+    // EOF. This is abrupt control teardown, not the TCP FIN/RST contract.
+    let disconnected = tokio::time::timeout(IO_DEADLINE, peer.read(&mut [0])).await.unwrap();
+    match disconnected {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("control peer remained live or failed unexpectedly: {other:?}"),
+    }
 }
