@@ -2822,6 +2822,7 @@ slowest_steps = 10
 [benchmark.routes]
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
 measured = [
+    "/vms/{id}/changes",
     "/status",
     "/version",
     "/vms/list",
