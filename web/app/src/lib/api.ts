@@ -15,7 +15,6 @@ import type {
   ProvisionRequest,
   ProvisionResponse,
   ExecResponse,
-  ReadFileResponse,
   ForkRequest,
   ForkResponse,
   StatsResponse,
@@ -33,7 +32,6 @@ import type {
   McpServerInfo,
   McpToolInfo,
   ToolPermission,
-  VmStateResponse,
   FileListResponse,
   FileContentResult,
   FileUploadResponse,
@@ -572,11 +570,6 @@ export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResp
   return _sdk.call(transport => gateway.createVm(transport, { body: opts }));
 }
 
-export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
-  const resp = await _post('/run', opts);
-  return await resp.json();
-}
-
 export async function stopVm(id: string): Promise<StopResponse> {
   return _sdk.call(transport => gateway.stopVm(transport, { id }));
 }
@@ -688,15 +681,6 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
     }
     throw err;
   }
-}
-
-export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const resp = await _post(`/vms/${encodeURIComponent(id)}/files/read`, { path });
-  return await resp.json();
-}
-
-export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/files/write`, { path, content });
 }
 
 // -- Images --
@@ -830,49 +814,6 @@ export async function onTerminalSourceChanged(cb: (source: string) => void): Pro
     const i = _termSourceCallbacks.indexOf(cb);
     if (i >= 0) _termSourceCallbacks.splice(i, 1);
   };
-}
-
-// -- VM state --
-
-/** Get the current VM state string. Returns 'not created' in mock mode. */
-export async function vmStatus(): Promise<string> {
-  if (!_connected) return 'not created';
-  try {
-    const status = await getStatus();
-    const running = status.vms.find(v => v.status.toLowerCase() === 'running');
-    if (running) return running.status.toLowerCase();
-    if (status.vms.length > 0) return status.vms[0].status.toLowerCase();
-    return 'not created';
-  } catch {
-    return 'not created';
-  }
-}
-
-/** Get VM state with transition history. */
-export async function getVmState(id?: string): Promise<VmStateResponse> {
-  if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
-  try {
-    const path = id ? `/vms/${encodeURIComponent(id)}/status` : '/status';
-    const resp = await _get(path);
-    const data = await resp.json();
-    // /vms/{id}/status returns runtime state; extract optional transition history.
-    if (id) {
-      return {
-        state: data.status ?? 'not created',
-        elapsed_ms: data.elapsed_ms ?? 0,
-        history: data.history ?? [],
-      };
-    }
-    // /status: synthesize from first VM.
-    const vm = data.vms?.[0];
-    return {
-      state: vm?.status?.toLowerCase() ?? 'not created',
-      elapsed_ms: 0,
-      history: [],
-    };
-  } catch {
-    return { state: 'not created', elapsed_ms: 0, history: [] };
-  }
 }
 
 // -- Real-time events (WebSocket /events) --

@@ -1,24 +1,4 @@
-// TypeScript types mirroring Rust structs for Tauri IPC.
-
-/** Response from get_guest_config. */
-export interface GuestConfigResponse {
-  env: Record<string, string>;
-}
-
-/** A single transition in the VM state machine history. */
-export interface TransitionEntry {
-  from: string;
-  to: string;
-  trigger: string;
-  duration_ms: number;
-}
-
-/** Response from get_vm_state. */
-export interface VmStateResponse {
-  state: string;
-  elapsed_ms: number;
-  history: TransitionEntry[];
-}
+// UI and profile configuration types. Gateway SDK types are re-exported below.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =

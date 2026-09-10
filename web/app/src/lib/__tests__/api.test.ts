@@ -256,24 +256,6 @@ describe('api', () => {
       expect(result.exit_code).toBe(0);
     });
 
-    it('readFile sends POST /vms/{id}/files/read', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ content: 'file contents' }));
-      const result = await api.readFile('vm-1', '/etc/hosts');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/files/read');
-      expect(result.content).toBe('file contents');
-    });
-
-    it('writeFile sends POST /vms/{id}/files/write', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.writeFile('vm-1', '/tmp/test', 'data');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/files/write');
-      const body = JSON.parse(call[1].body);
-      expect(body.path).toBe('/tmp/test');
-      expect(body.content).toBe('data');
-    });
-
     it('getVmStatsDetail sends GET /vms/{id}/stats/detail', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({
         model_stats: [{ provider: 'google', model: 'fixture-model', call_count: 1, duration_ms: 25, input_tokens: 12, output_tokens: 7, estimated_cost_usd: 0.001 }],
@@ -1051,66 +1033,6 @@ describe('api', () => {
       expect(call[0]).toContain('/vms/code-1/snapshots/list');
     });
   });
-
-  // ---- VM state ----
-
-  describe('VM state', () => {
-    it('vmStatus returns not created when disconnected', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      await api.init();
-      const state = await api.vmStatus();
-      expect(state).toBe('not created');
-    });
-
-    it('vmStatus returns running VM status when connected', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
-        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({
-        service: 'running',
-        gateway_version: '1.0.0',
-        vm_count: 1,
-        vms: [{ id: 'vm-1', name: 'code-dev', status: 'Running', persistent: true, profile_id: 'code', available_actions: ['stop'] }],
-        resource_summary: null,
-      }));
-      const state = await api.vmStatus();
-      expect(state).toBe('running');
-    });
-
-    it('getVmState returns empty when disconnected', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      await api.init();
-      const state = await api.getVmState();
-      expect(state.state).toBe('not created');
-      expect(state.history).toEqual([]);
-      expect(state.elapsed_ms).toBe(0);
-    });
-
-    it('getVmState with id sends GET /vms/{id}/status', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
-        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({
-        status: 'running',
-        elapsed_ms: 3100,
-        history: [{ from: 'booting', to: 'running', trigger: 'boot_complete', duration_ms: 3100, timestamp: '2026-01-01' }],
-      }));
-      const state = await api.getVmState('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/status');
-      expect(state.state).toBe('running');
-      expect(state.elapsed_ms).toBe(3100);
-      expect(state.history).toHaveLength(1);
-    });
-  });
-
-  // ---- Events (WebSocket) ----
 
   describe('onVmStateChanged / onDownloadProgress', () => {
     it('onVmStateChanged returns unsubscribe function', () => {

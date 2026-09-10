@@ -1,5 +1,5 @@
 // Gateway wire types come from the SDK as their consumers migrate.
-import type { HypervisorInfo, VmAction, VmLifecycleState } from '@capsem/sdk';
+import type { HypervisorInfo } from '@capsem/sdk';
 export type { SandboxInfo, VmSummary, ResourceSummary, ListResponse,
   VmStatsSummaryResponse as VmStatsSummary } from '@capsem/sdk';
 export { VmAction, VmLifecycleState } from '@capsem/sdk';
@@ -109,57 +109,9 @@ export type UpdateCompatibilityState =
   | 'unknown'
   | 'not_applicable';
 
-// GET /vms/{id}/status
-export interface VmStatusResponse {
-  id: string;
-  status: VmLifecycleState;
-  pid?: number;
-  persistent: boolean;
-  can_resume: boolean;
-  resume_blocked_reason?: string;
-  available_actions: VmAction[];
-  uptime_secs?: number;
-  created_at?: string;
-  last_error?: string;
-}
-
-export interface VmActionContract {
-  available_actions: VmAction[];
-}
-
-// GET /vms/{id}/save/status, GET /vms/{id}/fork/status
-export interface VmOperationStatusResponse {
-  vm_id: string;
-  operation: string;
-  status: string;
-  in_progress: boolean;
-  message?: string;
-}
-
 export type { ProvisionRequest, ProvisionResponse, ForkRequest, ForkResponse } from "@capsem/sdk";
 
 export type { ExecRequest, ExecResponse } from '@capsem/sdk';
-
-// POST /vms/{id}/files/read
-export interface ReadFileRequest {
-  path: string;
-}
-
-export interface ReadFileResponse {
-  content: string;
-}
-
-// POST /vms/{id}/files/write
-export interface WriteFileRequest {
-  path: string;
-  content: string;
-}
-
-
-// Error shape used by gateway and service
-export interface ErrorResponse {
-  error: string;
-}
 
 // GET /stats -- cross-session aggregation from main.db
 export interface StatsResponse {

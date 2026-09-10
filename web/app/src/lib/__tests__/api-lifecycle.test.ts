@@ -87,17 +87,6 @@ describe('VM lifecycle', () => {
     expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
   });
 
-  it('runVm sends POST /run', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(provision('vm-2')));
-    const result = await api.runVm({
-      profile_id: 'code',
-      ram_mb: 4096,
-      cpus: 4,
-      persistent: true,
-    });
-    expect(result.id).toBe('vm-2');
-  });
-
   it('stopVm sends POST /vms/{id}/stop', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ success: true, persistent: true }));
     expect(await api.stopVm('vm-1')).toEqual({ success: true, persistent: true });
