@@ -14,15 +14,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
-def test_python_sdk_live_vm_lifecycle_and_binary_files() -> None:
+@pytest.mark.parametrize("language", ["python", "typescript"])
+def test_sdk_live_vm_lifecycle_and_binary_files(language: str) -> None:
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
     try:
         service.start()
         gateway.start()
         result = subprocess.run(
-            ["uv", "run", "--frozen", "python", "-m", "tests.live_acceptance"],
-            cwd=ROOT / "sdk/python", env={
+            ["uv", "run", "--frozen", "python", "-m", "tests.live_acceptance"]
+            if language == "python" else ["node", "tools/live-acceptance.mjs"],
+            cwd=ROOT / "sdk" / language, env={
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                 "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,
             }, capture_output=True, text=True, timeout=240, check=False,
