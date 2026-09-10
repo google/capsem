@@ -5,3 +5,4 @@
 
 pub mod asset_manager;
 pub mod manifest_compat;
+pub mod oci;
