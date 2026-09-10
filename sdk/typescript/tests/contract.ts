@@ -6,9 +6,20 @@ export interface Schema {
   additionalProperties?: Schema | false; minimum?: number;
 }
 
-interface Specification {components: {schemas: Record<string, Schema>}}
+export interface Operation {
+  operationId: string;
+  parameters?: {name: string; in: string; required: boolean; schema: Schema}[];
+  requestBody?: {content: Record<string, {schema: Schema}>};
+  responses: Record<string, {content: Record<string, {schema: Schema}>}>;
+}
+interface Specification {
+  components: {schemas: Record<string, Schema>};
+  paths: Record<string, Record<string, Operation>>;
+}
 const specification = JSON.parse(readFileSync(new URL('../../specification/openapi.json', import.meta.url), 'utf8')) as Specification;
 export const schemas = specification.components.schemas;
+export const routes = Object.entries(specification.paths).flatMap(([path, methods]) =>
+  Object.entries(methods).map(([method, operation]) => ({path, method, operation})));
 
 export function sample(schema: Schema, full = false, variant = 0, depth = 0): unknown {
   if (schema.$ref) {

@@ -9,6 +9,7 @@ from .python import render_models
 from .python_operations import render_operations
 from .schema import read_schemas
 from .typescript import render_models as render_typescript_models
+from .typescript_operations import render_operations as render_typescript_operations
 from .typescript_validation import render_validators
 
 
@@ -21,7 +22,8 @@ def python_sources(specification: Path) -> dict[str, dict[str, str]]:
 
 def typescript_sources(specification: Path) -> dict[str, dict[str, str]]:
     schemas = read_schemas(specification)
-    return {"models": render_typescript_models(schemas), "validation": render_validators(schemas)}
+    return {"models": render_typescript_models(schemas), "validation": render_validators(schemas),
+            "operations": render_typescript_operations(read_operations(specification))}
 
 
 def synchronize(package: Path, sources: dict[str, dict[str, str]], *, check: bool) -> list[str]:

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Generated async TypeScript HTTP operations with validated inputs and responses
+  for every endpoint in the gateway OpenAPI contract.
+
 - TypeScript SDK HTTP transport with explicit bearer authentication, request
   cancellation and deadlines, binary bodies, and no mutation retries or redirects.
 
