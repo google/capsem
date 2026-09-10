@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Shell runs flush captured output before exiting, preserving short output
+  without a trailing newline.
 - Port publication reports sandbox initialization failures explicitly. macOS
   gate tests hand off the named router to its own stricter sandbox.
 - Local focused tests preserve the invoking checkout's assembled VM assets

@@ -60,8 +60,12 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
         };
         let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
         let response = response.into_result()?;
-        tokio::io::stdout().write_all(response.stdout.as_bytes()).await?;
-        tokio::io::stderr().write_all(response.stderr.as_bytes()).await?;
+        let mut stdout = tokio::io::stdout();
+        stdout.write_all(response.stdout.as_bytes()).await?;
+        stdout.flush().await?;
+        let mut stderr = tokio::io::stderr();
+        stderr.write_all(response.stderr.as_bytes()).await?;
+        stderr.flush().await?;
         if let Some(notice) = response.truncation_notice() {
             eprintln!("{notice}");
         }
@@ -235,7 +239,9 @@ async fn stream(vm: &ProvisionResponse, ports: &[container::PortMapping]) -> Res
                 truncated,
                 ..
             } if job == id => {
-                tokio::io::stderr().write_all(&stderr).await?;
+                let mut output = tokio::io::stderr();
+                output.write_all(&stderr).await?;
+                output.flush().await?;
                 ensure!(!truncated && exit_code >= 0, "container exec transport failed");
                 return Ok(exit_code);
             }

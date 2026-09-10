@@ -229,11 +229,14 @@ def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
 
 def test_shell_run_still_uses_existing_command_path(service):
     result = subprocess.run(
-        command(service, "printf shell-proof; exit 3"),
+        command(service, "printf shell-proof; printf shell-error >&2; exit 3"),
         env=environment(service),
         capture_output=True,
         timeout=45,
         check=False,
     )
-    assert result.returncode == 3 and result.stdout == b"shell-proof", result.stderr
+    # The existing guest exec transport combines the child's two streams.
+    assert result.returncode == 3, result.stderr
+    assert result.stdout == b"shell-proofshell-error"
+    assert result.stderr == b""
     assert service.client().get("/vms/list")["sandboxes"] == []
