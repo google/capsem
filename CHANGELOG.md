@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Container port forwarding uses fixed kernel socket queues, including guest
+  VSOCK credit limits, to propagate backpressure from stalled peers.
 - Guest published connections are canceled and joined on control disconnect,
   shutdown, and snapshot preparation; namespace setup uses bounded workers.
 - Guest VSOCK connection attempts now use a finite setup deadline, including

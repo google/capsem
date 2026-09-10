@@ -37,6 +37,10 @@ two-second deadline. Control failure shuts down both sides even if the child
 holds duplicate FDs. Cancellation closes partial records and received FDs.
 The sender retains its original descriptors through acknowledgement: on Darwin,
 a socket referenced only by queued descriptor messages can be garbage collected.
+Data sockets request fixed 64 KiB kernel queues on both ends, with Linux VSOCK's
+separate credit limits fixed to the same value. Linux TCP reports up to twice
+that request for kernel bookkeeping. These limits are set before handoff and
+applied again by the child; setup refuses an unsupported buffer configuration.
 The relay uses 16 KiB per direction and preserves TCP half-close. Each successful
 write renews a 60-second stall deadline; no deadline applies to quiet reads. After
 one direction drains and sends FIN, the reverse direction has 60 seconds to

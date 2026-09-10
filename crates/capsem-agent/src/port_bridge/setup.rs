@@ -2,7 +2,7 @@
 use crate::vsock_io::{self, VSOCK_HOST_CID};
 use std::io::{self, Write};
 use std::net::TcpStream;
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
@@ -15,7 +15,17 @@ pub(super) fn connect(id: u64, port: u16) -> io::Result<(TcpStream, UnixStream)>
     )?;
     // SAFETY: vsock_connect returns a new owned descriptor.
     let mut vsock = unsafe { UnixStream::from_raw_fd(fd) };
-    let tcp = container_tcp(port, remaining(deadline)?);
+    capsem_foundation::unix::fd::set_stream_buffers(
+        vsock.as_fd(),
+        capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
+    )?;
+    let tcp = container_tcp(port, remaining(deadline)?).and_then(|tcp| {
+        capsem_foundation::unix::fd::set_stream_buffers(
+            tcp.as_fd(),
+            capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
+        )?;
+        Ok(tcp)
+    });
     let mut header = [0; 9];
     header[..8].copy_from_slice(&id.to_be_bytes());
     header[8] = u8::from(tcp.is_ok());

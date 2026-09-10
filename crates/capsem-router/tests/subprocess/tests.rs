@@ -15,6 +15,76 @@ struct Router {
     events: Option<UnixStream>,
     retained: std::collections::HashMap<u64, (OwnedFd, OwnedFd)>,
 }
+
+fn resident_bytes(pid: u32) -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap()
+            * 1024
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse::<usize>()
+            .unwrap()
+            * 1024
+    }
+}
+
+#[tokio::test]
+async fn stalled_destination_backpressures_tcp_with_bounded_router_rss() {
+    let mut router = Router::start().await;
+    let pid = router.child.id().unwrap();
+    let before = resident_bytes(pid);
+    let (mut client, _stalled_peer) = router.pair(1).await;
+    assert_eq!(router.event().await, Event::Accepted(1));
+    capsem_foundation::unix::fd::set_stream_buffers(
+        client.as_fd(),
+        capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
+    )
+    .unwrap();
+    let writer = tokio::spawn(async move {
+        let chunk = Box::new([0xab; 16 * 1024]);
+        for _ in 0..1024 {
+            client.write_all(chunk.as_slice()).await?;
+        }
+        Ok::<_, std::io::Error>(())
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        !writer.is_finished(),
+        "stalled peer did not close the upstream TCP window"
+    );
+    let after = resident_bytes(pid);
+    eprintln!("router stalled-flow RSS before={before} after={after}");
+    assert!(
+        after.saturating_sub(before) < 8 * 1024 * 1024,
+        "one stalled flow grew router RSS from {before} to {after}"
+    );
+    router.grant(Grant::Abort { id: 1 }).await;
+    let Event::Closed(1, report) = router.event().await else {
+        panic!("missing abort close report")
+    };
+    assert_eq!(report.reason, capsem_router::CloseReason::Cancelled);
+    assert!(timeout(Duration::from_secs(2), writer).await.unwrap().unwrap().is_err());
+    router.close().await;
+}
 impl Router {
     async fn start() -> Self {
         let (parent, child) = StdUnixStream::pair().unwrap();

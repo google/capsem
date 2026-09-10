@@ -152,6 +152,7 @@ struct Stream(UnixStream);
 impl Stream {
     fn new(socket: OwnedFd) -> io::Result<Self> {
         fd::validate_connected_stream(socket.as_fd())?;
+        fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
         fd::set_nonblocking(socket.as_fd(), true)?;
         Ok(Self(UnixStream::from_std(std::os::unix::net::UnixStream::from(
             socket,

@@ -61,6 +61,51 @@ pub fn shutdown(fd: BorrowedFd<'_>, how: SocketShutdown) -> io::Result<()> {
     socket::shutdown(fd.as_raw_fd(), how.as_nix()).map_err(errno::io)
 }
 
+/// Fix socket queue sizes instead of allowing TCP receive/send autotuning.
+/// Linux accounts up to twice the requested bytes for TCP bookkeeping. VSOCK
+/// uses separate credit-buffer options, so those are fixed as well on Linux.
+pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
+    if bytes == 0 || bytes > i32::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid socket buffer size",
+        ));
+    }
+    socket::setsockopt(&fd, socket::sockopt::SndBuf, &bytes).map_err(errno::io)?;
+    socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)?;
+    #[cfg(target_os = "linux")]
+    {
+        use socket::SockaddrLike;
+        let address = socket::getsockname::<socket::SockaddrStorage>(fd.as_raw_fd()).map_err(errno::io)?;
+        if address.family() == Some(socket::AddressFamily::Vsock) {
+            let bytes = bytes as u64;
+            // Linux uapi/linux/vm_sockets.h: MIN_SIZE=1, MAX_SIZE=2, SIZE=0.
+            // Fix both bounds before SIZE so transport credit cannot grow.
+            for option in [1, 2, 0] {
+                retry_eintr(|| {
+                    // SAFETY: setsockopt reads this initialized u64 synchronously.
+                    if unsafe {
+                        libc::setsockopt(
+                            fd.as_raw_fd(),
+                            libc::AF_VSOCK,
+                            option,
+                            (&bytes as *const u64).cast(),
+                            std::mem::size_of::<u64>() as libc::socklen_t,
+                        )
+                    } == 0
+                    {
+                        Ok(())
+                    } else {
+                        Err(Errno::last())
+                    }
+                })
+                .map_err(errno::io)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Reject files, listeners and datagram sockets before adopting a relay stream.
 pub fn validate_connected_stream(fd: BorrowedFd<'_>) -> io::Result<()> {
     if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {

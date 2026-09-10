@@ -50,6 +50,8 @@ pub(super) async fn serve(
                         continue;
                     };
                     source.set_nodelay(true)?;
+                    capsem_foundation::unix::fd::set_stream_buffers(source.as_fd(),
+                        capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                     let source = source.into_std()?;
                     let (pending, receiver) = owner.request()?;
                     let id = pending.id;
@@ -98,6 +100,8 @@ pub(super) async fn serve(
                             // Guest setup completes out of order. The child sees
                             // an independent, monotonic handoff sequence.
                             let destination = connection.try_clone_fd()?;
+                            capsem_foundation::unix::fd::set_stream_buffers(destination.as_fd(),
+                                capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                             flow.connection = Some(connection);
                             flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
                             let id = router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await?;

@@ -8,6 +8,41 @@ use super::{duplicate, retry_eintr, set_nonblocking, shutdown, SocketShutdown};
 use nix::errno::Errno;
 
 #[test]
+fn stream_buffer_limits_replace_large_kernel_queues() {
+    use nix::sys::socket::{getsockopt, setsockopt, sockopt};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (_server, _) = listener.accept().unwrap();
+    setsockopt(&client, sockopt::SndBuf, &(256 * 1024)).unwrap();
+    setsockopt(&client, sockopt::RcvBuf, &(256 * 1024)).unwrap();
+    super::set_stream_buffers(client.as_fd(), 32 * 1024).unwrap();
+    // Linux reports doubled accounting space, while Darwin reports the request.
+    assert!(getsockopt(&client, sockopt::SndBuf).unwrap() <= 64 * 1024);
+    assert!(getsockopt(&client, sockopt::RcvBuf).unwrap() <= 64 * 1024);
+}
+
+#[test]
+fn zero_buffer_limit_is_refused_without_changing_the_socket() {
+    use nix::sys::socket::{getsockopt, sockopt};
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    let before = (
+        getsockopt(&stream, sockopt::SndBuf).unwrap(),
+        getsockopt(&stream, sockopt::RcvBuf).unwrap(),
+    );
+    assert_eq!(
+        super::set_stream_buffers(stream.as_fd(), 0).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        (
+            getsockopt(&stream, sockopt::SndBuf).unwrap(),
+            getsockopt(&stream, sockopt::RcvBuf).unwrap()
+        ),
+        before
+    );
+}
+
+#[test]
 fn duplicate_owns_an_independent_cloexec_descriptor() {
     let (mut writer, reader) = UnixStream::pair().unwrap();
     let duplicated = duplicate(reader.as_fd()).unwrap();

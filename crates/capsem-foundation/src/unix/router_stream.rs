@@ -7,6 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 
 pub const BUFFER_SIZE: usize = 16 * 1024;
+pub const SOCKET_BUFFER_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
 pub struct Limits {
