@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Authenticated gateway OpenAPI export for the initial SDK operations, derived
+  from shared Rust request and response contracts.
+
 ### Changed
 
 - Release rehearsal reads Debian package identity, embedded manifest metadata,

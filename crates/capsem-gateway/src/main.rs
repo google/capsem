@@ -2,6 +2,7 @@ mod auth;
 mod cors;
 mod listener;
 mod proxy;
+mod schema;
 mod service_client;
 mod status;
 mod terminal;
@@ -150,6 +151,7 @@ async fn main() -> Result<()> {
         .route("/status", get(status::handle_status))
         .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .route("/events", get(handle_events_ws))
+        .merge(schema::routes())
         .merge(service_proxy_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

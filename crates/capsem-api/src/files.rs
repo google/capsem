@@ -17,6 +17,7 @@ pub struct FileListEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_text: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(no_recursion)]
     pub children: Option<Vec<FileListEntry>>,
 }
 

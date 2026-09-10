@@ -1,6 +1,9 @@
 //! HTTP wire contracts shared by the gateway and service.
 //! No runtime, filesystem, or service dependencies belong here.
 
+mod document;
+pub use document::openapi;
+
 mod lifecycle;
 pub use lifecycle::*;
 mod execution;

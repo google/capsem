@@ -3,6 +3,91 @@ use serde_json::json;
 use utoipa::PartialSchema;
 
 #[test]
+fn checked_in_openapi_matches_the_rust_contract() {
+    let exported: serde_json::Value =
+        serde_json::from_str(include_str!("../../../sdk/specification/openapi.json")).unwrap();
+    assert_eq!(
+        exported,
+        serde_json::to_value(crate::openapi()).unwrap(),
+        "Regenerate sdk/specification/openapi.json using the capsem-api export_openapi example"
+    );
+}
+
+#[test]
+fn every_schema_reference_resolves_including_recursive_file_entries() {
+    fn check(value: &serde_json::Value, document: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if let Some(reference) = fields.get("$ref").and_then(serde_json::Value::as_str) {
+                    let pointer = reference
+                        .strip_prefix('#')
+                        .expect("contract uses local schema references");
+                    assert!(
+                        document.pointer(pointer).is_some(),
+                        "unresolved schema reference: {reference}"
+                    );
+                }
+                for child in fields.values() {
+                    check(child, document);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    check(child, document);
+                }
+            }
+            _ => {}
+        }
+    }
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    check(&document, &document);
+}
+
+#[test]
+fn openapi_uses_named_schemas_and_bearer_authentication() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let create = &document["paths"]["/vms/create"]["post"];
+    assert_eq!(create["operationId"], "createVm");
+    assert_eq!(
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ProvisionRequest"
+    );
+    assert_eq!(
+        create["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ProvisionResponse"
+    );
+    assert_eq!(
+        document["components"]["securitySchemes"]["bearerAuth"]["scheme"],
+        "bearer"
+    );
+    assert_eq!(document["security"], json!([{"bearerAuth": []}]));
+}
+
+#[test]
+fn openapi_describes_binary_copy_and_required_vm_identity() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let copy = &document["paths"]["/vms/{id}/files/content"];
+    assert_eq!(
+        copy["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"],
+        "binary"
+    );
+    assert_eq!(
+        copy["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]["format"],
+        "binary"
+    );
+    assert!(copy["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "id" && p["required"] == true));
+    assert!(copy["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "path" && p["required"] == true));
+}
+
+#[test]
 fn lifecycle_values_preserve_the_existing_wire_contract() {
     assert_eq!(
         serde_json::to_value(VmLifecycleState::Running).unwrap(),
