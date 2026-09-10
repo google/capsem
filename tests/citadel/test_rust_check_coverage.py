@@ -8,8 +8,8 @@ a checker at. Nothing fails, because nothing runs.
 
 from __future__ import annotations
 
+import runpy
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -155,10 +155,10 @@ def test_rust_format_covers_the_workspace() -> None:
 
 
 def test_per_crate_coverage_ratchets_match_the_workspace() -> None:
-    expected = {
-        tomllib.loads(manifest.read_text())["package"]["name"]
-        for manifest in (PROJECT_ROOT / MODULES.rust_coverage_crate_root).glob("*/Cargo.toml")
-    }
+    checker = runpy.run_path(str(PROJECT_ROOT / MODULES.rust_coverage_ratchet))
+    expected = set(checker["workspace_crates"](
+        PROJECT_ROOT, Path(MODULES.rust_coverage_workspace_manifest)
+    ).values())
     configured = set(MODULES.rust_coverage_crate_floors)
     assert configured == expected, (
         RUST_COVERAGE_RATIONALE

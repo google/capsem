@@ -2249,7 +2249,7 @@ rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib
 rust_coverage_floors = ["--fail-under-lines=67", "--fail-under-functions=66", "--fail-under-regions=65"]
 rust_coverage_report = "cache/target/coverage/rust-workspace.lcov"
 rust_coverage_ratchet = "build_system/scripts/test/rust-coverage-ratchet.py"
-rust_coverage_crate_root = "crates"
+rust_coverage_workspace_manifest = "Cargo.toml"
 # No workspace member may hide behind the aggregate. This minimum is repeated
 # in the Citadel contract so lowering the policy is a deliberate guard change.
 rust_coverage_crate_minimum = 40.0
