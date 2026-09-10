@@ -131,6 +131,12 @@ component_management:
       paths:
         - crates/capsem-assets/src/**
 
+    # Shared gateway request, response, enum, and OpenAPI contracts.
+    - component_id: api
+      name: Gateway API
+      paths:
+        - crates/capsem-api/src/**
+
     # Pure settings, provider, profile, MCP, and security-rule contracts.
     - component_id: config
       name: Configuration
