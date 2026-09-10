@@ -61,6 +61,16 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
         request(&mut server, "/update/apply").await,
         json!({"confirmed":true,"dry_run":false})
     );
+    let restarted = hv.restart().await.unwrap();
+    assert_eq!(restarted.status, models::RestartStatus::Accepted);
+    assert_eq!(
+        restarted.authentication,
+        models::RestartAuthentication::NewTokenRequired
+    );
+    let (parts, body) = server.received.recv().await.unwrap();
+    assert_eq!(parts.method, "POST");
+    assert_eq!(parts.uri.path(), "/restart");
+    assert!(body.is_empty());
     hv.log(
         HostLogSource::Service,
         LogOptions {

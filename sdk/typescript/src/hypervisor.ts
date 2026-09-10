@@ -42,4 +42,7 @@ export class Hypervisor extends Client {
   async update(options: CallOptions = {}): Promise<models.UpdateActionResponse> {
     return api.updateHypervisor(this.transport, {body: {confirmed: true}}, options);
   }
+  async restart(options: CallOptions = {}): Promise<models.RestartResponse> {
+    return api.restartHypervisor(this.transport, options);
+  }
 }

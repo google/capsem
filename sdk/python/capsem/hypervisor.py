@@ -48,3 +48,7 @@ class Hypervisor(Client):
 
     async def update(self) -> models.UpdateActionResponse:
         return await api.update_hypervisor(self._transport, body=models.UpdateApplyRequest(confirmed=True))
+
+    async def restart(self) -> models.RestartResponse:
+        """Restart an idle managed service; reconnect with a new gateway token."""
+        return await api.restart_hypervisor(self._transport)

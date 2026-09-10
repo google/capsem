@@ -35,6 +35,10 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
             assert isinstance(await hv.update(), models.UpdateActionResponse)
             assert json.loads(state.requests[-1][2]) == {"confirmed": True}
+            restarted = await hv.restart()
+            assert restarted.status is models.RestartStatus.ACCEPTED
+            assert restarted.authentication is models.RestartAuthentication.NEW_TOKEN_REQUIRED
+            assert state.requests[-1] == ("POST", "/restart", b"")
         await hv.close()
         with pytest.raises(RuntimeError, match="closed"):
             await temporary.info()

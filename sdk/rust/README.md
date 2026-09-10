@@ -59,5 +59,11 @@ redirects or retry automatically. `with_timeout` sets this handle's HTTP
 deadline; `exec`'s optional `timeout_secs` sets the guest command deadline.
 Choose an HTTP deadline long enough for the command.
 
-Managed hypervisor restart, explicit snapshot creation/restoration, mounts,
+`hv.restart().await?` returns a typed HTTP 202 acknowledgement. It requires an
+idle service managed by launchd or systemd; active/starting VMs return 409 and
+an unmanaged service returns 503. The gateway rotates its token on restart.
+Obtain fresh credentials and construct a new client explicitly; never replay
+the restart call. Acceptance does not claim reconnection has completed.
+
+Explicit snapshot creation/restoration, mounts,
 port exposure and subnet configuration remain outside the implemented facade.

@@ -52,7 +52,13 @@ Created/forked handles share their owner's connection. Closing a child leaves
 siblings usable; closing the owner invalidates its children. `close()` releases
 client access. VM lifecycle operations use `start/stop/pause/resume/delete()`.
 
-Managed restart, snapshot create/restore, mounts and port exposure are pending.
+`await hv.restart()` returns a typed HTTP 202 acknowledgement. It requires an
+idle service managed by launchd or systemd; active/starting VMs return 409 and
+an unmanaged service returns 503. The gateway rotates its token on restart.
+Obtain fresh credentials and construct a new client explicitly; never replay
+the restart call. Acceptance does not claim reconnection has completed.
+
+Snapshot create/restore, mounts and port exposure are pending.
 
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the

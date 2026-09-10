@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python, TypeScript and Rust `Hypervisor.restart()` methods return the typed
+  gateway acknowledgement and its fresh-credential reconnection requirement.
+
 - Gateway `POST /restart` acknowledges an idle managed-service restart with a
   typed HTTP 202 response. Active launches/VMs and unmanaged processes are refused;
   the response requires fresh credentials after gateway token rotation.

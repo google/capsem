@@ -52,5 +52,11 @@ File import/export requires a running VM's security ledger; copying from or to
 a stopped VM returns `HttpError` with status 409. Stopped workspace listing and
 snapshot comparisons remain available.
 
-This initial SDK does not yet expose managed hypervisor restart, snapshot
+`await hv.restart()` returns a typed HTTP 202 acknowledgement. It requires an
+idle service managed by launchd or systemd; active/starting VMs return 409 and
+an unmanaged service returns 503. The gateway rotates its token on restart.
+Obtain fresh credentials and create a new client explicitly; never replay the
+restart call. The acknowledgement does not claim reconnection has completed.
+
+This initial SDK does not yet expose snapshot
 creation/restoration, mounts, port exposure, or subnet management.

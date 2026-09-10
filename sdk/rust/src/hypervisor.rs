@@ -26,6 +26,11 @@ impl Hypervisor {
         api::get_hypervisor_info(&self.client.transport, self.client.options).await
     }
 
+    /// Restart an idle managed service. Reconnect with a fresh gateway token.
+    pub async fn restart(&self) -> Result<models::RestartResponse> {
+        api::restart_hypervisor(&self.client.transport, self.client.options).await
+    }
+
     pub async fn list(&self) -> Result<models::ListResponse> {
         api::list_vms(&self.client.transport, self.client.options).await
     }

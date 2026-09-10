@@ -12,7 +12,9 @@ export class FacadeGateway {
       && new RegExp(`^${route.path.replace(/\{[^}]+\}/g, '[^/]+')}$`).test(url.pathname));
     if (!route) {response.writeHead(404).end('missing'); return;}
     const operation = route.operation;
-    const schema = operation.responses['200']?.content['application/json']?.schema;
+    const status = operation.responses['200'] ? '200' : '202';
+    const schema = operation.responses[status]?.content['application/json']?.schema;
+    response.statusCode = Number(status);
     let value: unknown = sample(schema ?? schemas.UploadResponse ?? {});
     if (operation.operationId === 'listVms') value = {
       sandboxes: this.names.map(name => ({...sample(schemas.SandboxInfo ?? {}) as object, id: 'vm-0', name})),

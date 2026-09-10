@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, TimelineLayer, VM} from '../src/index.js';
+import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
@@ -74,6 +74,12 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await hv.update();
       expect(received.at(-1)?.url).toBe('/update/apply');
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({confirmed: true});
+      const restarted = await hv.restart();
+      expect(restarted.status).toBe(RestartStatus.ACCEPTED);
+      expect(restarted.authentication).toBe(RestartAuthentication.NEW_TOKEN_REQUIRED);
+      expect(received.at(-1)?.method).toBe('POST');
+      expect(received.at(-1)?.url).toBe('/restart');
+      expect(received.at(-1)?.body.length).toBe(0);
     } finally {
       vm.close(); hv.close();
     }

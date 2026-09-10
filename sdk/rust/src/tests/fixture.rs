@@ -28,6 +28,7 @@ pub async fn gateway() -> Server {
             "/vms/create" => "createVm",
             "/host-logs/service" => "getHypervisorLogs",
             "/update/apply" => "updateHypervisor",
+            "/restart" => "restartHypervisor",
             "/vms/vm-1/info" => "getVmInfo",
             "/vms/vm-1/exec" => "execVm",
             "/vms/vm-1/start" => "startVm",
@@ -54,7 +55,10 @@ pub async fn gateway() -> Server {
                     .unwrap()
             }
         };
-        Response::new(Body::from(serde_json::to_vec(&reply(operation)).unwrap()))
+        Response::builder()
+            .status(if path == "/restart" { 202 } else { 200 })
+            .body(Body::from(serde_json::to_vec(&reply(operation)).unwrap()))
+            .unwrap()
     })
     .await
 }
