@@ -1631,6 +1631,42 @@
           "response"
         ]
       },
+      "CaptureStatus": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "truncated",
+          "unknown"
+        ]
+      },
+      "CapturedContent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/JsonContent"
+          },
+          {
+            "$ref": "#/components/schemas/TextContent"
+          },
+          {
+            "$ref": "#/components/schemas/RawContent"
+          }
+        ]
+      },
+      "CapturedPayload": {
+        "type": "object",
+        "required": [
+          "status",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/CapturedContent"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaptureStatus"
+          }
+        }
+      },
       "ChangesResponse": {
         "type": "object",
         "required": [
@@ -2506,6 +2542,382 @@
           }
         }
       },
+      "Interaction": {
+        "type": "object",
+        "description": "One retained item. IDs refer to the session ledger, never a list position.",
+        "required": [
+          "event_id",
+          "timestamp",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/InteractionContent"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "item_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "model_call_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "model_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when there is no parent or its row is no longer retained."
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InteractionBlock": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/InteractionBlockKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          }
+        }
+      },
+      "InteractionBlockKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "reasoning"
+        ]
+      },
+      "InteractionBody": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "direction",
+          "original_bytes",
+          "stored_bytes",
+          "body_hash",
+          "payload"
+        ],
+        "properties": {
+          "body_hash": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/BodyDirection"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "original_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CapturedPayload"
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "InteractionContent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/InteractionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionMessage"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionToolCall"
+          },
+          {
+            "$ref": "#/components/schemas/InteractionToolResult"
+          }
+        ]
+      },
+      "InteractionMessage": {
+        "type": "object",
+        "required": [
+          "kind",
+          "role",
+          "blocks"
+        ],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionBlock"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionMessageKind"
+          },
+          "role": {
+            "$ref": "#/components/schemas/InteractionRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionMessageKind": {
+        "type": "string",
+        "enum": [
+          "message"
+        ]
+      },
+      "InteractionReport": {
+        "type": "object",
+        "required": [
+          "items",
+          "bodies"
+        ],
+        "properties": {
+          "bodies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionBody"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            },
+            "description": "Latest 200 model items and latest 200 tool calls, in chronological order.\nThis bounded report is not a complete conversation or a pagination API."
+          }
+        }
+      },
+      "InteractionRequest": {
+        "type": "object",
+        "description": "A retained request preview, not an inferred user message.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/InteractionRequestKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionRequestKind": {
+        "type": "string",
+        "enum": [
+          "request_preview"
+        ]
+      },
+      "InteractionRole": {
+        "type": "string",
+        "enum": [
+          "assistant"
+        ]
+      },
+      "InteractionToolCall": {
+        "type": "object",
+        "required": [
+          "kind",
+          "call_id",
+          "tool_name",
+          "origin",
+          "decision"
+        ],
+        "properties": {
+          "arguments": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          },
+          "call_id": {
+            "type": "string",
+            "description": "Provider/server scoped: use the enclosing trace and model IDs to correlate."
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolDecision"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionToolCallKind"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ToolOrigin"
+          },
+          "request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload",
+                "description": "Captured JSON-RPC request when the ledger stored an MCP envelope."
+              }
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InteractionToolResult",
+                "description": "Only the result stored on this call; unrelated call IDs are never joined."
+              }
+            ]
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionToolCallKind": {
+        "type": "string",
+        "enum": [
+          "tool_call"
+        ]
+      },
+      "InteractionToolResult": {
+        "type": "object",
+        "required": [
+          "kind",
+          "call_id"
+        ],
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_error": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Null when the source ledger did not record a result error flag."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InteractionToolResultKind"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload"
+              }
+            ]
+          },
+          "response": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapturedPayload",
+                "description": "Captured JSON-RPC response when `payload` is its extracted result."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionToolResultKind": {
+        "type": "string",
+        "enum": [
+          "tool_result"
+        ]
+      },
+      "JsonContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/JsonContentKind"
+          },
+          "value": {
+            "description": "Arbitrary tool/provider JSON, including arrays, scalars and JSON null."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JsonContentKind": {
+        "type": "string",
+        "enum": [
+          "json"
+        ]
+      },
       "ListResponse": {
         "type": "object",
         "required": [
@@ -3247,6 +3659,40 @@
           }
         }
       },
+      "RawContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "raw",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RawContentKind"
+          },
+          "raw": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RawContentReason"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RawContentKind": {
+        "type": "string",
+        "enum": [
+          "raw"
+        ]
+      },
+      "RawContentReason": {
+        "type": "string",
+        "enum": [
+          "truncated",
+          "invalid_json",
+          "unparsed"
+        ]
+      },
       "ResourceSummary": {
         "type": "object",
         "required": [
@@ -3874,6 +4320,28 @@
           }
         }
       },
+      "TextContent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TextContentKind"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TextContentKind": {
+        "type": "string",
+        "enum": [
+          "text"
+        ]
+      },
       "TimelineEvent": {
         "type": "object",
         "required": [
@@ -4470,6 +4938,7 @@
         "type": "object",
         "description": "Latest retained events (200 per model/tool/network/file family, 100 per\nprocess/audit/credential family), session model totals, and captured bodies.\nThis is a bounded inspection report; it is not the complete session ledger.",
         "required": [
+          "interactions",
           "model_stats",
           "model_events",
           "tool_events",
@@ -4524,6 +4993,9 @@
             "items": {
               "$ref": "#/components/schemas/HttpEvent"
             }
+          },
+          "interactions": {
+            "$ref": "#/components/schemas/InteractionReport"
           },
           "model_events": {
             "type": "array",

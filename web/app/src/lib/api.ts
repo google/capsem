@@ -651,6 +651,7 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
     audit_events: [],
     credential_events: [],
     body_blobs: {},
+    interactions: { items: [], bodies: [] },
   };
   if (!_connected) return empty;
   try {

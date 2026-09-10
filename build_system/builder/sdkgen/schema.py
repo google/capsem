@@ -39,6 +39,10 @@ class Schema(BaseModel):
     @model_validator(mode="after")
     def supported_shape(self) -> Schema:
         fields = self.model_fields_set - {"description"}
+        # An explicitly empty schema is arbitrary JSON, including JSON null.
+        # Unknown constraints still fail validation; this is not an error fallback.
+        if not fields:
+            return self
         if self.ref is not None:
             if fields != {"ref"}:
                 raise ValueError("reference may only carry a description")

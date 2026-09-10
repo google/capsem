@@ -4,6 +4,9 @@ from .asset_manifest_status import AssetManifestStatus as AssetManifestStatus
 from .audit_event import AuditEvent as AuditEvent
 from .audit_history_details import AuditHistoryDetails as AuditHistoryDetails
 from .body_direction import BodyDirection as BodyDirection
+from .capture_status import CaptureStatus as CaptureStatus
+from .captured_content import CapturedContent as CapturedContent
+from .captured_payload import CapturedPayload as CapturedPayload
 from .changes_response import ChangesResponse as ChangesResponse
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
@@ -34,6 +37,23 @@ from .host_log_source import HostLogSource as HostLogSource
 from .host_logs_response import HostLogsResponse as HostLogsResponse
 from .http_event import HttpEvent as HttpEvent
 from .hypervisor_info import HypervisorInfo as HypervisorInfo
+from .interaction import Interaction as Interaction
+from .interaction_block import InteractionBlock as InteractionBlock
+from .interaction_block_kind import InteractionBlockKind as InteractionBlockKind
+from .interaction_body import InteractionBody as InteractionBody
+from .interaction_content import InteractionContent as InteractionContent
+from .interaction_message import InteractionMessage as InteractionMessage
+from .interaction_message_kind import InteractionMessageKind as InteractionMessageKind
+from .interaction_report import InteractionReport as InteractionReport
+from .interaction_request import InteractionRequest as InteractionRequest
+from .interaction_request_kind import InteractionRequestKind as InteractionRequestKind
+from .interaction_role import InteractionRole as InteractionRole
+from .interaction_tool_call import InteractionToolCall as InteractionToolCall
+from .interaction_tool_call_kind import InteractionToolCallKind as InteractionToolCallKind
+from .interaction_tool_result import InteractionToolResult as InteractionToolResult
+from .interaction_tool_result_kind import InteractionToolResultKind as InteractionToolResultKind
+from .json_content import JsonContent as JsonContent
+from .json_content_kind import JsonContentKind as JsonContentKind
 from .list_response import ListResponse as ListResponse
 from .logs_response import LogsResponse as LogsResponse
 from .material_class import MaterialClass as MaterialClass
@@ -60,6 +80,9 @@ from .profile_upgrade_action import ProfileUpgradeAction as ProfileUpgradeAction
 from .profiles_list_response import ProfilesListResponse as ProfilesListResponse
 from .provision_request import ProvisionRequest as ProvisionRequest
 from .provision_response import ProvisionResponse as ProvisionResponse
+from .raw_content import RawContent as RawContent
+from .raw_content_kind import RawContentKind as RawContentKind
+from .raw_content_reason import RawContentReason as RawContentReason
 from .resource_summary import ResourceSummary as ResourceSummary
 from .restart_authentication import RestartAuthentication as RestartAuthentication
 from .restart_response import RestartResponse as RestartResponse
@@ -80,6 +103,8 @@ from .supply_chain_manifest_evidence import (
     SupplyChainManifestEvidence as SupplyChainManifestEvidence,
 )
 from .supply_chain_reference import SupplyChainReference as SupplyChainReference
+from .text_content import TextContent as TextContent
+from .text_content_kind import TextContentKind as TextContentKind
 from .timeline_event import TimelineEvent as TimelineEvent
 from .timeline_layer import TimelineLayer as TimelineLayer
 from .timeline_reference import TimelineReference as TimelineReference

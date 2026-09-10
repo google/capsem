@@ -22,6 +22,31 @@ level. `stats.details` returns model usage and typed model, tool, network, DNS,
 file, process, audit and credential events, plus captured bodies. It is the
 gateway's `/vms/{id}/stats/detail` response.
 
+`stats.details().interactions` is the shared interaction report for all three
+SDKs. Its `items` have stable ledger event IDs, parent model event/call IDs,
+trace/turn IDs, and a typed `content` variant: request preview, assistant message,
+tool call, or tool result. Message blocks distinguish text and reasoning. Tool
+calls retain their origin, server, decision and structured arguments; results
+retain structured content and the error flag when the ledger recorded it.
+Observed MCP JSON-RPC envelopes are retained separately as `request`/`response`;
+`arguments` and result `payload` expose the actual tool arguments and result.
+
+Captured payloads distinguish native JSON (including JSON null), text and raw
+content. Their status is `complete`, `truncated` or `unknown`. Preview fields
+have unknown completeness because the existing ledger does not retain their
+original lengths. Truncated bodies remain raw even if their prefix parses as
+JSON; malformed JSON and unparsed content retain explicit reasons. Request
+previews are not inferred user messages. Assistant items are retained content
+fragments, not reconstructed provider message boundaries.
+
+The report contains the latest 200 non-tool-call model items and 200 tool calls,
+sorted chronologically, plus the existing bounded body captures. Model tool
+calls come from `tool_calls` once; continuation results come from `model_items`.
+A call's embedded result uses only its own stored preview. Provider call IDs
+are scoped: correlate them with trace/model IDs, never by call ID alone. A null
+parent event ID can mean the parent row is no longer retained. Existing stats
+event fields remain available while the UI migrates to this shared contract.
+
 Results retain gateway semantics. In particular, guest exec currently combines
 stdout and stderr into `stdout`; `stderr` is empty. A successful create/start
 acknowledges launch, and an exec request waits for the guest to become ready.

@@ -42,7 +42,6 @@ def test_actual_export_preserves_every_schema() -> None:
     {"oneOf": [{"type": "string"}]},
     {"oneOf": [{"type": "string"}, {"type": "null"}], "type": "string"},
     {"type": "string", "items": {"type": "string"}},
-    {},
 ])
 def test_unsupported_or_ambiguous_schema_fails(value: object) -> None:
     with pytest.raises(ValidationError):

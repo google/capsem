@@ -143,6 +143,9 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
     assert_eq!(body.stored_bytes, 4);
     assert_eq!(value["tool_events"][0]["model_parent_missing"], false);
     assert_eq!(value["body_blobs"]["abcdef000001"][0]["truncated"], true);
+    assert_eq!(value["interactions"]["items"][0]["content"]["kind"], "tool_call");
+    assert_eq!(value["interactions"]["bodies"][0]["payload"]["status"], "truncated");
+    assert_eq!(value["interactions"]["bodies"][0]["payload"]["content"]["raw"], "test");
     assert!(
         state.stats_detail_response_cache.lock().unwrap().is_empty(),
         "stats detail must use DB-owned reads without a service projection cache"

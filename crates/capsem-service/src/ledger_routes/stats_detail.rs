@@ -1,6 +1,7 @@
 //! Stats detail query intent; DbHandle owns execution and read caching.
 use super::*;
 use std::collections::BTreeMap;
+mod interactions;
 
 pub(super) const STATS_DETAIL_MODEL_STATS_SQL: &str = r#"
 SELECT provider, COALESCE(model, 'unknown') AS model,
@@ -126,7 +127,7 @@ OR event_id IN (
 ORDER BY event_id, direction
 "#;
 
-async fn query_rows<T: DeserializeOwned>(
+pub(super) async fn query_rows<T: DeserializeOwned>(
     vm_id: &str,
     db_path: &StdPath,
     db: &capsem_logger::DbHandle,
@@ -174,6 +175,7 @@ pub(crate) async fn read_stats_detail_payload_from_session_db(
         body_blobs.entry(body.event_id.clone()).or_default().push(body);
     }
     Ok(api::VmStatsDetailResponse {
+        interactions: interactions::read_interactions(vm_id, db_path, &db, &body_blobs).await?,
         model_stats: query_rows(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL).await?,
         model_events: query_rows(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL).await?,
         tool_events: query_rows(vm_id, db_path, &db, "tool_events", STATS_DETAIL_TOOL_EVENTS_SQL).await?,

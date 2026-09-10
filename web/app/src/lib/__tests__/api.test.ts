@@ -259,6 +259,7 @@ describe('api', () => {
 
     it('getVmStatsDetail sends GET /vms/{id}/stats/detail', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({
+        interactions: { items: [], bodies: [] },
         model_stats: [{ provider: 'google', model: 'fixture-model', call_count: 1, duration_ms: 25, input_tokens: 12, output_tokens: 7, estimated_cost_usd: 0.001 }],
         model_events: [],
         tool_events: [],

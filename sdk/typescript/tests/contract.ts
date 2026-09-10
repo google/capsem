@@ -22,6 +22,7 @@ export const routes = Object.entries(specification.paths).flatMap(([path, method
   Object.entries(methods).map(([method, operation]) => ({path, method, operation})));
 
 export function sample(schema: Schema, full = false, variant = 0, depth = 0): unknown {
+  if (Object.keys(schema).every(key => key === 'description')) return {nested: [true, null, {number: 3}]};
   if (schema.$ref) {
     const target = schemas[schema.$ref.split('/').at(-1) ?? ''];
     if (!target) throw new Error(`Unknown schema ${schema.$ref}`);

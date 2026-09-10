@@ -121,6 +121,8 @@ def _validate(route: Route, names: set[str]) -> None:
             raise ValueError("request body must be JSON or binary")
         schemas.append(operation.request_body.schema)
     schemas.extend(media.schema_ for media in operation.responses["default"].content.values())
+    if any(not (schema.model_fields_set - {"description"}) for schema in schemas):
+        raise ValueError("operation boundaries require a named or concrete typed schema")
     missing = {name for schema in schemas for name in schema.references()} - names
     if missing:
         raise ValueError(f"missing operation schema references: {sorted(missing)}")

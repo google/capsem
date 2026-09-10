@@ -8,6 +8,7 @@ import {DnsEventSchema} from "./DnsEvent.js";
 import {EventBodySchema} from "./EventBody.js";
 import {FileEventSchema} from "./FileEvent.js";
 import {HttpEventSchema} from "./HttpEvent.js";
+import {InteractionReportSchema} from "./InteractionReport.js";
 import {ModelEventSchema} from "./ModelEvent.js";
 import {ModelUsageSchema} from "./ModelUsage.js";
 import {ProcessEventSchema} from "./ProcessEvent.js";
@@ -20,6 +21,7 @@ export const VmStatsDetailResponseSchema: z.ZodType<VmStatsDetailResponse> = z.o
   "dns_events": z.array(z.lazy(() => DnsEventSchema)),
   "file_events": z.array(z.lazy(() => FileEventSchema)),
   "http_events": z.array(z.lazy(() => HttpEventSchema)),
+  "interactions": z.lazy(() => InteractionReportSchema),
   "model_events": z.array(z.lazy(() => ModelEventSchema)),
   "model_stats": z.array(z.lazy(() => ModelUsageSchema)),
   "process_events": z.array(z.lazy(() => ProcessEventSchema)),

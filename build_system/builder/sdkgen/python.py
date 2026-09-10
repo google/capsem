@@ -8,13 +8,31 @@ import re
 from .schema import Schema, schema_order
 
 HEADER = '"""Generated from Capsem OpenAPI. Do not edit."""\n\n'
-BASE = '''"""Shared validation for optional fields that do not permit JSON null."""
+BASE = '''"""Shared validation for JSON values and optional nonnullable fields."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+from math import isfinite
+from typing import Annotated, ClassVar, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import JsonValue as PydanticJsonValue
+
+
+def _finite_json(value: PydanticJsonValue) -> PydanticJsonValue:
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, float) and not isfinite(item):
+            raise ValueError("JSON numbers must be finite")
+        if isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return value
+
+
+JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)]
 
 
 class Model(BaseModel):
@@ -37,12 +55,15 @@ def module_name(name: str) -> str:
 
 
 def nullable(schema: Schema) -> bool:
-    return ((isinstance(schema.type, list) and "null" in schema.type)
+    return (not (schema.model_fields_set - {"description"})
+            or (isinstance(schema.type, list) and "null" in schema.type)
             or schema.type == "null"
             or any(nullable(member) for member in schema.one_of or []))
 
 
 def type_name(schema: Schema) -> str:
+    if not (schema.model_fields_set - {"description"}):
+        return "JsonValue"
     if schema.ref is not None:
         return schema.ref.rsplit("/", 1)[1]
     if schema.one_of is not None:
@@ -125,8 +146,11 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         imports.append("")
         dependencies = schema.references() - {name}
         local = [f"from .{module_name(dep)} import {dep}" for dep in sorted(dependencies)]
+        base_names = (["JsonValue"] if re.search(r"\bJsonValue\b", body) else [])
         if "(Model)" in body:
-            local.append("from .model_base import Model")
+            base_names.append("Model")
+        if base_names:
+            local.append(f"from .model_base import {', '.join(base_names)}")
         imports += sorted(local)
         source = HEADER + "from __future__ import annotations\n\n"
         spacing = "\n\n\n" if body.startswith("class ") else "\n\n"

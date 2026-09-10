@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 /// This is a bounded inspection report; it is not the complete session ledger.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct VmStatsDetailResponse {
+    pub interactions: crate::InteractionReport,
     pub model_stats: Vec<ModelUsage>,
     pub model_events: Vec<ModelEvent>,
     pub tool_events: Vec<ToolEvent>,

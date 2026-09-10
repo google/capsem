@@ -6,6 +6,7 @@ import type { DnsEvent } from "./DnsEvent.js";
 import type { EventBody } from "./EventBody.js";
 import type { FileEvent } from "./FileEvent.js";
 import type { HttpEvent } from "./HttpEvent.js";
+import type { InteractionReport } from "./InteractionReport.js";
 import type { ModelEvent } from "./ModelEvent.js";
 import type { ModelUsage } from "./ModelUsage.js";
 import type { ProcessEvent } from "./ProcessEvent.js";
@@ -18,6 +19,7 @@ export interface VmStatsDetailResponse {
   "dns_events": Array<DnsEvent>;
   "file_events": Array<FileEvent>;
   "http_events": Array<HttpEvent>;
+  "interactions": InteractionReport;
   "model_events": Array<ModelEvent>;
   "model_stats": Array<ModelUsage>;
   "process_events": Array<ProcessEvent>;

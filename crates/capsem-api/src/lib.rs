@@ -24,6 +24,8 @@ mod history;
 pub use history::*;
 mod stats_detail;
 pub use stats_detail::*;
+mod interactions;
+pub use interactions::*;
 mod logs;
 pub use logs::*;
 mod updates;

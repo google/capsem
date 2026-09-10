@@ -22,6 +22,8 @@ OPERATIONS = [operation for methods in SPEC["paths"].values() for operation in m
 
 
 def sample(schema: dict[str, Any]) -> object:
+    if not (schema.keys() - {"description"}):
+        return {"nested": [True, None, {"number": 3}]}
     if "$ref" in schema:
         return sample(SCHEMAS[schema["$ref"].rsplit("/", 1)[1]])
     if "oneOf" in schema:

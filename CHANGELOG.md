@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SDK detailed statistics expose shared model/MCP interaction objects with typed
+  messages, content blocks, calls and results, structured tool JSON, stable ledger
+  references, and explicit complete, truncated or unknown capture status.
+
 - Python, TypeScript and Rust `Hypervisor.restart()` methods return the typed
   gateway acknowledgement and its fresh-credential reconnection requirement.
 

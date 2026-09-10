@@ -9,6 +9,8 @@ from .typescript import HEADER, render_models
 
 
 def expression(schema: Schema) -> str:
+    if not (schema.model_fields_set - {"description"}):
+        return "z.json()"
     if schema.ref is not None:
         return f"z.lazy(() => {schema.ref.rsplit('/', 1)[1]}Schema)"
     if schema.one_of is not None:

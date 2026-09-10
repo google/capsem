@@ -8,6 +8,12 @@ static CONTRACT: LazyLock<Value> =
     LazyLock::new(|| serde_json::from_str(include_str!("../../specification/openapi.json")).unwrap());
 
 fn sample(schema: &Value, full: bool) -> Value {
+    if schema
+        .as_object()
+        .is_some_and(|object| object.keys().all(|key| key == "description"))
+    {
+        return json!({"nested": [true, null, {"number": 3}]});
+    }
     if let Some(reference) = schema["$ref"].as_str() {
         return sample(CONTRACT.pointer(&reference[1..]).unwrap(), full);
     }

@@ -8,6 +8,7 @@ from .dns_event import DnsEvent
 from .event_body import EventBody
 from .file_event import FileEvent
 from .http_event import HttpEvent
+from .interaction_report import InteractionReport
 from .model_base import Model
 from .model_event import ModelEvent
 from .model_usage import ModelUsage
@@ -22,6 +23,7 @@ class VmStatsDetailResponse(Model):
     dns_events: list[DnsEvent]
     file_events: list[FileEvent]
     http_events: list[HttpEvent]
+    interactions: InteractionReport
     model_events: list[ModelEvent]
     model_stats: list[ModelUsage]
     process_events: list[ProcessEvent]

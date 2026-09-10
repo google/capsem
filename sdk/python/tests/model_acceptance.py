@@ -34,6 +34,21 @@ async def main() -> None:
         assert all(event.event_id and event.input_tokens and event.output_tokens for event in calls)
         assert any(event.arguments and observation["nonce"] in event.arguments for event in tools)
         assert all(isinstance(event.decision, models.ToolDecision) and isinstance(event.source, models.ToolOrigin) for event in tools)
+        interactions = detail.interactions.items
+        typed_tools = [item for item in interactions if isinstance(item.content, models.InteractionToolCall)
+                       and item.content.tool_name == observation["tool_call_name"]]
+        assert typed_tools
+        for item in typed_tools:
+            call = item.content
+            assert isinstance(call, models.InteractionToolCall)
+            assert call.arguments is not None and isinstance(call.arguments.content, models.JsonContent)
+            assert isinstance(call.arguments.content.value, dict)
+            assert observation["nonce"] in json.dumps(call.arguments.content.value)
+            assert item.model_event_id in {event.event_id for event in calls}
+            assert item.trace_id and call.call_id
+        assert any(isinstance(item.content, models.InteractionMessage) for item in interactions)
+        assert any(isinstance(item.content, models.InteractionToolResult) for item in interactions)
+        assert all(isinstance(body.payload.status, models.CaptureStatus) for body in detail.interactions.bodies)
         usage = next(row for row in detail.model_stats if row.model == observation["model"])
         assert usage.call_count >= 2 and usage.input_tokens > 0 and usage.output_tokens > 0
         assert usage.estimated_cost_usd > 0

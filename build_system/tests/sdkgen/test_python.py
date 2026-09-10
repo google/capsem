@@ -39,6 +39,8 @@ def models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleTy
 
 
 def _sample(schema: Schema) -> object:
+    if not (schema.model_fields_set - {"description"}):
+        return {"nested": [True, None, {"number": 3}]}
     if schema.ref:
         return _sample(SCHEMAS[schema.ref.rsplit("/", 1)[1]])
     if schema.one_of:

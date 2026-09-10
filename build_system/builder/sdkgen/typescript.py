@@ -11,6 +11,8 @@ HEADER = "// Generated from Capsem OpenAPI. Do not edit.\n\n"
 
 
 def type_name(schema: Schema) -> str:
+    if not (schema.model_fields_set - {"description"}):
+        return "JSONType"
     if schema.ref is not None:
         return schema.ref.rsplit("/", 1)[1]
     if schema.one_of is not None:
@@ -58,7 +60,10 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
             raise ValueError(f"invalid schema identifier: {name}")
         imports = [f'import type {{ {dep} }} from "./{dep}.js";'
                    for dep in sorted(schema.references() - {name})]
-        files[name + ".ts"] = HEADER + "\n".join(imports) + "\n\n" + _body(name, schema)
+        body = _body(name, schema)
+        if re.search(r"\bJSONType\b", body):
+            imports.insert(0, 'import type { JSONType } from "zod";')
+        files[name + ".ts"] = HEADER + "\n".join(imports) + "\n\n" + body
         qualifier = "" if schema.enum is not None else "type "
         exports.append(f'export {qualifier}{{ {name} }} from "./{name}.js";')
     files["index.ts"] = HEADER + "\n".join(exports) + "\n"

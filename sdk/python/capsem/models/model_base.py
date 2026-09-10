@@ -1,10 +1,28 @@
-"""Shared validation for optional fields that do not permit JSON null."""
+"""Shared validation for JSON values and optional nonnullable fields."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+from math import isfinite
+from typing import Annotated, ClassVar, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import JsonValue as PydanticJsonValue
+
+
+def _finite_json(value: PydanticJsonValue) -> PydanticJsonValue:
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, float) and not isfinite(item):
+            raise ValueError("JSON numbers must be finite")
+        if isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return value
+
+
+JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)]
 
 
 class Model(BaseModel):

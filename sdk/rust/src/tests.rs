@@ -7,6 +7,7 @@ use crate::test_gateway::Server;
 use crate::*;
 
 mod fixture;
+mod interactions;
 use fixture::{gateway, reply, request};
 
 #[tokio::test]

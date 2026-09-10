@@ -10,6 +10,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 const stats: VmStatsDetailResponse = {
+  interactions: { items: [], bodies: [] },
   model_stats: [{ provider: 'google', model: 'fixture-model', call_count: 1, duration_ms: 25,
     input_tokens: 12, output_tokens: 7, estimated_cost_usd: 0.001 }],
   model_events: [], tool_events: [], http_events: [], dns_events: [], file_events: [],
