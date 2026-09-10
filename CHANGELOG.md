@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust SDK HTTP transport with shared gateway DTOs, explicit bearer authentication,
+  bounded requests, cancellation by dropping futures, and typed HTTP errors.
+
 - Async TypeScript `Hypervisor` and `VM` clients with typed lifecycle results,
   canonical name resolution, profile defaults, and copy/snapshots/stats helpers.
 

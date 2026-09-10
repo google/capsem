@@ -1118,6 +1118,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-sdk"
+version = "0.6.3"
+dependencies = [
+ "axum",
+ "capsem-api",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "capsem-service"
 version = "0.6.3"
 dependencies = [

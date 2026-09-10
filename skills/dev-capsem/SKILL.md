@@ -14,6 +14,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
 | `capsem-api` | Gateway wire types and OpenAPI contract. | `document.rs`, `hypervisor.rs`, `vm_info.rs` |
+| `capsem-sdk` (`sdk/rust`) | Async HTTP gateway clients, shared API DTOs, no local discovery. | `transport.rs` |
 | `capsem-config` | Product config contracts, parsing, validation, and provider/MCP identity. | `types.rs`, `validation.rs`, `provider_profile.rs`, `mcp.rs`, `resolver.rs` |
 | `capsem-credentials` | Credential provider contracts and durable credential storage. | `provider.rs`, `store.rs`, `durable.rs` |
 | `capsem-core` | VM, hypervisor, security-engine, network-intercept, and session-runtime domain library. | `vm/`, `net/`, `security_engine/`, `mcp/`, `hypervisor/`, `image.rs` |

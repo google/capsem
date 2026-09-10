@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "sdk/rust",
     "crates/capsem-api",
     "crates/capsem-assets",
     "crates/capsem-config",

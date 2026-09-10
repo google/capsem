@@ -78,7 +78,7 @@ def _doc_code_blocks() -> list[str]:
     the wrong reason on a clean machine.
     """
     found = subprocess.run(
-        ["git", "grep", "-l", "-e", "/// ```", "--", "crates/"],
+        ["git", "grep", "-l", "-e", "/// ```", "--", "crates/", "sdk/rust/"],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

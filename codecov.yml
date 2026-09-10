@@ -53,6 +53,7 @@ flags:
   unit:
     paths:
       - crates/**
+      - sdk/rust/src/**
       - web/app/src/**
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
@@ -69,6 +70,7 @@ flags:
   linux-unit:
     paths:
       - crates/**
+      - sdk/rust/src/**
     carryforward: true
 
 # Components tag code paths by functional service.
@@ -162,6 +164,11 @@ component_management:
       name: Gateway API
       paths:
         - crates/capsem-api/src/**
+
+    - component_id: rust-sdk
+      name: Rust SDK
+      paths:
+        - sdk/rust/src/**
 
     # Pure settings, provider, profile, MCP, and security-rule contracts.
     - component_id: config
