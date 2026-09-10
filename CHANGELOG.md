@@ -301,6 +301,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Service shutdown drains pending replies before gracefully stopping its gateway,
+  with bounded cleanup for stalled requests and unresponsive companion processes.
+
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
   cases, including the built-in security registry measurement, instead of
   silently omitting results outside a directory named after the Cargo target.
