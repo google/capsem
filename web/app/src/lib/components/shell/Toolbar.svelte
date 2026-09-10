@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { VmAction } from "@capsem/sdk";
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import type { TabView } from '../../stores/tabs.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
@@ -142,7 +143,7 @@
               <Scroll size={16} />
               <span>Session Logs</span>
             </button>
-            {#if activeVm && hasVmAction(activeVm, 'pause')}
+            {#if activeVm && hasVmAction(activeVm, VmAction.PAUSE)}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
@@ -153,7 +154,7 @@
                 <span>Pause</span>
               </button>
             {/if}
-            {#if activeVm && hasVmAction(activeVm, 'stop')}
+            {#if activeVm && hasVmAction(activeVm, VmAction.STOP)}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
@@ -176,7 +177,7 @@
                 <span>{startLabel(activeVm)}</span>
               </button>
             {/if}
-            {#if activeVm && hasVmAction(activeVm, 'fork')}
+            {#if activeVm && hasVmAction(activeVm, VmAction.FORK)}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
@@ -187,7 +188,7 @@
                 <span>Fork</span>
               </button>
             {/if}
-            {#if activeVm && hasVmAction(activeVm, 'delete')}
+            {#if activeVm && hasVmAction(activeVm, VmAction.DELETE)}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"

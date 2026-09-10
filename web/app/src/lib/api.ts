@@ -2,6 +2,7 @@
 
 import { recordWsEvent } from './tauri-log';
 import * as gateway from '@capsem/sdk/operations';
+import { NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
@@ -377,16 +378,11 @@ export async function init(): Promise<InitResult> {
 async function _serviceStatusRunning(): Promise<boolean> {
   if (!_token) return false;
   try {
-    const resp = await fetch(`${_baseUrl}/status`, {
-      headers: {
-        Authorization: `Bearer ${_token}`,
-      },
-    });
-    if (!resp.ok) return false;
-    const status: StatusResponse = await resp.json();
-    return status.service === 'running';
-  } catch {
-    return false;
+    const status = await _sdk.call(gateway.getHypervisorInfo);
+    return status.service === ServiceAvailability.RUNNING;
+  } catch (error) {
+    if (error instanceof NetworkError || error instanceof ApiError) return false;
+    throw error;
   }
 }
 
@@ -427,14 +423,13 @@ export async function healthCheck(): Promise<boolean> {
       _connected = false;
       return false;
     }
-    const serviceRunning = await _serviceStatusRunning();
-    _connected = serviceRunning;
-    return serviceRunning;
   } catch {
     _connected = false;
-    
     return false;
   }
+  const serviceRunning = await _serviceStatusRunning();
+  _connected = serviceRunning;
+  return serviceRunning;
 }
 
 // -- HTTP helpers (private) --
@@ -492,10 +487,9 @@ export async function getStatus(): Promise<StatusResponse> {
     return emptyStatus();
   }
   try {
-    const resp = await _get('/status');
-    return await resp.json();
+    return await _sdk.call(gateway.getHypervisorInfo);
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return emptyStatus();
     }
@@ -505,8 +499,7 @@ export async function getStatus(): Promise<StatusResponse> {
 
 export async function getVmInfo(id: string): Promise<SandboxInfo> {
   if (!_connected) throw new Error('Gateway not connected');
-  const resp = await _get(`/vms/${encodeURIComponent(id)}/info`);
-  return await resp.json();
+  return _sdk.call(transport => gateway.getVmInfo(transport, { id }));
 }
 
 async function routeJson(path: string): Promise<unknown> {
@@ -672,10 +665,9 @@ const EMPTY_VM_STATS_SUMMARY: VmStatsSummary = {
 export async function getVmStatsSummary(id: string): Promise<VmStatsSummary> {
   if (!_connected) return EMPTY_VM_STATS_SUMMARY;
   try {
-    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats/summary`);
-    return await resp.json();
+    return await _sdk.call(transport => gateway.getVmStatsSummary(transport, { id }));
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (err instanceof NetworkError) {
       _connected = false;
       return EMPTY_VM_STATS_SUMMARY;
     }

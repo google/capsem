@@ -38,22 +38,12 @@ vi.stubGlobal('WebSocket', MockWebSocket);
 // Import after mocks are in place.
 const api = await import('../api');
 
-function jsonResponse(body: unknown, status = 200) {
-  return Promise.resolve({
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body),
-    text: () => Promise.resolve(JSON.stringify(body)),
-  });
+function jsonResponse(body: unknown, status = 200): Promise<Response> {
+  return Promise.resolve(new Response(JSON.stringify(body), { status }));
 }
 
-function textResponse(text: string, status = 200) {
-  return Promise.resolve({
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(JSON.parse(text)),
-    text: () => Promise.resolve(text),
-  });
+function textResponse(text: string, status = 200): Promise<Response> {
+  return Promise.resolve(new Response(text, { status }));
 }
 
 describe('api', () => {
@@ -84,7 +74,7 @@ describe('api', () => {
       expect(result.reason).toBe('ok');
       expect(api.isConnected()).toBe(true);
       expect(mockFetch.mock.calls[2][0]).toContain('/status');
-      expect(mockFetch.mock.calls[2][1].headers.Authorization).toBe('Bearer tok123');
+      expect(new Headers(mockFetch.mock.calls[2][1].headers).get('Authorization')).toBe('Bearer tok123');
     });
 
     it('returns connected=false when gateway is reachable but service status is unavailable', async () => {
@@ -222,6 +212,7 @@ describe('api', () => {
 
       mockFetch.mockReturnValueOnce(jsonResponse({
         id: 'session 1',
+        profile_id: 'code',
         name: 'Demo',
         pid: 123,
         status: 'Running',
@@ -547,7 +538,7 @@ describe('api', () => {
     });
 
     it('profile skill helpers use profile-scoped routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+      mockFetch.mockImplementation(() => jsonResponse({ ok: true }));
 
       await api.getProfileSkillsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/info');
@@ -569,7 +560,7 @@ describe('api', () => {
     });
 
     it('profile asset, plugin, and mcp info helpers use profile-scoped routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+      mockFetch.mockImplementation(() => jsonResponse({ ok: true }));
 
       await api.getProfileAssetsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/info');
@@ -703,7 +694,7 @@ describe('api', () => {
     });
 
     it('uses service-wide security, enforcement, and detection ledger routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ total: 0, sessions: [] }));
+      mockFetch.mockImplementation(() => jsonResponse({ total: 0, sessions: [] }));
 
       await api.getSecurityLatest();
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/security/latest');
@@ -1082,7 +1073,7 @@ describe('api', () => {
         service: 'running',
         gateway_version: '1.0.0',
         vm_count: 1,
-        vms: [{ id: 'vm-1', name: 'code-dev', status: 'Running', persistent: true }],
+        vms: [{ id: 'vm-1', name: 'code-dev', status: 'Running', persistent: true, profile_id: 'code', available_actions: ['stop'] }],
         resource_summary: null,
       }));
       const state = await api.vmStatus();

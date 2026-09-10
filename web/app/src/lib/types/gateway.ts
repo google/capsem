@@ -1,5 +1,13 @@
-// Gateway response types -- mirrors Rust serde serialization in capsem-gateway/src/status.rs
-// and capsem-service/src/api.rs. Do not modify field names without matching the backend.
+// Gateway wire types come from the SDK as their consumers migrate.
+import type { HypervisorInfo, VmAction, VmLifecycleState } from '@capsem/sdk';
+export type { SandboxInfo, VmSummary, ResourceSummary, ListResponse,
+  VmStatsSummaryResponse as VmStatsSummary } from '@capsem/sdk';
+export { VmAction, VmLifecycleState } from '@capsem/sdk';
+
+// Offline is local presentation state, never a gateway response.
+export type StatusResponse = Omit<HypervisorInfo, 'service'> & {
+  service: HypervisorInfo['service'] | 'offline';
+};
 
 // GET /
 export interface HealthResponse {
@@ -11,15 +19,6 @@ export interface HealthResponse {
 // GET /token
 export interface TokenResponse {
   token: string;
-}
-
-// GET /status
-export interface StatusResponse {
-  service: string; // "running" | "unavailable"
-  gateway_version: string;
-  vm_count: number;
-  vms: VmSummary[];
-  resource_summary: ResourceSummary | null;
 }
 
 // GET /update/status
@@ -110,82 +109,6 @@ export type UpdateCompatibilityState =
   | 'unknown'
   | 'not_applicable';
 
-export interface VmSummary {
-  id: string;
-  name: string | null;
-  status: VmLifecycleState;
-  persistent: boolean;
-  profile_id: string;
-  can_resume: boolean;
-  resume_blocked_reason?: string;
-  available_actions: VmAction[];
-  // Telemetry (present for running sessions, absent for stopped)
-  uptime_secs?: number;
-  total_input_tokens?: number;
-  total_thinking_tokens?: number;
-  total_output_tokens?: number;
-  total_estimated_cost?: number;
-  total_tool_calls?: number;
-  total_requests?: number;
-  allowed_requests?: number;
-  denied_requests?: number;
-  total_file_events?: number;
-  model_call_count?: number;
-}
-
-export interface VmStatsSummary {
-  total_requests: number;
-  allowed_requests: number;
-  denied_requests: number;
-  total_input_tokens: number;
-  total_thinking_tokens: number;
-  total_output_tokens: number;
-  total_tool_calls: number;
-  total_estimated_cost: number;
-}
-
-export interface ResourceSummary {
-  total_ram_mb: number;
-  total_cpus: number;
-  running_count: number;
-  stopped_count: number;
-  suspended_count: number;
-}
-
-// GET /vms/list (proxied to service)
-export interface ListResponse {
-  sandboxes: SandboxInfo[];
-}
-
-export interface SandboxInfo {
-  id: string;
-  name?: string;
-  pid: number;
-  status: VmLifecycleState;
-  persistent: boolean;
-  can_resume: boolean;
-  resume_blocked_reason?: string;
-  available_actions: VmAction[];
-  ram_mb?: number;
-  cpus?: number;
-  version?: string;
-  forked_from?: string;
-  description?: string;
-  // Telemetry (populated by /vms/{id}/info, absent from /vms/list)
-  created_at?: string;
-  uptime_secs?: number;
-  total_input_tokens?: number;
-  total_thinking_tokens?: number;
-  total_output_tokens?: number;
-  total_estimated_cost?: number;
-  total_tool_calls?: number;
-  total_requests?: number;
-  allowed_requests?: number;
-  denied_requests?: number;
-  total_file_events?: number;
-  model_call_count?: number;
-}
-
 // GET /vms/{id}/status
 export interface VmStatusResponse {
   id: string;
@@ -199,21 +122,6 @@ export interface VmStatusResponse {
   created_at?: string;
   last_error?: string;
 }
-
-export type VmLifecycleState =
-  | 'Running'
-  | 'Stopped'
-  | 'Suspended'
-  | 'Defunct'
-  | 'Incompatible';
-
-export type VmAction =
-  | 'pause'
-  | 'stop'
-  | 'start'
-  | 'resume'
-  | 'fork'
-  | 'delete';
 
 export interface VmActionContract {
   available_actions: VmAction[];
