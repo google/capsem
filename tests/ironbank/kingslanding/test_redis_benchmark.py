@@ -1,7 +1,6 @@
 """Exploratory Redis transport measurements, recorded by the benchmark owner.
 
-Explicit ARM64 spike proof: requires the pinned Redis prefetch.
-Run by path; this is not a portable release qualification gate.
+Kingslanding uses a pinned native image prepared before hermetic execution.
 """
 
 import hashlib
@@ -12,7 +11,7 @@ import subprocess
 import pytest
 from helpers.constants import ASSETS_DIR, BIN_DIR, PROJECT_ROOT
 
-from tests.ironbank.container_publish_acceptance import redis, service
+from tests.ironbank.kingslanding.test_publish import redis, service
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration

@@ -71,7 +71,15 @@ class ModulesConfig(Strict):
     release_pairing: ReleasePairingEnvironment
 
 
+class KingslandingConfig(Strict):
+    fixture_script: str
+    fixture_dir: str
+    suite_path: str
+    benchmark_path: str
+
+
 class FunctionalConfig(Strict):
+    kingslanding: KingslandingConfig
     injection_script: str
     integration_script: str
     binary: str

@@ -187,3 +187,31 @@ def test_the_just_skill_lists_every_focus_owner() -> None:
     row = next(line for line in guide.splitlines() if "just focus-test <group>" in line)
     for group in focus.TARGETS:
         assert f"`{group}`" in row, f"focus owner {group!r} is missing from /dev-just"
+
+
+def test_kingslanding_is_a_hermetic_owned_suite_after_fixture_preparation() -> None:
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("kingslanding"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    )
+    plan = command.plan()
+    prepared = "kingslanding.prefetch"
+    label = "kingslanding.pytest.kingslanding.code"
+    assert prepared in plan.after_of(label)
+    rendered = plan.describe()
+    assert "tests/ironbank/kingslanding" in rendered
+    assert "--platform linux/" in rendered
+    assert command.private_checkout and command.exclusive
+
+
+def test_functional_owns_kingslanding_once_per_profile() -> None:
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("functional"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    )
+    rendered = command.plan().describe()
+    for profile in ("code", "co-work"):
+        assert f"pytest.kingslanding.{profile}" in rendered
+    assert "--ignore=tests/ironbank/kingslanding" in rendered

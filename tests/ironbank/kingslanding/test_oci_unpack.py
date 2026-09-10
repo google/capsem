@@ -3,7 +3,7 @@
 import importlib.util
 import platform
 
-from tests.ironbank.test_oci_container import FIXTURES, oci_vm
+from tests.ironbank.kingslanding.test_oci_container import FIXTURES, oci_vm
 
 __all__ = ["oci_vm"]
 

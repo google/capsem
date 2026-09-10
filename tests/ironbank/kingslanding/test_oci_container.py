@@ -22,7 +22,7 @@ from helpers.service import (
 )
 
 pytestmark = pytest.mark.integration
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "oci"
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "oci"
 
 
 @pytest.fixture

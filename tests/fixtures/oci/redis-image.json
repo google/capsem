@@ -1,6 +1,8 @@
 {
   "tag": "redis:7.4.11-alpine",
   "version": "7.4.11",
-  "platform": "linux/arm64",
-  "image": "redis@sha256:f8d15882ba108587477ce13c00ab0551933a84138427b7cc9abadfbe45ffd973"
+  "images": {
+    "linux/arm64": "redis@sha256:f8d15882ba108587477ce13c00ab0551933a84138427b7cc9abadfbe45ffd973",
+    "linux/amd64": "redis@sha256:1db42ccef14898aa29bae778452d567534b59c107129cbc1163fb552de184d3c"
+  }
 }

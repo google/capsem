@@ -2151,6 +2151,7 @@ coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-re
 #                    them here too would run them a second time an hour later,
 #                    and a guard with two owners has none
 broad_ignores = [
+    "tests/ironbank/kingslanding",
     "tests/capsem-recipes",
     "tests/capsem_install",
     "tests/capsem-build-chain",
@@ -2208,6 +2209,12 @@ binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
 config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
+
+[functional.kingslanding]
+fixture_script = "tests/fixtures/oci/prepare_redis.py"
+fixture_dir = "cache/target/tests/redis-image"
+suite_path = "tests/ironbank/kingslanding"
+benchmark_path = "tests/ironbank/kingslanding/test_redis_benchmark.py"
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts

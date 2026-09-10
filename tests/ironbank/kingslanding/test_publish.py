@@ -1,10 +1,10 @@
 """Redis through the real confined host TCP router and guest VSOCK path.
 
-Explicit ARM64 spike proof: requires the pinned Redis prefetch.
-Run by path; this is not a portable release qualification gate.
+Kingslanding uses a pinned native image prepared before hermetic execution.
 """
 
 import concurrent.futures
+import contextlib
 import re
 import signal
 import socket
@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 from tests.fixtures.oci.registry import registry
-from tests.ironbank.container_run_acceptance import (
+from tests.ironbank.kingslanding.test_run import (
     command,
     environment,
     service,
@@ -38,6 +38,7 @@ def redis(service, tmp_path):
             stderr=stderr,
         )
         ports = []
+        vm_id = None
         try:
 
             def ready():
@@ -58,6 +59,7 @@ def redis(service, tmp_path):
             ports = [int(row[0]) for row in mappings]
             rows = service.client().get("/vms/list")["sandboxes"]
             assert len(rows) == 1
+            vm_id = rows[0]["id"]
             yield {
                 "port": ports[0],
                 "other_port": ports[1],
@@ -76,6 +78,11 @@ def redis(service, tmp_path):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+            if vm_id and any(
+                row["id"] == vm_id
+                for row in service.client().get("/vms/list")["sandboxes"]
+            ):
+                service.client().delete(f"/vms/{vm_id}/delete")
             assert service.client().get("/vms/list")["sandboxes"] == []
             for port in ports:
 
@@ -150,10 +157,8 @@ def test_binary_values_and_guest_namespace_isolation(redis, service):
         ("127.0.0.1", redis["other_port"]), timeout=5
     ) as connection:
         connection.sendall(b"GET / HTTP/1.0\r\n\r\n")
-        try:
+        with contextlib.suppress(ConnectionResetError):
             assert connection.recv(1) == b""
-        except ConnectionResetError:
-            pass
 
 
 def test_port_collision_does_not_replace_a_listener(service, tmp_path):
@@ -171,7 +176,9 @@ def test_port_collision_does_not_replace_a_listener(service, tmp_path):
         assert (
             result.returncode != 0 and b"bind publication listener" in result.stderr
         ), result.stderr
-        assert service.client().get("/vms/list")["sandboxes"] == []
+        rows = service.client().get("/vms/list")["sandboxes"]
+        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
+        service.client().delete(f"/vms/{rows[0]['id']}/delete")
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             accepted, _ = listener.accept()
             accepted.close()
@@ -189,7 +196,7 @@ def test_router_crash_cannot_stop_or_control_the_vm(redis, service):
     assert redis["process"].poll() is None
 
 
-def test_shutdown_under_load(redis):
+def test_shutdown_under_load(redis, service):
     clients = [
         socket.create_connection(("127.0.0.1", redis["port"]), timeout=5)
         for _ in range(32)
@@ -197,8 +204,8 @@ def test_shutdown_under_load(redis):
     try:
         for connection in clients:
             connection.sendall(b"PING\r\n" * 1024)
-        redis["process"].terminate()
-        assert redis["process"].wait(timeout=30) == 143
+        service.client().post(f"/vms/{redis['vm']['id']}/stop", {})
+        redis["process"].wait(timeout=30)
         for connection in clients:
             try:
                 while connection.recv(8192):

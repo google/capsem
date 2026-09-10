@@ -8,6 +8,7 @@ from pathlib import Path
 from . import (
     audits,
     hostpackage,
+    kingslanding,
     profiles,
     pytestsuite,
     runtimeprepare,
@@ -32,10 +33,8 @@ class FunctionalModule(
 ):
     """The compatibility axis, and the slowest thing the gate does.
 
-    The base profile takes the broad proof: everything that can share a
-    machine, four VMs at a time. Each remaining profile then repeats the
-    VM-owned suites -- that is the compatibility axis, not a reduced
-    release-only substitute.
+    The base profile takes the broad proof. Each remaining profile repeats
+    every VM suite, including Kingslanding, as the compatibility axis.
 
     What may not overlap is declared rather than achieved by placement. In
     shell these ran in sequence below a `wait` and stayed correct only because
@@ -184,11 +183,12 @@ def functional(
             else (phase.add(hostpackage.sign_step(config), after=settled),)
         )
 
+    fixture = phase.add(kingslanding.prefetch(config), after=first)
     previous = _profile_lane(
         phase,
         config,
         base,
-        after=first,
+        after=(fixture,),
         broad=True,
         isolated_assets=isolated_assets,
         staged=staged,
@@ -262,6 +262,10 @@ def _profile_lane(
 
     head = selected(head)
     current = phase.add(head.as_step(config), after=after)
+    current = phase.add(
+        selected(kingslanding.suite(config, profile=profile, benchmark=benchmark)).as_step(config),
+        after=(current,),
+    )
     current = phase.add(
         selected(pytestsuite.host_snapshot(config, profile=profile)).as_step(config),
         after=(current,),

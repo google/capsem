@@ -1,7 +1,6 @@
 """Real CLI, hermetic registry, rebuilt VM, default Redis startup and teardown.
 
-Explicit ARM64 spike proof: requires the pinned Redis prefetch.
-Run by path; this is not a portable release qualification gate.
+Kingslanding uses a pinned native image prepared before hermetic execution.
 """
 
 import contextlib
@@ -71,7 +70,7 @@ def environment(service):
     }
 
 
-def test_cli_default_redis_stream_and_cancel(service, tmp_path):
+def test_cli_default_redis_stream_and_detach(service, tmp_path):
     client = service.client()
     with registry(tmp_path) as (reference, certificate, requests):
         rejected = subprocess.run(
@@ -132,10 +131,11 @@ def test_cli_default_redis_stream_and_cancel(service, tmp_path):
                 )
                 process.send_signal(signal.SIGINT)
                 assert process.wait(timeout=30) == 130
-                assert client.get("/vms/list")["sandboxes"] == []
-                assert not session.exists(), (
-                    "cancelled container VM retained its workspace/runtime"
-                )
+                assert client.get("/vms/list")["sandboxes"][0]["id"] == rows[0]["id"]
+                assert session.exists(), "detaching must retain the VM workspace"
+                client.post(f"/vms/{rows[0]['id']}/stop", {})
+                client.delete(f"/vms/{rows[0]['id']}/delete")
+                assert not session.exists(), "explicit delete must remove session state"
                 assert len([path for path in requests if "/blobs/" in path]) == 2
             finally:
                 if process.poll() is None:
@@ -180,12 +180,14 @@ def test_cli_exit_timeout_and_failed_launch(
             assert result.returncode == code, result.stderr + result.stdout
             if output is not None:
                 assert result.stdout == output, result.stdout
-            assert client.get("/vms/list")["sandboxes"] == []
+            rows = client.get("/vms/list")["sandboxes"]
+            assert len(rows) == 1 and rows[0]["status"] == "Stopped"
+            client.delete(f"/vms/{rows[0]['id']}/delete")
             assert not list(service.tmp_dir.glob("persistent/*/guest"))
         assert len([path for path in requests if "/blobs/" in path]) == 2, requests
 
 
-def test_cli_runtime_failure_removes_vm(service, tmp_path):
+def test_cli_runtime_failure_retains_stopped_vm(service, tmp_path):
     metadata = {"Entrypoint": ["/missing-entrypoint"], "Cmd": []}
     with registry(tmp_path, image_config=metadata) as (reference, certificate, _):
         result = subprocess.run(
@@ -197,7 +199,9 @@ def test_cli_runtime_failure_removes_vm(service, tmp_path):
         )
         assert result.returncode == 1, result.stderr + result.stdout
         assert b"no such file" in result.stdout + result.stderr
-        assert service.client().get("/vms/list")["sandboxes"] == []
+        rows = service.client().get("/vms/list")["sandboxes"]
+        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
+        service.client().delete(f"/vms/{rows[0]['id']}/delete")
         assert not list(service.tmp_dir.glob("persistent/*/guest"))
 
 
@@ -218,7 +222,9 @@ def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
         assert result.returncode == 9, result.stderr
         assert len(result.stdout) == 12 * 1024**2
         assert not any(result.stdout)
-        assert service.client().get("/vms/list")["sandboxes"] == []
+        rows = service.client().get("/vms/list")["sandboxes"]
+        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
+        service.client().delete(f"/vms/{rows[0]['id']}/delete")
 
 
 def test_shell_run_still_uses_existing_command_path(service):

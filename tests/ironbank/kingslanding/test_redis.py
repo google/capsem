@@ -1,6 +1,6 @@
 """Explicit offline Redis spike; prefetch with tests/fixtures/oci/prepare_redis.py.
 
-Not auto-collected: the upstream image is an explicit spike prerequisite.
+The owning gate prepares the native image before hermetic execution.
 Loopback-only Redis traffic never enters Capsem's host network ledger.
 """
 
@@ -13,11 +13,12 @@ from pathlib import Path
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name, vm_session_db_path, wait_exec_ready
 
-from tests.ironbank.test_oci_container import FIXTURES, oci_vm
+from tests.fixtures.oci.prepare_redis import native_pin
+from tests.ironbank.kingslanding.test_oci_container import FIXTURES, oci_vm
 
 __all__ = ["oci_vm"]
 
-IMAGE = Path(__file__).resolve().parents[2] / "cache/target/tests/redis-image"
+IMAGE = Path(__file__).resolve().parents[3] / "cache/target/tests/redis-image"
 # Capsem boots its agents in a chroot. Give this fixture a private mount
 # namespace whose root is the guest root, so runc exec joins the correct root.
 PROBE_COMMAND = (
@@ -29,7 +30,7 @@ PROBE_COMMAND = (
 
 def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
     service, client, first = oci_vm
-    pin = json.loads((FIXTURES / "redis-image.json").read_text())
+    pin = native_pin()
     metadata = json.loads((IMAGE / "redis-image.json").read_text())
     assert {key: metadata[key] for key in pin} == pin
     archive = (IMAGE / "redis-rootfs.tar.gz").read_bytes()

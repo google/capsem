@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -16,11 +17,47 @@ def docker(*args):
     ).stdout
 
 
+def native_pin(selected=None):
+    if selected is None:
+        arch = {
+            "arm64": "arm64",
+            "aarch64": "arm64",
+            "x86_64": "amd64",
+            "AMD64": "amd64",
+        }.get(platform.machine())
+        selected = f"linux/{arch}"
+    pins = json.loads(Path(__file__).with_name("redis-image.json").read_text())
+    if selected not in pins["images"]:
+        raise ValueError(f"unsupported Redis fixture platform: {selected}")
+    return {
+        "tag": pins["tag"],
+        "version": pins["version"],
+        "platform": selected,
+        "image": pins["images"][selected],
+    }
+
+
+def cached(output, pin):
+    try:
+        metadata = json.loads((output / "redis-image.json").read_text())
+        archive = (output / "redis-rootfs.tar.gz").read_bytes()
+    except FileNotFoundError:
+        return False
+    return all(
+        metadata.get(key) == value for key, value in pin.items()
+    ) and hashlib.sha256(archive).hexdigest() == metadata.get("archive_sha256")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    output = parser.parse_args().output
-    pin = json.loads(Path(__file__).with_name("redis-image.json").read_text())
+    parser.add_argument("--platform")
+    args = parser.parse_args()
+    output = args.output
+    pin = native_pin(args.platform)
+    if cached(output, pin):
+        print(f"Verified cached Redis fixture: {pin['image']}")
+        return
     docker("pull", "--platform", pin["platform"], pin["image"])
     image = json.loads(docker("image", "inspect", pin["image"]))[0]
     assert f"{image['Os']}/{image['Architecture']}" == pin["platform"]

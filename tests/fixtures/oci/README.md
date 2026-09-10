@@ -7,8 +7,8 @@ capsem run -p 6379:6379 docker://redis:7.4.11-alpine
 ```
 
 The worktree build pulls the native Linux image, creates an image-named VM,
-uses the image's entrypoint and default command, streams logs, and removes the
-VM when the workload exits or the client handles cancellation. A command after
+uses the image's entrypoint and default command, streams logs, and retains a
+named VM controlled by the existing lifecycle commands. A command after
 the image overrides its default command. Registry-qualified references also
 work; `docker://` disambiguates short images from the existing shell-run command.
 Installed binaries, services, and profiles are not changed by this spike.
@@ -51,54 +51,52 @@ duplicated sockets. Borrowed handle grants and deregistration before close fix
 these without widening the sandbox. Separate owned reader tasks avoid cancelling
 a partial frame read when another async branch becomes ready.
 
-## Reproduce the ARM64 proof
+## Kingslanding
 
-Run from `/Users/elie/git/capsem-ai-eval-spike`, branch
-`worktree/ai-eval-containers`. Direct diagnostics use the repository's bounded
-runner. The existing profile build owns the kernel, `runc`, and `umoci`; rebuild
-those assets first if starting without the spike's cached profile outputs.
+The container E2E suite lives in `tests/ironbank/kingslanding/`, using the existing
+Ironbank service and VM helpers. Run it through its owner:
 
 ```sh
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- just _build-host
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 600 -- just _pack-initrd
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 60 -- just _materialize-config
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 240 -- \
-  uv run --project build_system --frozen python tests/fixtures/oci/prepare_redis.py \
-  --output cache/target/tests/redis-image
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1800 -- just focus-test kingslanding
 ```
 
-The explicit prefetch exports a never-started, digest-pinned Redis image and
-removes the Docker fixture container afterward. Tests serve those bytes from a
-local TLS registry. They never fetch from a public registry during VM execution.
-Keep a coherent copy of all host companions together when another worktree shares
-Cargo's output directory. `CAPSEM_RELEASE_BIN_DIR` selects that copy; the retained
-proof uses `cache/target/tests/container-binaries` in this worktree. The test
-fixture starts and stops its own service under its temporary configuration; it
-does not attach this new CLI to the installed service. To repeat using the
-retained cohort, run the following command. For a newly built cohort, set
-`CAPSEM_RELEASE_BIN_DIR` to Cargo's configured target directory plus `/debug`,
-keeping every companion from that same build together.
+After changing kernel or profile package inputs, first rebuild that profile with
+`just build-assets arm64 code` (use `x86_64` on that host). The focused gate
+uses the invoking checkout's assembled assets, refreshes its guest/host binaries,
+prepares a digest-pinned native Redis image,
+and runs the suite with public networking blocked. The fixture supports ARM64 and
+x86_64; cache reuse requires matching image identity and a verified archive hash.
+Preparation uses Docker only on the development host to export a never-started
+image. No Docker daemon runs inside Capsem. The regular functional gate runs
+Kingslanding for each profile; benchmark repetitions are omitted from release
+rehearsal to avoid recording the same cohort twice.
 
-```sh
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- \
-  env CAPSEM_RELEASE_BIN_DIR=/Users/elie/git/capsem-ai-eval-spike/cache/target/tests/container-binaries \
-  uv run --project build_system --frozen pytest -c build_system/pyproject.toml --rootdir . \
-  tests/ironbank/container_run_acceptance.py \
-  tests/ironbank/container_publish_acceptance.py \
-  tests/ironbank/container_redis_benchmark.py \
-  tests/ironbank/test_oci_container.py tests/ironbank/test_doctor_ledger.py -q \
-  --basetemp=cache/target/tests/container-proof-rerun
-```
+The suite covers CLI defaults, image cache reuse, logs, exit/timeout behavior,
+client detachment, stop/restart/fork/delete, OCI layer semantics, resource limits,
+filesystem/network isolation, router confinement and concurrent Redis traffic.
+All services and VMs belong to test fixtures; installed services and profiles are
+untouched. Throughput results are exploratory measurements, not a release threshold.
 
-Redis proofs are explicit ARM64 spike tests, invoked by path, following
-`redis_acceptance.py`. They are not a portable release qualification gate: their
-pinned prefetch still needs promotion into the release input pipeline for both
-architectures. The existing offline OCI and doctor suites remain auto-collected.
-No skips are counted as passing evidence.
+A named VM retains its image and command. Closing the client detaches. Workload
+exit or timeout stops the VM, and explicit delete removes it. Existing restart
+restores the command and host bindings; fork copies the workload and workspace
+without copying host ports. Redis memory and image-declared tmpfs volumes are
+fresh on cold boot, so this does not promise database persistence across restart.
 
 ## Artifact identities and evidence
 
-Latest ARM64 rebuild: `20260910-070738-84e38e-pack-initrd`, seven steps passed in
+Kingslanding native ARM64 run: **23 passed in 128.95s**, using the rebuilt
+`container-lifecycle-binaries` cohort. Evidence is under
+`cache/target/tests/kingslanding-native/`. The lifecycle RED cases are recorded in
+Sprinty S04-001; suite ownership and cache RED cases are in S04-003.
+The first sandboxed gate run exposed a stale shared-cache kernel; S04-004
+records the selection fix and the complete ARM64 profile rebuild
+`20260910-132119-a0c2a3-build-assets` (10 steps, 7m11s).
+
+The measurements below predate the lifecycle changes and are retained as
+historical spike evidence.
+
+Earlier ARM64 rebuild: `20260910-070738-84e38e-pack-initrd`, seven steps passed in
 1m38s. The manifest step rebuilt the changed native dependency graph, explaining
 its increase from the earlier 14.8s median to 27.4s.
 
@@ -131,7 +129,7 @@ read-only root, inaccessible unmounted guest files, isolated networking, denied
 VSOCK, memory OOM, process EAGAIN and CPU throttling. Timeout/cancellation check
 descendants, runtime directories, mounts and cgroups; fresh VMs cannot share files.
 The CLI suite adds default Redis startup, live output above 10 MiB, shell-run
-compatibility, image failures, scoped TLS trust and cancellation cleanup.
+compatibility, image failures, scoped TLS trust and client detachment.
 Publication tests add 64 clients using 32 workers, binary Redis SET/GET, guest-root
 versus container namespace isolation, port collisions, router crash, VM-owner death
 and teardown with slow consumers.
@@ -147,11 +145,16 @@ establish sustained performance or a regression threshold.
 
 ## Limits and next work
 
+Next: a minimal `container` profile containing the trusted guest agent, OCI runtime
+and required network plumbing, followed by policy-controlled container egress.
+Current containers boot from `code` or `co-work`; their application rootfs is already
+separate, but the surrounding VM still carries the profile's development tools.
+
 - IPv4 loopback TCP publication only; no UDP, LAN binding, container egress, SDK,
   OpenAPI endpoint or Inspect integration. This does not claim Docker compatibility.
-- One foreground container per disposable VM. Named workspaces are explicitly
-  deleted on handled completion. SIGKILL of the CLI while using a surviving service
-  can still leave its VM; crash recovery needs service-owned workload lifecycle.
+- One container workload per named VM. Client termination detaches. Workload
+  completion and timeout stop the VM; deletion remains explicit. Cold boot reruns
+  the saved image command and does not restore process memory or tmpfs contents.
 - CLI logs currently merge stdout/stderr. The existing captured exec API and offline
   fixture still prove them separately. Automatic image-derived names can race;
   the service rejects a collision instead of silently attaching to another VM.

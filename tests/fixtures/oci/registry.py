@@ -10,13 +10,15 @@ import subprocess
 import threading
 from pathlib import Path
 
+from tests.fixtures.oci.prepare_redis import native_pin
+
 FIXTURES = Path(__file__).parent
 IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
 
 
 @contextlib.contextmanager
 def registry(directory, *, image_config=None):
-    pin = json.loads((FIXTURES / "redis-image.json").read_text())
+    pin = native_pin()
     metadata = json.loads((IMAGE / "redis-image.json").read_text())
     assert all(metadata[key] == value for key, value in pin.items())
     archive = (IMAGE / "redis-rootfs.tar.gz").read_bytes()

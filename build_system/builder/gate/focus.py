@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import bench, module_contracts, staticmodule, vmmodules
+from . import bench, kingslanding, module_contracts, staticmodule, vmmodules
 from .actions import Script
 from .command import GateCommand
 from .execution import SATURATES, Kind, Needs, Speed, step
@@ -50,6 +50,7 @@ TARGETS: dict[str, type[GateCommand]] = {
     "benchmark": bench.BenchCommand,
     "binaries": staticmodule.StaticModule,
     "functional": vmmodules.FunctionalModule,
+    "kingslanding": kingslanding.KingslandingModule,
     "install": vmmodules.GlowupModule,
     "release-system": module_contracts.ReleaseContractsModule,
     "rust": RustAffectedCommand,
