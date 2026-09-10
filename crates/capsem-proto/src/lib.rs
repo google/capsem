@@ -123,6 +123,8 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+/// Guest-initiated data connections for explicitly published container TCP ports.
+pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -140,6 +142,7 @@ pub enum HostVsockService {
     Exec,
     Audit,
     DnsProxy,
+    Publication,
 }
 
 impl HostVsockService {
@@ -152,6 +155,7 @@ impl HostVsockService {
             Self::Exec => VSOCK_PORT_EXEC,
             Self::Audit => VSOCK_PORT_AUDIT,
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
+            Self::Publication => VSOCK_PORT_PUBLICATION,
         }
     }
 
@@ -164,6 +168,7 @@ impl HostVsockService {
             Self::Exec => "exec",
             Self::Audit => "audit",
             Self::DnsProxy => "dns_proxy",
+            Self::Publication => "publication",
         }
     }
 
@@ -176,6 +181,7 @@ impl HostVsockService {
             VSOCK_PORT_EXEC => Some(Self::Exec),
             VSOCK_PORT_AUDIT => Some(Self::Audit),
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
+            VSOCK_PORT_PUBLICATION => Some(Self::Publication),
             _ => None,
         }
     }
@@ -189,6 +195,7 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::Exec,
     HostVsockService::Audit,
     HostVsockService::DnsProxy,
+    HostVsockService::Publication,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -199,6 +206,7 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_EXEC,
     VSOCK_PORT_AUDIT,
     VSOCK_PORT_DNS_PROXY,
+    VSOCK_PORT_PUBLICATION,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {
@@ -419,6 +427,8 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
+    /// Connect to loopback in the active container's network namespace.
+    ConnectPort { id: u64, port: u16 },
 }
 
 /// A single boot timing measurement from the guest init script.

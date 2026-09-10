@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem run -p HOST:GUEST IMAGE` publishes loopback TCP ports through VSOCK
+  using a confined Rust companion, with bounded concurrent connections and
+  listener cleanup when the workload or VM exits.
 - `capsem run docker://IMAGE` (or a qualified registry reference) pulls and caches
   verified OCI images, runs the image command in an image-named VM with live logs,
   and removes the VM on completion, timeout, or interruption. Registry-specific

@@ -5,7 +5,6 @@ import json
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
@@ -83,6 +82,20 @@ def configure(unpacked, image, options):
         "hostname": "container",
         "process": process,
         "mounts": mounts,
+        "hooks": {
+            "prestart": [
+                {
+                    "path": "/usr/bin/python3",
+                    "args": [
+                        "/usr/bin/python3",
+                        str(Path(__file__).resolve()),
+                        "--network-ready",
+                    ],
+                    "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
+                    "timeout": 5,
+                }
+            ]
+        },
         "linux": {
             "namespaces": [
                 {"type": name} for name in ("pid", "mount", "ipc", "uts", "network")
@@ -187,14 +200,6 @@ def run(stage):
                 CONTAINER,
             ]
         )
-        deadline = time.monotonic() + 15
-        while not pid_file.exists() and process.poll() is None:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("container did not start")
-            time.sleep(0.01)
-        if process.poll() is None:
-            pid = int(pid_file.read_text())
-            command("nsenter", "-t", str(pid), "-n", "ip", "link", "set", "lo", "up")
         return process.wait()
     finally:
         if (state / CONTAINER).exists():
@@ -205,4 +210,10 @@ def run(stage):
 
 
 if __name__ == "__main__":
-    sys.exit(run(Path(sys.argv[1])))
+    if sys.argv[1:] == ["--network-ready"]:
+        pid = int(json.load(sys.stdin)["pid"])
+        if pid <= 1:
+            raise ValueError("invalid container network namespace pid")
+        command("nsenter", "-t", str(pid), "-n", "ip", "link", "set", "lo", "up")
+    else:
+        sys.exit(run(Path(sys.argv[1])))

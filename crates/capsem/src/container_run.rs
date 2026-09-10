@@ -27,6 +27,9 @@ pub(super) struct RunArgs {
     /// Container VM name; otherwise derived from the image
     #[arg(short = 'n', long)]
     pub name: Option<String>,
+    /// Publish loopback HOST_PORT:GUEST_PORT over VSOCK (host 0 picks a port)
+    #[arg(short = 'p', long = "publish")]
+    pub publish: Vec<container::PortMapping>,
     /// Additional PEM certificate trusted only for this registry pull
     #[arg(long)]
     pub registry_ca: Option<std::path::PathBuf>,
@@ -42,7 +45,11 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     client::validate_id(&args.profile)?;
     let Some(base) = container::image_name(&args.command)? else {
         ensure!(
-            args.name.is_none() && args.args.is_empty() && args.registry_ca.is_none() && args.registry_user.is_none(),
+            args.name.is_none()
+                && args.args.is_empty()
+                && args.registry_ca.is_none()
+                && args.registry_user.is_none()
+                && args.publish.is_empty(),
             "container options require an OCI image"
         );
         let request = RunRequest {
@@ -133,7 +140,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
         let ready = ready.into_result()?;
         ensure!(ready.exit_code == 0, "guest readiness check failed: {}", ready.stderr);
         upload::image(client, &vm.id, &image, args).await?;
-        stream(&vm).await
+        stream(&vm, &args.publish).await
     };
     let deadline = async {
         match args.timeout {
@@ -155,7 +162,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     }
 }
 
-async fn stream(vm: &ProvisionResponse) -> Result<i32> {
+async fn stream(vm: &ProvisionResponse, ports: &[container::PortMapping]) -> Result<i32> {
     let path = vm
         .uds_path
         .as_ref()
@@ -168,6 +175,33 @@ async fn stream(vm: &ProvisionResponse) -> Result<i32> {
     )
     .await?;
     let (sender, receiver) = tokio_unix_ipc::channel_from_std::<ServiceToProcess, ProcessToService>(socket)?;
+    for mapping in ports {
+        sender
+            .send(ServiceToProcess::PublishPort {
+                id: 0,
+                host_port: mapping.host,
+                guest_port: mapping.guest,
+            })
+            .await?;
+        loop {
+            if let ProcessToService::PortPublished {
+                id: 0,
+                host_port,
+                router_pid,
+                error,
+            } = receiver.recv().await?
+            {
+                if let Some(error) = error {
+                    anyhow::bail!("publish port: {error}");
+                }
+                eprintln!(
+                    "Published 127.0.0.1:{host_port} -> {}/tcp (router {router_pid})",
+                    mapping.guest
+                );
+                break;
+            }
+        }
+    }
     // Service job ids count upward; this private attached command has its own
     // connection and uses the reserved high end, with duplicate refusal in process.
     let id = i64::MAX as u64;

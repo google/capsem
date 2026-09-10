@@ -1,15 +1,10 @@
-// capsem-pty-agent: Guest-side PTY-over-vsock bridge.
-//
-// Runs inside the Linux VM as a child of capsem-init. Creates a PTY pair,
-// forks bash on the slave side, and bridges the master PTY with the host
-// over three vsock connections:
-//   - Port 5001: raw PTY I/O (terminal data)
-//   - Port 5000: control messages (resize, heartbeat, boot config)
-//   - Port 5005: exec output (direct child process stdout, on demand)
+// Guest agent under capsem-init: PTY, control, exec and published TCP data
+// use protocol-owned VSOCK ports.
 
 mod audit;
 mod boot_timing;
 mod control_writer;
+mod port_bridge;
 use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
 mod shutdown;
 mod snapshot;
@@ -1115,6 +1110,11 @@ fn control_loop(
 ) {
     loop {
         match recv_host_msg(control_fd) {
+            Ok(HostToGuest::ConnectPort { id, port }) => {
+                if let Err(error) = port_bridge::connect(id, port) {
+                    eprintln!("[capsem-agent] publication refused: {error}");
+                }
+            }
             Ok(HostToGuest::AckReply { id }) => {
                 // Host received the corresponding ackable response;
                 // drop it from the replay buffer so the next rekey

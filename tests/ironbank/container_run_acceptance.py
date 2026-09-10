@@ -1,4 +1,8 @@
-"""Real CLI, hermetic registry, rebuilt VM, default Redis startup and teardown."""
+"""Real CLI, hermetic registry, rebuilt VM, default Redis startup and teardown.
+
+Explicit ARM64 spike proof: requires the pinned Redis prefetch.
+Run by path; this is not a portable release qualification gate.
+"""
 
 import contextlib
 import json

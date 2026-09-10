@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn publications_are_explicit_loopback_port_pairs() {
+    assert_eq!(
+        "16379:6379".parse::<PortMapping>().unwrap(),
+        PortMapping {
+            host: 16379,
+            guest: 6379
+        }
+    );
+    assert_eq!("0:6379".parse::<PortMapping>().unwrap().host, 0);
+    for invalid in ["6379", "0.0.0.0:6379:6379", "1:0", "65536:6379", "1:2/udp"] {
+        assert!(invalid.parse::<PortMapping>().is_err(), "accepted {invalid}");
+    }
+}
+
+#[test]
 fn image_names_skip_existing_sessions_without_reusing_them() {
     assert_eq!(available_name("redis", &[]).unwrap(), "redis");
     assert_eq!(

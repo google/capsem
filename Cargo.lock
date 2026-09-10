@@ -825,6 +825,7 @@ dependencies = [
  "capsem-credentials",
  "capsem-foundation",
  "capsem-logger",
+ "capsem-port-router",
  "capsem-proto",
  "core-foundation-sys",
  "criterion",
@@ -907,6 +908,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-unix-ipc",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -1074,6 +1076,18 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "capsem-port-router"
+version = "0.6.3"
+dependencies = [
+ "capsem-foundation",
+ "capsem-guard",
+ "clap",
+ "serde",
+ "tokio",
+ "tokio-unix-ipc",
 ]
 
 [[package]]

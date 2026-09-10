@@ -47,7 +47,10 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert process["cwd"] == "/data"
     assert process["noNewPrivileges"] is True
     assert config["root"] == {"path": "rootfs", "readonly": True}
-    assert "hooks" not in config
+    hooks = config["hooks"]["prestart"]
+    assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
+    assert hooks[0]["args"] == ["/usr/bin/python3", str(SOURCE), "--network-ready"]
+    assert hooks[0]["timeout"] == 5
     assert {ns["type"] for ns in config["linux"]["namespaces"]} == {
         "pid",
         "mount",

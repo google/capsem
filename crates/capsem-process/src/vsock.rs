@@ -468,6 +468,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::TerminalResize { cols, rows } => {
                     capsem_core::try_send!("hub_resize", hub_tx.send(HostToGuest::Resize { cols, rows }).await);
                 }
+                ServiceToProcess::ConnectPort { id, port } => {
+                    capsem_core::try_send!(
+                        "hub_publication",
+                        hub_tx.send(HostToGuest::ConnectPort { id, port }).await
+                    );
+                }
                 ServiceToProcess::Exec { id, command } => {
                     // active_execs is owned by ipc.rs's Exec handler -- it
                     // creates the capture slot *before* sending here. The
@@ -927,6 +933,7 @@ fn dispatch_aux_connection(
     vm_id: &str,
 ) {
     match HostVsockService::from_port(conn.port) {
+        Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
         Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
@@ -1580,33 +1587,6 @@ fn is_retryable_handshake_error(err: &anyhow::Error) -> bool {
             )
         })
     })
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq)]
-enum VsockPortKind {
-    Terminal,
-    Control,
-    SniProxy,
-    Exec,
-    Lifecycle,
-    Audit,
-    DnsProxy,
-    Unknown,
-}
-
-#[cfg(test)]
-fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match HostVsockService::from_port(port) {
-        Some(HostVsockService::Terminal) => VsockPortKind::Terminal,
-        Some(HostVsockService::Control) => VsockPortKind::Control,
-        Some(HostVsockService::SniProxy) => VsockPortKind::SniProxy,
-        Some(HostVsockService::Exec) => VsockPortKind::Exec,
-        Some(HostVsockService::Lifecycle) => VsockPortKind::Lifecycle,
-        Some(HostVsockService::Audit) => VsockPortKind::Audit,
-        Some(HostVsockService::DnsProxy) => VsockPortKind::DnsProxy,
-        None => VsockPortKind::Unknown,
-    }
 }
 
 #[cfg(test)]
