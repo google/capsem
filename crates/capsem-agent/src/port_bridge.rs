@@ -31,7 +31,11 @@ pub fn connect(id: u64, port: u16) -> io::Result<()> {
         .name("capsem-port-connect".into())
         .spawn(move || {
             let result = (|| {
-                let fd = vsock_io::vsock_connect(VSOCK_HOST_CID, capsem_proto::VSOCK_PORT_PUBLICATION)?;
+                let fd = vsock_io::vsock_connect_with_timeout(
+                    VSOCK_HOST_CID,
+                    capsem_proto::VSOCK_PORT_PUBLICATION,
+                    std::time::Duration::from_secs(3),
+                )?;
                 // SAFETY: vsock_connect returns a newly owned fd or an error.
                 let mut vsock = std::os::unix::net::UnixStream::from(unsafe { OwnedFd::from_raw_fd(fd) });
                 let tcp = container_tcp(port);

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Guest VSOCK connection attempts now use a finite setup deadline, including
+  published-port connections whose host stops responding during setup.
 - Published ports share VM-wide connection and guest setup budgets, with bounded
   setup pacing across listeners.
 - VM shutdown joins published-port brokers and guest handshake readers before
