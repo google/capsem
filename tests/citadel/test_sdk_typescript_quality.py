@@ -24,7 +24,7 @@ def _assert_quality(source: str, scripts: dict, compiler: dict) -> None:
         value = re.search(rf"\b{metric}: (\d+)", thresholds[1])
         assert value and int(value[1]) >= 90, SDK_RATIONALE
     assert scripts["test"] == "vitest run --coverage", SDK_RATIONALE
-    assert scripts["check"] == "tsc --noEmit -p tsconfig.test.json", SDK_RATIONALE
+    assert scripts["check"] == "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.browser.json", SDK_RATIONALE
     assert scripts["lint"] == "eslint src tests tools eslint.config.js vitest.config.ts --max-warnings 0", SDK_RATIONALE
     assert scripts["build"] == "node tools/build.mjs", SDK_RATIONALE
     assert scripts["prepack"] == "pnpm run build", SDK_RATIONALE
@@ -43,12 +43,15 @@ def _settings() -> tuple[str, dict, dict]:
 
 def test_typescript_quality_is_enforced() -> None:
     _assert_quality(*_settings())
+    root = ROOT / CONFIG.sdk_typescript.project
+    browser = json.loads((root / "tsconfig.browser.json").read_text())
+    assert browser == {"extends": "./tsconfig.json", "compilerOptions": {"types": [], "noEmit": True}}, SDK_RATIONALE
     for root in (CONFIG.sdk_typescript.source, CONFIG.sdk_typescript.tests):
         for path in (ROOT / root).rglob("*.ts"):
             assert not re.search(r"(?:eslint-disable|@ts-ignore|@ts-nocheck|[vc]8 ignore|istanbul ignore)", path.read_text()), SDK_RATIONALE
 
 
-@pytest.mark.parametrize("mutation", ["source", "tests", "floor", "coverage", "strict", "lib"])
+@pytest.mark.parametrize("mutation", ["source", "tests", "floor", "coverage", "strict", "lib", "browser"])
 def test_typescript_quality_weakening_is_rejected(mutation: str) -> None:
     source, scripts, compiler = _settings()
     match mutation:
@@ -64,6 +67,8 @@ def test_typescript_quality_weakening_is_rejected(mutation: str) -> None:
             compiler["strict"] = False
         case "lib":
             compiler["skipLibCheck"] = True
+        case "browser":
+            scripts["check"] = "tsc --noEmit -p tsconfig.test.json"
     with pytest.raises(AssertionError, match="SDK code"):
         _assert_quality(source, scripts, compiler)
 

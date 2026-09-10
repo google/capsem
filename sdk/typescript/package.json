@@ -10,7 +10,7 @@
   },
   "scripts": {
     "lint": "eslint src tests tools eslint.config.js vitest.config.ts --max-warnings 0",
-    "check": "tsc --noEmit -p tsconfig.test.json",
+    "check": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.browser.json",
     "build": "node tools/build.mjs",
     "prepack": "pnpm run build",
     "test": "vitest run --coverage"
