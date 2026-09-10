@@ -89,16 +89,18 @@ impl Bridge {
                     tcp.set_nodelay(true)?;
                     let mut tcp = tokio::net::TcpStream::from_std(tcp)?;
                     let mut vsock = AsyncVsock::new(vsock.into_raw_fd())?;
-                    tokio::select! {
-                        biased;
-                        _ = stop.changed() => {},
-                        outcome = capsem_foundation::unix::router_stream::copy(&mut tcp, &mut vsock,
-                            capsem_foundation::unix::router_stream::Limits::default()) => {
-                            tracing::debug!(connection_id = id, reason = ?outcome.reason,
-                                from_source = outcome.from_source, to_source = outcome.to_source,
-                                error = ?outcome.error, "guest router stream ended");
-                        }
-                    }
+                    let outcome = capsem_foundation::unix::router_stream::copy_until(
+                        &mut tcp,
+                        &mut vsock,
+                        capsem_foundation::unix::router_stream::Limits::default(),
+                        async {
+                            let _ = stop.changed().await;
+                        },
+                    )
+                    .await;
+                    tracing::debug!(connection_id = id, reason = ?outcome.reason,
+                        from_source = outcome.from_source, to_source = outcome.to_source,
+                        error = ?outcome.error, "guest router stream ended");
                     Ok::<_, io::Error>(())
                 }
                 .await;

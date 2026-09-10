@@ -17,6 +17,7 @@ pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
+pub mod router;
 
 pub use handshake::{HandshakeError, Hello};
 
@@ -49,7 +50,7 @@ pub const MAX_BOOT_FILES: usize = 64;
 pub const PROTOCOL_VERSION: u16 = 1;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
-/// handshake.rs). Computed by `build.rs`. Detects "I added a variant in
+/// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
 /// the middle without bumping PROTOCOL_VERSION" -- silent re-numbering of
 /// bincode variants -- which is exactly the bug that motivated this
 /// sprint.

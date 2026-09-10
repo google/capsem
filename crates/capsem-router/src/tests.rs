@@ -4,6 +4,24 @@ use std::os::unix::net::UnixStream as StdUnixStream;
 use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
+#[tokio::test]
+async fn closed_event_has_bounded_space_for_reason_and_delivered_counts() {
+    let mut frame = Vec::new();
+    let report = CloseReport {
+        reason: CloseReason::Cancelled,
+        from_source: 123,
+        to_source: u64::MAX,
+    };
+    Event::Closed(7, report).write(&mut frame).await.unwrap();
+    assert_eq!(frame.len(), 27, "close reports need reason and two byte counts");
+    assert_eq!(Event::read(&mut &frame[..]).await.unwrap(), Event::Closed(7, report));
+    frame[10] = 255;
+    assert_eq!(
+        Event::read(&mut &frame[..]).await.unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
 fn stream_pair() -> (StdUnixStream, UnixStream) {
     let (owned, peer) = StdUnixStream::pair().unwrap();
     peer.set_nonblocking(true).unwrap();
@@ -65,7 +83,17 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
                 retained.remove(&id).expect("acknowledged unknown handoff");
                 accepted += 1;
             }
-            Event::Closed(_) => closed += 1,
+            Event::Closed(_, report) => {
+                assert_eq!(
+                    report,
+                    CloseReport {
+                        reason: CloseReason::Complete,
+                        from_source: 32 * 1024,
+                        to_source: 32 * 1024
+                    }
+                );
+                closed += 1;
+            }
             other => panic!("unexpected {other:?}"),
         }
     }

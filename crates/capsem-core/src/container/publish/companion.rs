@@ -92,7 +92,7 @@ impl Router {
             };
             let (id, terminal) = match event {
                 Event::Accepted(id) => (id, false),
-                Event::Closed(id) | Event::Refused(id) => (id, true),
+                Event::Closed(id, _) | Event::Refused(id) => (id, true),
                 Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
             };
             let observer = {

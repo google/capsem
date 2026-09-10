@@ -1,4 +1,5 @@
 //! Bounded duplex copying shared by the router and the guest bridge.
+pub use capsem_proto::router::{CloseReason, CloseReport};
 use std::future::Future;
 use std::io;
 use std::time::Duration;
@@ -21,15 +22,6 @@ impl Default for Limits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CloseReason {
-    Complete,
-    WriteStall,
-    HalfCloseTimeout,
-    Reset,
-    Io,
-}
-
 #[derive(Debug)]
 #[must_use]
 pub struct Outcome {
@@ -39,10 +31,30 @@ pub struct Outcome {
     pub error: Option<io::Error>,
 }
 
+impl Outcome {
+    pub fn report(&self) -> CloseReport {
+        CloseReport {
+            reason: self.reason,
+            from_source: self.from_source,
+            to_source: self.to_source,
+        }
+    }
+}
+
 pub async fn copy(
     source: &mut (impl AsyncRead + AsyncWrite + Unpin),
     destination: &mut (impl AsyncRead + AsyncWrite + Unpin),
     limits: Limits,
+) -> Outcome {
+    copy_until(source, destination, limits, std::future::pending()).await
+}
+
+/// Cooperative termination retains delivered counts, including during FIN drain.
+pub async fn copy_until(
+    source: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    destination: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    limits: Limits,
+    stop: impl Future<Output = ()>,
 ) -> Outcome {
     let (source_read, source_write) = tokio::io::split(source);
     let (destination_read, destination_write) = tokio::io::split(destination);
@@ -51,14 +63,22 @@ pub async fn copy(
         let forward = direction(source_read, destination_write, limits, &mut from_source);
         let reverse = direction(destination_read, source_write, limits, &mut to_source);
         tokio::pin!(forward, reverse);
+        let forwarding = async {
+            tokio::select! {
+                result = &mut forward => finish(result, reverse, limits.half_close).await,
+                result = &mut reverse => finish(result, forward, limits.half_close).await,
+            }
+        };
         tokio::select! {
-            result = &mut forward => finish(result, reverse, limits.half_close).await,
-            result = &mut reverse => finish(result, forward, limits.half_close).await,
+            biased;
+            _ = stop => None,
+            result = forwarding => Some(result),
         }
     };
     let (reason, error) = match result {
-        Ok(()) => (CloseReason::Complete, None),
-        Err((reason, error)) => (reason, Some(error)),
+        None => (CloseReason::Cancelled, None),
+        Some(Ok(())) => (CloseReason::Complete, None),
+        Some(Err((reason, error))) => (reason, Some(error)),
     };
     Outcome {
         from_source,

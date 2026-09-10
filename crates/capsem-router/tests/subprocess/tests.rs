@@ -106,7 +106,17 @@ async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
         .unwrap()
         .unwrap();
     assert_eq!(bytes, b"reply after EOF");
-    assert_eq!(router.event().await, Event::Closed(1));
+    assert_eq!(
+        router.event().await,
+        Event::Closed(
+            1,
+            capsem_router::CloseReport {
+                reason: capsem_router::CloseReason::Complete,
+                from_source: 7,
+                to_source: 15,
+            }
+        )
+    );
     router.close().await;
 }
 
@@ -128,8 +138,23 @@ async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
             .unwrap(),
         0
     );
+    let (client, peer) = &mut peers[0];
+    client.write_all(b"request").await.unwrap();
+    peer.read_exact(&mut [0; 7]).await.unwrap();
+    peer.write_all(b"reply").await.unwrap();
+    client.read_exact(&mut [0; 5]).await.unwrap();
     router.grant(Grant::Abort { id: 1 }).await;
-    assert_eq!(router.event().await, Event::Closed(1));
+    assert_eq!(
+        router.event().await,
+        Event::Closed(
+            1,
+            capsem_router::CloseReport {
+                reason: capsem_router::CloseReason::Cancelled,
+                from_source: 7,
+                to_source: 5,
+            }
+        )
+    );
     let replacement = router.pair(excess + 1).await;
     assert_eq!(router.event().await, Event::Accepted(excess + 1));
     peers.push(replacement);

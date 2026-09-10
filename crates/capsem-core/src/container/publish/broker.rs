@@ -76,9 +76,11 @@ pub(super) async fn serve(
                         ensure!(flow.acknowledgement.take().is_some() && !flow.accepted, "invalid router acknowledgement");
                         flow.accepted = true;
                     }
-                    Event::Closed(id) => {
+                    Event::Closed(id, report) => {
                         let flow = active.remove(&id).context("router closed unknown connection")?;
                         ensure!(flow.accepted, "router closed unacknowledged connection");
+                        tracing::debug!(connection_id = id, reason = ?report.reason,
+                            from_source = report.from_source, to_source = report.to_source, "publication closed");
                         drop(flow);
                     }
                     Event::Refused(id) => {

@@ -12,8 +12,10 @@ stream, and grants the two connected descriptors over a private Unix socket.
 The companion receives no listener. Linux also denies accept syscalls; macOS
 preserves existing FD authority, so closing inherited FDs and rejecting listener
 grants are essential. Ten-byte,
-versioned records carry grants, acknowledgements, closes, and aborts; only grants
-carry FDs. Oversized records, excess FDs, reused IDs, and unexpected events fail
+versioned headers carry grants, acknowledgements, closes, and aborts; only grants
+carry FDs. Close reports append 17 bytes for a typed reason and two delivered-byte
+counts. Cooperative cancellation preserves those counts during active transfer
+and FIN drain. Oversized records, excess FDs, reused IDs, and unexpected events fail
 closed. Kernel-sized ancillary storage prevents truncated FD ownership on Darwin.
 
 After runtime initialization, the companion installs Seatbelt on macOS or

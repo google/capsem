@@ -3,6 +3,11 @@ use capsem_foundation::unix::router_channel::Receiver;
 
 #[tokio::test]
 async fn late_ack_after_removal_does_not_interrupt_another_publication() {
+    let report = capsem_router::CloseReport {
+        reason: capsem_router::CloseReason::Cancelled,
+        from_source: 7,
+        to_source: 5,
+    };
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
@@ -26,12 +31,12 @@ async fn late_ack_after_removal_does_not_interrupt_another_publication() {
     router.abort(first).await.unwrap();
     assert!(matches!(Grant::decode(receiver.recv().await.unwrap()).unwrap(), Grant::Abort { id } if id == first));
     Event::Accepted(first).write(&mut events).await.unwrap();
-    Event::Closed(first).write(&mut events).await.unwrap();
+    Event::Closed(first, report).write(&mut events).await.unwrap();
     Event::Accepted(second).write(&mut events).await.unwrap();
     assert_eq!(second_events.recv().await.unwrap(), Event::Accepted(second));
     assert!(first_events.recv().await.is_none());
-    Event::Closed(second).write(&mut events).await.unwrap();
-    assert_eq!(second_events.recv().await.unwrap(), Event::Closed(second));
+    Event::Closed(second, report).write(&mut events).await.unwrap();
+    assert_eq!(second_events.recv().await.unwrap(), Event::Closed(second, report));
     assert!(router.observers.lock().unwrap().is_empty());
     router.closed.cancel();
     reader.await.unwrap().unwrap();

@@ -3,6 +3,33 @@ use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, timeout};
 
 #[tokio::test(start_paused = true)]
+async fn cooperative_abort_reports_delivered_bytes_before_closing() {
+    let (mut client, mut source) = duplex(32);
+    let (mut server, mut destination) = duplex(32);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let relay = tokio::spawn(async move {
+        copy_until(&mut source, &mut destination, Limits::default(), async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    client.write_all(b"request").await.unwrap();
+    server.read_exact(&mut [0; 7]).await.unwrap();
+    server.write_all(b"reply").await.unwrap();
+    client.read_exact(&mut [0; 5]).await.unwrap();
+    stop.send(()).unwrap();
+    let outcome = timeout(Duration::from_secs(1), relay)
+        .await
+        .expect("cancellation must finish even when both peers stay open")
+        .unwrap();
+    assert_eq!(outcome.reason, CloseReason::Cancelled);
+    assert_eq!((outcome.from_source, outcome.to_source), (7, 5));
+    assert!(outcome.error.is_none());
+    assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
+    assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+}
+
+#[tokio::test(start_paused = true)]
 async fn half_closed_peer_has_a_deadline() {
     let (mut client, mut source) = duplex(32);
     let (mut server, mut destination) = duplex(32);
@@ -15,6 +42,27 @@ async fn half_closed_peer_has_a_deadline() {
         .unwrap();
     assert_eq!(result.reason, CloseReason::HalfCloseTimeout);
     assert_eq!((result.from_source, result.to_source), (0, 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn cooperative_abort_interrupts_a_half_close_drain() {
+    let (mut client, mut source) = duplex(32);
+    let (mut server, mut destination) = duplex(32);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let relay = tokio::spawn(async move {
+        copy_until(&mut source, &mut destination, Limits::default(), async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    client.write_all(b"request").await.unwrap();
+    client.shutdown().await.unwrap();
+    server.read_exact(&mut [0; 7]).await.unwrap();
+    assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+    stop.send(()).unwrap();
+    let outcome = timeout(Duration::from_secs(1), relay).await.unwrap().unwrap();
+    assert_eq!(outcome.reason, CloseReason::Cancelled);
+    assert_eq!((outcome.from_source, outcome.to_source), (7, 0));
 }
 
 #[tokio::test(start_paused = true)]

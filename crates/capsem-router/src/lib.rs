@@ -4,6 +4,7 @@ use capsem_foundation::unix::{
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
     router_stream,
 };
+pub use router_stream::{CloseReason, CloseReport};
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
@@ -14,7 +15,7 @@ use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
 pub const CONNECTIONS_PER_CLASS: usize = 64;
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
@@ -96,7 +97,7 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
 pub enum Event {
     Ready,
     Accepted(u64),
-    Closed(u64),
+    Closed(u64, CloseReport),
     ConfinementFailed,
     Refused(u64),
 }
@@ -107,21 +108,42 @@ impl Event {
         match decode(frame)? {
             (0, 0) => Ok(Self::Ready),
             (1, id) if id != 0 => Ok(Self::Accepted(id)),
-            (2, id) if id != 0 => Ok(Self::Closed(id)),
+            (2, id) if id != 0 => {
+                let mut report = [0; 17];
+                reader.read_exact(&mut report).await?;
+                Ok(Self::Closed(
+                    id,
+                    CloseReport {
+                        reason: CloseReason::try_from(report[0]).map_err(invalid)?,
+                        from_source: u64::from_be_bytes(report[1..9].try_into().unwrap()),
+                        to_source: u64::from_be_bytes(report[9..17].try_into().unwrap()),
+                    },
+                ))
+            }
             (3, 0) => Ok(Self::ConfinementFailed),
             (4, id) if id != 0 => Ok(Self::Refused(id)),
             _ => Err(invalid("invalid router event")),
         }
     }
     pub async fn write(&self, writer: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
-        let frame = match self {
+        let header = match self {
             Self::Ready => encode(0, 0),
             Self::Accepted(id) => encode(1, *id),
-            Self::Closed(id) => encode(2, *id),
+            Self::Closed(id, _) => encode(2, *id),
             Self::ConfinementFailed => encode(3, 0),
             Self::Refused(id) => encode(4, *id),
         };
-        timeout(Duration::from_secs(2), writer.write_all(&frame)).await?
+        let mut frame = [0; 27];
+        frame[..FRAME_SIZE].copy_from_slice(&header);
+        let length = if let Self::Closed(_, report) = self {
+            frame[10] = report.reason as u8;
+            frame[11..19].copy_from_slice(&report.from_source.to_be_bytes());
+            frame[19..27].copy_from_slice(&report.to_source.to_be_bytes());
+            frame.len()
+        } else {
+            FRAME_SIZE
+        };
+        timeout(Duration::from_secs(2), writer.write_all(&frame[..length])).await?
     }
 }
 
@@ -191,30 +213,27 @@ pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
                         };
                         // Acknowledgement precedes forwarding and is bounded.
                         Event::Accepted(id).write(&mut events).await?;
-                        let task = jobs.spawn(async move {
+                        let (stop, stopped) = tokio::sync::oneshot::channel();
+                        jobs.spawn(async move {
                             let _permit = permit;
-                            let result = router_stream::copy(&mut source.0, &mut destination.0, router_stream::Limits::default()).await;
+                            let result = router_stream::copy_until(&mut source.0, &mut destination.0, router_stream::Limits::default(), async {
+                                let _ = stopped.await;
+                            }).await;
                             tracing::debug!(connection_id = id, ?class, reason = ?result.reason, from_source = result.from_source,
                                 to_source = result.to_source, error = ?result.error, "router stream ended");
-                            id
+                            (id, result.report())
                         });
-                        active.insert(id, task);
+                        active.insert(id, stop);
                     }
                     Grant::Abort { id } => {
-                        if let Some(task) = active.get(&id) { task.abort(); }
+                        if let Some(stop) = active.remove(&id) { let _ = stop.send(()); }
                     }
                     Grant::Hello => return Err(invalid("duplicate router hello")),
                 },
                 completed = jobs.join_next(), if !jobs.is_empty() => match completed.unwrap() {
-                    Ok(id) => {
+                    Ok((id, report)) => {
                         active.remove(&id);
-                        Event::Closed(id).write(&mut events).await?;
-                    }
-                    Err(error) if error.is_cancelled() => {
-                        if let Some(id) = active.iter().find_map(|(&id, task)| (task.id() == error.id()).then_some(id)) {
-                            active.remove(&id);
-                            Event::Closed(id).write(&mut events).await?;
-                        }
+                        Event::Closed(id, report).write(&mut events).await?;
                     },
                     Err(error) => return Err(io::Error::other(error)),
                 }
