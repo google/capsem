@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Local focused tests preserve the invoking checkout's assembled VM assets
+  instead of replacing them with another branch's cached kernel or rootfs.
+
 - Container runs now retain their named VM for the existing stop, restart, fork
   and delete commands. Closing the log client detaches; reboot restores the
   saved image command and host port bindings. Forks omit host bindings.
