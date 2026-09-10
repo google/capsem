@@ -43,6 +43,8 @@ HTTP `status` and response `body`; invalid typed responses raise Pydantic
 `ValidationError`. HTTP `timeout` is the client deadline, while `exec`'s
 `timeout_secs` is the command deadline sent to the gateway. Choose an HTTP
 deadline long enough for the command. Mutations are never automatically retried.
+The guest exec channel currently combines both streams in `stdout`; `stderr`
+is empty. The SDK preserves this gateway behavior.
 
 A VM selected by name resolves once, then retains its canonical ID. Handles
 returned by `create` and `fork` share their parent's connection. Close the

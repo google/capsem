@@ -58,6 +58,8 @@ returns `Error::Json`. HTTP requests default to 30 seconds and never follow
 redirects or retry automatically. `with_timeout` sets this handle's HTTP
 deadline; `exec`'s optional `timeout_secs` sets the guest command deadline.
 Choose an HTTP deadline long enough for the command.
+The guest exec channel currently combines both streams in `stdout`; `stderr`
+is empty. The SDK preserves this gateway behavior.
 
 `hv.restart().await?` returns a typed HTTP 202 acknowledgement. It requires an
 idle service managed by launchd or systemd; active/starting VMs return 409 and

@@ -47,6 +47,8 @@ preserves the gateway status and response text. `NetworkError` identifies fetch
 or response-body connection failures and retains the original `cause`. Response
 validation errors remain distinct; cancellation and timeout reasons are preserved.
 Mutations are never retried.
+The guest exec channel currently combines both streams in `stdout`; `stderr`
+is empty. The SDK preserves this gateway behavior.
 
 Created/forked handles share their owner's connection. Closing a child leaves
 siblings usable; closing the owner invalidates its children. `close()` releases
