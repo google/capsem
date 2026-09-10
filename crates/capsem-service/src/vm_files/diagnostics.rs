@@ -1,10 +1,12 @@
 //! Log, panic, and triage routes: the read-only diagnostics a session exposes.
 
 use super::*;
+use axum::response::IntoResponse;
 
 pub(crate) async fn handle_logs(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<LogQuery>,
 ) -> Result<Json<LogsResponse>, AppError> {
     let known = {
         let instances = state.instances.lock().unwrap();
@@ -38,14 +40,17 @@ pub(crate) async fn handle_logs(
     // output written through `CappedLogWriter`, so it both rotates and can be
     // arbitrarily large -- reading the whole bare file lost the rotated slice
     // and let the guest choose the allocation.
+    let max_bytes = log_read_limit(&params, SESSION_LOG_TAIL_MAX_BYTES);
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = capsem_foundation::telemetry::read_log_tail(&serial_log_path, SESSION_LOG_TAIL_MAX_BYTES);
-        let process = capsem_foundation::telemetry::read_log_tail(&process_log_path, SESSION_LOG_TAIL_MAX_BYTES);
+        let serial = capsem_foundation::telemetry::read_log_tail(&serial_log_path, max_bytes);
+        let process = capsem_foundation::telemetry::read_log_tail(&process_log_path, max_bytes);
         (serial, process)
     })
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
+    let serial_logs = serial_logs.map(|text| filter_log(text, &params));
+    let process_logs = process_logs.map(|text| filter_log(text, &params));
     Ok(Json(LogsResponse {
         logs: serial_logs.as_deref().unwrap_or("").to_string(),
         serial_logs,
@@ -315,39 +320,72 @@ pub(crate) struct TriageQuery {
 }
 
 /// `GET /host-logs/{name}?grep=&tail=&max_bytes=` -- read a host-side log
-/// file by symbolic name. Hard-coded allowlist (no path traversal). Used
-/// by the `capsem_host_logs` MCP tool (T3) but the endpoint already lands
-/// in this commit so a future T3 sub-sprint can wire the MCP tool without
-/// touching the service.
+/// file by symbolic name. Accept: application/json selects the typed SDK
+/// response; existing text consumers retain the plain representation.
 pub(crate) async fn handle_host_logs(
     State(state): State<Arc<ServiceState>>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    axum::extract::Query(params): axum::extract::Query<HostLogsQuery>,
-) -> Result<String, AppError> {
-    let path = if name == "app" {
-        state
+    axum::extract::Path(source): axum::extract::Path<HostLogSource>,
+    axum::extract::Query(params): axum::extract::Query<LogQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, AppError> {
+    let path = match source {
+        HostLogSource::App => state
             .off_worker(|_| triage::latest_app_log(&capsem_foundation::paths::capsem_home()))
             .await?
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?
-    } else {
-        triage::host_log_path(&state.run_dir, &name)
-            .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown log name: {name}")))?
+            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?,
+        HostLogSource::Service => state.run_dir.join("service.log"),
+        HostLogSource::Mcp => state.run_dir.join("mcp.log"),
+        HostLogSource::Gateway => state.run_dir.join("gateway.log"),
+        HostLogSource::Tray => state.run_dir.join("tray.log"),
     };
-    let max_bytes = params.max_bytes.unwrap_or(100 * 1024).min(5 * 1024 * 1024);
+    let max_bytes = log_read_limit(&params, 100 * 1024);
     // `service.log` names a daily-rotated stream, so opening that exact name
     // returns nothing the moment it has rotated -- this endpoint reported an
     // empty log for a service that was writing normally. Reading through the
     // stream reader also removes the fourth hand-rolled copy of seek-from-end
     // and trim-the-partial-line in this crate.
     let text = tokio::task::spawn_blocking(move || {
-        capsem_foundation::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
+        capsem_foundation::telemetry::read_log_tail(&path, max_bytes).unwrap_or_default()
     })
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
-    // Apply grep + tail post-filters here so the wire surface to the
-    // capsem_host_logs MCP tool can avoid two round-trips.
-    let mut text = text;
+    let text = filter_log(text, &params);
+    let json = headers.get_all(axum::http::header::ACCEPT).iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value.split(',').any(|media| {
+                let mut parts = media.split(';');
+                parts
+                    .next()
+                    .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
+                    && !parts.any(|param| {
+                        param
+                            .trim()
+                            .strip_prefix("q=")
+                            .is_some_and(|q| q.parse::<f32>().map_or(true, |q| q <= 0.0))
+                    })
+            })
+        })
+    });
+    let mut response = if json {
+        Json(HostLogsResponse { source, text }).into_response()
+    } else {
+        text.into_response()
+    };
+    response
+        .headers_mut()
+        .insert(axum::http::header::VARY, axum::http::HeaderValue::from_static("Accept"));
+    Ok(response)
+}
+
+fn log_read_limit(params: &LogQuery, default: usize) -> usize {
+    params
+        .max_bytes
+        .unwrap_or(default as u64)
+        .min(SESSION_LOG_TAIL_MAX_BYTES as u64) as usize
+}
+
+fn filter_log(mut text: String, params: &LogQuery) -> String {
     if let Some(pat) = &params.grep {
         text = text.lines().filter(|l| l.contains(pat)).collect::<Vec<_>>().join("\n");
     }
@@ -356,14 +394,7 @@ pub(crate) async fn handle_host_logs(
         let start = lines.len().saturating_sub(n);
         text = lines[start..].join("\n");
     }
-    Ok(text)
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub(crate) struct HostLogsQuery {
-    grep: Option<String>,
-    tail: Option<usize>,
-    max_bytes: Option<u64>,
+    text
 }
 
 pub(crate) async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<String, AppError> {

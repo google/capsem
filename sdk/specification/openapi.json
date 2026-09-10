@@ -5,6 +5,84 @@
     "version": "0.6.3"
   },
   "paths": {
+    "/host-logs/{name}": {
+      "get": {
+        "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
+        "operationId": "getHypervisorLogs",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HostLogSource"
+            }
+          },
+          {
+            "name": "grep",
+            "in": "query",
+            "description": "Keep lines containing this literal substring, before applying tail.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Return the last matching lines. Zero returns no lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "description": "Read at most this many bytes per stream, capped at 5 MiB.\nDefaults to 100 KiB for host logs and 5 MiB for VM logs.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded, filtered log tail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLogsResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/profiles/list": {
       "get": {
         "operationId": "listProfiles",
@@ -542,6 +620,36 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "grep",
+            "in": "query",
+            "description": "Keep lines containing this literal substring, before applying tail.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Return the last matching lines. Zero returns no lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "description": "Read at most this many bytes per stream, capped at 5 MiB.\nDefaults to 100 KiB for host logs and 5 MiB for VM logs.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
           }
         ],
         "responses": {
@@ -989,6 +1097,32 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "HostLogSource": {
+        "type": "string",
+        "description": "Symbolic host log streams. Paths supplied by clients are never accepted.",
+        "enum": [
+          "service",
+          "mcp",
+          "gateway",
+          "tray",
+          "app"
+        ]
+      },
+      "HostLogsResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "text"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/HostLogSource"
+          },
+          "text": {
+            "type": "string"
           }
         }
       },

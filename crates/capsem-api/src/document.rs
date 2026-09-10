@@ -6,7 +6,7 @@ use utoipa::openapi::request_body::RequestBodyBuilder;
 use utoipa::openapi::schema::{ComponentsBuilder, KnownFormat, ObjectBuilder, SchemaFormat, Type};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityRequirement, SecurityScheme};
 use utoipa::openapi::{Content, ContentBuilder, Info, OpenApi, Ref, Required, ResponseBuilder};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// Build the same contract served by the gateway and exported for SDK generation.
 pub fn openapi() -> OpenApi {
@@ -20,7 +20,7 @@ pub fn openapi() -> OpenApi {
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/start", "startVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/resume", "resumeVm");
-    doc.get::<LogsResponse>("/vms/{id}/logs", "getVmLogs");
+    doc.logs();
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
     doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
@@ -101,6 +101,42 @@ impl Document {
     fn empty_post<T: ToSchema>(&mut self, path: &str, id: &str) {
         let operation = self.operation::<T>(path, id);
         self.add(path, HttpMethod::Post, operation);
+    }
+
+    fn logs(&mut self) {
+        let path = "/vms/{id}/logs";
+        let operation = self
+            .operation::<LogsResponse>(path, "getVmLogs")
+            .parameters(Some(LogQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add(path, HttpMethod::Get, operation);
+
+        let path = "/host-logs/{name}";
+        let source = self.schema::<HostLogSource>();
+        let result = self.schema::<HostLogsResponse>();
+        let operation = self
+            .operation::<HostLogsResponse>(path, "getHypervisorLogs")
+            .description(Some(
+                "Send Accept: application/json for the typed response. Without it the route returns plain text.",
+            ))
+            .parameter(
+                ParameterBuilder::new()
+                    .name("name")
+                    .parameter_in(ParameterIn::Path)
+                    .required(Required::True)
+                    .schema(Some(source)),
+            )
+            .parameters(Some(LogQuery::into_params(|| Some(ParameterIn::Query))))
+            .response(
+                "200",
+                ResponseBuilder::new()
+                    .description("Bounded, filtered log tail")
+                    .content("application/json", Content::new(Some(result)))
+                    .content(
+                        "text/plain",
+                        Content::new(Some(ObjectBuilder::new().schema_type(Type::String))),
+                    ),
+            );
+        self.add(path, HttpMethod::Get, operation);
     }
 
     fn files(&mut self) {

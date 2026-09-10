@@ -49,7 +49,7 @@ async fn every_documented_operation_is_forwarded_by_the_real_gateway_router() {
     let document = serde_json::to_value(capsem_api::openapi()).unwrap();
     for (path, methods) in document["paths"].as_object().unwrap() {
         for method in methods.as_object().unwrap().keys() {
-            let uri = path.replace("{id}", "schema-test-vm");
+            let uri = path.replace("{id}", "schema-test-vm").replace("{name}", "service");
             let response = app
                 .clone()
                 .oneshot(
