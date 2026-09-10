@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Guest published connections are canceled and joined on control disconnect,
+  shutdown, and snapshot preparation; namespace setup uses bounded workers.
 - Guest VSOCK connection attempts now use a finite setup deadline, including
   published-port connections whose host stops responding during setup.
 - Published ports share VM-wide connection and guest setup budgets, with bounded

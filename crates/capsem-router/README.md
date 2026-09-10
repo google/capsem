@@ -44,6 +44,15 @@ Publication removal cancels its broker and aborts its flows; late acknowledgemen
 are discarded until Closed without interrupting other publications. VM shutdown
 joins the brokers, guest handshake readers, and child monitor before log draining.
 
+The guest control connection owns its own bridge JoinSet. Disconnect, shutdown,
+or snapshot preparation cancels streams and joins setup before returning. At most
+eight disposable namespace threads set up connections; reusable Tokio workers
+never change namespace. VSOCK connect, container TCP connect, and the guest
+handshake share a three-second setup deadline. The PID file is opened through
+the existing containment helper and bounded to a small regular-file read, so a
+FIFO or symlink cannot trap the setup worker. Queued and active flows share the
+guest's 64 ingress slots. The guest runtime is drained before it is dropped.
+
 ## Networking extension boundary
 
 Subsequent networking work will put connection admission through the existing

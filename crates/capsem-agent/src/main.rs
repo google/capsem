@@ -1114,11 +1114,18 @@ fn control_loop(
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
     pending_responses: PendingResponses,
 ) {
+    let mut publications: Option<port_bridge::Bridge> = None;
     loop {
         match recv_host_msg(control_fd) {
             Ok(HostToGuest::ConnectPort { id, port }) => {
-                if let Err(error) = port_bridge::connect(id, port) {
-                    eprintln!("[capsem-agent] publication refused: {error}");
+                let result = (|| {
+                    if publications.is_none() {
+                        publications = Some(port_bridge::Bridge::new()?);
+                    }
+                    publications.as_mut().unwrap().connect(id, port)
+                })();
+                if let Err(error) = result {
+                    tracing::debug!(connection_id = id, %error, "guest publication refused");
                 }
             }
             Ok(HostToGuest::AckReply { id }) => {
@@ -1154,6 +1161,7 @@ fn control_loop(
                 // Flag first: the bridge must not end the connection when
                 // the shell exits, or the report below is lost with it.
                 ctrl_tx.shutdown.request();
+                drop(publications.take());
                 let end = shutdown::end_terminal_shell(child_pid, std::time::Duration::from_secs(SHUTDOWN_GRACE_SECS));
                 eprintln!("[capsem-agent] shutdown: {end}");
                 // Tell the host it can stop the VM now rather than at the
@@ -1332,6 +1340,7 @@ fn control_loop(
                 }
             }
             Ok(HostToGuest::PrepareSnapshot) => {
+                drop(publications.take());
                 // Flush guest dirty pages out to the system-overlay
                 // virtio-blk device (/dev/vdb) before host save_state /
                 // host-side APFS clonefile runs. sync() drains the page
