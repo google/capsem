@@ -10,6 +10,7 @@ pub mod api;
 pub mod errors;
 pub mod fs_utils;
 pub mod lifecycle;
+pub mod management;
 pub mod naming;
 pub mod registry;
 pub mod triage;

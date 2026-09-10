@@ -1,8 +1,11 @@
 use super::*;
 
+pub(crate) mod restart;
+
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/status", get(handle_service_status))
+        .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
         .route("/system/status", get(handle_system_status))
         .route("/update/check", post(handle_update_check))

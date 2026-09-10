@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn restart_contract_acknowledges_202_and_requires_fresh_authentication() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    let operation = &doc["paths"]["/restart"]["post"];
+    assert_eq!(operation["operationId"], "restartHypervisor");
+    assert!(operation["responses"]["200"].is_null());
+    assert_eq!(
+        operation["responses"]["202"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RestartResponse"
+    );
+    let response = RestartResponse {
+        status: RestartStatus::Accepted,
+        manager: ServiceManager::Systemd,
+        authentication: RestartAuthentication::NewTokenRequired,
+    };
+    let wire = serde_json::to_value(&response).unwrap();
+    assert_eq!(wire["authentication"], "new_token_required");
+    assert_eq!(serde_json::from_value::<RestartResponse>(wire).unwrap(), response);
+}
+
+#[test]
 fn stats_detail_schema_names_every_event_and_uses_booleans() {
     let doc = serde_json::to_value(openapi()).unwrap();
     assert_eq!(

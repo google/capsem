@@ -43,6 +43,8 @@ mod list_vms;
 pub use list_vms::list_vms;
 mod pause_vm;
 pub use pause_vm::{pause_vm, PauseVmParams};
+mod restart_hypervisor;
+pub use restart_hypervisor::restart_hypervisor;
 mod resume_vm;
 pub use resume_vm::{resume_vm, ResumeVmParams};
 mod start_vm;

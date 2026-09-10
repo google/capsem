@@ -22,6 +22,7 @@ from .list_vm_files import list_vm_files as list_vm_files
 from .list_vm_snapshots import list_vm_snapshots as list_vm_snapshots
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm
+from .restart_hypervisor import restart_hypervisor as restart_hypervisor
 from .resume_vm import resume_vm as resume_vm
 from .start_vm import start_vm as start_vm
 from .stop_vm import stop_vm as stop_vm

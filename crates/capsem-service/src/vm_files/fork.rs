@@ -7,6 +7,10 @@ pub(crate) async fn handle_fork(
     Path(id): Path<String>,
     Json(payload): Json<ForkRequest>,
 ) -> Result<Json<ForkResponse>, AppError> {
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 

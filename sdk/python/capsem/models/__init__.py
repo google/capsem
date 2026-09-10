@@ -61,8 +61,12 @@ from .profiles_list_response import ProfilesListResponse as ProfilesListResponse
 from .provision_request import ProvisionRequest as ProvisionRequest
 from .provision_response import ProvisionResponse as ProvisionResponse
 from .resource_summary import ResourceSummary as ResourceSummary
+from .restart_authentication import RestartAuthentication as RestartAuthentication
+from .restart_response import RestartResponse as RestartResponse
+from .restart_status import RestartStatus as RestartStatus
 from .sandbox_info import SandboxInfo as SandboxInfo
 from .service_availability import ServiceAvailability as ServiceAvailability
+from .service_manager import ServiceManager as ServiceManager
 from .session_db_status import SessionDbStatus as SessionDbStatus
 from .snapshot_info import SnapshotInfo as SnapshotInfo
 from .snapshot_origin import SnapshotOrigin as SnapshotOrigin

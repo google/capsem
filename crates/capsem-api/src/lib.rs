@@ -28,6 +28,8 @@ mod logs;
 pub use logs::*;
 mod updates;
 pub use updates::*;
+mod restart;
+pub use restart::*;
 mod profiles;
 pub use profiles::*;
 

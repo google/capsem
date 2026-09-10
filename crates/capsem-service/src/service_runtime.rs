@@ -408,7 +408,7 @@ pub(super) async fn run_service() -> Result<()> {
         tokio::select! {
             _ = shutdown_signal() => {}
             _ = shutdown_state.update_restart.notified() => {
-                info!("service restart requested after binary update");
+                info!("managed service restart requested");
             }
         }
         info!("service shutting down, stopping VM processes and draining replies");

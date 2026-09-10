@@ -619,6 +619,7 @@ mod logs_api;
 mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
+mod restart;
 mod session_identity;
 mod settings_files;
 mod snapshots_api;

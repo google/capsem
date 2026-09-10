@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gateway `POST /restart` acknowledges an idle managed-service restart with a
+  typed HTTP 202 response. Active launches/VMs and unmanaged processes are refused;
+  the response requires fresh credentials after gateway token rotation.
+
 - UI profile discovery and update status/application use the typed SDK contract,
   including profile update semantics and validated update evidence and results.
 

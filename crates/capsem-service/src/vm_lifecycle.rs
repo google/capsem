@@ -808,6 +808,10 @@ pub(super) async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
     if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));

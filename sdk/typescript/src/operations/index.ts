@@ -22,6 +22,7 @@ export {listVmFiles} from "./listVmFiles.js";
 export {listVmSnapshots} from "./listVmSnapshots.js";
 export {listVms} from "./listVms.js";
 export {pauseVm} from "./pauseVm.js";
+export {restartHypervisor} from "./restartHypervisor.js";
 export {resumeVm} from "./resumeVm.js";
 export {startVm} from "./startVm.js";
 export {stopVm} from "./stopVm.js";

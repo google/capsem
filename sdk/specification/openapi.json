@@ -115,6 +115,39 @@
         }
       }
     },
+    "/restart": {
+      "post": {
+        "description": "Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation.",
+        "operationId": "restartHypervisor",
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "getHypervisorInfo",
@@ -3248,6 +3281,38 @@
           }
         }
       },
+      "RestartAuthentication": {
+        "type": "string",
+        "enum": [
+          "new_token_required"
+        ]
+      },
+      "RestartResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "manager",
+          "authentication"
+        ],
+        "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/RestartAuthentication",
+            "description": "The restarted gateway rotates its token. Obtain fresh credentials and\nconstruct a new SDK client; never replay the restart mutation."
+          },
+          "manager": {
+            "$ref": "#/components/schemas/ServiceManager"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RestartStatus"
+          }
+        }
+      },
+      "RestartStatus": {
+        "type": "string",
+        "enum": [
+          "accepted"
+        ]
+      },
       "SandboxInfo": {
         "type": "object",
         "required": [
@@ -3499,6 +3564,13 @@
         "enum": [
           "running",
           "unavailable"
+        ]
+      },
+      "ServiceManager": {
+        "type": "string",
+        "enum": [
+          "launchd",
+          "systemd"
         ]
       },
       "SessionDbStatus": {

@@ -52,6 +52,7 @@ pub struct Case {
     pub input: Value,
     pub response: Value,
     pub binary: bool,
+    pub success_status: u16,
     path: String,
     method: String,
     query: Vec<(String, String)>,
@@ -129,7 +130,12 @@ impl Case {
             );
             media.clone()
         });
-        let content = &operation["responses"]["200"]["content"];
+        let success_status = if operation["responses"].get("200").is_some() {
+            200
+        } else {
+            202
+        };
+        let content = &operation["responses"][success_status.to_string()]["content"];
         let binary = content.get("application/octet-stream").is_some();
         let response = if binary {
             Value::Null
@@ -140,6 +146,7 @@ impl Case {
             input: Value::Object(input),
             response,
             binary,
+            success_status,
             path: url.path().into(),
             method: method.to_uppercase(),
             query,

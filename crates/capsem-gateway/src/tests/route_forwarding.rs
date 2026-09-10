@@ -98,7 +98,7 @@ async fn gateway_update_status_route_is_get_only() {
 
 #[tokio::test]
 async fn gateway_update_action_routes_are_post_only() {
-    for uri in ["/update/check", "/update/apply"] {
+    for uri in ["/update/check", "/update/apply", "/restart"] {
         let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
         let post_resp = app
             .clone()

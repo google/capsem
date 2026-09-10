@@ -12,6 +12,9 @@ use utoipa::{IntoParams, ToSchema};
 pub fn openapi() -> OpenApi {
     let mut doc = Document::default();
     doc.get::<HypervisorInfo>("/status", "getHypervisorInfo");
+    let restart = doc.operation_status::<RestartResponse>("/restart", "restartHypervisor", "202")
+        .description(Some("Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation."));
+    doc.add("/restart", HttpMethod::Post, restart);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
@@ -66,12 +69,16 @@ impl Document {
     }
 
     fn operation<T: ToSchema>(&mut self, path: &str, id: &str) -> OperationBuilder {
+        self.operation_status::<T>(path, id, "200")
+    }
+
+    fn operation_status<T: ToSchema>(&mut self, path: &str, id: &str, status: &str) -> OperationBuilder {
         let result = self.schema::<T>();
         let error = self.schema::<ErrorResponse>();
         let mut operation = OperationBuilder::new()
             .operation_id(Some(id))
             .response(
-                "200",
+                status,
                 ResponseBuilder::new()
                     .description("Success")
                     .content("application/json", Content::new(Some(result))),

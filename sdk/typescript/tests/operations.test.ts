@@ -9,7 +9,8 @@ import {gateway} from './gateway.js';
 const operations: Record<string, (transport: Transport, ...parameters: never[]) => Promise<unknown>> = generated;
 
 for (const {path, method, operation} of routes) {
-  const content = operation.responses['200']?.content;
+  const status = operation.responses['200'] ? '200' : '202';
+  const content = operation.responses[status]?.content;
   if (!content) throw new Error('Operation has no successful response');
   const binary = MediaType.BINARY in content;
   it.each(binary ? ['minimal', 'complete', 'error'] : ['minimal', 'complete', 'error', 'invalid-json', 'invalid-shape'])(
@@ -41,6 +42,7 @@ for (const {path, method, operation} of routes) {
         }
       }
       await gateway((_, response) => {
+        response.statusCode = Number(status);
         if (outcome === 'error') response.writeHead(403).end('denied');
         else if (outcome === 'invalid-json') response.end('{');
         else if (outcome === 'invalid-shape') response.end('null');

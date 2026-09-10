@@ -71,7 +71,8 @@ def test_optional_nonnullable_fields_cannot_be_explicitly_null() -> None:
 
 @pytest.mark.parametrize("operation", OPERATIONS, ids=lambda operation: operation["operationId"])
 def test_each_packaged_operation_uses_http_and_returns_typed_data(operation: dict[str, Any]) -> None:
-    content = operation["responses"]["200"]["content"]
+    status = "200" if "200" in operation["responses"] else "202"
+    content = operation["responses"][status]["content"]
     binary = "application/octet-stream" in content
     expected = b"\x00\xff" if binary else sample(content["application/json"]["schema"])
     response = expected if isinstance(expected, bytes) else json.dumps(expected).encode()

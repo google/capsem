@@ -9,12 +9,12 @@ macro_rules! operation {
         async fn $name() {
             for full in [false, true] {
                 let case = Case::new($id, full);
-                for (status, invalid) in [(200, None), (403, None), (200, Some(b"not-json".as_slice())), (200, Some(b"{}".as_slice()))] {
+                for (status, invalid) in [(case.success_status, None), (403, None), (case.success_status, Some(b"not-json".as_slice())), (case.success_status, Some(b"{}".as_slice()))] {
                     if case.binary && invalid.is_some() { continue; }
                     let mut server = case.server(status, invalid).await;
                     let client = server.client();
                     let result = super::$name(&client, $(&serde_json::from_value::<$params>(case.input.clone()).unwrap(),)? CallOptions::default()).await;
-                    if status != 200 {
+                    if status != case.success_status {
                         assert!(matches!(result, Err(crate::Error::Http { status: 403, .. })));
                     } else if invalid.is_some() {
                         assert!(matches!(result, Err(crate::Error::Json(_))), "{result:?}");
@@ -53,6 +53,7 @@ operation!(get_vm_info, "getVmInfo", GetVmInfoParams);
 operation!(get_vm_logs, "getVmLogs", GetVmLogsParams);
 operation!(pause_vm, "pauseVm", PauseVmParams);
 operation!(resume_vm, "resumeVm", ResumeVmParams);
+operation!(restart_hypervisor, "restartHypervisor");
 operation!(list_vm_snapshots, "listVmSnapshots", ListVmSnapshotsParams);
 operation!(
     get_vm_snapshots_status,

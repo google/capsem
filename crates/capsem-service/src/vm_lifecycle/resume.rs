@@ -7,6 +7,10 @@ pub(crate) async fn handle_resume(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     // See handle_suspend: same lock, same reason. Restore happens in the
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
