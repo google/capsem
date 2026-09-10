@@ -49,6 +49,9 @@ pub(crate) struct ActiveExec {
     /// real volume rather than the retained slice.
     pub(crate) total_bytes: u64,
     pub(crate) deposited: Arc<Notify>,
+    pub(crate) stream: Option<tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
+    pub(crate) completion_started: bool,
+    pub(crate) output_error: Option<String>,
 }
 
 impl ActiveExec {
@@ -59,6 +62,9 @@ impl ActiveExec {
             captured: Vec::new(),
             total_bytes: 0,
             deposited: Arc::new(Notify::new()),
+            stream: None,
+            completion_started: false,
+            output_error: None,
         }
     }
 }
@@ -103,7 +109,7 @@ impl JobStore {
         // Wake every ExecDone handler parked on a deposit notifier. Each will
         // then observe its removed slot and complete without hanging.
         for (_, active) in self.active_execs.lock().unwrap().drain() {
-            active.deposited.notify_waiters();
+            active.deposited.notify_one();
         }
         self.active_file_ops.lock().unwrap().clear();
     }

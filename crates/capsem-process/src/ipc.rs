@@ -15,6 +15,7 @@ use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
+mod exec;
 mod snapshot;
 use snapshot::snapshot_status_from_scheduler;
 
@@ -136,7 +137,8 @@ pub(crate) async fn handle_ipc_connection(
     // Sender::send() writes header + payload as two separate syscalls with no
     // internal locking, so concurrent use from multiple tasks is unsafe.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
-    tokio::spawn(async move {
+    let mut connection_tasks = tokio::task::JoinSet::new();
+    connection_tasks.spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
             if tx.send(msg).await.is_err() {
                 break;
@@ -152,7 +154,7 @@ pub(crate) async fn handle_ipc_connection(
     {
         let out_tx = ipc_tx_out.clone();
         let mut rx_bcast = ipc_tx.subscribe();
-        tokio::spawn(async move {
+        connection_tasks.spawn(async move {
             while let Ok(msg) = rx_bcast.recv().await {
                 if matches!(msg, ProcessToService::TerminalOutput { .. }) {
                     continue;
@@ -170,7 +172,11 @@ pub(crate) async fn handle_ipc_connection(
     let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
 
     loop {
-        let msg = match rx.recv().await {
+        let received = tokio::select! {
+            received = rx.recv() => received,
+            _ = connection_tasks.join_next() => break,
+        };
+        let msg = match received {
             Ok(m) => m,
             Err(e) => {
                 // Surface the decode error -- silent connection close on a
@@ -257,117 +263,21 @@ pub(crate) async fn handle_ipc_connection(
                     ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await
                 );
             }
-            ServiceToProcess::Exec { id, command } => {
-                let job_store = job_store.clone();
-                let ctrl_tx = ctrl_tx.clone();
-                let ipc_tx_out = ipc_tx_out.clone();
-                let db = Arc::clone(&net_state.db);
-                tokio::spawn(async move {
-                    info!(id, command, "Received Exec command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-
-                    // Install this id's capture slot before dispatch so the
-                    // EXEC-port reader can deposit independently of other jobs.
-                    job_store
-                        .active_execs
-                        .lock()
-                        .unwrap()
-                        .insert(id, crate::job_store::ActiveExec::new());
-
-                    capsem_core::try_send!(
-                        "ctrl_exec",
-                        ctrl_tx
-                            .send(ServiceToProcess::Exec {
-                                id,
-                                command: command.clone()
-                            })
-                            .await
-                    );
-
-                    // Exec duration is user work, not transport liveness.
-                    // The control bridge's Ack/AckReply replay layers own
-                    // delivery in both directions; this task waits until
-                    // the guest command exits, while the service caller may
-                    // apply an explicit timeout when requested.
-                    let result = await_exec_result(j_rx).await;
-                    match result {
-                        Ok(JobResult::Exec {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            truncated,
-                        }) => {
-                            if truncated {
-                                warn!(
-                                    id,
-                                    retained_bytes = stdout.len(),
-                                    "exec output was capped; the caller receives the retained prefix"
-                                );
-                            }
-                            // The guest may close the command process before
-                            // host-side MITM/audit socket handlers enqueue
-                            // their terminal telemetry. Keep /exec a bounded
-                            // visibility barrier for callers that inspect
-                            // session.db immediately after a command returns,
-                            // without blocking the control bridge's ExecDone
-                            // path on large benchmark flushes.
-                            db.flush_after_quiescence(std::time::Duration::from_millis(50)).await;
-                            info!(id, exit_code, "Sending ExecResult back via IPC");
-                            capsem_core::try_send!(
-                                "ipc_exec_result",
-                                ipc_tx_out
-                                    .send(ProcessToService::ExecResult {
-                                        id,
-                                        stdout,
-                                        stderr,
-                                        exit_code,
-                                        truncated
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(JobResult::Error { message }) => {
-                            db.flush_after_quiescence(std::time::Duration::from_millis(50)).await;
-                            error!(id, message, "Sending Exec error back via IPC");
-                            capsem_core::try_send!(
-                                "ipc_exec_result_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::ExecResult {
-                                        id,
-                                        stdout: vec![],
-                                        stderr: message.into_bytes(),
-                                        exit_code: -1,
-                                        truncated: false
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(other) => {
-                            error!(id, result = ?other, "unexpected job result for Exec");
-                        }
-                        Err(msg) => {
-                            error!(id, msg, "Exec result channel closed");
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            // No caller is still waiting on this IPC job;
-                            // remove the pending-ack entry so the bridge
-                            // stops replaying it.
-                            job_store.pending_acks.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_exec_result_closed",
-                                ipc_tx_out
-                                    .send(ProcessToService::ExecResult {
-                                        id,
-                                        stdout: vec![],
-                                        stderr: msg.into_bytes(),
-                                        exit_code: -1,
-                                        truncated: false,
-                                    })
-                                    .await
-                            );
-                        }
-                    }
-                });
+            ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => {
+                let (id, command, streaming) = match msg {
+                    ServiceToProcess::Exec { id, command } => (id, command, false),
+                    ServiceToProcess::ExecStream { id, command } => (id, command, true),
+                    _ => unreachable!(),
+                };
+                tokio::spawn(exec::run(
+                    id,
+                    command,
+                    streaming,
+                    Arc::clone(&job_store),
+                    ctrl_tx.clone(),
+                    ipc_tx_out.clone(),
+                    Arc::clone(&net_state.db),
+                ));
             }
             ServiceToProcess::WriteFile { id, path, data }
                 if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
@@ -962,7 +872,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::Ping => IpcAction::HealthCheck,
         ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
-        ServiceToProcess::Exec { .. } => IpcAction::Job,
+        ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,

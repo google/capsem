@@ -262,6 +262,53 @@ revision = "test.1"
     ));
 
     service_tx
+        .send(ServiceToProcess::ExecStream {
+            id: 19,
+            command: "printf live".into(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        ctrl_rx.recv().await.unwrap(),
+        ServiceToProcess::Exec { id: 19, .. }
+    ));
+    let sender = job_store
+        .active_execs
+        .lock()
+        .unwrap()
+        .get(&19)
+        .unwrap()
+        .stream
+        .clone()
+        .unwrap();
+    sender
+        .send(ProcessToService::ExecOutput {
+            id: 19,
+            data: b"live\0\xff".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, data } if data == b"live\0\xff")
+    );
+    job_store
+        .jobs
+        .lock()
+        .unwrap()
+        .remove(&19)
+        .unwrap()
+        .send(JobResult::Exec {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: 7,
+            truncated: false,
+        })
+        .unwrap();
+    assert!(
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecResult { id: 19, exit_code: 7, stdout, .. } if stdout.is_empty())
+    );
+
+    service_tx
         .send(ServiceToProcess::Exec {
             id: 17,
             command: "false".to_string(),

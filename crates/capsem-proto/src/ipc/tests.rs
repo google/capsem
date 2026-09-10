@@ -68,6 +68,10 @@ fn service_to_process_bincode_indices_and_roundtrips_are_stable() {
             namespaced_name: "server__tool".into(),
             arguments_json: "{}".into(),
         },
+        ServiceToProcess::ExecStream {
+            id: 10,
+            command: "printf live".into(),
+        },
     ];
 
     for (expected, message) in messages.iter().enumerate() {
@@ -137,6 +141,10 @@ fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
         ProcessToService::SuspendFailed {
             id: "vm".into(),
             error: "failed".into(),
+        },
+        ProcessToService::ExecOutput {
+            id: 10,
+            data: vec![0, 255, 10],
         },
     ];
 

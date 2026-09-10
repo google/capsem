@@ -16,7 +16,10 @@ mod dns;
 use dns::serve_dns_session;
 mod guest_report;
 use guest_report::is_guest_liveness_message;
+mod exec_completion;
+mod exec_output;
 mod shutdown;
+use exec_output::{read_exec_output, MAX_EXEC_OUTPUT_BYTES};
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
@@ -963,7 +966,25 @@ fn dispatch_aux_connection(
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let (local_buf, total_seen) = read_exec_output(&mut file);
+                    let stream = js
+                        .active_execs
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .and_then(|active| active.stream.clone());
+                    let result = match stream {
+                        Some(sender) => exec_output::stream_exec_output(&mut file, id, &sender),
+                        None => Ok(read_exec_output(&mut file)),
+                    };
+                    let (local_buf, total_seen) = match result {
+                        Ok(output) => output,
+                        Err(error) => {
+                            if let Some(active) = js.active_execs.lock().unwrap().get_mut(&id) {
+                                active.output_error = Some(format!("exec output transport failed: {error}"));
+                            }
+                            (Vec::new(), 0)
+                        }
+                    };
                     if total_seen > local_buf.len() as u64 {
                         warn!(
                             id,
@@ -1056,50 +1077,6 @@ fn dispatch_aux_connection(
             );
         }
     }
-}
-
-/// Maximum guest exec output retained in memory.
-///
-/// The Exec vsock port is a raw stream, so the `MAX_FRAME_SIZE` bound that
-/// `read_control_msg` applies to length-prefixed control frames never reaches
-/// it. Without a cap here, a guest running `yes` grows this process until the
-/// OOM killer takes it and every in-flight job with it.
-///
-/// 10 MiB matches capsem-gateway's `MAX_BODY_SIZE`: output past that already
-/// cannot traverse the gateway to a remote client, so this moves an existing
-/// ceiling to before the allocation instead of after it.
-const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
-
-/// Drain one exec-output stream through EOF, retaining at most
-/// [`MAX_EXEC_OUTPUT_BYTES`].
-///
-/// Returns the retained bytes and the total number of bytes seen, which differ
-/// exactly when the guest exceeded the cap. Reading continues past the cap so
-/// the guest is not left blocked on a full socket and so the reported total is
-/// the real one; only the retained buffer stops growing.
-///
-/// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
-/// treating it as completion publishes an empty/partial buffer before the
-/// guest's `ExecDone`, while still returning the child's successful exit code.
-fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
-    let mut output = Vec::new();
-    let mut total_seen: u64 = 0;
-    let mut read_buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut read_buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                total_seen = total_seen.saturating_add(n as u64);
-                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
-                if room > 0 {
-                    output.extend_from_slice(&read_buf[..n.min(room)]);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        }
-    }
-    (output, total_seen)
 }
 
 fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
@@ -1326,66 +1303,30 @@ async fn handle_guest_msg(
         GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
         GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
         GuestToHost::ExecDone { id, exit_code } => {
-            // The guest closes the EXEC socket before sending ExecDone, and
-            // the host's EXEC-port reader thread may still be finishing its
-            // read loop + deposit. Wait on the deposit notifier so we read
-            // the actual captured buffer, not a stale empty one. Short
-            // timeout guards against lost connections (guest never opened
-            // the EXEC port) so we still return in bounded time. This must be
-            // a transport-loss bound, not a scheduler-latency assumption: a
-            // loaded runner can delay the reader for hundreds of milliseconds.
-            let notify = js.active_execs.lock().unwrap().get(&id).map(|a| a.deposited.clone());
-            if let Some(n) = notify {
-                let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
-            }
-            let active_exec = js.active_execs.lock().unwrap().remove(&id);
-            let (event_id, duration_ms, stdout, total_bytes) = active_exec
-                .map(|active| {
-                    (
-                        active.event_id,
-                        active.started_at.elapsed().as_millis() as u64,
-                        active.captured,
-                        active.total_bytes,
-                    )
-                })
-                .unwrap_or((None, 0, Vec::new(), 0));
-            // `total_bytes` is what the guest wrote; `stdout` is what survived
-            // the cap. They differ only on truncation.
-            let truncated = total_bytes > stdout.len() as u64;
-
-            let complete = capsem_logger::ExecEventComplete {
-                exec_id: id,
-                exit_code,
-                duration_ms,
-                stdout_preview: Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into()),
-                stderr_preview: None,
-                stdout_bytes: total_bytes,
-                stderr_bytes: 0,
-                pid: None,
+            let streaming = {
+                let mut guard = js.active_execs.lock().unwrap();
+                let Some(active) = guard.get_mut(&id) else {
+                    return;
+                };
+                if active.completion_started {
+                    return;
+                }
+                active.completion_started = true;
+                let streaming = active.stream.is_some();
+                drop(guard);
+                streaming
             };
-            if let Some(event_id) = event_id {
-                let rules = security_rules.read().unwrap().clone();
-                capsem_core::security_engine::emit_process_complete_security_write_and_rules(
-                    db, &rules, event_id, complete,
-                )
-                .await;
+            if streaming {
+                // At most one completion task per registered job. Slow output
+                // consumers must never occupy the control/ack/rekey loop.
+                let js = Arc::clone(js);
+                let db = Arc::clone(db);
+                let rules = Arc::clone(security_rules);
+                tokio::spawn(async move {
+                    exec_completion::complete(id, exit_code, &js, &db, &rules).await;
+                });
             } else {
-                warn!(
-                    exec_id = id,
-                    "exec completion arrived without a primary security event id; updating exec row without rule ledger match"
-                );
-                capsem_core::security_engine::emit_process_complete_security_write_only(db, complete).await;
-            }
-            if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                capsem_core::try_send!(
-                    "job_result_exec",
-                    tx.send(JobResult::Exec {
-                        stdout,
-                        stderr: vec![],
-                        exit_code,
-                        truncated
-                    })
-                );
+                exec_completion::complete(id, exit_code, js, db, security_rules).await;
             }
         }
         GuestToHost::FileContent { id, path, data } => {
