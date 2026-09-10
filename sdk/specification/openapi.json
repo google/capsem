@@ -998,6 +998,48 @@
         }
       }
     },
+    "/vms/{id}/stats/detail": {
+      "get": {
+        "operationId": "getVmStatsDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmStatsDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/stats/summary": {
       "get": {
         "operationId": "getVmStatsSummary",
@@ -1251,6 +1293,111 @@
           }
         }
       },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "pid",
+          "ppid",
+          "uid",
+          "exe",
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "type": "string"
+          },
+          "audit_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "exe": {
+            "type": "string"
+          },
+          "exec_event_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "parent_exe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ppid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "AuditHistoryDetails": {
         "type": "object",
         "required": [
@@ -1318,6 +1465,13 @@
           }
         }
       },
+      "BodyDirection": {
+        "type": "string",
+        "enum": [
+          "request",
+          "response"
+        ]
+      },
       "ChangesResponse": {
         "type": "object",
         "required": [
@@ -1346,6 +1500,191 @@
           }
         }
       },
+      "CredentialEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "material_class",
+          "source",
+          "verb"
+        ],
+        "properties": {
+          "context_json": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialEventType"
+              }
+            ]
+          },
+          "material_class": {
+            "$ref": "#/components/schemas/MaterialClass"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialEventType"
+              }
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verb": {
+            "$ref": "#/components/schemas/CredentialOutcome"
+          }
+        }
+      },
+      "CredentialEventType": {
+        "type": "string",
+        "description": "Boundary that observed or injected credential material.",
+        "enum": [
+          "http.request",
+          "http.response",
+          "model.call",
+          "mcp.tool_call",
+          "mcp.tool_list",
+          "mcp.event",
+          "dns.query",
+          "file.event",
+          "file.import",
+          "file.export",
+          "process.exec",
+          "process.exec_complete",
+          "process.audit",
+          "credential.substitution",
+          "security.rule",
+          "security.ask"
+        ]
+      },
+      "CredentialOutcome": {
+        "type": "string",
+        "enum": [
+          "captured",
+          "brokered",
+          "injected",
+          "error"
+        ]
+      },
+      "DnsEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "qname",
+          "qtype",
+          "qclass",
+          "rcode",
+          "decision"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/NetworkDecision"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "matched_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qclass": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "qname": {
+            "type": "string"
+          },
+          "qtype": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rcode": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source_proto": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NetworkProtocol"
+              }
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstream_resolver_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [
@@ -1354,6 +1693,51 @@
         "properties": {
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "EventBody": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "direction",
+          "original_bytes",
+          "stored_bytes",
+          "truncated",
+          "body_hash",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "body_hash": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/BodyDirection"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "original_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
           }
         }
       },
@@ -1497,6 +1881,49 @@
           "directory"
         ]
       },
+      "FileEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "action",
+          "path"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FileEventAction"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "FileEventAction": {
         "type": "string",
         "enum": [
@@ -1505,8 +1932,8 @@
           "deleted",
           "restored",
           "read",
-          "imported",
-          "exported"
+          "import",
+          "export"
         ]
       },
       "FileListEntry": {
@@ -1746,6 +2173,123 @@
           }
         }
       },
+      "HttpEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "domain",
+          "decision"
+        ],
+        "properties": {
+          "bytes_received": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_sent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/NetworkDecision"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "matched_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_headers": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_headers": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "HypervisorInfo": {
         "type": "object",
         "required": [
@@ -1840,6 +2384,12 @@
           }
         }
       },
+      "MaterialClass": {
+        "type": "string",
+        "enum": [
+          "credential"
+        ]
+      },
       "McpUsage": {
         "type": "object",
         "required": [
@@ -1878,6 +2428,97 @@
           },
           "tool_name": {
             "type": "string"
+          }
+        }
+      },
+      "ModelEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "provider",
+          "method",
+          "path"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "method": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "response_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1923,6 +2564,108 @@
           "provider": {
             "type": "string",
             "description": "Provider identifiers and model names are open namespaces."
+          }
+        }
+      },
+      "NetworkDecision": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "denied",
+          "error",
+          "redirected"
+        ]
+      },
+      "NetworkProtocol": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "udp"
+        ]
+      },
+      "ProcessEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "exec_id",
+          "command",
+          "source"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "exec_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExecSource"
+          },
+          "stderr_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "stdout_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -3020,6 +3763,113 @@
           "error"
         ]
       },
+      "ToolEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "server_name",
+          "tool_name",
+          "call_id",
+          "model_parent_missing",
+          "decision",
+          "duration_ms",
+          "bytes",
+          "source"
+        ],
+        "properties": {
+          "arguments": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolDecision"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_call_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "model_parent_missing": {
+            "type": "boolean"
+          },
+          "process_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ToolOrigin"
+          },
+          "timestamp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": "string"
+          }
+        }
+      },
+      "ToolOrigin": {
+        "type": "string",
+        "enum": [
+          "model",
+          "native",
+          "mcp",
+          "builtin",
+          "local",
+          "mcp_proxy"
+        ]
+      },
       "UpdateActionResponse": {
         "type": "object",
         "required": [
@@ -3387,6 +4237,91 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "VmStatsDetailResponse": {
+        "type": "object",
+        "description": "Latest retained events (200 per model/tool/network/file family, 100 per\nprocess/audit/credential family), session model totals, and captured bodies.\nThis is a bounded inspection report; it is not the complete session ledger.",
+        "required": [
+          "model_stats",
+          "model_events",
+          "tool_events",
+          "http_events",
+          "dns_events",
+          "file_events",
+          "process_events",
+          "audit_events",
+          "credential_events",
+          "body_blobs"
+        ],
+        "properties": {
+          "audit_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          },
+          "body_blobs": {
+            "type": "object",
+            "description": "Captured request/response bodies grouped by event ID.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/EventBody"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "credential_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CredentialEvent"
+            }
+          },
+          "dns_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsEvent"
+            }
+          },
+          "file_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileEvent"
+            }
+          },
+          "http_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HttpEvent"
+            }
+          },
+          "model_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelEvent"
+            }
+          },
+          "model_stats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            }
+          },
+          "process_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessEvent"
+            }
+          },
+          "tool_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolEvent"
+            }
           }
         }
       },

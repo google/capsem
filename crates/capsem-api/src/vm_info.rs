@@ -56,7 +56,9 @@ pub enum FileEventAction {
     Deleted,
     Restored,
     Read,
+    #[serde(rename = "import")]
     Imported,
+    #[serde(rename = "export")]
     Exported,
 }
 

@@ -1592,7 +1592,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(body["tool_events"][0]["tool_name"], "Create");
     assert_eq!(body["tool_events"][0]["call_id"], "tool-1");
     assert_eq!(body["tool_events"][0]["source"], "native");
-    assert_eq!(body["tool_events"][0]["model_parent_missing"], 0);
+    assert_eq!(body["tool_events"][0]["model_parent_missing"], false);
     assert!(body["tool_events"][0]["model_call_id"].as_i64().is_some());
     assert_eq!(body["tool_events"][0]["arguments"], r#"{"path":"/root/poem.md"}"#);
     assert_eq!(body["tool_events"][0]["response_preview"], "Wrote 4 lines to poem.md");
@@ -2169,7 +2169,7 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     assert_eq!(tool["event_id"], "badbad000001");
     assert_eq!(tool["call_id"], "orphan-tool");
     assert_eq!(tool["model_call_id"], 99_999);
-    assert_eq!(tool["model_parent_missing"], 1);
+    assert_eq!(tool["model_parent_missing"], true);
     assert_eq!(tool["source"], "model");
     assert_eq!(tool["server_name"], "model");
     assert_eq!(tool["tool_name"], "Write");

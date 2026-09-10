@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn stats_detail_schema_names_every_event_and_uses_booleans() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    assert_eq!(
+        doc["paths"]["/vms/{id}/stats/detail"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/VmStatsDetailResponse"
+    );
+    let schemas = &doc["components"]["schemas"];
+    for (field, model) in [
+        ("model_stats", "ModelUsage"),
+        ("model_events", "ModelEvent"),
+        ("tool_events", "ToolEvent"),
+        ("http_events", "HttpEvent"),
+        ("dns_events", "DnsEvent"),
+        ("file_events", "FileEvent"),
+        ("process_events", "ProcessEvent"),
+        ("audit_events", "AuditEvent"),
+        ("credential_events", "CredentialEvent"),
+    ] {
+        assert_eq!(
+            schemas["VmStatsDetailResponse"]["properties"][field]["items"]["$ref"],
+            format!("#/components/schemas/{model}")
+        );
+    }
+    assert_eq!(
+        schemas["ToolEvent"]["properties"]["model_parent_missing"]["type"],
+        "boolean"
+    );
+    assert_eq!(schemas["EventBody"]["properties"]["truncated"]["type"], "boolean");
+    assert_eq!(
+        schemas["VmStatsDetailResponse"]["properties"]["body_blobs"]["additionalProperties"]["items"]["$ref"],
+        "#/components/schemas/EventBody"
+    );
+    for invalid in ["invented", ""] {
+        let value = serde_json::json!(invalid);
+        assert!(serde_json::from_value::<NetworkDecision>(value.clone()).is_err());
+        assert!(serde_json::from_value::<NetworkProtocol>(value.clone()).is_err());
+        assert!(serde_json::from_value::<ToolOrigin>(value.clone()).is_err());
+        assert!(serde_json::from_value::<CredentialOutcome>(value.clone()).is_err());
+        assert!(serde_json::from_value::<CredentialEventType>(value.clone()).is_err());
+        assert!(serde_json::from_value::<BodyDirection>(value).is_err());
+    }
+}
+
+#[test]
 fn inspection_types_reject_unknown_categories_and_preserve_union_values() {
     assert!(serde_json::from_str::<HistoryLayerFilter>("\"net\"").is_err());
     assert!(serde_json::from_str::<TimelineLayer>("\"tools\"").is_err());

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed detailed VM statistics, including model costs, activity events, and
+  captured bodies with boolean flags and enum categories for gateway SDKs.
+
 - Typed history details and timeline events for gateway SDKs. Timeline returns
   named event objects; history and timeline filters reject unknown layers.
 - Typed snapshot listings and checkpoint-based workspace changes through the

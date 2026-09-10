@@ -22,6 +22,7 @@ pub fn openapi() -> OpenApi {
     doc.empty_post::<ProvisionResponse>("/vms/{id}/resume", "resumeVm");
     doc.logs();
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
+    doc.get::<VmStatsDetailResponse>("/vms/{id}/stats/detail", "getVmStatsDetail");
     doc.get::<SnapshotsStatus>("/vms/{id}/snapshots/status", "getVmSnapshotsStatus");
     doc.get::<SnapshotsList>("/vms/{id}/snapshots/list", "listVmSnapshots");
     let timeline = doc
