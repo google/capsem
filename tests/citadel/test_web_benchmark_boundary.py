@@ -99,6 +99,24 @@ def _text_sources(tracked: tuple[str, ...]) -> dict[str, str]:
 
 
 def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
+    def source_text(path: str, text: str) -> str:
+        if path.endswith(".json"):
+            try:
+                document = json.loads(text)
+            except json.JSONDecodeError:
+                return text
+            if isinstance(document, dict) and "openapi" in document:
+                # Schema enums are wire values, not repository paths. Keep
+                # defaults, examples, descriptions and actual path fields.
+                def without_enums(value: Any) -> Any:
+                    if isinstance(value, dict):
+                        return {key: without_enums(child) for key, child in value.items() if key != "enum"}
+                    if isinstance(value, list):
+                        return [without_enums(child) for child in value]
+                    return value
+                return json.dumps(without_enums(document), indent=2)
+        return text
+
     return tuple(
         sorted(
             json.dumps(
@@ -111,7 +129,7 @@ def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
                 separators=(",", ":"),
             )
             for path, text in sources.items()
-            for line in text.splitlines()
+            for line in source_text(path, text).splitlines()
             for family, pattern in REFERENCE_PATTERNS.items()
             if pattern.search(line)
         )
@@ -352,6 +370,15 @@ def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
 
     assert len(after) == len(before) + 1
     assert _digest(after) != _digest(before)
+
+
+def test_openapi_wire_enums_are_not_repository_paths() -> None:
+    document: dict[str, Any] = {"openapi": "3.1.0", "components": {"schemas": {
+        "Source": {"type": "string", "enum": ["frontend"]},
+    }}}
+    assert not _legacy_references({"contract.json": json.dumps(document)})
+    document["example"] = "frontend/missing.ts"
+    assert _legacy_references({"contract.json": json.dumps(document)})
 
 
 def test_coverage_mapping_fingerprint_ignores_unrelated_line_movement() -> None:

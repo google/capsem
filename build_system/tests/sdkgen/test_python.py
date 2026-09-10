@@ -53,6 +53,7 @@ def _sample(schema: Schema) -> object:
         return {name: _sample(schema.properties[name]) for name in schema.required}
     if schema.type == "array":
         return []
+    assert schema.type is not None
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
 
 
