@@ -400,3 +400,53 @@ Engineering judgment, not measured delivery commitments:
 The offline milestone is now proved above. Inspect remains the integration
 target; an SDK-backed direct-VM provider can be useful before arbitrary container
 environments are supported.
+
+## Packaged OCI layer unpacking (ARM64, 2026-09-10)
+
+Both profile package lists now include `umoci`. A deterministic two-layer OCI
+fixture proves ordinary and opaque whiteouts, binary bytes, an absolute symlink,
+and combined image Entrypoint/Cmd inside the real guest. Unpacking stays inside
+the disposable VM; the host registry client never extracts image archives.
+
+The new Ironbank test first failed with exit 127 (`umoci: command not found`).
+After rebuilding it reports `umoci version 0.4.7+ds-3+b7` and
+`OCI_UNPACK: whiteouts,binary,symlink,entrypoint,cmd=PASS`. Fixture manifest:
+`sha256:667bdbc91c490a85bf74d827badcd06623a28b360c4154799bdeca4c78175f86`.
+
+Reproduction, from this worktree (wrap direct commands with the repository's
+bounded-command runner):
+
+```sh
+just _build-rootfs arm64 code
+just _materialize-config
+env CAPSEM_RELEASE_BIN_DIR=/Users/elie/git/capsem/cache/target/cargo/release \
+  uv run --project build_system --frozen pytest -c build_system/pyproject.toml \
+  --rootdir . tests/ironbank/test_oci_unpack.py \
+  tests/ironbank/test_oci_container.py tests/ironbank/redis_acceptance.py -q
+```
+
+Build `20260910-043343-5f7547-build-assets` passed all ten steps in 6m48s.
+The preceding build failed after rootfs creation because manifest generation
+included an unrelated, incomplete x86_64 directory. The scoped-manifest fix
+retains strict checks for every selected architecture; its evidence is 271
+focused Python tests and 18 Rust image-build tests, plus Ruff, Ty and Clippy.
+
+Rebuilt asset SHA-256 identities:
+
+| ARM64 asset | SHA-256 |
+|---|---|
+| kernel | `b1d8357da3005ef29c9dd2797e83177b85ad25494b13802a78603b2f0b843892` |
+| initrd | `1ec23e3842e9e877e3cc37a54c0ac9e56bc584405d24039f678d0ca90f178799` |
+| rootfs | `a41d85bb3cfdc624f47be2e80706d7b2d16e5417beebc8546b8514f377cc388e` |
+
+Unpacking, the offline adversarial suite, fresh-session isolation and real Redis
+acceptance passed together: five host tests in 12.61s. The added guest-hardening
+check and unpacking test then passed together in 3.35s, exercising the existing
+doctor checks for immutable guest binaries, immutable rootfs block device and
+absence of real NICs. Evidence is under `cache/target/tests/oci-umoci-proof/` and
+`cache/target/tests/oci-umoci-hardening/`.
+
+This is ARM64 execution evidence. The x86_64 package list is aligned, but its
+new rootfs has not been built or executed. Installed service/profile state was
+not replaced. `capsem run IMAGE`, retained OCI caching and TCP publishing are
+still open Sprinty work; these tests do not claim those product paths exist.

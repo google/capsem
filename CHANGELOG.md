@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Both profiles include `runc`; guest kernels support offline OCI process
   namespaces and cgroup CPU, memory, and process limits.
+- Both profiles include `umoci` for OCI image layer unpacking inside the VM.
 
 ### Changed
 
