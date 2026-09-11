@@ -154,7 +154,7 @@ mod tun {
         request
     }
 
-    fn ioctl(fd: impl AsRawFd, request: u32, argument: &mut [u8; IFREQ_BYTES]) -> io::Result<()> {
+    fn ioctl(fd: &impl AsRawFd, request: u32, argument: &mut [u8; IFREQ_BYTES]) -> io::Result<()> {
         // SAFETY: every request here takes a pointer to an `ifreq` the
         // caller owns for the duration of the call.
         if unsafe { libc::ioctl(fd.as_raw_fd(), request as _, argument.as_mut_ptr()) } < 0 {
