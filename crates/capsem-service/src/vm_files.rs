@@ -1561,10 +1561,6 @@ pub(super) async fn handle_stats_detail(
 ) -> Result<impl IntoResponse, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "stats_detail", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
-
     let payload = read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?;
     let body = serde_json::to_vec(&payload).map_err(|error| {
         AppError(
@@ -1572,7 +1568,6 @@ pub(super) async fn handle_stats_detail(
             format!("failed to serialize stats detail response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "stats_detail", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 

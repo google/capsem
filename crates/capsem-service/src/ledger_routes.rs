@@ -43,16 +43,6 @@ pub(super) async fn handle_timeline(
     let session_dir = resolve_session_dir(&state, &id)?;
     let cutoff = since_filter.map(secs_to_rfc3339);
     let db_path = session_dir.join("session.db");
-    let route_key = format!(
-        "timeline:layers={}:limit={}:since={}:trace={}",
-        layers.join(","),
-        limit,
-        params.since.as_deref().unwrap_or(""),
-        params.trace_id.as_deref().unwrap_or("")
-    );
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let sql = timeline_base_sql();
     let rows = read_timeline_rows_from_session_db(&state, &id, &db_path, &sql)
         .await?
@@ -79,7 +69,6 @@ pub(super) async fn handle_timeline(
             format!("timeline ledger serialization failed: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, json_str.as_bytes());
 
     Ok(json_bytes_response(Bytes::from(json_str)))
 }
@@ -101,12 +90,6 @@ pub(super) async fn handle_security_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!("security_latest:limit={limit}");
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
     info!(
         route = "/vms/{id}/security/latest",
@@ -121,7 +104,6 @@ pub(super) async fn handle_security_latest(
             format!("failed to serialize security latest response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -132,12 +114,6 @@ pub(super) async fn handle_detection_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!("detection_latest:limit={limit}");
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let rows = security_latest_for_vm(&state, &id, limit, true).await?;
     let body = serde_json::to_vec(&rows).map_err(|error| {
         AppError(
@@ -145,7 +121,6 @@ pub(super) async fn handle_detection_latest(
             format!("failed to serialize detection latest response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -154,11 +129,6 @@ pub(super) async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "security_status", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let stats = security_stats_for_vm(&state, &id).await?;
     let body = serde_json::to_vec(&stats).map_err(|error| {
         AppError(
@@ -166,7 +136,6 @@ pub(super) async fn handle_security_info(
             format!("failed to serialize security status response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "security_status", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -1073,58 +1042,6 @@ pub(super) fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(by_event)
-}
-
-pub(super) fn stats_detail_db_fingerprint(db_path: &StdPath) -> Option<String> {
-    let metadata = std::fs::metadata(db_path).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    Some(format!("{}:{modified}", metadata.len()))
-}
-
-pub(super) fn session_response_cache_key(vm_id: &str, route_key: &str) -> String {
-    format!("{vm_id}:{route_key}")
-}
-
-pub(super) fn session_response_cache_get(
-    state: &ServiceState,
-    vm_id: &str,
-    route_key: &str,
-    db_path: &StdPath,
-) -> Option<Bytes> {
-    let db_fingerprint = stats_detail_db_fingerprint(db_path)?;
-    let cache_key = session_response_cache_key(vm_id, route_key);
-    let cached = state
-        .stats_detail_response_cache
-        .lock()
-        .unwrap()
-        .get(&cache_key)
-        .cloned()?;
-    (cached.db_fingerprint == db_fingerprint).then(|| Bytes::from(cached.bytes))
-}
-
-pub(super) fn session_response_cache_store(
-    state: &ServiceState,
-    vm_id: &str,
-    route_key: &str,
-    db_path: &StdPath,
-    bytes: &[u8],
-) {
-    let Some(db_fingerprint) = stats_detail_db_fingerprint(db_path) else {
-        return;
-    };
-    let cache_key = session_response_cache_key(vm_id, route_key);
-    state.stats_detail_response_cache.lock().unwrap().insert(
-        cache_key,
-        CachedStatsDetailResponse {
-            db_fingerprint,
-            bytes: bytes.to_vec(),
-        },
-    );
 }
 
 pub(super) async fn read_stats_detail_payload_from_session_db(

@@ -262,7 +262,6 @@ pub(super) async fn run_service() -> Result<()> {
         profile_mutation_db,
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),

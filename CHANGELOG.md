@@ -281,6 +281,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Session ledger routes (`security/latest`, `detection/latest`,
+  `security/status`, `timeline`, `history*`, `stats/detail`) read through the
+  logger on every request. They no longer serve a cached response while a
+  commit sits only in the write-ahead log, which previously hid new rows until
+  the next checkpoint.
 - Security audit emitters report failed database admission accurately, allowing
   security-sensitive callers to refuse work when the audit writer is closed.
 
