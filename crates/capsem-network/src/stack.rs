@@ -1,11 +1,11 @@
 //! One interface over one framed stream, driven by an application.
 use crate::device::FrameDevice;
-use crate::frames;
+use crate::frames::FrameParser;
 use smoltcp::iface::{Config, Interface, PollResult, SocketSet};
 use smoltcp::wire::{HardwareAddress, IpCidr, Ipv4Cidr};
 use std::io;
 use std::time::Instant;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 /// What an application reports after a step, so the loop knows whether to
 /// poll the interface again before waiting for the stream.
@@ -45,7 +45,19 @@ pub struct Stack<IO> {
     /// Framed bytes not yet on the wire, and how far into them the writer is.
     outgoing: Vec<u8>,
     written: usize,
+    /// Bytes read but not yet a whole frame.
+    incoming: FrameParser,
+    /// What crossed the link, reported when it ends: the numbers a stalled
+    /// transfer is diagnosed from.
+    frames_in: u64,
+    bytes_in: u64,
+    frames_out: u64,
+    bytes_out: u64,
+    malformed: u64,
 }
+
+/// One read per wakeup; a whole frame at the link MTU fits in two.
+const READ_BYTES: usize = 64 * 1024;
 
 impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
     pub fn new(io: IO, address: Ipv4Cidr, mtu: usize) -> Self {
@@ -69,6 +81,12 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
             started,
             outgoing: Vec::new(),
             written: 0,
+            incoming: FrameParser::default(),
+            frames_in: 0,
+            bytes_in: 0,
+            frames_out: 0,
+            bytes_out: 0,
+            malformed: 0,
         }
     }
 
@@ -82,7 +100,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
     /// application finished, `Ok(true)` when the application finished.
     pub async fn run(mut self, app: &mut impl App) -> io::Result<bool> {
         app.attach(&mut self.iface, &mut self.sockets);
-        let mut packet = Vec::with_capacity(frames::MAX_FRAME_BYTES);
+        let mut scratch = vec![0u8; READ_BYTES];
         loop {
             // Poll and step until neither side has anything left to do, so
             // every reply and every buffered write leaves in this round.
@@ -102,7 +120,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
                 self.frame_outgoing();
             }
             if done {
-                return self.drain().await.map(|delivered| delivered && true);
+                let delivered = self.drain().await?;
+                self.report("application finished");
+                return Ok(delivered);
             }
             let timer = self
                 .iface
@@ -123,7 +143,10 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
             let has_room = self.device.has_rx_room();
             tokio::select! {
                 wrote = self.writer.write(&self.outgoing[self.written..]), if has_outgoing => match wrote {
-                    Ok(0) => return Ok(false),
+                    Ok(0) => {
+                        self.report("peer stopped reading");
+                        return Ok(false);
+                    }
                     Ok(count) => {
                         self.written += count;
                         if self.written == self.outgoing.len() {
@@ -131,16 +154,63 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
                             self.written = 0;
                         }
                     }
-                    Err(error) if peer_gone(&error) => return Ok(false),
+                    Err(error) if peer_gone(&error) => {
+                        self.report("peer gone on write");
+                        return Ok(false);
+                    }
                     Err(error) => return Err(error),
                 },
-                read = frames::read_frame(&mut self.reader, &mut packet), if has_room => match read? {
-                    None => return Ok(false),
-                    Some(length) => self.device.push_rx(packet[..length].to_vec()),
+                read = self.reader.read(&mut scratch), if has_room => match read {
+                    Ok(0) => {
+                        self.report("stream ended");
+                        return Ok(false);
+                    }
+                    Ok(count) => self.receive(&scratch[..count])?,
+                    Err(error) if peer_gone(&error) => {
+                        self.report("peer gone on read");
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(error),
                 },
                 () = wait => {}
             }
         }
+    }
+
+    /// Feed bytes to the parser and every complete frame to the device. A
+    /// frame that is not IPv4 is counted and dropped, as a NIC drops a
+    /// frame it cannot address; smoltcp would drop it later anyway, but the
+    /// count is what shows a desynchronised stream.
+    fn receive(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.incoming.extend(bytes);
+        while let Some(packet) = self
+            .incoming
+            .next_frame()
+            .inspect_err(|_| self.report("corrupt frame"))?
+        {
+            self.frames_in += 1;
+            self.bytes_in += packet.len() as u64;
+            if packet.first().map(|byte| byte >> 4) != Some(4) {
+                self.malformed += 1;
+                continue;
+            }
+            self.device.push_rx(packet);
+        }
+        Ok(())
+    }
+
+    fn report(&self, outcome: &str) {
+        tracing::info!(
+            outcome,
+            frames_in = self.frames_in,
+            bytes_in = self.bytes_in,
+            frames_out = self.frames_out,
+            bytes_out = self.bytes_out,
+            malformed = self.malformed,
+            pending_bytes = self.incoming.pending(),
+            unsent_bytes = self.outgoing.len() - self.written,
+            "network stack link ended"
+        );
     }
 
     /// Move every packet the interface produced into the outgoing bytes.
@@ -149,6 +219,8 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
             let length = u16::try_from(packet.len()).expect("the device MTU is a u16");
             self.outgoing.extend_from_slice(&length.to_be_bytes());
             self.outgoing.extend_from_slice(&packet);
+            self.frames_out += 1;
+            self.bytes_out += packet.len() as u64;
         }
     }
 
@@ -163,7 +235,10 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
         .await;
         match result {
             Ok(()) => Ok(true),
-            Err(error) if peer_gone(&error) => Ok(false),
+            Err(error) if peer_gone(&error) => {
+                self.report("peer gone on drain");
+                Ok(false)
+            }
             Err(error) => Err(error),
         }
     }
