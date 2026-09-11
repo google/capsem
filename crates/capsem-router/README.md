@@ -26,10 +26,33 @@ It receives no virtualization entitlement. Two Tokio workers relay at most
 classes. Published mappings share one VM-owned child; private routing is not
 yet connected to the VM broker. Core serializes grants across all mappings and
 dispatches bounded acknowledgements to the broker retaining each endpoint pair.
-Expose admission is shared across every listener in the VM: 64 queued/active
+Expose admission is shared across every listener in the VM, by default: 64 queued/active
 connections, eight guest setups, and 32 setup requests per second with a burst
 of 16. Setup waits count against the eight-second deadline. Cancelling a queued
 request returns its permits and preserves rate credit; pacing owns no refill task.
+
+The active profile can lower connection and setup ceilings and tune setup pacing:
+
+```toml
+[network.router.expose]
+connections = 32
+setups = 4
+rate_per_second = 16
+burst = 8
+
+[network.router.private]
+connections = 64
+setups = 8
+rate_per_second = 32
+burst = 16
+```
+
+Omitted fields retain the defaults above. Each class validates connections in
+1–64, setups in 1–8, setup rate in 1–1024 per second, and burst in 1–64. Zero
+never means unlimited. The VM loads these budgets before restoring published
+listeners and passes both connection ceilings to its confined child. Private
+setup pacing takes effect when the private broker is connected; it has no
+effect on today's expose traffic. Budgets apply for the VM process lifetime.
 
 The parent retains shutdown handles for both endpoints until the child reports
 closure. Guest data handshakes include a fresh owner generation as well as the

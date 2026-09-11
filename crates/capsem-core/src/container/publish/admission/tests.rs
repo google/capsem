@@ -3,6 +3,18 @@ use std::time::Duration;
 use tokio::time::{advance, timeout, Instant};
 
 #[tokio::test(start_paused = true)]
+async fn configured_pacing_uses_its_own_burst_and_refill() {
+    let rate = SetupRate::new(2, 1);
+    rate.acquire().await;
+    assert!(timeout(Duration::ZERO, rate.acquire()).await.is_err());
+    let start = Instant::now();
+    advance(Duration::from_millis(250)).await;
+    assert!(timeout(Duration::ZERO, rate.acquire()).await.is_err());
+    rate.acquire().await;
+    assert!((Duration::from_millis(500)..=Duration::from_millis(501)).contains(&start.elapsed()));
+}
+
+#[tokio::test(start_paused = true)]
 async fn burst_is_bounded_and_refills_at_32_per_second() {
     let rate = SetupRate::default();
     for _ in 0..16 {

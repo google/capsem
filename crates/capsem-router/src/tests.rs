@@ -36,7 +36,11 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
     let mut events = UnixStream::from_std(parent).unwrap();
-    let router = tokio::spawn(relay(receiver, UnixStream::from_std(child).unwrap()));
+    let router = tokio::spawn(relay(
+        receiver,
+        UnixStream::from_std(child).unwrap(),
+        ConnectionLimits::default(),
+    ));
     assert_eq!(Event::read(&mut events).await.unwrap(), Event::Ready);
     let mut peers = tokio::task::JoinSet::new();
     let mut retained = HashMap::new();

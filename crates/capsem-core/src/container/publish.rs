@@ -25,6 +25,7 @@ mod companion;
 mod saved;
 
 pub struct Publisher {
+    budgets: capsem_config::router::RouterConfig,
     generation: u64,
     saved: Option<saved::Mappings>,
     pending: Mutex<HashMap<u64, GuestFlow>>,
@@ -51,7 +52,14 @@ struct GuestFlow {
 
 impl Default for Publisher {
     fn default() -> Self {
-        Self {
+        Self::configured(capsem_config::router::RouterConfig::default()).expect("valid default router budgets")
+    }
+}
+
+impl Publisher {
+    pub fn configured(budgets: capsem_config::router::RouterConfig) -> Result<Self> {
+        budgets.validate().map_err(anyhow::Error::msg)?;
+        Ok(Self {
             // The UUID variant bits make its low half nonzero.
             generation: uuid::Uuid::new_v4().as_u128() as u64,
             saved: None,
@@ -59,14 +67,18 @@ impl Default for Publisher {
             next_id: AtomicU64::new(1),
             incoming: Arc::new(Semaphore::new(128)),
             mappings: Arc::new(Semaphore::new(8)),
-            ingress: Arc::new(Semaphore::new(capsem_router::CONNECTIONS_PER_CLASS)),
-            setups: Arc::new(Semaphore::new(8)),
-            setup_rate: Arc::new(admission::SetupRate::default()),
+            ingress: Arc::new(Semaphore::new(usize::from(budgets.expose.connections))),
+            setups: Arc::new(Semaphore::new(usize::from(budgets.expose.setups))),
+            setup_rate: Arc::new(admission::SetupRate::new(
+                budgets.expose.rate_per_second,
+                budgets.expose.burst,
+            )),
             tasks: Mutex::new(tokio::task::JoinSet::new()),
             cancellation: CancellationToken::new(),
             drain: tokio::sync::Mutex::new(()),
             router: tokio::sync::Mutex::new(None),
-        }
+            budgets,
+        })
     }
 }
 

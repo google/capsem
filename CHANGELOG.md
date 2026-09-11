@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Active profiles can configure separate router connection and setup budgets
+  under `network.router`, within fixed resource ceilings shared by a VM's ports.
 - Published connections carry the VM owner's boot generation so stale streams
   cannot consume reused request IDs after restart.
 - Container port forwarding uses fixed kernel socket queues, including guest

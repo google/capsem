@@ -28,14 +28,13 @@ fn read(path: &Path) -> Result<Vec<PortMapping>> {
 }
 
 impl Publisher {
-    pub fn for_session(session_dir: &Path) -> Self {
-        Self {
-            saved: Some(Mappings {
-                path: session_dir.join("published-ports.json"),
-                lock: tokio::sync::Mutex::new(()),
-            }),
-            ..Self::default()
-        }
+    pub fn for_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
+        let mut publisher = Self::configured(budgets)?;
+        publisher.saved = Some(Mappings {
+            path: session_dir.join("published-ports.json"),
+            lock: tokio::sync::Mutex::new(()),
+        });
+        Ok(publisher)
     }
 
     pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<Vec<Publication>> {

@@ -77,6 +77,15 @@ http_upstream_ports = [80, 3713]
 
 [network.dns]
 upstreams = ["127.0.0.1:5353"]
+
+[network.router.expose]
+connections = 12
+setups = 3
+rate_per_second = 7
+burst = 2
+
+[network.router.private]
+connections = 24
 "#,
     )
     .unwrap();
@@ -100,6 +109,19 @@ upstreams = ["127.0.0.1:5353"]
     assert!(runtime.network.log_bodies);
     assert_eq!(runtime.network.max_body_capture, 8192);
     assert_eq!(runtime.network.http_upstream_ports, vec![80, 3713]);
+    let budgets = &runtime.network.router;
+    assert_eq!(budgets.expose.connections, 12);
+    assert_eq!(budgets.expose.setups, 3);
+    assert_eq!(budgets.expose.rate_per_second, 7);
+    assert_eq!(budgets.expose.burst, 2);
+    assert_eq!(budgets.private.connections, 24);
+    let materialized = capsem_core::net::policy_config::network_config_from_policy_and_dns(
+        &runtime.network,
+        capsem_core::net::policy_config::DnsNetworkConfig::default(),
+    );
+    let encoded = toml::to_string(&materialized).unwrap();
+    let decoded: capsem_core::net::policy_config::NetworkConfig = toml::from_str(&encoded).unwrap();
+    assert_eq!(decoded.router.as_ref(), Some(budgets));
     assert_eq!(first.action, capsem_core::net::policy_config::SecurityRuleAction::Block);
 }
 

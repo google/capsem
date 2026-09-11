@@ -124,6 +124,10 @@ pub(super) async fn start(owner: &Publisher) -> Result<Arc<Router>> {
     let (parent, child_socket) = StdUnixStream::pair()?;
     let mut child = tokio::process::Command::new(binary)
         .args(["--parent-pid", &std::process::id().to_string()])
+        .arg("--expose-limit")
+        .arg(owner.budgets.expose.connections.to_string())
+        .arg("--private-limit")
+        .arg(owner.budgets.private.connections.to_string())
         .env_clear()
         .current_dir("/")
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_socket)))

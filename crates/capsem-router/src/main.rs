@@ -10,6 +10,10 @@ use std::time::Duration;
 struct Args {
     #[arg(long)]
     parent_pid: u32,
+    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
+    expose_limit: u16,
+    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
+    private_limit: u16,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: process entry before descriptor owners or threads exist.
@@ -20,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_filter: "capsem_router=info",
     })?;
     let args = Args::parse();
+    let limits = capsem_router::ConnectionLimits::new(args.expose_limit, args.private_limit)?;
     capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -44,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "router requires versioned hello",
             ));
         }
-        capsem_router::relay(grants, events).await
+        capsem_router::relay(grants, events, limits).await
     })?;
     Ok(())
 }

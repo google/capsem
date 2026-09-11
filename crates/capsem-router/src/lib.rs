@@ -183,10 +183,40 @@ impl Drop for Stream {
     }
 }
 
-pub async fn relay(grants: Receiver, mut events: UnixStream) -> io::Result<()> {
+#[derive(Clone, Copy)]
+pub struct ConnectionLimits {
+    expose: usize,
+    private: usize,
+}
+
+impl Default for ConnectionLimits {
+    fn default() -> Self {
+        Self {
+            expose: CONNECTIONS_PER_CLASS,
+            private: CONNECTIONS_PER_CLASS,
+        }
+    }
+}
+
+impl ConnectionLimits {
+    pub fn new(expose: u16, private: u16) -> io::Result<Self> {
+        let limits = Self {
+            expose: usize::from(expose),
+            private: usize::from(private),
+        };
+        if !(1..=CONNECTIONS_PER_CLASS).contains(&limits.expose)
+            || !(1..=CONNECTIONS_PER_CLASS).contains(&limits.private)
+        {
+            return Err(invalid("router limits exceed per-class ceilings"));
+        }
+        Ok(limits)
+    }
+}
+
+pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionLimits) -> io::Result<()> {
     let slots = [
-        Arc::new(tokio::sync::Semaphore::new(CONNECTIONS_PER_CLASS)),
-        Arc::new(tokio::sync::Semaphore::new(CONNECTIONS_PER_CLASS)),
+        Arc::new(tokio::sync::Semaphore::new(limits.expose)),
+        Arc::new(tokio::sync::Semaphore::new(limits.private)),
     ];
     let mut jobs = tokio::task::JoinSet::new();
     let mut active = HashMap::new();

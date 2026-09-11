@@ -246,7 +246,27 @@ async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
 
 #[tokio::test]
 async fn guest_setup_budget_is_shared_across_publications() {
-    let owner = Arc::new(Publisher::default());
+    shared_admission_budget(capsem_config::router::RouterConfig::default(), 8).await;
+}
+
+#[tokio::test]
+async fn configured_setup_budget_is_shared_across_publications() {
+    let mut budgets = capsem_config::router::RouterConfig::default();
+    budgets.expose.setups = 3;
+    shared_admission_budget(budgets, 3).await;
+}
+
+#[tokio::test]
+async fn configured_connection_budget_includes_pending_guest_setups() {
+    let mut budgets = capsem_config::router::RouterConfig::default();
+    budgets.expose.connections = 2;
+    shared_admission_budget(budgets, 2).await;
+}
+
+async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, expected: usize) {
+    let connections = usize::from(budgets.expose.connections);
+    let setups = usize::from(budgets.expose.setups);
+    let owner = Arc::new(Publisher::configured(budgets).unwrap());
     let (parent, _child) = StdUnixStream::pair().unwrap();
     let router = Arc::new(companion::Router::new(
         0,
@@ -272,7 +292,7 @@ async fn guest_setup_budget_is_shared_across_publications() {
             clients.push(tokio::net::TcpStream::connect(address).await.unwrap());
         }
     }
-    for _ in 0..8 {
+    for _ in 0..expected {
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(1), requests.recv())
                 .await
@@ -285,15 +305,15 @@ async fn guest_setup_budget_is_shared_across_publications() {
         tokio::time::timeout(Duration::from_millis(100), requests.recv())
             .await
             .is_err(),
-        "another mapping bypassed the VM-wide setup budget"
+        "another mapping bypassed the VM-wide admission budget"
     );
     cancellation.cancel();
     while let Some(result) = brokers.join_next().await {
         result.unwrap().unwrap();
     }
     assert!(owner.pending.lock().unwrap().is_empty());
-    assert_eq!(owner.ingress.available_permits(), capsem_router::CONNECTIONS_PER_CLASS);
-    assert_eq!(owner.setups.available_permits(), 8);
+    assert_eq!(owner.ingress.available_permits(), connections);
+    assert_eq!(owner.setups.available_permits(), setups);
     owner.shutdown().await;
 }
 

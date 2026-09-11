@@ -17,6 +17,31 @@ struct Router {
 }
 
 #[tokio::test]
+async fn configured_class_limits_are_independent_in_the_confined_child() {
+    let mut router = Router::with_limits(2, 1).await;
+    let mut peers = Vec::new();
+    for (id, class, allowed) in [
+        (1, Class::Private, true),
+        (2, Class::Private, false),
+        (3, Class::Expose, true),
+        (4, Class::Expose, true),
+        (5, Class::Expose, false),
+    ] {
+        peers.push(router.class_pair(id, class).await);
+        assert_eq!(
+            router.event().await,
+            if allowed {
+                Event::Accepted(id)
+            } else {
+                Event::Refused(id)
+            }
+        );
+    }
+    router.close().await;
+    drop(peers);
+}
+
+#[tokio::test]
 async fn process_kill_resets_tcp_without_running_stream_destructors() {
     let mut router = Router::start().await;
     let (mut client, _peer) = router.pair(1).await;
@@ -135,9 +160,16 @@ async fn stalled_destination_backpressures_tcp_with_bounded_router_rss() {
 }
 impl Router {
     async fn start() -> Self {
+        Self::with_limits(CONNECTIONS_PER_CLASS as u16, CONNECTIONS_PER_CLASS as u16).await
+    }
+    async fn with_limits(expose: u16, private: u16) -> Self {
         let (parent, child) = StdUnixStream::pair().unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_capsem-router"))
             .args(["--parent-pid", &std::process::id().to_string()])
+            .arg("--expose-limit")
+            .arg(expose.to_string())
+            .arg("--private-limit")
+            .arg(private.to_string())
             .env_clear()
             .stdin(Stdio::from(std::os::fd::OwnedFd::from(child)))
             .stdout(Stdio::null())

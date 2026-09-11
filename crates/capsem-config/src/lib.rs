@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod model;
 mod provider_profile;
 mod resolver;
+pub mod router;
 mod security_rule_profile;
 mod settings_metadata;
 mod tree;

@@ -453,6 +453,8 @@ impl SettingsFile {
 #[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<crate::router::RouterConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_bodies: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_body_capture: Option<usize>,
@@ -466,7 +468,8 @@ pub struct NetworkConfig {
 
 impl NetworkConfig {
     pub fn is_empty(&self) -> bool {
-        self.log_bodies.is_none()
+        self.router.is_none()
+            && self.log_bodies.is_none()
             && self.max_body_capture.is_none()
             && self.http_upstream_ports.is_empty()
             && self.dns.is_empty()
@@ -474,6 +477,9 @@ impl NetworkConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(router) = &self.router {
+            router.validate()?;
+        }
         if matches!(self.max_body_capture, Some(value) if value > 1024 * 1024) {
             return Err("network.max_body_capture must be at most 1048576".to_string());
         }

@@ -365,8 +365,13 @@ async fn run_async_main_loop(
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
 ) -> Result<()> {
+    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
+    let runtime_config = runtime_source.load()?;
     let job_store = Arc::new(JobStore {
-        publisher: Arc::new(capsem_core::container::publish::Publisher::for_session(&session_dir)),
+        publisher: Arc::new(capsem_core::container::publish::Publisher::for_session(
+            &session_dir,
+            runtime_config.network.router.clone(),
+        )?),
         ..JobStore::new()
     });
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
@@ -389,8 +394,6 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
-    let runtime_config = runtime_source.load()?;
     let security_rule_ids = runtime_config
         .security_rules
         .rules()
