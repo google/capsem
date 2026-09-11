@@ -60,6 +60,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
         },
     );
     let result = handle_fork(
@@ -133,6 +134,7 @@ async fn handle_fork_duplicate_returns_conflict() {
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -176,23 +178,8 @@ async fn handle_fork_from_persistent_registry() {
             "pers-vm".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "pers-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
                 created_at: "2026-01-01T00:00:00Z".into(),
-                session_dir: session_dir.clone(),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("pers-vm", session_dir.clone())
             },
         );
     }
@@ -244,6 +231,7 @@ async fn handle_persist_preserves_profile_identity() {
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
         },
     );
 
@@ -308,6 +296,7 @@ fn resume_rejects_profile_revision_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -451,6 +440,7 @@ fn resume_rejects_profile_payload_hash_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -496,6 +486,7 @@ async fn handle_fork_rejects_asset_pin_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -547,24 +538,8 @@ fn provision_rejects_source_with_different_profile() {
         reg.data.vms.insert(
             "other-profile-source".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "other-profile-source".into(),
                 profile_id: "other-profile".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: PathBuf::from("/tmp/other-profile-source"),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("other-profile-source", PathBuf::from("/tmp/other-profile-source"))
             },
         );
     }
@@ -605,24 +580,9 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "susp-vm".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "susp-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: suspended_dir,
-                forked_from: None,
-                description: None,
                 suspended: true,
-                defunct: false,
-                last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
-                env: None,
+                ..test_persistent_entry("susp-vm", suspended_dir)
             },
         );
     }
@@ -633,24 +593,9 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "stop-vm".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "stop-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
                 ram_mb: 1024,
                 cpus: 1,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: stopped_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("stop-vm", stopped_dir)
             },
         );
     }
@@ -713,6 +658,7 @@ async fn handle_info_shows_suspended_status() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -785,24 +731,8 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
         reg.data.vms.insert(
             "payload-drift".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "payload-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
                 profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: state.run_dir.join("persistent/payload-drift"),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("payload-drift", state.run_dir.join("persistent/payload-drift"))
             },
         );
     }
@@ -834,23 +764,11 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
             "payload-drift-info".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "payload-drift-info".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
                 profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: state.run_dir.join("persistent/payload-drift-info"),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry(
+                    "payload-drift-info",
+                    state.run_dir.join("persistent/payload-drift-info"),
+                )
             },
         );
     }
@@ -894,6 +812,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -992,6 +911,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
                 persistent: false,
                 env: None,
                 forked_from: None,
+                private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
             },
         );
     }
@@ -1027,23 +947,9 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
             "resume-vm".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "resume-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: session_dir.clone(),
-                forked_from: None,
-                description: None,
                 suspended: true,
-                defunct: false,
-                last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
-                env: None,
+                ..test_persistent_entry("resume-vm", session_dir.clone())
             },
         );
     }
@@ -1102,6 +1008,7 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
             persistent: true,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
         },
     );
 
@@ -1151,6 +1058,7 @@ fn existing_resume_checkpoint_requires_completion_marker() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
+                private_address: None,
             },
         );
     }
@@ -1200,6 +1108,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
+                private_address: None,
             },
         );
     }

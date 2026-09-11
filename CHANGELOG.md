@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every VM receives one private IPv4 address for its whole life from the
+  host pool `10.128.0.0/9`, kept across stop and resume for named VMs and shown
+  as `private_address` by `/vms/list`, `/vms/{id}/info`, `capsem list` and
+  `capsem info`; the guest sees it as `CAPSEM_PRIVATE_ADDRESS`.
+- `capsem-bench-rs throughput` measures bulk upload, download, bidirectional
+  transfer and echo latency over N streams, and serves as the far end itself.
 - The logger supports bounded primary transport audit records, with indexed
   connection/network identities and an additive upgrade for retained sessions
   that preserves the shared session index's schema version.

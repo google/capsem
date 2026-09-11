@@ -21,6 +21,7 @@ fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
         last_error: None,
         checkpoint_path: None,
         env: None,
+        private_address: None,
     }
 }
 

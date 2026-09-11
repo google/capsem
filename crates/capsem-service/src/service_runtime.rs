@@ -166,7 +166,14 @@ pub(super) async fn run_service() -> Result<()> {
     });
 
     let registry_path = run_dir.join("persistent_registry.json");
-    let persistent_registry = PersistentRegistry::load(registry_path)?;
+    let mut persistent_registry = PersistentRegistry::load(registry_path)?;
+    let mut private_addresses =
+        capsem_core::net::address_pool::AddressAllocator::new(capsem_config::PrivatePool::DEFAULT);
+    reserve_registry_addresses(&mut persistent_registry, &mut private_addresses);
+    let networks =
+        capsem_core::net::network_registry::NetworkRegistry::load(capsem_foundation::paths::capsem_networks_dir())
+            .await
+            .map_err(|error| anyhow!("load network registry: {error}"))?;
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"
@@ -241,6 +248,8 @@ pub(super) async fn run_service() -> Result<()> {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(persistent_registry),
+        private_addresses: Mutex::new(private_addresses),
+        networks: tokio::sync::Mutex::new(networks),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),

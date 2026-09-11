@@ -118,6 +118,13 @@ pub(crate) async fn handle_fork(
     })?;
 
     // Register as persistent VM; the registry saves to disk, so off the worker.
+    // The fork is a new VM and gets its own lifetime address.
+    let private_address = state
+        .private_addresses
+        .lock()
+        .unwrap()
+        .allocate()
+        .map_err(|e| capsem_service::app_error_logged!(error, StatusCode::SERVICE_UNAVAILABLE, "fork: {e}"))?;
     let entry = PersistentVmEntry {
         id: vm_id.clone(),
         name: name.clone(),
@@ -143,11 +150,15 @@ pub(crate) async fn handle_fork(
         last_error: None,
         checkpoint_path: None,
         env: None,
+        private_address: Some(private_address),
     };
-    state
+    let registered = state
         .off_worker(move |state| state.persistent_registry.lock().unwrap().register(entry))
-        .await?
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .await?;
+    if let Err(e) = registered {
+        state.private_addresses.lock().unwrap().release(private_address);
+        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+    }
 
     Ok(Json(ForkResponse {
         id: vm_id,

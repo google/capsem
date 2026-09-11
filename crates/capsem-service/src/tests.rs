@@ -93,6 +93,12 @@ fn make_test_state() -> Arc<ServiceState> {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
+        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
+            capsem_config::PrivatePool::DEFAULT,
+        )),
+        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
+            run_dir.join("networks"),
+        )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
@@ -171,6 +177,12 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         persistent_registry: SharedRegistry::new(
             PersistentRegistry::load(assets_dir.join("persistent_registry.json")).expect("registry loads"),
         ),
+        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
+            capsem_config::PrivatePool::DEFAULT,
+        )),
+        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
+            run_dir.join("networks"),
+        )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir,
         run_dir: run_dir.clone(),
@@ -309,6 +321,7 @@ fn insert_fake_instance_with_session_dir_and_pins(
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
         },
     );
 }
@@ -398,6 +411,7 @@ fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry 
         last_error: None,
         checkpoint_path: None,
         env: None,
+        private_address: None,
     }
 }
 
@@ -625,6 +639,12 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
+        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
+            capsem_config::PrivatePool::DEFAULT,
+        )),
+        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
+            run_dir.join("networks"),
+        )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: dir.path().join("assets"),
         run_dir: run_dir.clone(),
@@ -670,6 +690,7 @@ mod files_api;
 mod ledger_routes;
 mod lifecycle;
 mod persist_purge;
+mod private_address;
 mod profile_mutations;
 mod profile_routes;
 mod session_identity;

@@ -54,6 +54,11 @@ pub struct PersistentVmEntry {
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
+    /// The VM's lifetime private address, drawn from the host pool at create
+    /// and reserved again at every service start. `None` only on entries
+    /// written before addresses existed; resume assigns one and saves it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub private_address: Option<std::net::Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

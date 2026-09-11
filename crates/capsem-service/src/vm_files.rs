@@ -934,10 +934,10 @@ pub(super) async fn handle_provision(
                 let stale_name = name.clone();
                 let _ = state
                     .off_worker(move |state| {
-                        let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
+                        let _ = state.forget_persistent_entry(&stale_name);
                     })
                     .await;
-                state.instances.lock().unwrap().remove(&id);
+                state.evict_instance(&id);
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 
@@ -1184,22 +1184,7 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
-            let mut info = SandboxInfo::new(
-                i.id.clone(),
-                i.profile_id.clone(),
-                i.pid,
-                VmLifecycleState::Running,
-                i.persistent,
-            );
-            info.name = Some(i.name.clone());
-            info.ram_mb = Some(i.ram_mb);
-            info.cpus = Some(i.cpus);
-            info.version = Some(i.base_version.clone());
-            info.forked_from = i.forked_from.clone();
-            info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-            info.can_resume = false;
-            info.refresh_available_actions();
-            sandboxes.push(info);
+            sandboxes.push(running_sandbox_info(i));
         }
     }
 
@@ -1219,26 +1204,61 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
     for entry in inactive_persistent {
         let vm_id = persistent_entry_vm_id(&entry);
         let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
-        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
-        info.name = Some(entry.name.clone());
-        info.ram_mb = Some(entry.ram_mb);
-        info.cpus = Some(entry.cpus);
-        info.version = Some(entry.base_version.clone());
-        info.forked_from = entry.forked_from.clone();
-        info.description = entry.description.clone();
-        info.can_resume = can_resume;
-        if can_resume {
-            info.resume_blocked_reason = None;
-        } else if entry.defunct {
-            info.last_error = blocked_reason;
-        } else {
-            info.resume_blocked_reason = blocked_reason;
-        }
-        info.refresh_available_actions();
-        sandboxes.push(info);
+        sandboxes.push(inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason));
     }
 
     ListResponse { sandboxes }
+}
+
+/// The list/info row of a running VM, from its in-memory record alone.
+fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
+    let mut info = SandboxInfo::new(
+        i.id.clone(),
+        i.profile_id.clone(),
+        i.pid,
+        VmLifecycleState::Running,
+        i.persistent,
+    );
+    info.name = Some(i.name.clone());
+    info.ram_mb = Some(i.ram_mb);
+    info.cpus = Some(i.cpus);
+    info.version = Some(i.base_version.clone());
+    info.forked_from = i.forked_from.clone();
+    info.private_address = Some(i.private_address);
+    info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+    info.can_resume = false;
+    info.refresh_available_actions();
+    info
+}
+
+/// The list/info row of a stopped, suspended or defunct persistent VM. A
+/// blocked resume explains itself: as the crash's last error for a defunct
+/// VM, as the reason otherwise.
+fn inactive_sandbox_info(
+    vm_id: String,
+    entry: &PersistentVmEntry,
+    status: VmLifecycleState,
+    can_resume: bool,
+    blocked_reason: Option<String>,
+) -> SandboxInfo {
+    let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
+    info.name = Some(entry.name.clone());
+    info.ram_mb = Some(entry.ram_mb);
+    info.cpus = Some(entry.cpus);
+    info.version = Some(entry.base_version.clone());
+    info.forked_from = entry.forked_from.clone();
+    info.description = entry.description.clone();
+    info.private_address = entry.private_address;
+    info.can_resume = can_resume;
+    if can_resume {
+        info.resume_blocked_reason = None;
+    } else if entry.defunct {
+        info.last_error = blocked_reason;
+    } else {
+        info.resume_blocked_reason = blocked_reason;
+    }
+    info.refresh_available_actions();
+    info
 }
 
 pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
@@ -1280,24 +1300,7 @@ pub(super) async fn handle_info(
         let (instance_data, session_dir) = {
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
-                Some(i) => {
-                    let mut info = SandboxInfo::new(
-                        i.id.clone(),
-                        i.profile_id.clone(),
-                        i.pid,
-                        VmLifecycleState::Running,
-                        i.persistent,
-                    );
-                    info.name = Some(i.name.clone());
-                    info.ram_mb = Some(i.ram_mb);
-                    info.cpus = Some(i.cpus);
-                    info.version = Some(i.base_version.clone());
-                    info.forked_from = i.forked_from.clone();
-                    info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-                    info.can_resume = false;
-                    info.refresh_available_actions();
-                    (Some(info), Some(i.session_dir.clone()))
-                }
+                Some(i) => (Some(running_sandbox_info(i)), Some(i.session_dir.clone())),
                 None => (None, None),
             }
         };
@@ -1318,22 +1321,7 @@ pub(super) async fn handle_info(
         let (status, can_resume, blocked_reason) = state
             .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
             .await?;
-        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
-        info.name = Some(entry.name.clone());
-        info.ram_mb = Some(entry.ram_mb);
-        info.cpus = Some(entry.cpus);
-        info.version = Some(entry.base_version.clone());
-        info.forked_from = entry.forked_from.clone();
-        info.description = entry.description.clone();
-        info.can_resume = can_resume;
-        if can_resume {
-            info.resume_blocked_reason = None;
-        } else if entry.defunct {
-            info.last_error = blocked_reason;
-        } else {
-            info.resume_blocked_reason = blocked_reason;
-        }
-        info.refresh_available_actions();
+        let mut info = inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
         // Disk usage is a recursive walk of the session dir (including every
         // snapshot clone). Run it off the async worker so it does not stall the
         // axum runtime, and log rather than silently swallow a failure.

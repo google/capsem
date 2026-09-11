@@ -303,24 +303,8 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
-            id: new_persistent_vm_id(),
-            name: "saved-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: pins,
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: base.join("persistent/saved-vm"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-            env: None,
+            ..test_persistent_entry("saved-vm", base.join("persistent/saved-vm"))
         },
     );
 
@@ -365,24 +349,8 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
-            id: new_persistent_vm_id(),
-            name: "saved-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: pins,
-            ram_mb: 2048,
-            cpus: 2,
-            base_version: "0.0.0".into(),
-            created_at: "0".into(),
-            session_dir: base.join("persistent/saved-vm"),
-            forked_from: None,
-            description: None,
-            suspended: false,
-            defunct: false,
-            last_error: None,
-            checkpoint_path: None,
-            env: None,
+            ..test_persistent_entry("saved-vm", base.join("persistent/saved-vm"))
         },
     );
 
@@ -881,6 +849,12 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
+        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
+            capsem_config::PrivatePool::DEFAULT,
+        )),
+        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
+            "/nonexistent/networks",
+        ))),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
@@ -1479,24 +1453,7 @@ fn provision_persistent_rejects_duplicate_name() {
         reg.data.vms.insert(
             "taken".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "taken".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: PathBuf::from("/tmp/taken"),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("taken", PathBuf::from("/tmp/taken"))
             },
         );
     }
@@ -1535,47 +1492,15 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
         reg.data.vms.insert(
             "defunct-vm".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "defunct-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: defunct_dir.clone(),
-                forked_from: None,
-                description: None,
-                suspended: false,
                 defunct: true,
                 last_error: Some("boot failed".into()),
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("defunct-vm", defunct_dir.clone())
             },
         );
         reg.data.vms.insert(
             "healthy-vm".into(),
             PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "healthy-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir: healthy_dir.clone(),
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
+                ..test_persistent_entry("healthy-vm", healthy_dir.clone())
             },
         );
     }

@@ -1150,6 +1150,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "capsem-assets",
+ "capsem-config",
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
