@@ -142,15 +142,19 @@ async fn serve_one(stream: &mut TcpStream, chunk: &[u8]) -> Result<()> {
     }
     let (mut reader, mut writer) = stream.split();
     // The half that does not apply never completes, so the select ends on
-    // the client's signal alone: EOF for an upload, a failed write once the
-    // client has closed for a download. A bidirectional client shuts its
-    // write side first, so EOF ends it too.
+    // the client's signal alone: EOF or a reset on the drain, a failed write
+    // on the fill. A client that drops with unread bytes resets; that is
+    // the normal end of a trial, not a failure to report.
     let drain = async {
         if !direction.sends() {
             std::future::pending::<()>().await;
         }
         let mut sink = vec![0u8; chunk.len()];
-        while reader.read(&mut sink).await? != 0 {}
+        while let Ok(count) = reader.read(&mut sink).await {
+            if count == 0 {
+                break;
+            }
+        }
         Ok::<_, anyhow::Error>(())
     };
     let fill = async {
@@ -188,6 +192,10 @@ async fn measure(args: &Args, address: SocketAddr) -> Result<serde_json::Value> 
                 return echo_round_trips(&mut stream, stop).await;
             }
             let (mut reader, mut writer) = stream.split();
+            // Neither side half-closes: at the deadline the whole socket is
+            // dropped, as iperf3 ends a trial. A proxied path may turn a
+            // half-close into a reset after its own deadline, which is not
+            // the transfer being measured.
             let send = async {
                 let mut sent = 0u64;
                 if direction.sends() {
@@ -195,7 +203,6 @@ async fn measure(args: &Args, address: SocketAddr) -> Result<serde_json::Value> 
                         writer.write_all(&chunk).await?;
                         sent += chunk.len() as u64;
                     }
-                    writer.shutdown().await?;
                 }
                 Ok::<_, anyhow::Error>(sent)
             };

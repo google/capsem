@@ -217,6 +217,10 @@ def test_private_link_and_published_port_transport_samples(
             log = guest(service, vm_id, f"cat /var/tmp/{name}.log", check=False)
             (output / f"{name}.log").write_text(
                 log.get("stdout", "") + log.get("stderr", "")
+            helpers = guest(
+                service, vm_id, "ls -la /var/tmp; pgrep -a capsem-tun; ip -o addr show tun0", check=False
+            )
+            (output / "guest-helpers.txt").write_text(json.dumps(helpers, indent=2))
             )
         print(f"PRIVATE LINK EVIDENCE: {output}")
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
