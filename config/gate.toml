@@ -708,6 +708,14 @@ identity_roots = [
     "rust-toolchain.toml",
 ]
 lane_receipt = ".lane-receipt.json"
+# The host asset tree (`imagebuild.output`) gets the same identity recorded
+# beside it after its last image build, with one digest per input. The warm
+# shortcut in functional and candidate plans rebuilds when the tree is missing
+# or when this record no longer matches the checkout, and the run log names
+# the inputs that changed. Presence alone once reused a kernel built from an
+# older defconfig through two green-looking runs.
+host_identity_record = ".identity.json"
+host_identity_changed_inputs_shown = 20
 
 # A build that exits zero having produced none of these is the failure worth
 # naming here rather than much later, inside a VM boot.

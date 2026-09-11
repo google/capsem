@@ -7,7 +7,7 @@ both architectures from sources none of them had touched -- the last three
 changed only test files and a shell function.
 
 The build cache does carry `assets/` between prefixes, and the lane ignored
-it: the only thing consulting it is the `_when_missing` recovery path, which
+it: the only thing consulting it is the `_when_stale` recovery path, which
 answers a different question. The lane's own output tree is not carried at
 all, so there was nothing to reuse even in principle.
 
@@ -45,6 +45,30 @@ def digest_of(root: Path, relatives: tuple[str, ...]) -> str:
     """
     digest = blake3.blake3()
     digest.update(b"capsem.asset-lane-input.v2\0")
+    for relative, path in _inputs(root, relatives):
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        _feed(digest, path)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def inputs(root: Path, relatives: tuple[str, ...]) -> dict[str, str]:
+    """One digest per input, keyed by checkout-relative path.
+
+    `digest_of` answers "did anything change"; this answers "what", so a stale
+    asset can be explained rather than merely rebuilt. Each value covers the
+    same facts as the combined digest: mode, kind, and content or link target.
+    """
+    result: dict[str, str] = {}
+    for relative, path in _inputs(root, relatives):
+        digest = blake3.blake3()
+        _feed(digest, path)
+        result[relative] = digest.hexdigest()
+    return result
+
+
+def _inputs(root: Path, relatives: tuple[str, ...]) -> Iterator[tuple[str, Path]]:
     for relative in relatives:
         target = root / relative
         if not target.exists() and not target.is_symlink():
@@ -54,21 +78,21 @@ def digest_of(root: Path, relatives: tuple[str, ...]) -> str:
                 "shrinks the identity to whatever happened to be present"
             )
         for path in sorted(_files(target)):
-            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-            digest.update(b"\0")
-            mode = path.lstat().st_mode
-            digest.update(f"{stat.S_IMODE(mode):04o}".encode("ascii"))
-            digest.update(b"\0")
-            if stat.S_ISLNK(mode):
-                digest.update(b"symlink\0")
-                digest.update(os.readlink(path).encode("utf-8"))
-            elif stat.S_ISREG(mode):
-                digest.update(b"file\0")
-                digest.update(path.read_bytes())
-            else:
-                raise GateError(f"asset identity input {path} is not a file or symlink")
-            digest.update(b"\0")
-    return digest.hexdigest()
+            yield path.relative_to(root).as_posix(), path
+
+
+def _feed(digest: blake3.blake3, path: Path) -> None:
+    mode = path.lstat().st_mode
+    digest.update(f"{stat.S_IMODE(mode):04o}".encode("ascii"))
+    digest.update(b"\0")
+    if stat.S_ISLNK(mode):
+        digest.update(b"symlink\0")
+        digest.update(os.readlink(path).encode("utf-8"))
+    elif stat.S_ISREG(mode):
+        digest.update(b"file\0")
+        digest.update(path.read_bytes())
+    else:
+        raise GateError(f"asset identity input {path} is not a file or symlink")
 
 
 def _files(target: Path) -> Iterator[Path]:
