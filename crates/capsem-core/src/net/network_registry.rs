@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod logs;
+pub use logs::{LogEvent, LogPage, LogQuery, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT};
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NetworkError {
     #[error("network name {0:?} must be a DNS label: 1-63 lowercase letters, digits or hyphens, not at the ends")]
@@ -33,6 +36,8 @@ pub enum NetworkError {
     NotAMember { id: Uuid, vm_id: String },
     #[error("network database {path}: {error}")]
     Database { path: PathBuf, error: String },
+    #[error("invalid log cursor or limit: {0}")]
+    Cursor(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +66,8 @@ struct NetworkEntry {
 pub struct NetworkRegistry {
     root: PathBuf,
     networks: BTreeMap<Uuid, NetworkEntry>,
+    /// Readers of retired networks, opened on first history read.
+    retired_readers: BTreeMap<Uuid, Arc<DbHandle>>,
 }
 
 impl std::fmt::Debug for NetworkRegistry {
@@ -78,6 +85,7 @@ impl NetworkRegistry {
         Self {
             root,
             networks: BTreeMap::new(),
+            retired_readers: BTreeMap::new(),
         }
     }
 

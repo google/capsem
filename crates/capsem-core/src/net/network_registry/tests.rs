@@ -174,3 +174,260 @@ async fn an_empty_or_missing_root_is_an_empty_registry() {
     std::fs::create_dir_all(root.join("not-a-uuid")).unwrap();
     assert!(NetworkRegistry::load(root).await.unwrap().list().is_empty());
 }
+
+async fn write_events(registry: &NetworkRegistry, id: Uuid, count: usize, first_ms: i64) {
+    use capsem_logger::{TransportEvent, TransportEventKind, WriteOp};
+    let entry = registry.networks.get(&id).unwrap();
+    // Ids derive from the timestamp too: the ledger keeps one row per event
+    // id, so a second batch with the same ids would be silently dropped.
+    for n in (first_ms as usize)..(first_ms as usize + count) {
+        let facts = serde_json::json!({
+            "network": {"context": "flow", "source": {"vm": {"id": format!("vm-{}", n % 2)}}, "destination": {"vm": {"id": "vm-9"}}},
+            "decision": {"effective": if n % 3 == 0 { "block" } else { "allow" }},
+        });
+        let event = TransportEvent::new(
+            format!("{:012x}", 0xabc000 + n),
+            n as i64,
+            if n % 2 == 0 {
+                TransportEventKind::Connect
+            } else {
+                TransportEventKind::Close
+            },
+            Some(id),
+            Some(Uuid::from_u128(1000 + n as u128)),
+            &facts,
+        )
+        .unwrap();
+        entry.handle.write(WriteOp::TransportEvent(event)).await.unwrap();
+    }
+    entry.handle.flush().await.unwrap();
+}
+
+#[tokio::test]
+async fn logs_page_oldest_first_and_the_cursor_continues_across_appends() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let net = registry.create("audited", 1).await.unwrap();
+    write_events(&registry, net.id, 7, 100).await;
+    let first = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                limit: Some(3),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first.events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert!(first.next_cursor.is_some(), "a full page has more");
+    write_events(&registry, net.id, 2, 200).await;
+    let second = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                cursor: first.next_cursor.clone(),
+                limit: Some(100),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        second.events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+        vec![4, 5, 6, 7, 8, 9]
+    );
+    assert!(
+        second.next_cursor.is_none(),
+        "not a full page: everything so far was seen"
+    );
+    let idle = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                cursor: Some(second.cursor.clone()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(idle.events.is_empty());
+    assert_eq!(idle.cursor, second.cursor, "an empty poll keeps the same cursor");
+}
+
+#[tokio::test]
+async fn log_filters_select_by_vm_connection_type_decision_and_time() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let net = registry.create("audited", 1).await.unwrap();
+    write_events(&registry, net.id, 6, 100).await;
+    let by_vm = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                vm: Some("vm-1".into()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        by_vm.events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+        vec![2, 4, 6]
+    );
+    let by_destination = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                vm: Some("vm-9".into()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_destination.events.len(), 6, "either endpoint matches");
+    let by_type = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                event_type: Some("network.close".into()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_type.events.len(), 3);
+    let blocked = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                decision: Some("block".into()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked.events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
+        vec![3, 6]
+    );
+    let window = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                since_unix_ms: Some(102),
+                until_unix_ms: Some(104),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        window.events.iter().map(|e| e.timestamp_unix_ms).collect::<Vec<_>>(),
+        vec![102, 103, 104]
+    );
+    let connection = Uuid::from_u128(1102).to_string();
+    let by_connection = registry
+        .logs(
+            net.id,
+            &LogQuery {
+                connection: Some(connection.clone()),
+                ..LogQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_connection.events.len(), 1);
+    assert_eq!(
+        by_connection.events[0].connection_id.as_deref(),
+        Some(connection.as_str())
+    );
+}
+
+#[tokio::test]
+async fn cursors_are_bound_to_their_network_and_filters_and_limits_are_bounded() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let a = registry.create("alpha", 1).await.unwrap();
+    let b = registry.create("beta", 1).await.unwrap();
+    write_events(&registry, a.id, 2, 100).await;
+    let page = registry.logs(a.id, &LogQuery::default()).await.unwrap();
+    let other = registry
+        .logs(
+            b.id,
+            &LogQuery {
+                cursor: Some(page.cursor.clone()),
+                ..LogQuery::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(other, Err(NetworkError::Cursor(ref reason)) if reason.contains("another network")),
+        "{other:?}"
+    );
+    let refiltered = registry
+        .logs(
+            a.id,
+            &LogQuery {
+                cursor: Some(page.cursor.clone()),
+                vm: Some("vm-0".into()),
+                ..LogQuery::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(refiltered, Err(NetworkError::Cursor(ref reason)) if reason.contains("different filters")),
+        "{refiltered:?}"
+    );
+    for bad in ["nope", "x.y.z", &format!("{}.0.-1", a.id)] {
+        let result = registry
+            .logs(
+                a.id,
+                &LogQuery {
+                    cursor: Some(bad.to_string()),
+                    ..LogQuery::default()
+                },
+            )
+            .await;
+        assert!(matches!(result, Err(NetworkError::Cursor(_))), "{bad}: {result:?}");
+    }
+    for limit in [0, MAX_LOG_LIMIT + 1] {
+        let result = registry
+            .logs(
+                a.id,
+                &LogQuery {
+                    limit: Some(limit),
+                    ..LogQuery::default()
+                },
+            )
+            .await;
+        assert!(matches!(result, Err(NetworkError::Cursor(_))), "limit {limit}");
+    }
+}
+
+#[tokio::test]
+async fn a_retired_network_keeps_its_history_and_a_new_same_name_network_starts_empty() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root.clone());
+    let old = registry.create("team", 1).await.unwrap();
+    write_events(&registry, old.id, 3, 100).await;
+    registry.retire(old.id, 2).await.unwrap();
+    let new = registry.create("team", 3).await.unwrap();
+    let mut reloaded = NetworkRegistry::load(root).await.unwrap();
+    let history = reloaded.logs(old.id, &LogQuery::default()).await.unwrap();
+    assert_eq!(
+        history.events.len(),
+        3,
+        "retired history is read through a lazily opened reader"
+    );
+    let fresh = reloaded.logs(new.id, &LogQuery::default()).await.unwrap();
+    assert!(fresh.events.is_empty());
+    let unknown = Uuid::new_v4();
+    assert_eq!(
+        reloaded.logs(unknown, &LogQuery::default()).await.unwrap_err(),
+        NetworkError::NotFound(unknown)
+    );
+}
