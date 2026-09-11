@@ -28,6 +28,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-admin`**: profile/asset/release validation and materialization.
 - **`capsem-mcp`**: host MCP server bridging AI-agent tools to the service API.
 - **`capsem-router`**: Seatbelt/seccomp-confined TCP relay; receives connected descriptor pairs over a private, bounded grant channel. The VM owner accepts listeners and retains endpoint shutdown handles. No service control socket, ambient file access, listener acceptance, or virtualization entitlement.
+- **`capsem-network`**: user-space TCP/IP (smoltcp) over one guest's tun0 packet stream. The kernel never routes these packets; every guest connection is a smoltcp socket the host process owns, which is where policy and audit attach. Runs inside the VM owner for the data-plane measurement; a confined companion fed by descriptor passing is the target shape.
 - **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
 - **`capsem-mcp-builtin`**: built-in HTTP and file/snapshot MCP tools.
 - **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.
