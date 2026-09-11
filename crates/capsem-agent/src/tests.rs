@@ -535,7 +535,7 @@ fn recv_exec_done(rx: &SharedCtrlReceiver) -> (u64, i32) {
         .unwrap()
         .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
-    match received {
+    match received.message {
         GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
         other => panic!("expected ExecDone, got {other:?}"),
     }
@@ -1678,11 +1678,4 @@ fn a_message_the_dying_writer_consumed_is_delivered_by_the_next_one() {
     second.finish();
 }
 
-#[test]
-fn ackable_responses_are_parked_at_send_time_and_pongs_are_not() {
-    let (sender, _rx) = test_ctrl_channel();
-    sender.send(GuestToHost::Pong).unwrap();
-    sender.send(GuestToHost::ExecDone { id: 4, exit_code: 0 }).unwrap();
-    let parked: Vec<u64> = sender.pending.lock().unwrap().keys().copied().collect();
-    assert_eq!(parked, vec![4]);
-}
+mod control_replay;

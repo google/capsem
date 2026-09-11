@@ -647,6 +647,7 @@ binaries = [
     "capsem-app",
     "capsem-gateway",
     "capsem-mcp",
+    "capsem-router",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-process",
@@ -707,6 +708,14 @@ identity_roots = [
     "rust-toolchain.toml",
 ]
 lane_receipt = ".lane-receipt.json"
+# The host asset tree (`imagebuild.output`) gets the same identity recorded
+# beside it after its last image build, with one digest per input. The warm
+# shortcut in functional and candidate plans rebuilds when the tree is missing
+# or when this record no longer matches the checkout, and the run log names
+# the inputs that changed. Presence alone once reused a kernel built from an
+# older defconfig through two green-looking runs.
+host_identity_record = ".identity.json"
+host_identity_changed_inputs_shown = 20
 
 # A build that exits zero having produced none of these is the failure worth
 # naming here rather than much later, inside a VM boot.
@@ -839,6 +848,7 @@ ty_search_paths = [
     "build_system/tests/release",
     "build_system/tests/release_site",
     "guest/artifacts",
+    "tests/fixtures/oci",
 ]
 # Check the same cross-platform Python surface on Linux and macOS so the exact
 # diagnostic ratchet cannot change merely because the gate moved hosts.
@@ -1070,12 +1080,12 @@ must_stay_below_lines = 3000
 [boundary.rust.oversized_line_counts]
 "crates/capsem-admin/src/assets_channel_render.rs" = 1720
 "crates/capsem-admin/src/assets_channel_validation.rs" = 1412
-"crates/capsem-admin/src/main.rs" = 2193
-"crates/capsem-admin/src/profile_images.rs" = 2207
+"crates/capsem-admin/src/main.rs" = 2182
+"crates/capsem-admin/src/profile_images.rs" = 2189
 "crates/capsem-admin/src/release_graph.rs" = 1089
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
-"crates/capsem-agent/src/main.rs" = 1397
-"crates/capsem-agent/src/tests.rs" = 1688
+"crates/capsem-agent/src/main.rs" = 1109
+"crates/capsem-agent/src/tests.rs" = 1681
 "crates/capsem-assets/src/asset_manager.rs" = 1355
 "crates/capsem-core/src/auto_snapshot.rs" = 1011
 "crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
@@ -1089,31 +1099,31 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/net/policy_config/profile_contract.rs" = 2160
 "crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1264
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
-"crates/capsem-core/src/security_engine/mod.rs" = 2775
+"crates/capsem-core/src/security_engine/mod.rs" = 2435
 "crates/capsem-core/tests/mitm_integration.rs" = 2161
 "crates/capsem-logger/src/db/handle_tests.rs" = 1410
-"crates/capsem-logger/src/reader.rs" = 1779
-"crates/capsem-logger/src/schema.rs" = 1504
-"crates/capsem-logger/src/schema/tests.rs" = 1099
+"crates/capsem-logger/src/reader.rs" = 1727
+"crates/capsem-logger/src/schema.rs" = 1295
+"crates/capsem-logger/src/schema/tests.rs" = 1032
 "crates/capsem-logger/src/session_index.rs" = 1270
 "crates/capsem-logger/src/session_index/tests.rs" = 1205
-"crates/capsem-logger/src/writer.rs" = 1283
-"crates/capsem-logger/src/writer/tests.rs" = 2002
-"crates/capsem-mock-server/src/main.rs" = 1565
-"crates/capsem-process/src/vsock.rs" = 1672
-"crates/capsem-proto/src/tests.rs" = 1505
-"crates/capsem-service/src/ledger_routes.rs" = 2920
-"crates/capsem-service/src/main.rs" = 2111
-"crates/capsem-service/src/profile_routes.rs" = 2202
-"crates/capsem-service/src/vm_files.rs" = 1901
-"crates/capsem-service/src/tests/assets_registry.rs" = 1600
+"crates/capsem-logger/src/writer.rs" = 1140
+"crates/capsem-logger/src/writer/tests.rs" = 1946
+"crates/capsem-mock-server/src/main.rs" = 1416
+"crates/capsem-process/src/vsock.rs" = 1466
+"crates/capsem-proto/src/tests.rs" = 1457
+"crates/capsem-service/src/ledger_routes.rs" = 2810
+"crates/capsem-service/src/main.rs" = 2100
+"crates/capsem-service/src/profile_routes.rs" = 2167
+"crates/capsem-service/src/vm_files.rs" = 1896
+"crates/capsem-service/src/tests/assets_registry.rs" = 1599
 "crates/capsem-service/src/tests/lifecycle.rs" = 2396
-"crates/capsem-service/src/tests/profile_routes.rs" = 2682
+"crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 2190
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2491
+"crates/capsem/src/main.rs" = 2455
 "crates/capsem/src/support_bundle.rs" = 1047
-"crates/capsem/src/tests.rs" = 1452
+"crates/capsem/src/tests.rs" = 1403
 "crates/capsem/src/update.rs" = 2488
 "crates/capsem/src/update/asset_install.rs" = 1400
 "crates/capsem/src/update/tests.rs" = 2776
@@ -1651,7 +1661,7 @@ binaries = [
 # `initrd.guest-agents` cross-compiles.
 built = [
     "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway", "capsem-mcp",
-    "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process",
+    "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-router",
     "capsem-service", "capsem-tray", "capsem-tui", "mcp_export",
 ]
 # Host binaries this list deliberately omits, each built by a step that owns
@@ -2149,6 +2159,7 @@ coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-re
 #                    them here too would run them a second time an hour later,
 #                    and a guard with two owners has none
 broad_ignores = [
+    "tests/ironbank/kingslanding",
     "tests/capsem-recipes",
     "tests/capsem_install",
     "tests/capsem-build-chain",
@@ -2207,6 +2218,12 @@ assets_variable = "CAPSEM_TEST_ASSETS_DIR"
 config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
 
+[functional.kingslanding]
+fixture_script = "tests/fixtures/oci/prepare_redis.py"
+fixture_dir = "cache/target/tests/redis-image"
+suite_path = "tests/ironbank/kingslanding"
+benchmark_path = "tests/ironbank/kingslanding/test_redis_benchmark.py"
+
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts
 # module excludes them because it is the cheap composition proof; the artifacts
@@ -2258,7 +2275,7 @@ rust_coverage_crate_minimum = 40.0
 # absorbs small measurement variation; once added tests improve coverage past
 # it, the same patch must raise the floor instead of leaving stale headroom.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-proto = 90.82, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-process = 40.0, capsem-router = 65.4, capsem-proto = 90.82, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
@@ -2548,6 +2565,8 @@ egress_max_message_bytes = 8388608
 
 network_reason = "No mid-run fetch. This is the rule the whole profile exists for."
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
+self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter router profile before handling data; ordinary test children retain the gate network denial."
+self_confined_executables = ["capsem-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first
@@ -2772,6 +2791,11 @@ slow_action_seconds = 30
 # log stays in `steps/`; this is the part that has to be in front of whoever is
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
+# A failed pytest command is summarised instead: its short test summary, then
+# this many `E ` lines of each failure's message. The tail of a log with four
+# errors sharing one long assertion is the middle of that assertion; the runc
+# hook error that explained a real-VM failure had to be grepped out of it.
+pytest_failure_lines = 12
 
 # Nothing bounds how long `fast-test` may take, and deliberately so. The
 # wall-clock budget that did was removed after it failed two releases: a

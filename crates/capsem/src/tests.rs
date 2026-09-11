@@ -227,17 +227,6 @@ fn cli_create_accepts_profile() {
 }
 
 #[test]
-fn cli_run_accepts_profile() {
-    let cli = Cli::parse_from(["capsem", "run", "echo ok", "--profile", "co-work"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Run { profile, .. }) => {
-            assert_eq!(profile, "co-work");
-        }
-        _ => panic!("expected Run"),
-    }
-}
-
-#[test]
 fn cli_mcp_commands_accept_profile() {
     let cases = [
         vec!["capsem", "mcp", "servers", "--profile", "co-work"],
@@ -424,44 +413,6 @@ fn purge_summary_keeps_temporary_only_message_when_no_defunct_persistent() {
         purge_summary_message(&result, false),
         "[*] Purged 3 temporary sessions."
     );
-}
-
-#[test]
-fn parse_run() {
-    let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Run {
-            command,
-            profile,
-            timeout,
-            env,
-        }) => {
-            assert_eq!(command, "echo hello");
-            assert_eq!(profile, "code");
-            assert_eq!(timeout, None);
-            assert!(env.is_empty());
-        }
-        _ => panic!("expected Run"),
-    }
-}
-
-#[test]
-fn parse_run_with_timeout() {
-    let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Run {
-            command,
-            profile,
-            timeout,
-            env,
-        }) => {
-            assert_eq!(command, "ls -la");
-            assert_eq!(profile, "code");
-            assert_eq!(timeout, Some(120));
-            assert!(env.is_empty());
-        }
-        _ => panic!("expected Run"),
-    }
 }
 
 #[test]

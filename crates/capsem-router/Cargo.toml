@@ -1,0 +1,20 @@
+[package]
+name = "capsem-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Confined descriptor-only TCP publication companion."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-guard = { path = "../capsem-guard" }
+tokio.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

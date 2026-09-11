@@ -10,11 +10,12 @@ use uuid::Uuid;
 
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, ProfileMutationEvent,
-    SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SubstitutionEvent,
+    SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SubstitutionEvent, TransportEvent,
 };
 use crate::schema;
 
 mod model_rows;
+mod producer;
 use model_rows::insert_model_call;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -127,6 +128,7 @@ fn blake3_bytes_ref(value: &[u8]) -> String {
 /// Typed write operations sent to the writer thread.
 #[derive(Debug, Clone)]
 pub enum WriteOp {
+    TransportEvent(TransportEvent),
     NetEvent(NetEvent),
     ModelCall(ModelCall),
     McpCall(McpCall),
@@ -183,71 +185,7 @@ fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessag
     mpsc::sync_channel(capacity.max(1))
 }
 
-impl WriteOp {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            WriteOp::NetEvent(_) => "net_event",
-            WriteOp::ModelCall(_) => "model_call",
-            WriteOp::McpCall(_) => "mcp_call",
-            WriteOp::FileEvent(_) => "file_event",
-            WriteOp::ExecEvent(_) => "exec_event",
-            WriteOp::ExecEventComplete(_) => "exec_event_complete",
-            WriteOp::AuditEvent(_) => "audit_event",
-            WriteOp::DnsEvent(_) => "dns_event",
-            WriteOp::SubstitutionEvent(_) => "substitution_event",
-            WriteOp::SecurityRuleEvent(_) => "security_rule_event",
-            WriteOp::SecurityAskEvent(_) => "security_ask_event",
-            WriteOp::SecurityDecisionEvent(_) => "security_decision_event",
-            WriteOp::ProfileMutationEvent(_) => "profile_mutation_event",
-        }
-    }
-
-    /// Ensure a primary emitted event has a stable 12-lower-hex id before it
-    /// reaches SQLite. Rule ledger rows already point at a triggering event and
-    /// therefore must not mint their own id here.
-    pub fn ensure_event_id(&mut self) -> Option<String> {
-        match self {
-            WriteOp::NetEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::ModelCall(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::McpCall(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::FileEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::ExecEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::AuditEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::DnsEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::SubstitutionEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::SecurityRuleEvent(event) => Some(event.event_id.clone()),
-            WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
-            WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.clone()),
-            WriteOp::ExecEventComplete(_) => None,
-        }
-    }
-
-    pub fn event_id(&self) -> Option<&str> {
-        match self {
-            WriteOp::NetEvent(event) => event.event_id.as_deref(),
-            WriteOp::ModelCall(event) => event.event_id.as_deref(),
-            WriteOp::McpCall(event) => event.event_id.as_deref(),
-            WriteOp::FileEvent(event) => event.event_id.as_deref(),
-            WriteOp::ExecEvent(event) => event.event_id.as_deref(),
-            WriteOp::AuditEvent(event) => event.event_id.as_deref(),
-            WriteOp::DnsEvent(event) => event.event_id.as_deref(),
-            WriteOp::SubstitutionEvent(event) => event.event_id.as_deref(),
-            WriteOp::SecurityRuleEvent(event) => Some(event.event_id.as_str()),
-            WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
-            WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.as_str()),
-            WriteOp::ExecEventComplete(_) => None,
-        }
-    }
-}
-
-fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
-    if event_id.is_none() {
-        *event_id = Some(new_event_id());
-    }
-    event_id.clone()
-}
+mod operation;
 
 /// A dedicated writer thread that owns the SQLite connection.
 ///
@@ -307,7 +245,7 @@ impl DbWriter {
         conn.set_prepared_statement_cache_capacity(64);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         schema::create_tables(&conn)?;
-        schema::migrate(&conn);
+        schema::migrate(&conn)?;
         let memory_uri = schema::memory_uri_for_path(path);
         schema::with_memory_schema_lock(|| {
             schema::create_memory_tables(&conn, &memory_uri)?;
@@ -342,7 +280,7 @@ impl DbWriter {
         // One statement per table per target; the default 16 would evict.
         conn.set_prepared_statement_cache_capacity(64);
         schema::create_tables(&conn)?;
-        schema::migrate(&conn);
+        schema::migrate(&conn)?;
         let memory_uri = schema::memory_uri_for_name(&format!(
             "writer-open-in-memory-{}-{}",
             std::process::id(),
@@ -369,91 +307,6 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
         })
-    }
-
-    /// Clone the stored sender so async work can happen outside the lock.
-    fn clone_sender(&self) -> Option<WriterSender> {
-        self.tx.lock().unwrap().clone()
-    }
-
-    /// Enqueue one operation, yielding while the bounded writer channel is full.
-    pub async fn write(&self, op: WriteOp) {
-        if let Err(error) = self.write_checked(op).await {
-            warn!(error = %error, "db writer dropped write op");
-        }
-    }
-
-    /// Enqueue one operation, yielding while the bounded writer channel is full.
-    /// Reports a closed or missing writer instead of silently dropping the op.
-    pub async fn write_checked(&self, op: WriteOp) -> Result<(), String> {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let Some(tx) = self.clone_sender() else {
-            record_enqueue(started, "missing_sender", &span);
-            return Err("db writer sender missing".to_string());
-        };
-        send_with_backpressure(&tx, WriterMessage::write(op))
-            .await
-            .inspect_err(|_| {
-                record_enqueue(started, "closed", &span);
-            })?;
-        record_enqueue(started, "queued", &span);
-        Ok(())
-    }
-
-    /// Try to enqueue without blocking. Returns false when the queue is full or closed.
-    pub fn try_write(&self, op: WriteOp) -> bool {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let queue_result = match self.clone_sender() {
-            Some(tx) => match tx.try_send(WriterMessage::write(op)) {
-                Ok(()) => "queued",
-                Err(mpsc::TrySendError::Full(_)) => "full",
-                Err(mpsc::TrySendError::Disconnected(_)) => "closed",
-            },
-            None => "missing_sender",
-        };
-        record_enqueue(started, queue_result, &span);
-        queue_result == "queued"
-    }
-
-    /// Blocking send for synchronous producer paths that must not drop
-    /// security events. This deliberately avoids Tokio's `blocking_send`,
-    /// which panics when called from a runtime worker. Backpressure is still
-    /// honored: if the queue is full, this thread waits until the writer
-    /// drains capacity instead of dropping the event.
-    pub fn write_blocking(&self, op: WriteOp) {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let result = self
-            .clone_sender()
-            .ok_or_else(|| "db writer sender missing".to_string())
-            .and_then(|tx| {
-                tx.send(WriterMessage::write(op))
-                    .map_err(|error| format!("db writer channel closed: {error}"))
-            });
-        match result {
-            Ok(()) => record_enqueue(started, "queued", &span),
-            Err(error) => {
-                record_enqueue(started, "closed", &span);
-                warn!(error = %error, "db writer channel closed, dropping blocking write op");
-            }
-        }
     }
 
     /// Wait until the writer thread has committed every operation enqueued
@@ -800,6 +653,9 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
         WriteOp::AuditEvent(_) => {
             tables.insert("audit_events");
         }
+        WriteOp::TransportEvent(_) => {
+            tables.insert("transport_events");
+        }
         WriteOp::DnsEvent(_) => {
             tables.insert("dns_events");
         }
@@ -899,6 +755,7 @@ fn execute_memory_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Resul
         *op_counts.entry(op.kind()).or_default() += 1;
         affected_memory_tables(op, &mut affected_tables);
         match op {
+            WriteOp::TransportEvent(e) => event_rows::insert_transport_event(&tx, e, WriteTarget::Memory)?,
             WriteOp::NetEvent(e) => insert_net_event(&tx, e, WriteTarget::Memory)?,
             WriteOp::ModelCall(m) => insert_model_call(&tx, m, WriteTarget::Memory)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c, WriteTarget::Memory)?,

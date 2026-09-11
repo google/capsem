@@ -167,7 +167,7 @@ class BuildAssetsCommand(
             assets = config.path(config.imagebuild.output)
             targets = {name: (assets / name / config.artifacts.initrd,) for name in names}
             packed = plan.add(initrd.repack_step(config, targets), after=images)
-            initrd.finalize(plan, config, assets=assets, after=(packed,))
+            initrd.finalize(plan, config, assets=assets, arches=names, after=(packed,))
         return plan
 
 
@@ -205,7 +205,7 @@ def check_assets(
     names = (arch.name,)
     rust_builders = imagebases.required_rust_builder_names(config, names)
     bases = phase.add(
-        _when_missing(
+        _when_stale(
             recovery,
             step(
                 "base-images",
@@ -217,11 +217,11 @@ def check_assets(
         after=after,
     )
     checked = phase.add(
-        _when_missing(recovery, doctor(config, skips=doctor_skips)),
+        _when_stale(recovery, doctor(config, skips=doctor_skips)),
         after=(bases,),
     )
     ready = phase.add(
-        _when_missing(
+        _when_stale(
             recovery,
             step(
                 "guest-execution",
@@ -233,7 +233,7 @@ def check_assets(
         after=(checked,),
     )
     if rust_builders:
-        # Not `_when_missing`. The warm-asset shortcut is about not rebuilding
+        # Not `_when_stale`. The warm-asset shortcut is about not rebuilding
         # assets; this builds the *tool* that builds them, and
         # `initrd.guest-agents` runs `capsem-builder agent` without asking
         # whether any asset is present. The builder also goes stale on its own
@@ -258,7 +258,7 @@ def check_assets(
             after=(ready,),
         )
     ready = phase.add(
-        _when_missing(
+        _when_stale(
             recovery,
             step(
                 "asset-tools",
@@ -271,7 +271,7 @@ def check_assets(
         after=(ready,),
     )
     ready = phase.add(
-        _when_missing(
+        _when_stale(
             recovery,
             assetdependencies.dependency_step(
                 config, profiles(config), names, label="recovery-dependencies"
@@ -284,12 +284,13 @@ def check_assets(
     for profile in profiles(config):
         subject = build(config, profile=profile, arch=arch.name, template="all")
         subject = replace(subject, actions=(Remove(manifest), *subject.actions))
-        ready = phase.add(_when_missing(recovery, subject), after=(ready,))
+        ready = phase.add(_when_stale(recovery, subject), after=(ready,))
         images.append(ready)
+    phase.add(recovery.record_step(), after=(ready,))
     return tuple(images)
 
 
-def _when_missing(recovery: AssetRecovery, subject: Step) -> Step:
+def _when_stale(recovery: AssetRecovery, subject: Step) -> Step:
     return replace(
         subject,
         actions=tuple(recovery.when(action) for action in subject.actions),

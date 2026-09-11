@@ -11,6 +11,15 @@ from pydantic import ValidationError
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_oci_blobs_have_one_bounded_cache_contract():
+    policy = load_policy(PROJECT_ROOT).stages["oci-images"]
+    assert policy.scope is CacheScope.DISK
+    assert policy.prune_strategy is PruneStrategy.LRU
+    assert policy.entry_root == Path("blobs")
+    assert policy.mutation_locks == (Path("cache.lock"),)
+    assert 0 < policy.warm_size_bytes < policy.max_size_bytes
+
+
 @pytest.mark.parametrize("field,value", [
     ("retention_root", "../outside"), ("retention_root", "/tmp/outside"),
     ("mutation_locks", ["../outside"]), ("mutation_locks", ["/tmp/outside"]),

@@ -215,6 +215,7 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     cache = _policy(source)
     environment = {
         **python,
+        cache["authority_environment"]: str(authority),
         PYTEST_ADDOPTS: _pytest_addopts(pytest, test_tmp / "pytest"),
         TMPDIR: str(test_tmp),
         UV_CACHE: str(uv),

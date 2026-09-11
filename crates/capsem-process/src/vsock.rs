@@ -14,9 +14,14 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 mod dns;
 use dns::serve_dns_session;
+mod handshake;
+use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
 mod guest_report;
-use guest_report::is_guest_liveness_message;
+use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
+mod exec_completion;
+mod exec_output;
 mod shutdown;
+use exec_output::{read_exec_output, MAX_EXEC_OUTPUT_BYTES};
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
@@ -310,11 +315,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             };
 
             info!("control bridge: active");
-            let Some(mut writer_fd) = clone_fd(&conn, "duplicate-control-vsock-writer") else {
-                continue;
-            };
-            let Some(mut reader_fd) = clone_fd(&conn, "duplicate-control-vsock-reader") else {
-                continue;
+            let mut control = match capsem_core::vm::control::Connection::new(conn) {
+                Ok(control) => control,
+                Err(error) => {
+                    error!(%error, "control bridge: connection setup failed");
+                    continue;
+                }
             };
 
             // Re-write every pending (unacked) message on the fresh conn.
@@ -328,38 +334,31 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 );
                 let mut replay_failed = false;
                 for msg in &to_replay {
-                    if let Err(e) = write_control_msg(&mut writer_fd, msg) {
+                    let frame = match proto::encode_host_msg(msg) {
+                        Ok(frame) => frame,
+                        Err(error) => {
+                            error!(%error, "control bridge: invalid replay frame");
+                            replay_failed = true;
+                            break;
+                        }
+                    };
+                    if let Err(e) = control.write(&frame).await {
                         error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
                         break;
                     }
                 }
                 if replay_failed {
+                    control.close().await;
                     continue;
                 }
             }
 
-            let (msg_tx, mut msg_rx) = mpsc::channel::<Result<GuestToHost>>(32);
-
-            // Reader thread. An oversized guest frame is discarded and the
-            // stream realigned by read_control_msg; dropping the connection
-            // for it made the guest replay the same frame on every reconnect.
-            std::thread::spawn(move || loop {
-                let res = read_control_msg(&mut reader_fd);
-                if let Err(too_large) = res
-                    .as_ref()
-                    .map_err(|e| e.downcast_ref::<capsem_core::ControlFrameTooLarge>())
-                {
-                    if let Some(too_large) = too_large {
-                        error!(%too_large, "control bridge: oversized guest frame discarded");
-                        continue;
-                    }
-                }
-                let is_err = res.is_err();
-                if msg_tx.blocking_send(res).is_err() || is_err {
-                    break;
-                }
-            });
+            if let Err(error) = js.publisher.control_ready() {
+                error!(%error, "control bridge: publication lease refused");
+                control.close().await;
+                continue;
+            }
 
             loop {
                 tokio::select! {
@@ -367,6 +366,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // *before* writing so a write-fail/silent-drop is
                     // recoverable via the next rekey replay.
                     Some(msg) = ctrl_out_rx.recv() => {
+                        if let HostToGuest::ConnectPort { flow, .. } = &msg {
+                            if !js.publisher.pending_connection(*flow) {
+                                tracing::debug!(?flow, "control bridge: stale publication setup dropped");
+                                continue;
+                            }
+                        }
                         // Frame first: a message the guest would drop must
                         // not be parked for replay or mistaken for a
                         // transport failure.
@@ -380,7 +385,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         if let Some(id) = ackable_id(&msg) {
                             pending.pending_acks.lock().unwrap().insert(id, msg.clone());
                         }
-                        if let Err(e) = writer_fd.write_all(&frame) {
+                        if let Err(e) = control.write(&frame).await {
                             error!(error = %e, "control bridge: write failed");
                             break;
                         }
@@ -392,14 +397,28 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // back so the agent's symmetric pending_responses
                     // map can drop the entry; without this the agent
                     // would replay every response on every rekey.
-                    res = msg_rx.recv() => {
+                    res = control.recv() => {
                         match res {
                             Some(Ok(GuestToHost::Ack { id })) => {
                                 pending.pending_acks.lock().unwrap().remove(&id);
                             }
+                            Some(Ok(GuestToHost::PortClosed { flow, report })) => {
+                                if let Err(error) = js.publisher.report_close(flow, report) {
+                                    error!(%error, "guest close report rejected");
+                                    break;
+                                }
+                                let frame = proto::encode_host_msg(&HostToGuest::PortCloseAck { flow })
+                                    .expect("fixed-size flow acknowledgement");
+                                if let Err(error) = control.write(&frame).await {
+                                    error!(%error, "flow close acknowledgement failed");
+                                    break;
+                                }
+                            }
                             Some(Ok(msg)) => {
                                 if let Some(id) = ackable_response_id(&msg) {
-                                    if let Err(e) = write_control_msg(&mut writer_fd, &HostToGuest::AckReply { id }) {
+                                    let frame = proto::encode_host_msg(&HostToGuest::AckReply { id })
+                                        .expect("fixed-size control acknowledgement");
+                                    if let Err(e) = control.write(&frame).await {
                                         error!(error = %e, "control bridge: AckReply write failed");
                                         break;
                                     }
@@ -423,6 +442,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
             }
+            js.publisher.control_lost();
+            control.close().await;
         }
     });
 
@@ -464,6 +485,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 ServiceToProcess::TerminalResize { cols, rows } => {
                     capsem_core::try_send!("hub_resize", hub_tx.send(HostToGuest::Resize { cols, rows }).await);
+                }
+                ServiceToProcess::ConnectPort { flow, port } => {
+                    capsem_core::try_send!(
+                        "hub_publication",
+                        hub_tx.send(HostToGuest::ConnectPort { flow, port }).await
+                    );
+                }
+                ServiceToProcess::AbortPorts { flows } => {
+                    capsem_core::try_send!(
+                        "hub_publication_abort",
+                        hub_tx.send(HostToGuest::AbortPorts { flows }).await
+                    );
                 }
                 ServiceToProcess::Exec { id, command } => {
                     // active_execs is owned by ipc.rs's Exec handler -- it
@@ -924,6 +957,7 @@ fn dispatch_aux_connection(
     vm_id: &str,
 ) {
     match HostVsockService::from_port(conn.port) {
+        Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
         Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
@@ -963,7 +997,25 @@ fn dispatch_aux_connection(
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let (local_buf, total_seen) = read_exec_output(&mut file);
+                    let stream = js
+                        .active_execs
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .and_then(|active| active.stream.clone());
+                    let result = match stream {
+                        Some(sender) => exec_output::stream_exec_output(&mut file, id, &sender),
+                        None => Ok(read_exec_output(&mut file)),
+                    };
+                    let (local_buf, total_seen) = match result {
+                        Ok(output) => output,
+                        Err(error) => {
+                            if let Some(active) = js.active_execs.lock().unwrap().get_mut(&id) {
+                                active.output_error = Some(format!("exec output transport failed: {error}"));
+                            }
+                            (Vec::new(), 0)
+                        }
+                    };
                     if total_seen > local_buf.len() as u64 {
                         warn!(
                             id,
@@ -1058,50 +1110,6 @@ fn dispatch_aux_connection(
     }
 }
 
-/// Maximum guest exec output retained in memory.
-///
-/// The Exec vsock port is a raw stream, so the `MAX_FRAME_SIZE` bound that
-/// `read_control_msg` applies to length-prefixed control frames never reaches
-/// it. Without a cap here, a guest running `yes` grows this process until the
-/// OOM killer takes it and every in-flight job with it.
-///
-/// 10 MiB matches capsem-gateway's `MAX_BODY_SIZE`: output past that already
-/// cannot traverse the gateway to a remote client, so this moves an existing
-/// ceiling to before the allocation instead of after it.
-const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
-
-/// Drain one exec-output stream through EOF, retaining at most
-/// [`MAX_EXEC_OUTPUT_BYTES`].
-///
-/// Returns the retained bytes and the total number of bytes seen, which differ
-/// exactly when the guest exceeded the cap. Reading continues past the cap so
-/// the guest is not left blocked on a full socket and so the reported total is
-/// the real one; only the retained buffer stops growing.
-///
-/// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
-/// treating it as completion publishes an empty/partial buffer before the
-/// guest's `ExecDone`, while still returning the child's successful exit code.
-fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
-    let mut output = Vec::new();
-    let mut total_seen: u64 = 0;
-    let mut read_buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut read_buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                total_seen = total_seen.saturating_add(n as u64);
-                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
-                if room > 0 {
-                    output.extend_from_slice(&read_buf[..n.min(room)]);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        }
-    }
-    (output, total_seen)
-}
-
 fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
 where
     W: std::io::Write + Send + 'static,
@@ -1146,37 +1154,6 @@ fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload)?;
     Ok(Some(payload))
-}
-
-/// Returns `Some(id)` for HostToGuest variants whose delivery the host
-/// bridge tracks via the pending-ack map. The agent acks these on
-/// receipt; the bridge replays them on every fresh conn until acked.
-/// Non-ackable variants (Resize, Ping, Shutdown, BootConfig, etc.) are
-/// either side-effect-free or fire-and-forget at boot, so we don't
-/// burden the wire with per-message acks for them.
-fn ackable_id(msg: &HostToGuest) -> Option<u64> {
-    match msg {
-        HostToGuest::Exec { id, .. }
-        | HostToGuest::FileWrite { id, .. }
-        | HostToGuest::FileRead { id, .. }
-        | HostToGuest::FileDelete { id, .. } => Some(*id),
-        _ => None,
-    }
-}
-
-/// Returns `Some(id)` for `GuestToHost` variants the agent retains in
-/// its symmetric pending_responses map and replays on every fresh
-/// control conn. The host emits `HostToGuest::AckReply { id }` on
-/// receipt so the agent can drop the entry. Mirrors `ackable_id` but
-/// for the return path.
-fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
-    match msg {
-        GuestToHost::ExecDone { id, .. }
-        | GuestToHost::FileOpDone { id }
-        | GuestToHost::FileContent { id, .. }
-        | GuestToHost::Error { id, .. } => Some(*id),
-        _ => None,
-    }
 }
 
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
@@ -1326,66 +1303,30 @@ async fn handle_guest_msg(
         GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
         GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
         GuestToHost::ExecDone { id, exit_code } => {
-            // The guest closes the EXEC socket before sending ExecDone, and
-            // the host's EXEC-port reader thread may still be finishing its
-            // read loop + deposit. Wait on the deposit notifier so we read
-            // the actual captured buffer, not a stale empty one. Short
-            // timeout guards against lost connections (guest never opened
-            // the EXEC port) so we still return in bounded time. This must be
-            // a transport-loss bound, not a scheduler-latency assumption: a
-            // loaded runner can delay the reader for hundreds of milliseconds.
-            let notify = js.active_execs.lock().unwrap().get(&id).map(|a| a.deposited.clone());
-            if let Some(n) = notify {
-                let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
-            }
-            let active_exec = js.active_execs.lock().unwrap().remove(&id);
-            let (event_id, duration_ms, stdout, total_bytes) = active_exec
-                .map(|active| {
-                    (
-                        active.event_id,
-                        active.started_at.elapsed().as_millis() as u64,
-                        active.captured,
-                        active.total_bytes,
-                    )
-                })
-                .unwrap_or((None, 0, Vec::new(), 0));
-            // `total_bytes` is what the guest wrote; `stdout` is what survived
-            // the cap. They differ only on truncation.
-            let truncated = total_bytes > stdout.len() as u64;
-
-            let complete = capsem_logger::ExecEventComplete {
-                exec_id: id,
-                exit_code,
-                duration_ms,
-                stdout_preview: Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into()),
-                stderr_preview: None,
-                stdout_bytes: total_bytes,
-                stderr_bytes: 0,
-                pid: None,
+            let streaming = {
+                let mut guard = js.active_execs.lock().unwrap();
+                let Some(active) = guard.get_mut(&id) else {
+                    return;
+                };
+                if active.completion_started {
+                    return;
+                }
+                active.completion_started = true;
+                let streaming = active.stream.is_some();
+                drop(guard);
+                streaming
             };
-            if let Some(event_id) = event_id {
-                let rules = security_rules.read().unwrap().clone();
-                capsem_core::security_engine::emit_process_complete_security_write_and_rules(
-                    db, &rules, event_id, complete,
-                )
-                .await;
+            if streaming {
+                // At most one completion task per registered job. Slow output
+                // consumers must never occupy the control/ack/rekey loop.
+                let js = Arc::clone(js);
+                let db = Arc::clone(db);
+                let rules = Arc::clone(security_rules);
+                tokio::spawn(async move {
+                    exec_completion::complete(id, exit_code, &js, &db, &rules).await;
+                });
             } else {
-                warn!(
-                    exec_id = id,
-                    "exec completion arrived without a primary security event id; updating exec row without rule ledger match"
-                );
-                capsem_core::security_engine::emit_process_complete_security_write_only(db, complete).await;
-            }
-            if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                capsem_core::try_send!(
-                    "job_result_exec",
-                    tx.send(JobResult::Exec {
-                        stdout,
-                        stderr: vec![],
-                        exit_code,
-                        truncated
-                    })
-                );
+                exec_completion::complete(id, exit_code, js, db, security_rules).await;
             }
         }
         GuestToHost::FileContent { id, path, data } => {
@@ -1518,153 +1459,6 @@ async fn handle_guest_msg(
         other => {
             warn!(target: "ipc", unhandled = ?other, "handle_guest_msg: unknown variant; this binary may be older than its peer");
         }
-    }
-}
-
-/// Run the boot handshake on an already-accepted control fd.
-///
-/// Must be invoked from `spawn_blocking`: all I/O here is synchronous on
-/// a `std::fs::File` wrapper over the vsock fd, and doing it inline on a
-/// tokio worker starves the runtime under multi-VM boot contention.
-///
-/// `.context()` (not `map_err(anyhow!)`) is used throughout so the
-/// underlying `std::io::Error` stays in the error source chain, which
-/// `is_retryable_handshake_error` downcasts to decide whether to retry.
-fn perform_handshake(
-    fd: &mut std::fs::File,
-    is_restore: bool,
-    env: &[(String, String)],
-    conf: Option<capsem_core::net::policy_config::GuestConfig>,
-) -> Result<()> {
-    read_control_msg(fd).context("initial Ready read failed")?;
-    if is_restore {
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let traceparent = capsem_foundation::telemetry::current_parent_traceparent().to_string();
-        write_control_msg(
-            fd,
-            &HostToGuest::BootConfig {
-                epoch_secs: epoch,
-                traceparent,
-            },
-        )
-        .context("restore BootConfig write failed")?;
-        // Re-inject timezone in case host TZ changed since suspend. These
-        // writes are best-effort: failing to reset the guest clock is not
-        // itself a handshake failure.
-        if let Ok(link) = std::fs::read_link("/etc/localtime") {
-            if let Some(s) = link.to_str() {
-                if let Some(idx) = s.find("/zoneinfo/") {
-                    let tz = &s[idx + "/zoneinfo/".len()..];
-                    let _ = write_control_msg(
-                        fd,
-                        &HostToGuest::SetEnv {
-                            key: "TZ".into(),
-                            value: tz.to_string(),
-                        },
-                    );
-                    if let Ok(tz_data) = std::fs::read("/etc/localtime") {
-                        let _ = write_control_msg(
-                            fd,
-                            &HostToGuest::FileWrite {
-                                id: 0,
-                                path: "/etc/localtime".into(),
-                                data: tz_data,
-                                mode: 0o644,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        write_control_msg(fd, &HostToGuest::BootConfigDone).context("restore BootConfigDone write failed")?;
-    } else {
-        capsem_core::send_boot_config(fd, env, conf).context("send_boot_config failed")?;
-    }
-    read_control_msg(fd).context("BootReady read failed")?;
-    Ok(())
-}
-
-/// Collect a terminal+control pair from the vsock accept stream.
-///
-/// Auxiliary connections (MITM proxy, audit, DNS) that race ahead
-/// of the pair are parked in `deferred_conns` so the caller can hand
-/// them to the long-running dispatcher once the handshake succeeds.
-async fn collect_terminal_control_pair(
-    vsock_rx: &mut mpsc::UnboundedReceiver<VsockConnection>,
-    deferred_conns: &mut Vec<VsockConnection>,
-) -> Result<(VsockConnection, VsockConnection)> {
-    let mut terminal = None;
-    let mut control = None;
-    while terminal.is_none() || control.is_none() {
-        let Some(conn) = vsock_rx.recv().await else {
-            anyhow::bail!("vsock channel closed before terminal/control pair arrived");
-        };
-        match conn.port {
-            proto::VSOCK_PORT_TERMINAL => terminal = Some(conn),
-            proto::VSOCK_PORT_CONTROL => control = Some(conn),
-            proto::VSOCK_PORT_SNI_PROXY | proto::VSOCK_PORT_AUDIT | proto::VSOCK_PORT_DNS_PROXY => {
-                deferred_conns.push(conn);
-            }
-            _ => {}
-        }
-    }
-    Ok((terminal.unwrap(), control.unwrap()))
-}
-
-/// Classify a handshake error as retryable.
-///
-/// All cover the same observed pattern: Apple VZ tears the post-restoreState
-/// vsock conn down between the guest sending one frame and the next, leaving
-/// the host with a dead fd. The kind we get depends on which side closes
-/// first and how:
-///   - `BrokenPipe` / `ConnectionReset` -- guest's end shut down hard.
-///   - `UnexpectedEof` -- guest closed cleanly mid-frame; we get EOF on
-///     `read_exact`. Empirically this is the dominant kind under heavy
-///     suspend/resume churn (see commit history of this file).
-///
-/// Retrying drops the dead pair and waits for the guest's reconnect loop to
-/// open a fresh terminal+control pair, then re-runs the handshake. Capped
-/// at `HANDSHAKE_RETRY_MAX` so a genuinely broken guest fails fast.
-fn is_retryable_handshake_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-            matches!(
-                io.kind(),
-                std::io::ErrorKind::BrokenPipe
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::UnexpectedEof
-            )
-        })
-    })
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq)]
-enum VsockPortKind {
-    Terminal,
-    Control,
-    SniProxy,
-    Exec,
-    Lifecycle,
-    Audit,
-    DnsProxy,
-    Unknown,
-}
-
-#[cfg(test)]
-fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match HostVsockService::from_port(port) {
-        Some(HostVsockService::Terminal) => VsockPortKind::Terminal,
-        Some(HostVsockService::Control) => VsockPortKind::Control,
-        Some(HostVsockService::SniProxy) => VsockPortKind::SniProxy,
-        Some(HostVsockService::Exec) => VsockPortKind::Exec,
-        Some(HostVsockService::Lifecycle) => VsockPortKind::Lifecycle,
-        Some(HostVsockService::Audit) => VsockPortKind::Audit,
-        Some(HostVsockService::DnsProxy) => VsockPortKind::DnsProxy,
-        None => VsockPortKind::Unknown,
     }
 }
 

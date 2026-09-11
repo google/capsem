@@ -300,6 +300,7 @@ pub fn network_config_from_policy_and_dns(
     dns: DnsNetworkConfig,
 ) -> NetworkConfig {
     NetworkConfig {
+        router: (mechanics.router != capsem_config::router::RouterConfig::default()).then(|| mechanics.router.clone()),
         log_bodies: Some(mechanics.log_bodies),
         max_body_capture: Some(mechanics.max_body_capture),
         http_upstream_ports: mechanics.http_upstream_ports.clone(),
@@ -324,6 +325,9 @@ pub fn network_config_from_policy_and_dns(
 }
 
 pub fn apply_network_config(config: &NetworkConfig, mechanics: &mut crate::net::policy::NetworkMechanics) {
+    if let Some(router) = &config.router {
+        mechanics.router = router.clone();
+    }
     if let Some(log_bodies) = config.log_bodies {
         mechanics.log_bodies = log_bodies;
     }

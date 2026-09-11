@@ -47,6 +47,7 @@ mod profile_mutation_cache;
 mod profile_status_cache;
 mod session_cleanup;
 mod session_db_handles;
+use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
@@ -282,10 +283,6 @@ struct ServiceState {
     /// `main.db` query. The typed session-summary epoch invalidates it for
     /// session/usage writes without coupling it to profile-mutation ledger rows.
     stats_response_cache: Mutex<Option<CachedStatsResponse>>,
-    /// Final stats/detail bytes for inactive sessions. Running sessions keep
-    /// reading live DB state; stopped/seeded sessions can reuse bytes until
-    /// their session.db metadata changes.
-    stats_detail_response_cache: Mutex<HashMap<String, CachedStatsDetailResponse>>,
     /// Session storage diagnostics cached by session directory. These values
     /// describe the rootfs image path/size and host filesystem for status/info
     /// routes; repeated polling must not stat the filesystem on every sample.
@@ -356,12 +353,6 @@ struct CachedStatsResponse {
 }
 
 #[derive(Clone)]
-struct CachedStatsDetailResponse {
-    db_fingerprint: String,
-    bytes: Vec<u8>,
-}
-
-#[derive(Clone)]
 struct CachedPersistentResumeState {
     fingerprint: String,
     state: (VmLifecycleState, bool, Option<String>),
@@ -378,10 +369,6 @@ struct CachedEvaluateResponse {
 struct CachedListResponse {
     fingerprint: String,
     bytes: Bytes,
-}
-
-fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
-    session_dir.join("session.db")
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1198,6 +1185,7 @@ impl ServiceState {
         let guest_name = if persistent { name } else { id };
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
+        child_cmd.arg("--vm-name").arg(guest_name);
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -1464,6 +1452,7 @@ impl ServiceState {
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+        child_cmd.arg("--vm-name").arg(&name);
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {

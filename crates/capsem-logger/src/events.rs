@@ -3,6 +3,9 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+mod transport;
+pub use transport::{TransportEvent, TransportEventKind};
+
 pub use capsem_proto::credential_reference::{credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX};
 
 /// Canonical action vocabulary for security rule matches.

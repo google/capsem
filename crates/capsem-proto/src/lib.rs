@@ -17,6 +17,7 @@ pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
+pub mod router;
 
 pub use handshake::{HandshakeError, Hello};
 
@@ -46,10 +47,11 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Version 2 adds router flow keys tied to the owner generation.
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
-/// handshake.rs). Computed by `build.rs`. Detects "I added a variant in
+/// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
 /// the middle without bumping PROTOCOL_VERSION" -- silent re-numbering of
 /// bincode variants -- which is exactly the bug that motivated this
 /// sprint.
@@ -123,6 +125,8 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+/// Guest-initiated data connections for explicitly published container TCP ports.
+pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -140,6 +144,7 @@ pub enum HostVsockService {
     Exec,
     Audit,
     DnsProxy,
+    Publication,
 }
 
 impl HostVsockService {
@@ -152,6 +157,7 @@ impl HostVsockService {
             Self::Exec => VSOCK_PORT_EXEC,
             Self::Audit => VSOCK_PORT_AUDIT,
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
+            Self::Publication => VSOCK_PORT_PUBLICATION,
         }
     }
 
@@ -164,6 +170,7 @@ impl HostVsockService {
             Self::Exec => "exec",
             Self::Audit => "audit",
             Self::DnsProxy => "dns_proxy",
+            Self::Publication => "publication",
         }
     }
 
@@ -176,6 +183,7 @@ impl HostVsockService {
             VSOCK_PORT_EXEC => Some(Self::Exec),
             VSOCK_PORT_AUDIT => Some(Self::Audit),
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
+            VSOCK_PORT_PUBLICATION => Some(Self::Publication),
             _ => None,
         }
     }
@@ -189,6 +197,7 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::Exec,
     HostVsockService::Audit,
     HostVsockService::DnsProxy,
+    HostVsockService::Publication,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -199,6 +208,7 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_EXEC,
     VSOCK_PORT_AUDIT,
     VSOCK_PORT_DNS_PROXY,
+    VSOCK_PORT_PUBLICATION,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {
@@ -419,6 +429,12 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
+    /// Connect to loopback in the active container's network namespace.
+    ConnectPort { flow: router::FlowKey, port: u16 },
+    /// Cancel a bounded set of flows from this control connection's VM boot.
+    AbortPorts { flows: Vec<router::FlowKey> },
+    /// Receipt of a terminal flow report; distinct from exec/file job IDs.
+    PortCloseAck { flow: router::FlowKey },
 }
 
 /// A single boot timing measurement from the guest init script.
@@ -610,6 +626,11 @@ pub enum GuestToHost {
     ShutdownComplete,
     /// Quiescence ack: filesystem frozen, safe to snapshot.
     SnapshotReady,
+    /// Terminal guest endpoint report. Replayed until PortCloseAck.
+    PortClosed {
+        flow: router::FlowKey,
+        report: router::CloseReport,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ BINARIES=(
     capsem-process
     capsem-tui
     capsem-mcp
-    capsem-mcp-aggregator
+    capsem-router capsem-mcp-aggregator
     capsem-mcp-builtin
     capsem-gateway
     capsem-tray

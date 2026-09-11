@@ -1,5 +1,6 @@
 mod client;
 mod completions;
+mod container_run;
 mod paths;
 mod platform;
 mod service_install;
@@ -32,7 +33,7 @@ use client::UpdateTrackState;
 use client::{
     ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
     ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse,
-    RunRequest, SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
+    SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -406,23 +407,8 @@ enum SessionCommands {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Run a command in a fresh session (destroyed after)
-    ///
-    /// Creates a temporary session, runs the command, prints output, and
-    /// destroys the session. Useful for one-shot tasks and CI pipelines.
-    Run {
-        /// Command to execute
-        command: String,
-        /// Profile to use for this session
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-        /// Timeout in seconds
-        #[arg(long)]
-        timeout: Option<u64>,
-        /// Set environment variables (repeatable: -e KEY=VALUE)
-        #[arg(short = 'e', long = "env")]
-        env: Vec<String>,
-    },
+    /// Run a shell command or OCI image in a fresh session, then destroy it
+    Run(container_run::RunArgs),
     /// Copy a file in or out of a session's workspace.
     ///
     /// Either `src` or `dst` (but not both) must use the form
@@ -1328,7 +1314,7 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run { .. }) => client::DirectServiceLifetime::BoundToCommand,
+        Commands::Session(SessionCommands::Run(..)) => client::DirectServiceLifetime::BoundToCommand,
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1812,32 +1798,10 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Session(SessionCommands::Run {
-            command,
-            profile,
-            timeout,
-            env,
-        }) => {
-            client::validate_id(profile)?;
-            let req = RunRequest {
-                command: command.clone(),
-                profile_id: profile.clone(),
-                timeout_secs: *timeout,
-                env: client::parse_env_vars(env)?,
-            };
-            let request: Result<ApiResponse<ExecResponse>> = client.post("/run", &req).await;
-            let resp = client.finish_direct_request(request).await?;
-            let resp = resp.into_result()?;
-            if !resp.stdout.is_empty() {
-                print!("{}", resp.stdout);
-            }
-            if !resp.stderr.is_empty() {
-                eprint!("{}", resp.stderr);
-            }
-            if let Some(notice) = resp.truncation_notice() {
-                eprintln!("{notice}");
-            }
-            std::process::exit(resp.exit_code);
+        Commands::Session(SessionCommands::Run(args)) => {
+            let result = container_run::run(&client, args).await;
+            let exit_code = client.finish_direct_request(result).await?;
+            std::process::exit(exit_code);
         }
         Commands::Session(SessionCommands::Cp { src, dst }) => {
             handle_cp(&client, src, dst).await?;

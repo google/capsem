@@ -8,14 +8,16 @@
 [migration.manifest]
 
 [domain_abi.rust]
+"crates/capsem-agent/src/control_reader.rs" = "1c8aba2461e6eb9e4aa30e83c9fa20e94c3c1f4d6b8f511412e2629d1e2dd5a6"
 "crates/capsem-agent/src/audit.rs" = "2ff815c166e12c8323e75f8d5259072f9f3247877d0cdab6238eaf192fe078ab"
 "crates/capsem-agent/src/bin/capsem_sysutil.rs" = "2456e6eea72b13097ac6f4a3204861deb89f36706ac53d6fc4973c1518aa0592"
 "crates/capsem-agent/src/control_writer.rs" = "7bb055fc33322daf9f68fabd409338a10da68f7c92ddc19343d271c8be051f75"
-"crates/capsem-agent/src/main.rs" = "a07eb0b96c4c1a5aa60f4c99cf35949d26c03af9e99720a02e52878725776da1"
+"crates/capsem-agent/src/main.rs" = "ce0b2b7cb0299eb8b097100221b251d00e3729bdd1b2bae314cc562554845a51"
+"crates/capsem-agent/src/port_bridge/setup.rs" = "c314ef519d011b48444e2429508459a2d9fab5aa44191ebfae51e48a6e70bcbb"
 "crates/capsem-agent/src/mcp_server.rs" = "c13ca2276c05f67b07b2a19e8244dff4e1eafc9ba767a90422dd89c57952d580"
 "crates/capsem-agent/src/shutdown.rs" = "c59308ad70e3e026ca82edd165eba2a776fc247b8d11c7b5fc816966560005da"
 "crates/capsem-agent/src/terminal_bridge.rs" = "a998fbd07bf14d4d1f7d01fc2756142c9fffd037a8840fe28fcf9723df4db656"
-"crates/capsem-agent/src/vsock_io.rs" = "edfe7d88e4bd25c74ee6b8dbde2439653aefd9f6836b9044315db17ded0367da"
+"crates/capsem-agent/src/vsock_io.rs" = "1962827294e0a3fd23a4aafd6f1cdda660a718615871ed9dc7db324ddd116535"
 "crates/capsem-core/src/auto_snapshot.rs" = "8c74a509534e2ab852cbd8a486536065090ea2064fbe111752f5637b2e3abc6e"
 "crates/capsem-core/src/auto_snapshot/sparse_copy.rs" = "2ae415613b699b3ee820ff965560126503f0e6a2bd5063323dd1dc778079d603"
 "crates/capsem-core/src/hypervisor/apple_vz/machine.rs" = "6b58f0be51ae99954999ec72250f8439fa6ee56c5fd8b62f8950431810d48d20"

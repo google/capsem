@@ -5,6 +5,39 @@ use std::os::unix::net::UnixStream;
 use std::thread;
 
 #[test]
+fn connect_rejects_an_unbounded_setup_deadline_before_opening_a_socket() {
+    assert_eq!(
+        vsock_connect_with_timeout(VSOCK_HOST_CID, 9999, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::InvalidInput
+    );
+}
+
+#[test]
+fn connection_readiness_obeys_its_deadline_when_the_peer_stalls() {
+    use std::io::Write;
+    let (mut socket, _peer) = UnixStream::pair().unwrap();
+    socket.set_nonblocking(true).unwrap();
+    while socket.write(&[0; 16384]).is_ok() {}
+    let started = std::time::Instant::now();
+    assert_eq!(
+        wait_connected(&socket, Duration::from_millis(30)).unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
+    assert!(started.elapsed() >= Duration::from_millis(30));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn connection_readiness_succeeds_without_waiting_for_the_deadline() {
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let started = std::time::Instant::now();
+    wait_connected(&socket, Duration::from_secs(10)).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
 fn vsock_connect_fails_gracefully_on_host() {
     let result = vsock_connect(VSOCK_HOST_CID, 9999);
     assert!(

@@ -252,3 +252,27 @@ pub(super) fn insert_profile_mutation_event(
     )?;
     Ok(())
 }
+
+pub(super) fn insert_transport_event(
+    conn: &Connection,
+    event: &TransportEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (event_id,timestamp_unix_ms,event_type,network_id,connection_id,event_json)
+                  VALUES (?1,?2,?3,?4,?5,?6)",
+            target.table("transport_events")
+        ),
+        params![
+            event.event_id,
+            event.timestamp_unix_ms,
+            event.kind.as_str(),
+            event.network_id,
+            event.connection_id,
+            event.event_json
+        ],
+    )?;
+    Ok(())
+}

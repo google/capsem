@@ -212,6 +212,11 @@ chmod 755 /newroot/etc
 # /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
 mount -t proc     proc     /newroot/proc
 mount -t sysfs    sysfs    /newroot/sys
+mkdir -p /newroot/sys/fs/cgroup
+mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /newroot/sys/fs/cgroup || {
+    echo "[capsem-init] FATAL: cannot mount cgroup v2 for resource limits"
+    exit 1
+}
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
@@ -636,6 +641,13 @@ else
     echo "[capsem-init] Rebuild with 'just build' or 'just repack'"
     # Keep PID 1 alive to prevent kernel panic, but no shell is started.
     while true; do sleep 60; done
+fi
+
+# A configured container is session state, so existing cold restart/fork boots
+# its saved command. Runtime namespaces/cgroups belong only to this boot.
+if [ -f /newroot/root/.capsem-image/ready ]; then
+    rm -rf /newroot/var/tmp/capsem-container
+    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
 fi
 
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log

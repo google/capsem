@@ -118,6 +118,18 @@ max_size_bytes = 51539607552 # 48 GiB
 prune_strategy = "none"
 maximum_age_hours = 2160
 
+[stages.oci-images]
+description = "Verified OCI blobs reused across container runs; manifests are refreshed from the registry."
+scope = "disk"
+path = "oci-images"
+entry_root = "blobs"
+# Retain one maximum-size (4 GiB) accepted image, with room for its replacement.
+warm_size_bytes = 4294967296
+max_size_bytes = 8589934592
+prune_strategy = "lru"
+maximum_age_hours = 168
+mutation_locks = ["cache.lock"]
+
 [stages.prefix-products]
 description = "Cargo outputs lent between source-isolated gate worktrees."
 scope = "disk"

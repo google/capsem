@@ -74,6 +74,14 @@ pub enum ServiceToProcess {
         namespaced_name: String,
         arguments_json: String,
     },
+    /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
+    ExecStream { id: u64, command: String },
+    /// Publish one loopback host TCP port into this VM's container namespace.
+    PublishPort { id: u64, host_port: u16, guest_port: u16 },
+    /// Internal VM-owner request for one declared publication data stream.
+    ConnectPort { flow: crate::router::FlowKey, port: u16 },
+    /// Internal VM-owner cancellation for bounded generation-bound flows.
+    AbortPorts { flows: Vec<crate::router::FlowKey> },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -146,6 +154,14 @@ pub enum ProcessToService {
     /// Warm suspend failed before the durable checkpoint marker was written.
     /// Kept at the end so existing bincode variant indexes remain stable.
     SuspendFailed { id: String, error: String },
+    /// Live merged stdout/stderr for an ExecStream job. Each chunk is at most 8 KiB.
+    ExecOutput { id: u64, data: Vec<u8> },
+    PortPublished {
+        id: u64,
+        host_port: u16,
+        router_pid: u32,
+        error: Option<String>,
+    },
 }
 
 /// Status of an MCP server as reported through IPC.

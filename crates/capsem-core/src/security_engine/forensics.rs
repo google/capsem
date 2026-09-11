@@ -81,6 +81,7 @@ pub(super) fn security_event_forensic_json(event: &SecurityEvent) -> serde_json:
         "ip": event.ip,
         "tcp": event.tcp,
         "udp": event.udp,
+        "network": event.network,
     })
 }
 
@@ -153,6 +154,7 @@ pub(super) fn trace_security_rule_match(event: &SecurityRuleEvent, rule: &Compil
 
 pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
     match op {
+        WriteOp::TransportEvent(_) => None,
         WriteOp::NetEvent(event) => event.credential_ref.clone(),
         WriteOp::ModelCall(event) => event.credential_ref.clone(),
         WriteOp::McpCall(event) => event.credential_ref.clone(),
@@ -171,6 +173,7 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
 
 pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
     match op {
+        WriteOp::TransportEvent(_) => None,
         WriteOp::NetEvent(event) => event.trace_id.clone(),
         WriteOp::ModelCall(event) => event.trace_id.clone(),
         WriteOp::McpCall(event) => event.trace_id.clone(),

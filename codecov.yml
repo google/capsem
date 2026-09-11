@@ -122,6 +122,13 @@ component_management:
         - crates/capsem-core/src/vm/**
         - crates/capsem-core/src/hypervisor/**
         - crates/capsem-core/src/host_state.rs
+        - crates/capsem-core/src/container.rs
+        - crates/capsem-core/src/container/**
+
+    - component_id: port-router
+      name: Confined Port Router
+      paths:
+        - crates/capsem-router/src/**
 
     # Runtime half of the asset contract: manifest hash extraction plus the
     # download/verify path that resolves recorded digests before boot.

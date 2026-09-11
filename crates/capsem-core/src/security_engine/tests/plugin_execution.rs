@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn network_event_engine_rejects_missing_facts_and_defaults_to_block() {
+    let rules = SecurityRuleSet::compile_profile(&SecurityRuleProfile::default(), SecurityRuleSource::User).unwrap();
+    let engine = SecurityEventEngine::with_builtin_actions(Arc::new(RecordingEmitter::new()));
+    let empty = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect);
+    assert!(engine.apply_matching_rules_and_emit(&rules, empty).is_err());
+    let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
+        .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
+    assert_eq!(
+        engine
+            .apply_matching_rules_and_emit(&rules, event)
+            .unwrap()
+            .decision
+            .effective,
+        SecurityDecisionKind::Block
+    );
+}
+
+#[test]
 fn security_event_emitter_is_the_auditable_event_boundary() {
     let emitter = RecordingEmitter::new();
     let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest);

@@ -1,0 +1,602 @@
+use super::*;
+use std::os::fd::AsRawFd;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpListener;
+
+mod security;
+
+fn source_fixture() -> Arc<std::net::TcpStream> {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    Arc::new(listener.accept().unwrap().0)
+}
+
+#[tokio::test]
+async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broker() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, data) = owner.request(&source, close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation.get(),
+        id: pending.id,
+    };
+    owner
+        .report_close(
+            flow,
+            CloseReport {
+                reason: CloseReason::Reset,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .unwrap();
+    // No broker has read the report or relinquished its shutdown handle yet.
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    assert!(data.await.unwrap().is_err());
+    assert_eq!(reports.try_recv().unwrap().0, flow);
+    drop(pending);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_complete() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, data) = owner.request(&source, close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation.get(),
+        id: pending.id,
+    };
+    owner
+        .report_close(
+            flow,
+            CloseReport {
+                reason: CloseReason::Complete,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .unwrap();
+    reports.try_recv().unwrap();
+    owner.control_lost();
+    assert_eq!(
+        reports
+            .try_recv()
+            .expect("normal report disabled later control-loss cleanup")
+            .1
+            .reason,
+        CloseReason::Cancelled
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    assert!(data.await.unwrap().is_err());
+    drop(pending);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_report_survives_data_adoption_and_is_delivered_once_per_generation() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation.get(),
+        id: pending.id,
+    };
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    peer.write_all(&flow.data_header(true)).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    let data = tokio::time::timeout(Duration::from_secs(1), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let report = CloseReport {
+        reason: CloseReason::Reset,
+        from_source: 17,
+        to_source: 19,
+    };
+    owner
+        .report_close(
+            FlowKey {
+                generation: flow.generation ^ 1,
+                ..flow
+            },
+            report,
+        )
+        .unwrap();
+    assert!(reports.try_recv().is_err());
+    owner.report_close(flow, report).unwrap();
+    assert_eq!(
+        reports
+            .try_recv()
+            .expect("data adoption discarded the close-report lease"),
+        (flow, report)
+    );
+    owner.report_close(flow, report).unwrap();
+    assert!(reports.try_recv().is_err());
+    drop(pending);
+    owner.report_close(flow, report).unwrap();
+    assert!(owner.pending.lock().unwrap().is_empty());
+    drop(data);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (close, _reports) = mpsc::channel(1);
+    let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    let mut header = [0; 17];
+    header[..8].copy_from_slice(&pending.id.to_be_bytes());
+    header[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    header[16] = 1;
+    peer.write_all(&header).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), peer.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert!(
+        owner.pending.lock().unwrap().contains_key(&pending.id),
+        "a stale boot consumed a current request with the same numeric ID"
+    );
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    let flow = capsem_proto::router::FlowKey {
+        generation: owner.generation.get(),
+        id: pending.id,
+    };
+    peer.write_all(&flow.data_header(true)).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    let accepted = tokio::time::timeout(Duration::from_secs(1), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(owner.pending.lock().unwrap().get(&pending.id).unwrap().data.is_none());
+    drop(accepted);
+    drop(pending);
+    owner.shutdown().await;
+}
+
+async fn serve_fixture(
+    owner: Arc<Publisher>,
+    guest_port: u16,
+    listener: TcpListener,
+    control: mpsc::Sender<ServiceToProcess>,
+    sender: capsem_foundation::unix::router_channel::Sender,
+    events: UnixStream,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    let router = Arc::new(companion::Router::new(0, sender, CancellationToken::new()));
+    let monitor = router.clone();
+    let mut readers = tokio::task::JoinSet::new();
+    readers.spawn(async move {
+        let result = monitor.read_events(events).await;
+        monitor.closed.cancel();
+        result
+    });
+    let result = broker::serve(owner, guest_port, listener, control, router.clone(), cancellation).await;
+    router.closed.cancel();
+    let events = readers.join_next().await.unwrap().unwrap();
+    result.and(events)
+}
+
+#[tokio::test]
+async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    owner.shutdown().await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(100), peer.read(&mut [0]))
+            .await
+            .expect("shutdown left a detached header reader")
+            .unwrap(),
+        0
+    );
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(100), peer.read(&mut [0]))
+            .await
+            .expect("closed publisher accepted another guest socket")
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn guest_setup_budget_is_shared_across_publications() {
+    shared_admission_budget(capsem_config::router::RouterConfig::default(), 8).await;
+}
+
+#[tokio::test]
+async fn configured_setup_budget_is_shared_across_publications() {
+    let mut budgets = capsem_config::router::RouterConfig::default();
+    budgets.expose.setups = 3;
+    shared_admission_budget(budgets, 3).await;
+}
+
+#[tokio::test]
+async fn configured_connection_budget_includes_pending_guest_setups() {
+    let mut budgets = capsem_config::router::RouterConfig::default();
+    budgets.expose.connections = 2;
+    shared_admission_budget(budgets, 2).await;
+}
+
+async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, expected: usize) {
+    let connections = usize::from(budgets.expose.connections);
+    let setups = usize::from(budgets.expose.setups);
+    let owner = Arc::new(security::authorized_publisher(budgets));
+    let (parent, _child) = StdUnixStream::pair().unwrap();
+    let router = Arc::new(companion::Router::new(
+        0,
+        capsem_foundation::unix::router_channel::Sender::new(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let (control, mut requests) = mpsc::channel(32);
+    let cancellation = CancellationToken::new();
+    let mut brokers = tokio::task::JoinSet::new();
+    let mut clients = Vec::new();
+    for guest_port in [6379, 6380] {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        brokers.spawn(broker::serve(
+            owner.clone(),
+            guest_port,
+            listener,
+            control.clone(),
+            router.clone(),
+            cancellation.clone(),
+        ));
+        for _ in 0..5 {
+            clients.push(tokio::net::TcpStream::connect(address).await.unwrap());
+        }
+    }
+    for _ in 0..expected {
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), requests.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            ServiceToProcess::ConnectPort { .. }
+        ));
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), requests.recv())
+            .await
+            .is_err(),
+        "another mapping bypassed the VM-wide admission budget"
+    );
+    cancellation.cancel();
+    while let Some(result) = brokers.join_next().await {
+        result.unwrap().unwrap();
+    }
+    assert!(owner.pending.lock().unwrap().is_empty());
+    assert_eq!(owner.ingress.available_permits(), connections);
+    assert_eq!(owner.setups.available_permits(), setups);
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    let receiver = capsem_foundation::unix::router_channel::Receiver::new(child.try_clone().unwrap()).unwrap();
+    let mut events = UnixStream::from_std(child).unwrap();
+    let (control, mut requests) = mpsc::channel(4);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let broker = tokio::spawn(serve_fixture(
+        owner.clone(),
+        6379,
+        listener,
+        control,
+        sender,
+        UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let _first = tokio::net::TcpStream::connect(address).await.unwrap();
+    let ServiceToProcess::ConnectPort { flow: first, .. } = requests.recv().await.unwrap() else {
+        panic!("missing first setup");
+    };
+    let _second = tokio::net::TcpStream::connect(address).await.unwrap();
+    let ServiceToProcess::ConnectPort { flow: second, .. } = requests.recv().await.unwrap() else {
+        panic!("missing second setup");
+    };
+    let mut peers = Vec::new();
+    for (expected_grant, flow) in [(1, second), (2, first)] {
+        let (connection, peer) = StdUnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let mut peer = UnixStream::from_std(peer).unwrap();
+        let header = flow.data_header(true);
+        peer.write_all(&header).await.unwrap();
+        owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+        let frame = receiver.recv().await.unwrap();
+        let Grant::Connected { id, .. } = Grant::decode(frame).unwrap() else {
+            panic!("missing pair");
+        };
+        assert_eq!(id, expected_grant, "setup completion order must not look like replay");
+        Event::Accepted(id).write(&mut events).await.unwrap();
+        peers.push(peer);
+    }
+    drop(receiver);
+    drop(events);
+    assert!(tokio::time::timeout(Duration::from_secs(1), broker)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(owner.pending.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn missing_pair_ack_shuts_down_retained_descriptors() {
+    unacknowledged_pair_reclaims_guest(ChildFault::MissingAccept).await;
+}
+
+#[tokio::test]
+async fn premature_child_close_still_aborts_guest_flow() {
+    unacknowledged_pair_reclaims_guest(ChildFault::PrematureClose).await;
+}
+
+#[tokio::test]
+async fn missing_child_close_ack_reclaims_the_flow_and_terminates_the_companion() {
+    unacknowledged_pair_reclaims_guest(ChildFault::MissingClose).await;
+}
+
+enum ChildFault {
+    MissingAccept,
+    PrematureClose,
+    MissingClose,
+}
+
+async fn unacknowledged_pair_reclaims_guest(fault: ChildFault) {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let mut events = UnixStream::from_std(child.try_clone().unwrap()).unwrap();
+    let receiver = capsem_foundation::unix::router_channel::Receiver::new(child).unwrap();
+    let (control, mut requests) = mpsc::channel(4);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let broker = tokio::spawn(serve_fixture(
+        owner.clone(),
+        6379,
+        listener,
+        control,
+        sender,
+        UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+    let ServiceToProcess::ConnectPort { flow, .. } = requests.recv().await.unwrap() else {
+        panic!("missing guest setup");
+    };
+    let (connection, peer) = StdUnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = UnixStream::from_std(peer).unwrap();
+    let header = flow.data_header(true);
+    peer.write_all(&header).await.unwrap();
+    owner.accept(VsockConnection::new(connection.as_raw_fd(), 0, Box::new(connection)));
+    let granted = Grant::decode(receiver.recv().await.unwrap()).unwrap();
+    assert!(matches!(granted, Grant::Connected { id: 1, .. }));
+    if matches!(fault, ChildFault::PrematureClose) {
+        Event::Closed(
+            1,
+            capsem_proto::router::CloseReport {
+                reason: capsem_proto::router::CloseReason::Reset,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .write(&mut events)
+        .await
+        .unwrap();
+    }
+    if matches!(fault, ChildFault::MissingClose) {
+        Event::Accepted(1).write(&mut events).await.unwrap();
+        owner
+            .report_close(
+                flow,
+                capsem_proto::router::CloseReport {
+                    reason: capsem_proto::router::CloseReason::Reset,
+                    from_source: 0,
+                    to_source: 0,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            Grant::decode(
+                tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap(),
+            Grant::Abort { id: 1 }
+        ));
+    }
+    assert!(tokio::time::timeout(Duration::from_secs(4), broker)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    // The hostile child still owns its copies; owner shutdown must wake peers.
+    assert_eq!(
+        client.read(&mut [0]).await.unwrap_err().kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+    assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
+    assert!(owner.pending.lock().unwrap().is_empty());
+    let abort = requests.recv().await.expect("unacknowledged pair left guest alive");
+    assert!(matches!(abort, ServiceToProcess::AbortPorts { flows } if flows == vec![flow]));
+    drop(granted);
+}
+
+#[tokio::test]
+async fn compromised_router_cannot_request_destination_connections() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    let (control, mut requests) = mpsc::channel(4);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let broker = tokio::spawn(serve_fixture(
+        owner.clone(),
+        6379,
+        listener,
+        control,
+        sender,
+        UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let mut child = UnixStream::from_std(child).unwrap();
+    Event::Accepted(1).write(&mut child).await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(1), broker)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(
+        requests.recv().await.is_none(),
+        "child caused destination setup without host accept"
+    );
+    assert!(owner.pending.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn malformed_child_record_cannot_allocate_or_dial() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    let (control, mut requests) = mpsc::channel(4);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let broker = tokio::spawn(serve_fixture(
+        owner,
+        6379,
+        listener,
+        control,
+        sender,
+        UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let mut child = UnixStream::from_std(child).unwrap();
+    child.write_all(&[255; 10]).await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(1), broker)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(requests.recv().await.is_none());
+}
+
+#[tokio::test]
+async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
+    let (control, mut requests) = mpsc::channel(4);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let broker = tokio::spawn(serve_fixture(
+        owner.clone(),
+        6379,
+        listener,
+        control,
+        sender,
+        UnixStream::from_std(parent).unwrap(),
+        CancellationToken::new(),
+    ));
+    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+    let ServiceToProcess::ConnectPort { flow, port: 6379 } = requests.recv().await.unwrap() else {
+        panic!("expected guest setup");
+    };
+    drop(child);
+    assert!(tokio::time::timeout(Duration::from_secs(1), broker)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(owner.pending.lock().unwrap().is_empty());
+    let abort = requests.recv().await.expect("router failure left guest setup alive");
+    assert!(matches!(abort, ServiceToProcess::AbortPorts { flows } if flows == vec![flow]));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::ConnectionReset
+    );
+}

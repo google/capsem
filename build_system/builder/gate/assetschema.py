@@ -31,6 +31,12 @@ class AssetsConfig(Strict):
     #: a stale rootfs in a run that stays green.
     identity_roots: tuple[str, ...]
     lane_receipt: str
+    #: Recorded beside the host asset tree after its last image build: the
+    #: identity plus per-input digests, so a later run can say which inputs
+    #: made the tree stale instead of only that it is.
+    host_identity_record: str
+    #: How many changed inputs a stale-asset note names before "and N more".
+    host_identity_changed_inputs_shown: int
     evidence_artifacts: tuple[str, ...]
     obom_artifact: str
     failure_tail_lines: int

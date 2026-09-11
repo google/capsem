@@ -745,9 +745,12 @@ class TestGenerateDefaultsJsonConformance:
         """
         defaults = generate_defaults_json(real_config)
         expected = generate_mock_ts(defaults, mcp_tools=[])
-        on_disk = (
-            PROJECT_ROOT / "web" / "app" / "src" / "lib" / "mock-settings.generated.ts"
-        ).read_text()
+        generated = PROJECT_ROOT / "web" / "app" / "src" / "lib" / "mock-settings.generated.ts"
+        if not generated.is_file():
+            # Gitignored and produced by `just _generate-settings`: a fresh
+            # worktree has nothing to be stale yet, only nothing at all.
+            pytest.skip(f"{generated.relative_to(PROJECT_ROOT)} not generated in this checkout")
+        on_disk = generated.read_text()
         assert on_disk == expected, (
             "web/app/src/lib/mock-settings.generated.ts is stale"
             " -- regenerate with: just _generate-settings"

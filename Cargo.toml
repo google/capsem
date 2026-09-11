@@ -23,6 +23,7 @@ members = [
     "crates/capsem-tray",
     "crates/capsem-gateway",
     "crates/capsem-guard",
+    "crates/capsem-router",
 ]
 
 [workspace.package]

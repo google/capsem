@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod model;
 mod provider_profile;
 mod resolver;
+pub mod router;
 mod security_rule_profile;
 mod settings_metadata;
 mod tree;
@@ -35,6 +36,12 @@ pub fn security_event_type_is_known(value: &str) -> bool {
     matches!(
         value,
         "http.request"
+            | "network.connect"
+            | "network.connect_result"
+            | "network.close"
+            | "network.lifecycle"
+            | "network.probe"
+            | "network.probe_result"
             | "model.call"
             | "mcp.tool_call"
             | "mcp.tool_list"
@@ -129,6 +136,23 @@ pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
     "model.response.valid",
     "model.tool_call.valid",
     "model.valid",
+    "network.destination.generation",
+    "network.destination.ip",
+    "network.destination.port",
+    "network.destination.vm_id",
+    "network.destination.vm_name",
+    "network.id",
+    "network.mode",
+    "network.name",
+    "network.protocol",
+    "network.publication.id",
+    "network.side",
+    "network.source.generation",
+    "network.source.ip",
+    "network.source.port",
+    "network.source.vm_id",
+    "network.source.vm_name",
+    "network.valid",
     "process.audit.valid",
     "process.command",
     "process.exec.exit_code",

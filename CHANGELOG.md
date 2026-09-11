@@ -7,8 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The logger supports bounded primary transport audit records, with indexed
+  connection/network identities and an additive upgrade for retained sessions
+  that preserves the shared session index's schema version.
+- Security rules recognize typed `network` routing facts. Network boundary
+  events validate owner identities and require an explicit allow; retained
+  security ledgers accept their new event types through a checked migration.
+- `capsem-bench-rs redis` collects validated Redis PING samples with configurable
+  concurrency and pipelining on both the host and guest.
+- `capsem run -p HOST:GUEST IMAGE` publishes loopback TCP ports through VSOCK
+  using a confined Rust companion, with bounded concurrent connections and
+  listener cleanup when the workload or VM exits.
+- `capsem run docker://IMAGE` (or a qualified registry reference) pulls and caches
+  verified OCI images, runs the image command in an image-named VM with live logs,
+  and retains a named VM controlled by the existing lifecycle commands. Registry-specific
+  CA trust and username/token authentication are supported.
+- Containers started with `capsem run docker://IMAGE` reach the internet through
+  the VM's existing DNS and HTTP(S) interception: the same rules, plugins, and
+  ledger apply, the container trusts the Capsem CA read-only, and it can reach
+  nothing else inside the VM.
+- Both profiles include `runc`; guest kernels support offline OCI process
+  namespaces and cgroup CPU, memory, and process limits.
+- Both profiles include `umoci` for OCI image layer unpacking inside the VM.
+
 ### Changed
 
+- Published TCP connections require an audited allow from the existing security
+  rules and plugins before guest setup. Profile defaults explicitly allow expose;
+  deny, pending approval, audit failure, and stale control leases refuse access.
+  Transport records include trusted VM, listener, peer, and connection identities.
+
+- Active profiles can configure separate router connection and setup budgets
+  under `network.router`, within fixed resource ceilings shared by a VM's ports.
+- Published connections carry the VM owner's boot generation so stale streams
+  cannot consume reused request IDs after restart.
+- Container port forwarding uses fixed kernel socket queues, including guest
+  VSOCK credit limits, to propagate backpressure from stalled peers.
+- Guest published connections are canceled and joined on control disconnect,
+  shutdown, and snapshot preparation; namespace setup uses bounded workers.
+- Guest VSOCK connection attempts now use a finite setup deadline, including
+  published-port connections whose host stops responding during setup.
+- Published ports share VM-wide connection and guest setup budgets, with bounded
+  setup pacing across listeners.
+- VM shutdown joins published-port brokers and guest handshake readers before
+  draining session logs; publication removal requests cooperative cleanup.
+- Container port forwarding closes stalled writes and half-closed peers after
+  60 seconds while preserving quiet connections and trailing response bytes.
+- Published TCP listeners stay with the VM owner. The confined router receives
+  only connected descriptor pairs; bounded acknowledgements and control failure
+  close both endpoints even when the router retains duplicate descriptors.
+- The confined network companion is now named `capsem-router`; package signing
+  continues to exclude virtualization authority.
+- Shell runs flush captured output before exiting, preserving short output
+  without a trailing newline.
+- Port publication reports sandbox initialization failures explicitly. macOS
+  gate tests hand off the named router to its own stricter sandbox.
+- Local focused tests preserve the invoking checkout's assembled VM assets
+  instead of replacing them with another branch's cached kernel or rootfs.
+
+- Container runs now retain their named VM for the existing stop, restart, fork
+  and delete commands. Closing the log client detaches; reboot restores the
+  saved image command and host port bindings. Forks omit host bindings.
+- Host builds and native packages include the port router; it receives no
+  virtualization entitlement.
+- Registry pulls use the existing WebPKI TLS trust stack without platform
+  keychain verification dependencies.
+- Single-architecture asset builds and initrd repacks generate manifests for
+  the selected architecture, preserving incomplete builds for other targets.
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using
@@ -218,6 +285,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Published-port connection audits record `unreachable` when the guest bridge
+  never came up and `cancelled` when it was lost during setup; both were
+  recorded as `stale_generation`, which names only the post-setup recheck.
+- Editing or deleting a profile enforcement or detection rule through the API
+  now reaches running VMs on that profile before the route returns, as plugin
+  edits already did; previously running VMs kept the old rules until an explicit
+  profile reload.
+- Session ledger routes (`security/latest`, `detection/latest`,
+  `security/status`, `timeline`, `history*`, `stats/detail`) read through the
+  logger on every request. They no longer serve a cached response while a
+  commit sits only in the write-ahead log, which previously hid new rows until
+  the next checkpoint.
+- Security audit emitters report failed database admission accurately, allowing
+  security-sensitive callers to refuse work when the audit writer is closed.
+
+- Guest TCP resets propagate across VSOCK with generation-bound close reports
+  and acknowledgments; bounded replay credits prevent stalled control traffic
+  from accumulating network reports.
+- TCP reset is armed before router handoff, so forced process death also
+  closes published connections abruptly; normal completion restores graceful close.
+- Abnormal published-connection cleanup resets TCP and revokes socket copies
+  retained by the router, while normal completion preserves half-close and trailing bytes.
+- Removing an exposed port or losing its router now cancels its guest flows,
+  including queued setup, without interrupting other published ports.
+- Guest control connections use async I/O with bounded frame deadlines and
+  joined reader cleanup on reconnect, so a stalled guest cannot block a host Tokio worker.
+
+- Linux router startup no longer races thread-local libc registration when
+  installing confinement; creating new threads remains forbidden.
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
   cases, including the built-in security registry measurement, instead of
   silently omitting results outside a directory named after the Cargo target.

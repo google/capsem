@@ -6,7 +6,7 @@ from ipaddress import ip_address
 
 from pydantic import PositiveFloat, PositiveInt, model_validator
 
-from .configschema import Strict
+from .configschema import SafeToken, Strict
 
 
 class SandboxConfig(Strict):
@@ -39,6 +39,8 @@ class SandboxConfig(Strict):
     egress_max_message_bytes: int
     network_reason: str
     socket_reason: str
+    self_confinement_reason: str
+    self_confined_executables: tuple[SafeToken, ...]
     sockets: tuple[str, ...]
     local_socket_prefixes: tuple[str, ...]
     local_socket_regexes: tuple[str, ...]

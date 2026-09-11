@@ -128,6 +128,7 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
         "capsem-mcp-builtin",
         "capsem-mock-server",
         "capsem-process",
+        "capsem-router",
         "capsem-proto",
         "capsem-service",
         "capsem-tray",

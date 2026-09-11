@@ -14,6 +14,18 @@ BOUNDED = ROOT / "build_system/scripts/ci/run-bounded-command.py"
 CACHE_POLICY = load_policy(ROOT)
 
 
+def test_contained_environment_exports_resolved_authority(tmp_path, monkeypatch):
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
+    monkeypatch.setattr(gatelaunch, "_git_common_checkout", lambda _: tmp_path)
+    inherited = gatelaunch.contained_environment(ROOT)
+    assert inherited[CACHE_POLICY.authority_environment] == str(tmp_path)
+    override = tmp_path / "explicit"
+    monkeypatch.setenv(CACHE_POLICY.authority_environment, str(override))
+    selected = gatelaunch.contained_environment(ROOT)
+    assert selected[CACHE_POLICY.authority_environment] == str(override)
+    assert Path(selected["CARGO_TARGET_DIR"]).is_relative_to(override)
+
+
 def test_cold_compiler_cache_socket_parent_exists_before_launch(tmp_path: Path) -> None:
     source = tmp_path / "checkout"
     (source / "config").mkdir(parents=True)

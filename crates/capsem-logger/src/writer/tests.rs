@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod producer;
+
 #[test]
 fn cap_field_none_returns_none() {
     assert!(cap_field(&None).is_none());
@@ -1045,7 +1047,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     crate::schema::apply_pragmas(&conn).unwrap();
     crate::schema::create_tables(&conn).unwrap();
-    crate::schema::migrate(&conn);
+    crate::schema::migrate(&conn).unwrap();
     crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
     metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
@@ -1103,64 +1105,6 @@ fn db_writer_records_enqueue_metrics() {
     assert!(snapshot
         .iter()
         .any(|(key, _, _, value)| { key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_)) }));
-}
-
-#[test]
-fn write_blocking_persists_without_try_drop() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("blocking.db");
-    let writer = DbWriter::open(&db_path, 1).unwrap();
-    writer.write_blocking(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/blocking".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM fs_events WHERE path = '/blocking'", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(count, 1);
-}
-
-#[test]
-fn write_blocking_is_safe_inside_tokio_runtime() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("runtime-blocking.db");
-    let writer = DbWriter::open(&db_path, 1).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    rt.block_on(async {
-        writer.write_blocking(WriteOp::FileEvent(crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/runtime-safe".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        }));
-    });
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM fs_events WHERE path = '/runtime-safe'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 1);
 }
 
 #[test]

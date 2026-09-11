@@ -149,6 +149,22 @@ def lend(config: GateConfig, prefix_path: Path) -> list[str]:
     return lent
 
 
+def seed_runtime(config: GateConfig, checkout: Path, prefix_path: Path) -> bool:
+    """A local run boots the operator's assembled assets, in a private copy.
+
+    The shared cache may belong to another branch. Its presence must not
+    replace the kernel/rootfs deliberately rebuilt in this checkout. Released
+    cohorts and resumed prefixes retain their separate input authority.
+    """
+    relative = config.functional.assets_dir
+    origin, destination = checkout / relative, prefix_path / relative
+    if not origin.is_dir() or destination.exists():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    copy_tree(origin, destination)
+    return True
+
+
 def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
     """Take the build output back before the prefix is gone.
 

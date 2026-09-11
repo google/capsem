@@ -76,45 +76,48 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
 #[test]
 fn classify_terminal_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_TERMINAL),
-        VsockPortKind::Terminal
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_TERMINAL),
+        Some(HostVsockService::Terminal)
     );
 }
 
 #[test]
 fn classify_control_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_CONTROL),
-        VsockPortKind::Control
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_CONTROL),
+        Some(HostVsockService::Control)
     );
 }
 
 #[test]
 fn classify_sni_proxy_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_SNI_PROXY),
-        VsockPortKind::SniProxy
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_SNI_PROXY),
+        Some(HostVsockService::SniProxy)
     );
 }
 
 #[test]
 fn classify_exec_port() {
-    assert_eq!(classify_vsock_port(capsem_proto::VSOCK_PORT_EXEC), VsockPortKind::Exec);
+    assert_eq!(
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_EXEC),
+        Some(HostVsockService::Exec)
+    );
 }
 
 #[test]
 fn classify_lifecycle_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_LIFECYCLE),
-        VsockPortKind::Lifecycle
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_LIFECYCLE),
+        Some(HostVsockService::Lifecycle)
     );
 }
 
 #[test]
 fn classify_audit_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
-        VsockPortKind::Audit
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_AUDIT),
+        Some(HostVsockService::Audit)
     );
 }
 
@@ -162,19 +165,19 @@ fn bounded_frame_reader_returns_none_on_clean_eof() {
 #[test]
 fn classify_dns_proxy_port() {
     assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
-        VsockPortKind::DnsProxy
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
+        Some(HostVsockService::DnsProxy)
     );
 }
 
 #[test]
 fn classify_unknown_port() {
-    assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
+    assert_eq!(HostVsockService::from_port(99999), None);
 }
 
 #[test]
 fn classify_port_zero_unknown() {
-    assert_eq!(classify_vsock_port(0), VsockPortKind::Unknown);
+    assert_eq!(HostVsockService::from_port(0), None);
 }
 
 // -----------------------------------------------------------------------
@@ -342,7 +345,7 @@ async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
         .expect("pair collected");
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].port, capsem_proto::VSOCK_PORT_SNI_PROXY);
-    assert_eq!(classify_vsock_port(5003), VsockPortKind::Unknown);
+    assert_eq!(HostVsockService::from_port(5003), None);
 }
 
 #[tokio::test]

@@ -6,12 +6,28 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_compiler_wrapper_preserves_cargo_binary_paths_arguments_and_exit_status() -> None:
+    wrapper = ROOT / "build_system/scripts/build/rustc-workspace-wrapper.sh"
+    key = "CARGO_BIN_EXE_capsem-router"
+    path = "/a path/with spaces/capsem-router"
+    arguments = ["argument with spaces", "literal $HOME", "line\nbreak"]
+    result = subprocess.run(
+        [str(wrapper), sys.executable, "-c",
+         "import json,os,sys; print(json.dumps([os.environ.get(sys.argv[1]), sys.argv[2:]])); sys.exit(23)",
+         key, *arguments],
+        env=dict(os.environ, **{key: path}), capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == 23, result.stderr
+    assert json.loads(result.stdout) == [path, arguments]
 
 
 @pytest.mark.parametrize("outer_cache", [False, True])

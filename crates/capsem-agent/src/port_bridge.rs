@@ -1,0 +1,211 @@
+//! Per-control-connection owner for guest publication setup and streams.
+use crate::vsock_io::AsyncVsock;
+use capsem_proto::router::FlowKey;
+use std::collections::HashMap;
+use std::io;
+use std::net::TcpStream;
+use std::os::fd::{AsFd, IntoRawFd};
+use std::os::unix::net::UnixStream;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
+use tokio::sync::{watch, Semaphore};
+use tokio::task::JoinSet;
+
+mod setup;
+
+pub struct Bridge {
+    control: crate::control_writer::CtrlSender,
+    runtime: Runtime,
+    tasks: JoinSet<FlowKey>,
+    flows: HashMap<FlowKey, watch::Sender<bool>>,
+    connections: Arc<Semaphore>,
+    setups: Arc<Semaphore>,
+    stop: watch::Sender<bool>,
+}
+
+impl Bridge {
+    pub fn abort(&mut self, flows: &[FlowKey]) -> io::Result<()> {
+        if flows.len() > capsem_proto::router::MAX_ABORT_FLOWS {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        for flow in flows {
+            if let Some(stop) = self.flows.get(flow) {
+                stop.send_replace(true);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn new(control: crate::control_writer::CtrlSender) -> io::Result<Self> {
+        Ok(Self {
+            control,
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?,
+            tasks: JoinSet::new(),
+            flows: HashMap::new(),
+            connections: Arc::new(Semaphore::new(64)),
+            setups: Arc::new(Semaphore::new(8)),
+            stop: watch::channel(false).0,
+        })
+    }
+
+    pub fn connect(&mut self, flow: capsem_proto::router::FlowKey, port: u16) -> io::Result<()> {
+        if !flow.is_valid() || port == 0 {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        self.connect_with(flow, move || setup::connect(flow, port))
+    }
+
+    fn connect_with(
+        &mut self,
+        flow: FlowKey,
+        setup: impl FnOnce() -> io::Result<(TcpStream, UnixStream)> + Send + 'static,
+    ) -> io::Result<()> {
+        if *self.stop.borrow() {
+            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        }
+        while let Some(result) = self.tasks.try_join_next() {
+            match result {
+                Ok(flow) => {
+                    self.flows.remove(&flow);
+                }
+                Err(error) => {
+                    self.shutdown();
+                    return Err(io::Error::other(error));
+                }
+            }
+        }
+        if self.flows.contains_key(&flow) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "duplicate publication flow",
+            ));
+        }
+        let permit = self
+            .connections
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| io::Error::other("publication connection limit reached"))?;
+        let credit = self.control.network.reserve()?;
+        let control = self.control.clone();
+        let (cancel, mut cancelled) = watch::channel(false);
+        self.flows.insert(flow, cancel);
+        let setups = self.setups.clone();
+        let mut stop = self.stop.subscribe();
+        self.tasks.spawn_on(
+            async move {
+                use capsem_proto::router::{CloseReason, CloseReport};
+                let mut report = CloseReport { reason: CloseReason::Cancelled, from_source: 0, to_source: 0 };
+                let mut transport = None;
+                let result = async {
+                    let setup_permit = tokio::select! {
+                        biased;
+                        _ = stop.changed() => return Ok(()),
+                        _ = cancelled.changed() => return Ok(()),
+                        permit = setups.acquire_owned() => permit.map_err(io::Error::other)?,
+                    };
+                    // The blocking pool only joins. Namespace changes happen on a
+                    // disposable thread, never on a reusable Tokio worker. Once
+                    // started, always await its finite setup before cancellation.
+                    let endpoints = tokio::task::spawn_blocking(move || {
+                        std::thread::Builder::new()
+                            .name("capsem-port-connect".into())
+                            .spawn(setup)?
+                            .join()
+                            .map_err(|_| io::Error::other("publication setup panicked"))?
+                    })
+                    .await
+                    .map_err(io::Error::other)?;
+                    drop(setup_permit);
+                    let (tcp, vsock) = endpoints?;
+                    capsem_foundation::unix::fd::tcp_reset_on_close(tcp.as_fd())?;
+                    if *stop.borrow() || *cancelled.borrow() {
+                        capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
+                        return Ok(());
+                    }
+                    tcp.set_nonblocking(true)?;
+                    tcp.set_nodelay(true)?;
+                    let mut tcp = tokio::net::TcpStream::from_std(tcp)?;
+                    let vsock = transport.insert(AsyncVsock::new(vsock.into_raw_fd())?);
+                    let outcome = capsem_foundation::unix::router_stream::copy_until(
+                        &mut tcp,
+                        vsock,
+                        capsem_foundation::unix::router_stream::Limits::default(),
+                        async {
+                            tokio::select! {
+                                _ = stop.changed() => {},
+                                _ = cancelled.changed() => {},
+                            }
+                        },
+                    )
+                    .await;
+                    // Host source is the client; this hop's copier source is
+                    // the destination TCP server, so its counters are reversed.
+                    report = CloseReport { reason: outcome.reason, from_source: outcome.to_source, to_source: outcome.from_source };
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, reason = ?outcome.reason,
+                        from_source = outcome.from_source, to_source = outcome.to_source,
+                        error = ?outcome.error, "guest router stream ended");
+                    if outcome.reason != capsem_proto::router::CloseReason::Complete {
+                        capsem_foundation::unix::fd::reset_tcp(tcp.as_fd())?;
+                    } else {
+                        capsem_foundation::unix::fd::tcp_clear_reset_on_close(tcp.as_fd())?;
+                    }
+                    Ok::<_, io::Error>(())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication failed");
+                    if matches!(report.reason, CloseReason::Complete | CloseReason::Cancelled) {
+                        report.reason = CloseReason::Io;
+                    }
+                }
+                match control.send_closed(flow, report, credit) {
+                    Ok(acknowledged) if report.reason != CloseReason::Complete && !*stop.borrow() && !*cancelled.borrow() => {
+                        let applied = tokio::select! {
+                            _ = stop.changed() => true,
+                            _ = cancelled.changed() => true,
+                            result = tokio::time::timeout(std::time::Duration::from_secs(5), acknowledged.notified()) => result.is_ok(),
+                        };
+                        if !applied {
+                            tracing::error!(connection_id = flow.id, generation = flow.generation, "guest close acknowledgement timed out");
+                            control.network.fail();
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!(connection_id = flow.id, generation = flow.generation, %error, "guest close report failed");
+                        control.network.fail();
+                    }
+                }
+                drop(transport);
+                drop(permit);
+                flow
+            },
+            self.runtime.handle(),
+        );
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {
+        self.stop.send_replace(true);
+        self.runtime.block_on(async {
+            while let Some(result) = self.tasks.join_next().await {
+                if let Err(error) = result {
+                    tracing::error!(%error, "guest publication task failed during drain");
+                }
+            }
+        });
+        self.flows.clear();
+    }
+}
+
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests;

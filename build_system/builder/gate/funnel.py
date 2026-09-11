@@ -29,6 +29,8 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
+from . import pytestexcerpt
+from .config import GateConfig
 from .context import Journal
 from .errors import GateError
 from .invocation import Command
@@ -106,6 +108,7 @@ class GuardedRunner(Runner):
         *,
         journal: Journal,
         tail_lines: int = 0,
+        pytest_failure_lines: int = 0,
         checkpoint: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(inner.root)
@@ -113,7 +116,26 @@ class GuardedRunner(Runner):
         self.observing = inner.observing
         self._journal = journal
         self._tail_lines = tail_lines
+        self._pytest_failure_lines = pytest_failure_lines
         self._checkpoint = checkpoint or (lambda: None)
+
+    @classmethod
+    def sized_by(
+        cls,
+        inner: Runner,
+        config: GateConfig,
+        *,
+        journal: Journal,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> GuardedRunner:
+        """Tail and excerpt sizes from `[runlog]`; call sites need not know the keys."""
+        return cls(
+            inner,
+            journal=journal,
+            tail_lines=config.runlog.failure_tail_lines,
+            pytest_failure_lines=config.runlog.pytest_failure_lines,
+            checkpoint=checkpoint,
+        )
 
     @property
     def run_id(self) -> str:
@@ -145,6 +167,11 @@ class GuardedRunner(Runner):
         if command.log is None or self._tail_lines <= 0 or not command.log.is_file():
             return ""
         lines = command.log.read_text(encoding="utf-8", errors="replace").splitlines()
+        # A pytest log names its failures and their causes; the tail of one
+        # with several errors is the middle of a message, not the point.
+        excerpt = pytestexcerpt.excerpt(lines, per_failure=self._pytest_failure_lines)
+        if excerpt:
+            return "\n" + excerpt
         kept = lines[-self._tail_lines :]
         return "\n" + "\n".join(kept) if kept else ""
 
@@ -217,4 +244,12 @@ class GuardedRunner(Runner):
         self._inner.step(message)
 
     def note(self, message: str) -> None:
+        """To the terminal and to the run record.
+
+        A note is why a step did what it did -- assets rebuilt because their
+        identity moved, a lane reused. Console-only notes left every run's
+        `run.jsonl` without a single one, so nothing after the run could
+        explain a five-minute step.
+        """
         self._inner.note(message)
+        self._journal.note(message)

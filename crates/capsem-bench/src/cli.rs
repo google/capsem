@@ -12,6 +12,8 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Measure validated Redis PING batches; emit raw collector samples.
+    Redis(crate::redis::Args),
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.

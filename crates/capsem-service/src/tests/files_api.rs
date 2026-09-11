@@ -8,7 +8,7 @@ use std::io::{Read as _, Write as _};
 // -----------------------------------------------------------------------
 
 fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &str) {
-    setup_vm_with_workspace_and_uds(state, dir, vm_id, PathBuf::from("/tmp/test.sock"));
+    setup_vm_with_workspace_and_uds(state, dir, vm_id, dir.join("process.sock"));
 }
 
 fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, vm_id: &str, uds_path: PathBuf) {
@@ -54,64 +54,30 @@ async fn spawn_file_boundary_ipc(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let uds_path = dir.path().join("process.sock");
-    let listener = tokio::net::UnixListener::bind(&uds_path).unwrap();
-    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
-    let handle = tokio::spawn(async move {
-        let mut messages = Vec::new();
-        for _ in 0..expected_messages {
-            let (stream, _) = listener.accept().await.unwrap();
-            let std_stream = stream.into_std().unwrap();
-            let std_stream = tokio::task::spawn_blocking(move || {
-                let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
-                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            let (tx, rx): (
-                tokio_unix_ipc::Sender<ProcessToService>,
-                tokio_unix_ipc::Receiver<ServiceToProcess>,
-            ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
-            let msg = rx.recv().await.unwrap();
-            match &msg {
-                ServiceToProcess::LogFileBoundary { id, .. } => {
-                    tx.send(ProcessToService::LogFileBoundaryResult {
-                        id: *id,
-                        success: true,
-                        data: None,
-                        error: None,
-                    })
-                    .await
-                    .unwrap();
-                }
-                ServiceToProcess::WriteFile { id, .. } => {
-                    if write_reply == WriteFileIpcReply::Disconnect {
-                        drop(tx);
-                    } else {
-                        tx.send(ProcessToService::WriteFileResult {
-                            id: *id,
-                            success: true,
-                            error: None,
-                        })
-                        .await
-                        .unwrap();
-                    }
-                }
-                ServiceToProcess::ReadFile { id, .. } => {
-                    tx.send(ProcessToService::ReadFileResult {
-                        id: *id,
-                        data: Some(b"guest export".to_vec()),
-                        error: None,
-                    })
-                    .await
-                    .unwrap();
-                }
-                other => panic!("unexpected IPC message in file boundary test: {other:?}"),
+    let handle = spawn_fake_process(&uds_path, expected_messages, move |message| {
+        let reply = match message {
+            ServiceToProcess::LogFileBoundary { id, .. } => Some(ProcessToService::LogFileBoundaryResult {
+                id: *id,
+                success: true,
+                data: None,
+                error: None,
+            }),
+            // No reply is a disconnect: the fixture closes the connection.
+            ServiceToProcess::WriteFile { id, .. } => {
+                (write_reply == WriteFileIpcReply::Success).then_some(ProcessToService::WriteFileResult {
+                    id: *id,
+                    success: true,
+                    error: None,
+                })
             }
-            messages.push(msg);
-        }
-        messages
+            ServiceToProcess::ReadFile { id, .. } => Some(ProcessToService::ReadFileResult {
+                id: *id,
+                data: Some(b"guest export".to_vec()),
+                error: None,
+            }),
+            other => panic!("unexpected IPC message in file boundary test: {other:?}"),
+        };
+        Box::pin(async move { reply })
     });
     (dir, uds_path, handle)
 }
