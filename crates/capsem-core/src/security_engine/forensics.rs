@@ -168,6 +168,8 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityAskEvent(_) => None,
         WriteOp::SecurityDecisionEvent(event) => event.credential_ref.clone(),
         WriteOp::ProfileMutationEvent(_) => None,
+        // Registry rows carry state, not a credential.
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
     }
 }
 
@@ -187,5 +189,6 @@ pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityAskEvent(event) => event.trace_id.clone(),
         WriteOp::SecurityDecisionEvent(event) => event.trace_id.clone(),
         WriteOp::ProfileMutationEvent(event) => event.trace_id.clone(),
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
     }
 }

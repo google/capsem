@@ -204,6 +204,9 @@ impl RuntimeSecurityEventType {
             WriteOp::SecurityAskEvent(_) => Self::SecurityAsk,
             WriteOp::SecurityDecisionEvent(_) => Self::SecurityRule,
             WriteOp::ProfileMutationEvent(_) => Self::SecurityRule,
+            // Registry rows of a network database: the state a lifecycle
+            // event describes, so they audit under the same type.
+            WriteOp::Network(_) | WriteOp::NetworkMembership(_) => Self::NetworkLifecycle,
         }
     }
 }
