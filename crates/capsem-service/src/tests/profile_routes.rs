@@ -2300,7 +2300,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     std::fs::create_dir_all(&session_dir).unwrap();
     insert_fake_instance_with_session_dir(&state, "route-ledger-vm", std::process::id(), session_dir.clone());
     let uds_path = state.instances.lock().unwrap()["route-ledger-vm"].uds_path.clone();
-    let process = profile_rule_push::spawn_fake_process_reload_ack(&uds_path, 1);
+    let process = spawn_fake_process_reload_ack(&uds_path, 1);
 
     let rule = capsem_core::net::policy_config::SecurityRule {
         name: "openai_http_observed".to_string(),

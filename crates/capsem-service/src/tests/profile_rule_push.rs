@@ -5,43 +5,6 @@
 //! running VM enforcing the old rules until someone called the reload route.
 use super::*;
 
-/// A stand-in capsem-process listening on `uds_path`: accepts `expected`
-/// service connections, acknowledges reload/ping with `Pong`, and returns
-/// everything it received.
-pub(super) fn spawn_fake_process_reload_ack(
-    uds_path: &StdPath,
-    expected: usize,
-) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    let _ = std::fs::remove_file(uds_path);
-    let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
-    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
-    tokio::spawn(async move {
-        let mut messages = Vec::new();
-        for _ in 0..expected {
-            let (stream, _) = listener.accept().await.unwrap();
-            let std_stream = stream.into_std().unwrap();
-            let std_stream = tokio::task::spawn_blocking(move || {
-                let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
-                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            let (tx, rx): (
-                tokio_unix_ipc::Sender<ProcessToService>,
-                tokio_unix_ipc::Receiver<ServiceToProcess>,
-            ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
-            let message = rx.recv().await.unwrap();
-            if matches!(message, ServiceToProcess::ReloadConfig | ServiceToProcess::Ping) {
-                tx.send(ProcessToService::Pong).await.unwrap();
-            }
-            messages.push(message);
-        }
-        messages
-    })
-}
-
 fn rule(name: &str, condition: &str) -> capsem_core::net::policy_config::SecurityRule {
     capsem_core::net::policy_config::SecurityRule {
         name: name.to_string(),

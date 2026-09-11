@@ -209,7 +209,62 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 }
 
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
-    insert_fake_instance_with_session_dir(state, id, pid, PathBuf::from(format!("/tmp/sessions/{}", id)));
+    insert_fake_instance_with_session_dir(state, id, pid, state.run_dir.join("sessions").join(id));
+}
+
+/// The reply a fake process produces for one received message.
+pub(crate) type FakeProcessReply =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<ProcessToService>> + Send>>;
+
+/// A stand-in capsem-process listening on `uds_path`: accepts `expected`
+/// service connections one at a time, answers each message through
+/// `handler` (no reply closes the connection), and returns everything it
+/// received. The one fixture for every test that needs the process side
+/// of the IPC; a fake instance's `uds_path` is where to bind it.
+pub(crate) fn spawn_fake_process(
+    uds_path: &StdPath,
+    expected: usize,
+    handler: impl Fn(&ServiceToProcess) -> FakeProcessReply + Send + Sync + 'static,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    let _ = std::fs::remove_file(uds_path);
+    let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
+    tokio::spawn(async move {
+        let mut messages = Vec::new();
+        for _ in 0..expected {
+            let (stream, _) = listener.accept().await.unwrap();
+            let std_stream = stream.into_std().unwrap();
+            let std_stream = tokio::task::spawn_blocking(move || {
+                let mut std_stream = std_stream;
+                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
+                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            let (tx, rx): (
+                tokio_unix_ipc::Sender<ProcessToService>,
+                tokio_unix_ipc::Receiver<ServiceToProcess>,
+            ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
+            let message = rx.recv().await.unwrap();
+            if let Some(reply) = handler(&message).await {
+                tx.send(reply).await.unwrap();
+            }
+            messages.push(message);
+        }
+        messages
+    })
+}
+
+/// A fake process that acknowledges reload and ping immediately.
+pub(crate) fn spawn_fake_process_reload_ack(
+    uds_path: &StdPath,
+    expected: usize,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    spawn_fake_process(uds_path, expected, |message| {
+        let ack = matches!(message, ServiceToProcess::ReloadConfig | ServiceToProcess::Ping);
+        Box::pin(async move { ack.then_some(ProcessToService::Pong) })
+    })
 }
 
 pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &str, pid: u32, session_dir: PathBuf) {
@@ -243,7 +298,9 @@ fn insert_fake_instance_with_session_dir_and_pins(
             profile_payload_hash,
             asset_pins,
             pid,
-            uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
+            // Inside the session, never a global path: a test that binds a
+            // fake process here cannot collide with another run's leftovers.
+            uds_path: session_dir.join("process.sock"),
             session_dir,
             ram_mb: 2048,
             cpus: 2,
