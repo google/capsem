@@ -27,7 +27,7 @@ const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'as
 const SECURITY_DECISION_STAGE_CHECK: &str =
     "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
 const SECURITY_EVENT_TYPE_CHECK: &str =
-    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
+    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'))";
 const SECURITY_EVENT_ID_CHECK: &str =
     "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
 const MODEL_PROTOCOL_CHECK: &str =
@@ -347,7 +347,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
@@ -370,7 +370,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT NOT NULL,
         rule_id TEXT,
@@ -396,7 +396,7 @@ pub const CREATE_SCHEMA: &str = "
         timestamp_unix_ms INTEGER NOT NULL,
         ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
@@ -447,10 +447,13 @@ pub const CREATE_SCHEMA: &str = "
 
 /// Create all tables and indexes on the given connection.
 mod memory_sync;
+mod network_types;
+use memory_sync::table_column_names;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
 pub use memory_sync::{
-    flush_memory_tables_to_disk, rehydrate_memory_tables_from_disk_once, sync_memory_tables_from_disk,
+    flush_memory_tables_to_disk, reconcile_memory_tables_from_disk, rehydrate_memory_tables_from_disk_once,
+    sync_memory_tables_from_disk,
 };
 pub(crate) use memory_sync::{initial_memory_flush_watermarks, MemoryFlushWatermarks};
 
@@ -482,61 +485,6 @@ pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::R
 pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
     attach_memory_schema(conn, memory_uri)?;
     reconcile_memory_tables_from_disk(conn)
-}
-
-/// Reconcile the attached DB-owned memory schema with the current disk schema.
-///
-/// An external reader can observe `session.db` after SQLite creates the file but
-/// before the writer process finishes its canonical DDL.  The reader must not
-/// freeze that partial snapshot for the rest of the service lifetime.  This
-/// function is intentionally DB-owned: route callers neither inspect nor repair
-/// ledger schema.
-pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );"
-    ))?;
-
-    let mut stmt = conn.prepare(
-        "SELECT name, sql
-         FROM main.sqlite_master
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-         ORDER BY name",
-    )?;
-    let tables = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    for table in tables {
-        let (name, sql) = table;
-        if is_disk_only_table(&name) {
-            continue;
-        }
-        let disk_columns = table_column_names(conn, "main", &name)?;
-        let memory_columns = table_column_names(conn, MEMORY_SCHEMA, &name)?;
-        if !memory_columns.is_empty() && memory_columns != disk_columns {
-            conn.execute_batch(&format!(
-                "DROP VIEW IF EXISTS temp.{name};
-                 DROP TABLE {MEMORY_SCHEMA}.{name};"
-            ))?;
-        }
-        let mem_sql =
-            memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
-        conn.execute_batch(&mem_sql)?;
-    }
-
-    Ok(())
-}
-
-fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(columns)
 }
 
 pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
@@ -1036,7 +984,7 @@ fn rebuild_event_body_blobs_source_check(conn: &Connection) {
 
 /// Migrate existing databases to add new columns/tables.
 /// Idempotent: safe to call on databases that already have the changes.
-pub fn migrate(conn: &Connection) {
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     for tbl in [
         "net_events",
         "model_calls",
@@ -1487,6 +1435,7 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
             ON profile_mutation_events(category, target_kind, target_key);"
     ));
+    network_types::migrate(conn)
 }
 
 /// Apply read-safe pragmas for DB-owned query connections.

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security rules recognize typed `network` routing facts. Network boundary
+  events validate owner identities and require an explicit allow; retained
+  security ledgers accept their new event types through a checked migration.
 - `capsem-bench-rs redis` collects validated Redis PING samples with configurable
   concurrency and pipelining on both the host and guest.
 - `capsem run -p HOST:GUEST IMAGE` publishes loopback TCP ports through VSOCK

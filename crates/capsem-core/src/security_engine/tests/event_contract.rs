@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn network_event_types_and_authorization_fields_are_canonical() {
+    for name in [
+        "network.connect",
+        "network.connect_result",
+        "network.close",
+        "network.lifecycle",
+        "network.probe",
+        "network.probe_result",
+    ] {
+        let event_type = RuntimeSecurityEventType::try_from(name).expect("network boundary has a canonical type");
+        assert_eq!(event_type.family().as_str(), "network");
+        assert!(crate::net::policy_config::security_event_type_is_known(name));
+    }
+    for field in [
+        "network.id",
+        "network.name",
+        "network.mode",
+        "network.side",
+        "network.protocol",
+        "network.source.vm_id",
+        "network.source.vm_name",
+        "network.source.generation",
+        "network.source.ip",
+        "network.source.port",
+        "network.destination.vm_id",
+        "network.destination.vm_name",
+        "network.destination.generation",
+        "network.destination.ip",
+        "network.destination.port",
+        "network.publication.id",
+    ] {
+        crate::net::policy_config::validate_security_event_match(&format!("has({field})"))
+            .unwrap_or_else(|error| panic!("{field}: {error}"));
+    }
+    for field in [
+        "network.report.bytes_sent",
+        "network.report.reason",
+        "network.decision",
+        "network.payload",
+    ] {
+        assert!(crate::net::policy_config::validate_security_event_match(&format!("has({field})")).is_err());
+    }
+}
+
+#[test]
 fn security_event_cel_evaluates_one_cross_root_rule_without_fanout() {
     let condition = r#"
 http.host.matches("(^|.*\.)openai\.com$")
@@ -146,7 +191,8 @@ fn security_event_cel_exposes_all_first_party_roots() {
         })
         .with_udp(UdpSecurityEvent {
             port: Some("53".to_string()),
-        });
+        })
+        .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
 
     let conditions = [
         r#"http.valid == "true""#,
@@ -211,6 +257,8 @@ fn security_event_cel_exposes_all_first_party_roots() {
         r#"tcp.port == "11434""#,
         r#"udp.valid == "true""#,
         r#"udp.port == "53""#,
+        r#"network.valid == "true""#,
+        r#"network.name == "eval""#,
     ];
     let covered_roots = conditions
         .iter()
@@ -318,7 +366,7 @@ fn runtime_security_event_families_mark_only_credential_as_ledger_only() {
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let families = [Http, Model, Mcp, Dns, File, Process, Credential, Security];
+    let families = [Http, Model, Mcp, Dns, File, Process, Network, Credential, Security];
 
     for family in families {
         assert_eq!(

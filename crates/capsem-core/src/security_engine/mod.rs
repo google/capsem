@@ -25,10 +25,12 @@ use crate::net::policy_config::{
 
 mod builtin_actions;
 mod forensics;
+pub mod network;
 use forensics::{
     compiled_rule_forensic_json, logged_detection_level, logged_rule_action, logger_write_credential_ref,
     logger_write_trace_id, security_event_forensic_json, trace_runtime_security_event, trace_security_rule_match,
 };
+pub use network::NetworkSecurityEvent;
 mod plugins;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 
@@ -41,6 +43,7 @@ pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-S
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeSecurityEventFamily {
+    Network,
     Http,
     Model,
     Mcp,
@@ -54,6 +57,7 @@ pub enum RuntimeSecurityEventFamily {
 impl RuntimeSecurityEventFamily {
     pub const fn as_str(self) -> &'static str {
         match self {
+            RuntimeSecurityEventFamily::Network => "network",
             RuntimeSecurityEventFamily::Http => "http",
             RuntimeSecurityEventFamily::Model => "model",
             RuntimeSecurityEventFamily::Mcp => "mcp",
@@ -68,7 +72,8 @@ impl RuntimeSecurityEventFamily {
     pub const fn is_first_party_cel_root(self) -> bool {
         matches!(
             self,
-            RuntimeSecurityEventFamily::Http
+            RuntimeSecurityEventFamily::Network
+                | RuntimeSecurityEventFamily::Http
                 | RuntimeSecurityEventFamily::Model
                 | RuntimeSecurityEventFamily::Mcp
                 | RuntimeSecurityEventFamily::Dns
@@ -84,6 +89,12 @@ impl RuntimeSecurityEventFamily {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeSecurityEventType {
+    NetworkConnect,
+    NetworkConnectResult,
+    NetworkClose,
+    NetworkLifecycle,
+    NetworkProbe,
+    NetworkProbeResult,
     HttpRequest,
     ModelCall,
     McpToolCall,
@@ -105,6 +116,12 @@ pub enum RuntimeSecurityEventType {
 
 impl RuntimeSecurityEventType {
     pub const ALL: &'static [Self] = &[
+        Self::NetworkConnect,
+        Self::NetworkConnectResult,
+        Self::NetworkClose,
+        Self::NetworkLifecycle,
+        Self::NetworkProbe,
+        Self::NetworkProbeResult,
         Self::HttpRequest,
         Self::ModelCall,
         Self::McpToolCall,
@@ -124,6 +141,12 @@ impl RuntimeSecurityEventType {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::NetworkConnect => "network.connect",
+            Self::NetworkConnectResult => "network.connect_result",
+            Self::NetworkClose => "network.close",
+            Self::NetworkLifecycle => "network.lifecycle",
+            Self::NetworkProbe => "network.probe",
+            Self::NetworkProbeResult => "network.probe_result",
             RuntimeSecurityEventType::HttpRequest => "http.request",
             RuntimeSecurityEventType::ModelCall => "model.call",
             RuntimeSecurityEventType::McpToolCall => "mcp.tool_call",
@@ -144,6 +167,12 @@ impl RuntimeSecurityEventType {
 
     pub const fn family(self) -> RuntimeSecurityEventFamily {
         match self {
+            Self::NetworkConnect
+            | Self::NetworkConnectResult
+            | Self::NetworkClose
+            | Self::NetworkLifecycle
+            | Self::NetworkProbe
+            | Self::NetworkProbeResult => RuntimeSecurityEventFamily::Network,
             RuntimeSecurityEventType::HttpRequest => RuntimeSecurityEventFamily::Http,
             RuntimeSecurityEventType::ModelCall => RuntimeSecurityEventFamily::Model,
             RuntimeSecurityEventType::McpToolCall
@@ -168,6 +197,12 @@ impl RuntimeSecurityEventType {
 
     pub fn parse_str(value: &str) -> Result<Self, SecurityEventTypeParseError> {
         match value {
+            "network.connect" => Ok(Self::NetworkConnect),
+            "network.connect_result" => Ok(Self::NetworkConnectResult),
+            "network.close" => Ok(Self::NetworkClose),
+            "network.lifecycle" => Ok(Self::NetworkLifecycle),
+            "network.probe" => Ok(Self::NetworkProbe),
+            "network.probe_result" => Ok(Self::NetworkProbeResult),
             "http.request" => Ok(Self::HttpRequest),
             "model.call" => Ok(Self::ModelCall),
             "mcp.tool_call" => Ok(Self::McpToolCall),
@@ -1062,11 +1097,12 @@ pub async fn emit_matching_security_rules_with_decision(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<SecurityRuleEmission, String> {
+    event.validate_network(event_type).map_err(|error| error.to_string())?;
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut enforcement = security_enforcement_decision(selected_rule);
     let mut emitted = 0;
-    let enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     if let Some(rule) = selected_rule {
@@ -1132,11 +1168,12 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<SecurityRuleEmission, String> {
+    event.validate_network(event_type).map_err(|error| error.to_string())?;
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut enforcement = security_enforcement_decision(selected_rule);
     let mut emitted = 0;
-    let enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     if let Some(rule) = selected_rule {
@@ -1310,9 +1347,35 @@ fn apply_event_decision_to_enforcement(event: &SecurityEvent, enforcement: &mut 
     }
 }
 
-fn security_enforcement_decision(rule: Option<&CompiledSecurityRule>) -> SecurityEnforcementDecision {
+fn requested_boundary_decision(
+    rule: Option<&CompiledSecurityRule>,
+    kind: RuntimeSecurityEventType,
+) -> SecurityDecisionKind {
+    match rule {
+        Some(rule) => requested_decision_for_rule(rule.action),
+        None if matches!(
+            kind,
+            RuntimeSecurityEventType::NetworkConnect | RuntimeSecurityEventType::NetworkProbe
+        ) =>
+        {
+            SecurityDecisionKind::Block
+        }
+        None => SecurityDecisionKind::Allow,
+    }
+}
+
+fn security_enforcement_decision(
+    rule: Option<&CompiledSecurityRule>,
+    event: &mut SecurityEvent,
+) -> SecurityEnforcementDecision {
     let Some(rule) = rule else {
-        return SecurityEnforcementDecision::allow();
+        let mut decision = SecurityEnforcementDecision::allow();
+        if requested_boundary_decision(None, event.event_type) == SecurityDecisionKind::Block {
+            event.request_decision(SecurityDecisionKind::Block);
+            decision.action = SecurityEnforcementAction::Block;
+            decision.reason = Some("network operation requires an explicit allow rule".into());
+        }
+        return decision;
     };
     SecurityEnforcementDecision {
         action: match rule.action {
@@ -1335,6 +1398,7 @@ pub fn evaluate_security_boundary(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    event.validate_network(event.event_type)?;
     let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
@@ -1345,10 +1409,8 @@ pub fn evaluate_security_boundary(
     }
 
     let selected_rule = selected_enforcement_rule(&evaluation);
-    if let Some(rule) = selected_rule {
-        event.request_decision(requested_decision_for_rule(rule.action));
-    }
-    let mut enforcement = security_enforcement_decision(selected_rule);
+    event.request_decision(requested_boundary_decision(selected_rule, event.event_type));
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut event);
     apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
@@ -1608,6 +1670,7 @@ pub struct SecurityPluginExecution {
 /// transport should hang off `SecurityEventEmitter`, not protocol-owned writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
+    pub network: Option<NetworkSecurityEvent>,
     pub event_type: RuntimeSecurityEventType,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
@@ -1631,6 +1694,7 @@ pub struct SecurityEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SerializableSecurityEvent {
+    pub network: Option<NetworkSecurityEvent>,
     pub event_type: String,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
@@ -1652,6 +1716,7 @@ pub struct SerializableSecurityEvent {
 impl From<&SecurityEvent> for SerializableSecurityEvent {
     fn from(event: &SecurityEvent) -> Self {
         Self {
+            network: event.network.clone(),
             event_type: event.event_type.as_str().to_string(),
             trace_id: event.trace_id.clone(),
             credential_ref: event.credential_ref.clone(),
@@ -1679,6 +1744,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
 impl SecurityEvent {
     pub fn new(event_type: RuntimeSecurityEventType) -> Self {
         Self {
+            network: None,
             event_type,
             trace_id: None,
             credential_ref: None,
@@ -1815,100 +1881,13 @@ impl SecurityEvent {
 /// into a rule that silently never matches. Every arm of the `get` methods below
 /// needs an entry here; `security_event_cel_fields_all_resolve` guards the
 /// pairing.
-pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
-    "dns.qname",
-    "dns.qtype",
-    "dns.valid",
-    "file.content",
-    "file.create.content",
-    "file.create.ext",
-    "file.create.mime_type",
-    "file.create.name",
-    "file.create.path",
-    "file.create.valid",
-    "file.delete.content",
-    "file.delete.ext",
-    "file.delete.mime_type",
-    "file.delete.name",
-    "file.delete.path",
-    "file.delete.valid",
-    "file.export.content",
-    "file.export.ext",
-    "file.export.mime_type",
-    "file.export.name",
-    "file.export.path",
-    "file.export.valid",
-    "file.import.content",
-    "file.import.ext",
-    "file.import.mime_type",
-    "file.import.name",
-    "file.import.path",
-    "file.import.valid",
-    "file.read.content",
-    "file.read.ext",
-    "file.read.mime_type",
-    "file.read.name",
-    "file.read.path",
-    "file.read.valid",
-    "file.valid",
-    "file.write.content",
-    "file.write.ext",
-    "file.write.mime_type",
-    "file.write.name",
-    "file.write.path",
-    "file.write.valid",
-    "http.body",
-    "http.host",
-    "http.method",
-    "http.path",
-    "http.query",
-    "http.status",
-    "http.valid",
-    "ip.valid",
-    "ip.value",
-    "ip.version",
-    "mcp.event.valid",
-    "mcp.method",
-    "mcp.request.arguments",
-    "mcp.request.id",
-    "mcp.request.method",
-    "mcp.request.valid",
-    "mcp.response.content",
-    "mcp.response.valid",
-    "mcp.server.name",
-    "mcp.server.valid",
-    "mcp.tool_call.name",
-    "mcp.tool_call.valid",
-    "mcp.tool_list",
-    "mcp.tool_list.valid",
-    "mcp.valid",
-    "model.name",
-    "model.provider",
-    "model.request.body",
-    "model.request.tool_calls",
-    "model.request.valid",
-    "model.response.body",
-    "model.response.valid",
-    "model.tool_call.valid",
-    "model.valid",
-    "process.audit.valid",
-    "process.command",
-    "process.exec.exit_code",
-    "process.exec.id",
-    "process.exec.path",
-    "process.exec.stderr",
-    "process.exec.stdout",
-    "process.exec.valid",
-    "process.name",
-    "process.valid",
-    "tcp.port",
-    "tcp.valid",
-    "udp.port",
-    "udp.valid",
-];
+pub use capsem_config::SECURITY_EVENT_CEL_FIELDS;
 
 impl PolicySubject for SecurityEvent {
     fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        if let Some(rest) = field.strip_prefix("network.") {
+            return self.network.as_ref().and_then(|event| event.get(rest));
+        }
         if let Some(rest) = field.strip_prefix("http.") {
             return self.http.as_ref().and_then(|event| event.get(rest));
         }
@@ -2747,6 +2726,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         rules: &SecurityRuleSet,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
+        event.validate_network(event.event_type)?;
         event = self
             .action_registry
             .apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
@@ -2755,9 +2735,10 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         for rule in evaluation.matched_rules() {
             record_rule_detection(&mut event, rule);
         }
-        if let Some(rule) = selected_enforcement_rule(&evaluation) {
-            event.request_decision(requested_decision_for_rule(rule.action));
-        }
+        event.request_decision(requested_boundary_decision(
+            selected_enforcement_rule(&evaluation),
+            event.event_type,
+        ));
         event = self
             .action_registry
             .apply_security_plugins(SecurityPluginStage::Postprocess, event)?;

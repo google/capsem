@@ -81,6 +81,7 @@ pub(super) fn security_event_forensic_json(event: &SecurityEvent) -> serde_json:
         "ip": event.ip,
         "tcp": event.tcp,
         "udp": event.udp,
+        "network": event.network,
     })
 }
 

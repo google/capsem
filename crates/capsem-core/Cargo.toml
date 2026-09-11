@@ -52,7 +52,7 @@ tokio-util = { workspace = true }
 sse-stream = { workspace = true }
 bytes = "1"
 serde_json = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"

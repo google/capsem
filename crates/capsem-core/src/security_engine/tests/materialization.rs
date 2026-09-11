@@ -218,10 +218,24 @@ fn security_event_cel_fields_all_resolve() {
     use crate::net::policy_config::PolicySubject;
 
     let event = fully_populated_security_event();
+    let private = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
+        .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
+    let mut expose = network::tests::private_flow();
+    expose.route = network::NetworkRoute::Expose {
+        publication_id: Uuid::from_u128(3),
+    };
+    expose.source.vm = None;
+    expose.side = network::NetworkSide::Destination;
+    let expose =
+        SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(NetworkSecurityEvent::Flow(expose));
     let unresolved = SECURITY_EVENT_CEL_FIELDS
         .iter()
         .copied()
-        .filter(|field| event.get_policy_field(field).is_none())
+        .filter(|field| {
+            [&event, &private, &expose]
+                .iter()
+                .all(|event| event.get_policy_field(field).is_none())
+        })
         .collect::<Vec<_>>();
 
     assert!(

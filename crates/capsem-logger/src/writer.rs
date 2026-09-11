@@ -307,7 +307,7 @@ impl DbWriter {
         conn.set_prepared_statement_cache_capacity(64);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         schema::create_tables(&conn)?;
-        schema::migrate(&conn);
+        schema::migrate(&conn)?;
         let memory_uri = schema::memory_uri_for_path(path);
         schema::with_memory_schema_lock(|| {
             schema::create_memory_tables(&conn, &memory_uri)?;
@@ -342,7 +342,7 @@ impl DbWriter {
         // One statement per table per target; the default 16 would evict.
         conn.set_prepared_statement_cache_capacity(64);
         schema::create_tables(&conn)?;
-        schema::migrate(&conn);
+        schema::migrate(&conn)?;
         let memory_uri = schema::memory_uri_for_name(&format!(
             "writer-open-in-memory-{}-{}",
             std::process::id(),

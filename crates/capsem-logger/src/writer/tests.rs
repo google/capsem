@@ -1045,7 +1045,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     crate::schema::apply_pragmas(&conn).unwrap();
     crate::schema::create_tables(&conn).unwrap();
-    crate::schema::migrate(&conn);
+    crate::schema::migrate(&conn).unwrap();
     crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
     metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));

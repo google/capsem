@@ -2,6 +2,85 @@ use super::*;
 use crate::security_engine::forensics::SecurityRuleTraceLabels;
 
 #[tokio::test]
+async fn network_decision_ledger_preserves_owner_facts_and_sanitizes_before_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&path, 8).unwrap();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.redis_block]
+name = "redis_block"
+action = "block"
+match = 'network.destination.vm_name == "redis"'
+"#,
+    )
+    .unwrap();
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let plugins = BTreeMap::from([
+        (
+            "dummy_post_allow".into(),
+            SecurityPluginConfig {
+                mode: SecurityPluginMode::Allow,
+                detection_level: DetectionLevel::Informational,
+            },
+        ),
+        (
+            "log_sanitizer".into(),
+            SecurityPluginConfig {
+                mode: SecurityPluginMode::Rewrite,
+                detection_level: DetectionLevel::Informational,
+            },
+        ),
+    ]);
+    let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
+        .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()))
+        .with_credential_observations(vec![CredentialObservation {
+            provider: CredentialProvider::OpenAi,
+            raw_value: "sk-must-not-reach-network-ledger".into(),
+            source: "fixture".into(),
+            event_type: None,
+            trace_id: None,
+            context_json: None,
+        }]);
+    let evaluated = evaluate_security_boundary(&rules, plugins.clone(), event).unwrap();
+    assert_eq!(evaluated.enforcement.action, SecurityEnforcementAction::Block);
+    assert_eq!(
+        emit_matching_security_rules_for_evaluated_event(
+            &writer,
+            SecurityEventId::parse("abcdef123456").unwrap(),
+            RuntimeSecurityEventType::NetworkConnect,
+            &rules,
+            plugins,
+            evaluated.event,
+            1_789_000_000_000,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    writer.shutdown_blocking();
+    let rows = capsem_logger::DbReader::open(&path)
+        .unwrap()
+        .recent_security_rule_events(10)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].event_type, "network.connect");
+    assert_eq!(rows[0].event_id, "abcdef123456");
+    let json: serde_json::Value = serde_json::from_str(&rows[0].event_json).unwrap();
+    assert_eq!(json["network"]["source"]["vm"]["id"], "client");
+    assert_eq!(json["network"]["source"]["vm"]["generation"], "9");
+    assert_eq!(json["network"]["destination"]["address"], "10.128.0.3:6379");
+    assert_eq!(json["decision"]["effective"], "block");
+    assert!(json["plugin_executions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|execution| execution["plugin_id"] == "log_sanitizer" && execution["applied"] == true));
+    assert!(!rows[0].event_json.contains("sk-must-not-reach-network-ledger"));
+    assert!(json["credential_observations"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn emit_security_rule_match_writes_forensic_ledger_row() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
