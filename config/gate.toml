@@ -1467,6 +1467,13 @@ staging = "cache/target/build/linux-agent"
 # The guest builder's source_roots and sealed image identity own freshness.
 # Checkout timestamps never participate in reuse decisions.
 build = ["uv", "run", "--project", "build_system", "--frozen", "capsem-builder", "agent", "config/docker/image"]
+# The feature set the guest builder compiles, linted on the host with every
+# target by `fast.clippy.guest`. `fast.clippy` is `--workspace` and so sees
+# only the host features; the builder only runs `cargo build`. Between them no
+# guest test target was ever compiled, and `capsem-bench --features guest`
+# carried uncompilable tests until someone ran the command by hand.
+lint_packages = ["capsem-agent", "capsem-bench"]
+lint_features = ["capsem-bench/guest"]
 
 # Checked-in guest payloads copied in beside the binaries.
 init = "guest/artifacts/capsem-init"
@@ -1871,7 +1878,7 @@ enforced_by = ["fast.audit.source-syntax"]
 [[lint_surfaces]]
 name = "rust"
 pattern = "*.rs"
-enforced_by = ["fast.clippy", "fast.rust-format"]
+enforced_by = ["fast.clippy", "fast.clippy.guest", "fast.rust-format"]
 # Linting is not testing. Clippy answers in the fast phase; the two runners
 # cannot, because both need a compiled workspace. Nextest owns every native
 # target and structurally cannot own doctests -- see `rustinventory` -- so

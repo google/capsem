@@ -184,6 +184,9 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
     blocking = webaudits.blocking_surface(config, surfaces)
     clippy = phase.add(webaudits.clippy(config), after=(blocking, rust, ort))
+    # The guest feature set embeds no frontend, so it waits only for the
+    # toolchain and shares the binaries lock with workspace clippy.
+    guest = phase.add(webaudits.clippy_guest(config), after=(syntax, rust, ort))
     return (
         *audited,
         *checked,
@@ -194,4 +197,5 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *(surface for surface in surfaces if surface is not blocking),
         channel,
         clippy,
+        guest,
     )
