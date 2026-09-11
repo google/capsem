@@ -285,6 +285,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Published-port connection audits record `unreachable` when the guest bridge
+  never came up and `cancelled` when it was lost during setup; both were
+  recorded as `stale_generation`, which names only the post-setup recheck.
 - Editing or deleting a profile enforcement or detection rule through the API
   now reaches running VMs on that profile before the route returns, as plugin
   edits already did; previously running VMs kept the old rules until an explicit

@@ -90,13 +90,17 @@ pub(super) async fn serve(
                             let _setup = slots.acquire_owned().await.context("guest setup admission closed")?;
                             rate.acquire().await;
                             let action = record.authorize().await?;
+                            // Each failure below names what actually happened;
+                            // `stale_generation` belongs only to the recheck after
+                            // setup, and once covered every path from here.
                             reason = match action {
                                 Action::Block => NetworkReason::Blocked,
                                 Action::Ask => NetworkReason::ApprovalRequired,
-                                Action::Allow => NetworkReason::StaleGeneration,
+                                Action::Allow => NetworkReason::Unreachable,
                             };
                             ensure!(action == Action::Allow, "publication security decision: {action:?}");
                             let lease = lease.context("guest control lease missing")?;
+                            reason = NetworkReason::Cancelled;
                             ensure!(!lease.is_cancelled(), "guest control lease expired");
                             tokio::select! {
                                 biased;
