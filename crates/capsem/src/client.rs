@@ -120,6 +120,9 @@ pub struct SessionInfo {
     pub forked_from: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The VM's address on the private link, for its whole life.
+    #[serde(default)]
+    pub private_address: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
