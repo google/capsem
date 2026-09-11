@@ -1,6 +1,8 @@
 use super::dns::emit_dns_security_write_and_rules;
 use super::*;
 
+mod ports;
+
 mod ack;
 
 struct InterruptedThenData {
@@ -71,56 +73,6 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
     assert_ne!(*writer_thread.lock().unwrap(), Some(caller_thread));
 }
 
-// Vsock port classification
-
-#[test]
-fn classify_terminal_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_TERMINAL),
-        Some(HostVsockService::Terminal)
-    );
-}
-
-#[test]
-fn classify_control_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_CONTROL),
-        Some(HostVsockService::Control)
-    );
-}
-
-#[test]
-fn classify_sni_proxy_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_SNI_PROXY),
-        Some(HostVsockService::SniProxy)
-    );
-}
-
-#[test]
-fn classify_exec_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_EXEC),
-        Some(HostVsockService::Exec)
-    );
-}
-
-#[test]
-fn classify_lifecycle_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_LIFECYCLE),
-        Some(HostVsockService::Lifecycle)
-    );
-}
-
-#[test]
-fn classify_audit_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_AUDIT),
-        Some(HostVsockService::Audit)
-    );
-}
-
 #[test]
 fn bounded_frame_reader_returns_one_complete_payload() {
     let payload = b"audit-record";
@@ -160,32 +112,6 @@ fn bounded_frame_reader_returns_none_on_clean_eof() {
     let frame = read_bounded_frame(&mut std::io::Cursor::new(Vec::new())).unwrap();
 
     assert!(frame.is_none());
-}
-
-#[test]
-fn classify_dns_proxy_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
-        Some(HostVsockService::DnsProxy)
-    );
-}
-
-#[test]
-fn classify_network_port() {
-    assert_eq!(
-        HostVsockService::from_port(capsem_proto::VSOCK_PORT_NETWORK),
-        Some(HostVsockService::Network)
-    );
-}
-
-#[test]
-fn classify_unknown_port() {
-    assert_eq!(HostVsockService::from_port(99999), None);
-}
-
-#[test]
-fn classify_port_zero_unknown() {
-    assert_eq!(HostVsockService::from_port(0), None);
 }
 
 // -----------------------------------------------------------------------
