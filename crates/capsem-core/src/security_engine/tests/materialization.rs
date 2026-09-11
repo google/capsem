@@ -223,6 +223,7 @@ fn security_event_cel_fields_all_resolve() {
     let mut expose = network::tests::private_flow();
     expose.route = network::NetworkRoute::Expose {
         publication_id: Uuid::from_u128(3),
+        listener: "127.0.0.1:16379".parse().unwrap(),
     };
     expose.source.vm = None;
     expose.side = network::NetworkSide::Destination;

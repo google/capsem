@@ -1,9 +1,13 @@
+use super::security::{close_reason, AuditFlow};
 use super::*;
+use crate::security_engine::network::NetworkReason;
+use crate::security_engine::{RuntimeSecurityEventType as Type, SecurityEnforcementAction as Action};
 use capsem_router::MAX_CONNECTIONS;
 use tokio::net::TcpListener;
 use tokio::time::Instant;
 
 struct Active {
+    audit: AuditFlow,
     guest: capsem_proto::router::FlowKey,
     _pending: Pending,
     graceful: bool,
@@ -46,13 +50,16 @@ pub(super) async fn serve(
     router: Arc<companion::Router>,
     cancellation: CancellationToken,
 ) -> Result<()> {
+    let authority = owner.security.clone().context("publication security context missing")?;
+    let host_address = listener.local_addr()?;
+    let publication_id = uuid::Uuid::new_v4();
     let mut active: HashMap<u64, Active> = HashMap::new();
     let mut connecting: HashMap<u64, Active> = HashMap::new();
     let mut setups = tokio::task::JoinSet::new();
     let (queue, mut records) = mpsc::channel(MAX_CONNECTIONS);
     let (guest_close, mut guest_records) = mpsc::channel(MAX_CONNECTIONS);
     let mut acknowledgements = tokio::time::interval(Duration::from_millis(100));
-    let result = async {
+    let result = Box::pin(async {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => return Ok(()),
@@ -71,21 +78,50 @@ pub(super) async fn serve(
                     let (pending, receiver) = owner.request(&source, guest_close.clone())?;
                     let id = pending.id;
                     let flow = capsem_proto::router::FlowKey { generation: owner.generation, id };
+                    let audit = AuditFlow::new(authority.clone(), publication_id, host_address, peer, guest_port);
+                    let record = audit.clone();
+                    let lease = pending.lease.clone();
                     let control = control.clone();
                     let slots = owner.setups.clone();
                     let rate = owner.setup_rate.clone();
                     let setup = setups.spawn(async move {
+                        let mut reason = NetworkReason::Io;
                         let result = tokio::time::timeout(Duration::from_secs(8), async {
                             let _setup = slots.acquire_owned().await.context("guest setup admission closed")?;
                             rate.acquire().await;
-                            control.send(ServiceToProcess::ConnectPort { flow, port: guest_port }).await
-                                .context("guest control closed")?;
-                            receiver.await.context("guest connection cancelled")?
-                        }).await.context("guest connection timed out").and_then(|result| result);
-                        (id, result)
+                            let action = record.authorize().await?;
+                            reason = match action {
+                                Action::Block => NetworkReason::Blocked,
+                                Action::Ask => NetworkReason::ApprovalRequired,
+                                Action::Allow => NetworkReason::StaleGeneration,
+                            };
+                            ensure!(action == Action::Allow, "publication security decision: {action:?}");
+                            let lease = lease.context("guest control lease missing")?;
+                            ensure!(!lease.is_cancelled(), "guest control lease expired");
+                            tokio::select! {
+                                biased;
+                                _ = lease.cancelled() => anyhow::bail!("guest control lease expired"),
+                                result = async {
+                                    control.send(ServiceToProcess::ConnectPort { flow, port: guest_port }).await
+                                        .context("guest control closed")?;
+                                    receiver.await.context("guest connection cancelled")?
+                                } => {
+                                    reason = NetworkReason::Refused;
+                                    result
+                                },
+                            }
+                        }).await;
+                        let result = match result {
+                            Ok(result) => result,
+                            Err(error) => {
+                                reason = NetworkReason::SetupTimeout;
+                                Err(anyhow::Error::new(error).context("guest connection timed out"))
+                            }
+                        };
+                        (id, result, reason)
                     });
                     tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
+                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
                 }
                 Some((guest, report)) = guest_records.recv() => {
                     if report.reason != capsem_proto::router::CloseReason::Complete {
@@ -98,9 +134,13 @@ pub(super) async fn serve(
                 }
                 event = records.recv() => match event.context("router event reader closed")? {
                     Event::Accepted(id) => {
-                        let flow = active.get_mut(&id).context("router acknowledged unknown connection")?;
-                        ensure!(flow.acknowledgement.take().is_some() && !flow.accepted, "invalid router acknowledgement");
-                        flow.accepted = true;
+                        let audit = {
+                            let flow = active.get_mut(&id).context("router acknowledged unknown connection")?;
+                            ensure!(flow.acknowledgement.take().is_some() && !flow.accepted, "invalid router acknowledgement");
+                            flow.accepted = true;
+                            flow.audit.clone()
+                        };
+                        audit.record(Type::NetworkConnectResult, NetworkReason::Connected, 0, 0).await?;
                     }
                     Event::Closed(id, report) => {
                         ensure!(active.get(&id).is_some_and(|flow| flow.accepted), "router closed unacknowledged connection");
@@ -109,7 +149,9 @@ pub(super) async fn serve(
                         tracing::debug!(connection_id = id, reason = ?report.reason,
                             from_source = report.from_source, to_source = report.to_source, "publication closed");
                         let guest = flow.guest;
+                        let audit = flow.audit.clone();
                         drop(flow);
+                        audit.record(Type::NetworkClose, close_reason(report.reason), report.from_source, report.to_source).await?;
                         if report.reason != capsem_proto::router::CloseReason::Complete {
                             abort_guest(&control, vec![guest]).await?;
                         }
@@ -118,16 +160,27 @@ pub(super) async fn serve(
                         ensure!(active.get(&id).is_some_and(|flow| flow.acknowledgement.is_some() && !flow.accepted), "unexpected router refusal");
                         let flow = active.remove(&id).unwrap();
                         let guest = flow.guest;
+                        let audit = flow.audit.clone();
                         drop(flow);
                         abort_guest(&control, vec![guest]).await?;
+                        audit.record(Type::NetworkConnectResult, NetworkReason::Refused, 0, 0).await?;
                     }
                     Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
                 },
                 completed = setups.join_next(), if !setups.is_empty() => {
-                    let (id, result) = completed.unwrap().context("publication setup task failed")?;
+                    let (id, result, reason) = completed.unwrap().context("publication setup task failed")?;
                     let mut flow = connecting.remove(&id).context("completed unknown publication setup")?;
                     match result {
                         Ok(connection) => {
+                            if flow._pending.lease.as_ref().is_none_or(|lease| lease.is_cancelled()) {
+                                let guest = flow.guest;
+                                let audit = flow.audit.clone();
+                                drop(connection);
+                                drop(flow);
+                                abort_guest(&control, vec![guest]).await?;
+                                audit.record(Type::NetworkConnectResult, NetworkReason::StaleGeneration, 0, 0).await?;
+                                continue;
+                            }
                             // Guest setup completes out of order. The child sees
                             // an independent, monotonic handoff sequence.
                             let grant = async {
@@ -151,9 +204,11 @@ pub(super) async fn serve(
                         }
                         Err(error) => {
                             let guest = flow.guest;
+                            let audit = flow.audit.clone();
                             drop(flow);
                             tracing::debug!(connection_id = id, %error, "publication connection refused");
                             abort_guest(&control, vec![guest]).await?;
+                            audit.record(Type::NetworkConnectResult, reason, 0, 0).await?;
                         }
                     }
                 }
@@ -165,7 +220,7 @@ pub(super) async fn serve(
                 }
             }
         }
-    }.await;
+    }).await;
     if result.is_err() {
         // An invalid record or missing ACK means the child cannot be trusted to
         // relinquish its copies. Terminate the shared child, not just this broker.
@@ -176,6 +231,20 @@ pub(super) async fn serve(
         .values()
         .chain(connecting.values())
         .map(|flow| flow.guest)
+        .collect();
+    let audits: Vec<_> = active
+        .values()
+        .chain(connecting.values())
+        .map(|flow| {
+            (
+                flow.audit.clone(),
+                if flow.accepted {
+                    Type::NetworkClose
+                } else {
+                    Type::NetworkConnectResult
+                },
+            )
+        })
         .collect();
     drop(active);
     drop(connecting);
@@ -194,7 +263,19 @@ pub(super) async fn serve(
     if router_cleanup.is_err() {
         router.closed.cancel();
     }
-    result.and(guest_cleanup).and(router_cleanup)
+    let audit_cleanup = tokio::time::timeout(Duration::from_secs(2), async {
+        for (audit, kind) in audits {
+            audit.record(kind, NetworkReason::Cancelled, 0, 0).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("publication cleanup audit deadline exceeded")
+    .and_then(|result| result);
+    if let Err(error) = &audit_cleanup {
+        tracing::error!(%error, "publication cleanup audit failed");
+    }
+    result.and(guest_cleanup).and(router_cleanup).and(audit_cleanup)
 }
 
 async fn abort_guest(

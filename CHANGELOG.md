@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Published TCP connections require an audited allow from the existing security
+  rules and plugins before guest setup. Profile defaults explicitly allow expose;
+  deny, pending approval, audit failure, and stale control leases refuse access.
+  Transport records include trusted VM, listener, peer, and connection identities.
+
 - Active profiles can configure separate router connection and setup budgets
   under `network.router`, within fixed resource ceilings shared by a VM's ports.
 - Published connections carry the VM owner's boot generation so stale streams

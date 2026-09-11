@@ -80,6 +80,9 @@ fn process_kernel_cmdline() -> &'static str {
 struct Args {
     #[arg(long)]
     id: String,
+    /// Trusted host-side identity; independent of guest environment overrides.
+    #[arg(long)]
+    vm_name: Option<String>,
     #[arg(long)]
     assets_dir: PathBuf,
     #[arg(long)]
@@ -367,22 +370,6 @@ async fn run_async_main_loop(
 ) -> Result<()> {
     let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
     let runtime_config = runtime_source.load()?;
-    let job_store = Arc::new(JobStore {
-        publisher: Arc::new(capsem_core::container::publish::Publisher::for_session(
-            &session_dir,
-            runtime_config.network.router.clone(),
-        )?),
-        ..JobStore::new()
-    });
-    shutdown.lock().await.publisher = Some(job_store.publisher.clone());
-    let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
-    let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
-    let restored = job_store
-        .publisher
-        .restore(ctrl_tx.clone())
-        .await
-        .context("restore published ports")?;
-    *job_store.publications.lock().unwrap() = restored;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
@@ -412,6 +399,33 @@ async fn run_async_main_loop(
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
+    let job_store = Arc::new(JobStore {
+        publisher: Arc::new(
+            capsem_core::container::publish::Publisher::for_session(
+                &session_dir,
+                runtime_config.network.router.clone(),
+            )?
+            .with_security(
+                args.id.clone(),
+                args.vm_name.clone().unwrap_or_else(|| args.id.clone()),
+                Arc::new(capsem_core::security_engine::network::ledger::NetworkSecurity {
+                    db: db.clone(),
+                    rules: security_rules.clone(),
+                    plugins: plugin_policy.clone(),
+                }),
+            ),
+        ),
+        ..JobStore::new()
+    });
+    shutdown.lock().await.publisher = Some(job_store.publisher.clone());
+    let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
+    let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
+    let restored = job_store
+        .publisher
+        .restore(ctrl_tx.clone())
+        .await
+        .context("restore published ports")?;
+    *job_store.publications.lock().unwrap() = restored;
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.

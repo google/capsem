@@ -47,6 +47,7 @@ mod profile_mutation_cache;
 mod profile_status_cache;
 mod session_cleanup;
 mod session_db_handles;
+use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
@@ -378,10 +379,6 @@ struct CachedEvaluateResponse {
 struct CachedListResponse {
     fingerprint: String,
     bytes: Bytes,
-}
-
-fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
-    session_dir.join("session.db")
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1198,6 +1195,7 @@ impl ServiceState {
         let guest_name = if persistent { name } else { id };
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
+        child_cmd.arg("--vm-name").arg(guest_name);
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -1464,6 +1462,7 @@ impl ServiceState {
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+        child_cmd.arg("--vm-name").arg(&name);
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {

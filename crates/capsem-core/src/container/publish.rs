@@ -23,8 +23,11 @@ mod admission;
 mod broker;
 mod companion;
 mod saved;
+mod security;
 
 pub struct Publisher {
+    security: Option<Arc<security::Authority>>,
+    control_lease: Mutex<Option<CancellationToken>>,
     budgets: capsem_config::router::RouterConfig,
     generation: u64,
     saved: Option<saved::Mappings>,
@@ -44,6 +47,7 @@ pub struct Publisher {
 type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
 
 struct GuestFlow {
+    lease: Option<CancellationToken>,
     data: Option<oneshot::Sender<Result<VsockConnection>>>,
     close: mpsc::Sender<GuestClose>,
     report: Option<capsem_proto::router::CloseReason>,
@@ -60,6 +64,8 @@ impl Publisher {
     pub fn configured(budgets: capsem_config::router::RouterConfig) -> Result<Self> {
         budgets.validate().map_err(anyhow::Error::msg)?;
         Ok(Self {
+            security: None,
+            control_lease: Mutex::new(None),
             // The UUID variant bits make its low half nonzero.
             generation: uuid::Uuid::new_v4().as_u128() as u64,
             saved: None,
@@ -105,6 +111,9 @@ impl Publisher {
     /// A lost control lease invalidates every current guest endpoint. Keep the
     /// declared listeners, but revoke sockets before accepting a replacement lease.
     pub fn control_lost(&self) {
+        if let Some(lease) = self.control_lease.lock().unwrap().take() {
+            lease.cancel();
+        }
         let flows: Vec<_> = {
             let mut pending = self.pending.lock().unwrap();
             pending
@@ -193,6 +202,7 @@ impl Publisher {
         let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
         ensure!(guest_port != 0, "guest port must be nonzero");
+        ensure!(self.security.is_some(), "publication security context missing");
         let permit = self
             .mappings
             .clone()
@@ -324,9 +334,11 @@ impl Publisher {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| anyhow::anyhow!("publication connection ids exhausted"))?;
         let (sender, receiver) = oneshot::channel();
+        let lease = self.control_lease.lock().unwrap().clone();
         self.pending.lock().unwrap().insert(
             id,
             GuestFlow {
+                lease: lease.clone(),
                 data: Some(sender),
                 close,
                 report: None,
@@ -336,6 +348,7 @@ impl Publisher {
         Ok((
             Pending {
                 owner: self.clone(),
+                lease,
                 id,
             },
             receiver,
@@ -344,6 +357,7 @@ impl Publisher {
 }
 
 struct Pending {
+    lease: Option<CancellationToken>,
     owner: Arc<Publisher>,
     id: u64,
 }

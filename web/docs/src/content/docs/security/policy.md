@@ -323,8 +323,21 @@ routes; a publication ID exists for expose routes. Host socket endpoints have no
 VM identity. Connection and synthetic probe authorization require complete
 facts and an explicit allow rule. Missing facts are errors. Counters, close
 reasons, connection IDs, and decision state are audit data and cannot be read
-by rules. This event contract does not itself enable private routing or apply
-policy to published ports; those integrations are tracked separately.
+by rules. Expose records also include the actual loopback listener address.
+
+Published TCP ports evaluate the destination VM's current rules and plugins
+before requesting any guest connection. Both profiles have a visible default
+expose allow rule; a more specific deny or ask prevents setup. An unavailable
+audit writer, evaluation error, or expired guest control lease also refuses
+setup. Existing connections retain their decision until closed; editing a rule
+affects new connections. A control disconnect immediately revokes live sockets,
+and queued requests from that lease cannot cross a replacement control stream.
+
+The primary transport ledger records requests, setup results, and close reports
+with one connection ID. Matched rules use that same event identity and the
+existing security ledger. These are buffered audit records, not a per-connection
+disk sync; counters describe transport bytes, not decoded application payloads.
+Private routing remains subsequent work.
 
 Do not use old callback-local roots such as `request.host` or
 `tool.name`. The rule compiler rejects them because they are not

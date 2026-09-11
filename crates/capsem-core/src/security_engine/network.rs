@@ -7,6 +7,8 @@ use std::net::SocketAddr;
 use std::num::NonZeroU64;
 use uuid::Uuid;
 
+pub mod ledger;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NetworkIdentity {
     pub id: Uuid,
@@ -73,7 +75,7 @@ pub enum NetworkProtocol {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum NetworkRoute {
-    Expose { publication_id: Uuid },
+    Expose { publication_id: Uuid, listener: SocketAddr },
     Private { network: NetworkIdentity },
 }
 
@@ -169,7 +171,14 @@ impl NetworkSecurityEvent {
                 }
                 require(flow.destination.vm.is_some(), "missing destination VM identity")?;
                 match &flow.route {
-                    NetworkRoute::Expose { publication_id } => {
+                    NetworkRoute::Expose {
+                        publication_id,
+                        listener,
+                    } => {
+                        require(
+                            listener.ip().is_loopback() && listener.port() != 0,
+                            "invalid publication listener",
+                        )?;
                         require(!publication_id.is_nil(), "missing publication identity")?;
                         require(!probe, "expose cannot carry synthetic ping")?;
                         require(flow.source.vm.is_none(), "expose source must be a host socket")?;
@@ -224,7 +233,7 @@ impl NetworkSecurityEvent {
                 NetworkProtocol::SyntheticPing => "synthetic_ping",
             })),
             "publication.id" => match flow.route {
-                NetworkRoute::Expose { publication_id } => Some(owned(publication_id)),
+                NetworkRoute::Expose { publication_id, .. } => Some(owned(publication_id)),
                 _ => None,
             },
             _ => field

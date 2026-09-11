@@ -3,6 +3,8 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+mod security;
+
 fn source_fixture() -> Arc<std::net::TcpStream> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -12,7 +14,9 @@ fn source_fixture() -> Arc<std::net::TcpStream> {
 #[tokio::test]
 async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broker() {
     use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
@@ -52,7 +56,9 @@ async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broke
 #[tokio::test]
 async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_complete() {
     use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
@@ -100,7 +106,9 @@ async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_compl
 #[tokio::test]
 async fn terminal_report_survives_data_adoption_and_is_delivered_once_per_generation() {
     use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
     let flow = FlowKey {
@@ -150,7 +158,9 @@ async fn terminal_report_survives_data_adoption_and_is_delivered_once_per_genera
 
 #[tokio::test]
 async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (close, _reports) = mpsc::channel(1);
     let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
     let (connection, peer) = StdUnixStream::pair().unwrap();
@@ -218,7 +228,9 @@ async fn serve_fixture(
 
 #[tokio::test]
 async fn shutdown_joins_incomplete_guest_headers_and_refuses_new_arrivals() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (connection, peer) = StdUnixStream::pair().unwrap();
     peer.set_nonblocking(true).unwrap();
     let mut peer = UnixStream::from_std(peer).unwrap();
@@ -266,7 +278,7 @@ async fn configured_connection_budget_includes_pending_guest_setups() {
 async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, expected: usize) {
     let connections = usize::from(budgets.expose.connections);
     let setups = usize::from(budgets.expose.setups);
-    let owner = Arc::new(Publisher::configured(budgets).unwrap());
+    let owner = Arc::new(security::authorized_publisher(budgets));
     let (parent, _child) = StdUnixStream::pair().unwrap();
     let router = Arc::new(companion::Router::new(
         0,
@@ -319,7 +331,9 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
 
 #[tokio::test]
 async fn concurrent_guest_setups_grant_ids_in_handoff_order() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
@@ -394,7 +408,9 @@ enum ChildFault {
 }
 
 async fn unacknowledged_pair_reclaims_guest(fault: ChildFault) {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
@@ -480,7 +496,9 @@ async fn unacknowledged_pair_reclaims_guest(fault: ChildFault) {
 
 #[tokio::test]
 async fn compromised_router_cannot_request_destination_connections() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
@@ -512,7 +530,9 @@ async fn compromised_router_cannot_request_destination_connections() {
 
 #[tokio::test]
 async fn malformed_child_record_cannot_allocate_or_dial() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     child.set_nonblocking(true).unwrap();
@@ -540,7 +560,9 @@ async fn malformed_child_record_cannot_allocate_or_dial() {
 
 #[tokio::test]
 async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
-    let owner = Arc::new(Publisher::default());
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
     let (parent, child) = StdUnixStream::pair().unwrap();
     parent.set_nonblocking(true).unwrap();
     let sender = capsem_foundation::unix::router_channel::Sender::new(parent.try_clone().unwrap()).unwrap();
