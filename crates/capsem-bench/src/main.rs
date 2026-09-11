@@ -20,6 +20,7 @@ mod schema;
 mod stats;
 #[cfg(feature = "host")]
 mod store;
+mod throughput;
 
 use anyhow::Result;
 use clap::Parser;
@@ -58,6 +59,7 @@ async fn main() -> Result<()> {
         profile: "code".to_string(),
     })) {
         Command::Redis(args) => println!("{}", serde_json::to_string(&redis::run(args).await?)?),
+        Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();
