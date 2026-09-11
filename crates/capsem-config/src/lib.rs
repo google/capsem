@@ -8,6 +8,7 @@ mod condition;
 mod lint;
 pub mod mcp;
 pub mod model;
+pub mod private_pool;
 mod provider_profile;
 mod resolver;
 pub mod router;
@@ -18,6 +19,7 @@ mod types;
 mod validation;
 
 pub use lint::*;
+pub use private_pool::PrivatePool;
 pub use provider_profile::*;
 pub use resolver::*;
 pub use security_rule_profile::*;
