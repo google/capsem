@@ -127,6 +127,11 @@ CONFIG_NF_NAT_REDIRECT=y
 CONFIG_VETH=y
 CONFIG_NETFILTER_XT_NAT=y
 
+# Private network link: capsem-tun opens tun0 and pumps its packets over
+# VSOCK to the host's smoltcp endpoint (crates/capsem-network). The kernel
+# routes into the device; nothing else on the guest sees those packets.
+CONFIG_TUN=y
+
 # ==========================================
 # 8. PROCESS MANAGEMENT
 # ==========================================
