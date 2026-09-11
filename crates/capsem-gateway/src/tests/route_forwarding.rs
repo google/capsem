@@ -179,6 +179,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("POST", "/networks"),
         ("GET", "/networks/net-1"),
         ("DELETE", "/networks/net-1"),
+        ("GET", "/networks/net-1/logs?limit=10"),
         ("PUT", "/networks/net-1/members/test-vm"),
         ("DELETE", "/networks/net-1/members/test-vm"),
         ("GET", "/vms/list"),
