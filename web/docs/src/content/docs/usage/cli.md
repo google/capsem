@@ -243,6 +243,57 @@ capsem purge --all        # everything (requires confirmation)
 |------|---------|-------------|
 | `--all` | false | Also destroy retained sessions |
 
+## Network commands
+
+Named networks are groups of VMs. Every VM has one private address for its
+whole life (`capsem info` shows it as `Address`), and a network is the set of
+VMs allowed to reach each other on those addresses. A network name is a DNS
+label; deleting a network frees the name, and a new network under that name
+is a different network with its own history.
+
+### network list
+
+```bash
+capsem network list
+```
+
+### network create
+
+```bash
+capsem network create team
+```
+
+### network inspect
+
+```bash
+capsem network inspect team
+```
+
+Shows the network's id and every member with its address and membership state.
+
+### network delete
+
+```bash
+capsem network delete team
+```
+
+Refuses while the network still has members: disconnect them first.
+
+### network connect
+
+```bash
+capsem network connect my-vm team
+```
+
+The VM may be running or stopped; it keeps its membership across stop and
+resume. `capsem create --network team` joins a network at create time.
+
+### network disconnect
+
+```bash
+capsem network disconnect my-vm team
+```
+
 ## Service commands
 
 The background service (`capsem-service`) runs as a daemon. It auto-starts on login via LaunchAgent (macOS) or systemd (Linux).
