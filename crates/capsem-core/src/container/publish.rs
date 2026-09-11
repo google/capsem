@@ -6,6 +6,7 @@ use capsem_router::{send_grant, Event, Grant};
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::Ipv4Addr;
+use std::num::NonZeroU64;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::process::Stdio;
@@ -29,7 +30,9 @@ pub struct Publisher {
     security: Option<Arc<security::Authority>>,
     control_lease: Mutex<Option<CancellationToken>>,
     budgets: capsem_config::router::RouterConfig,
-    generation: u64,
+    /// Nonzero by type: audit identities and guest flow keys both require it,
+    /// so no later stage has to unwrap it.
+    generation: NonZeroU64,
     saved: Option<saved::Mappings>,
     pending: Mutex<HashMap<u64, GuestFlow>>,
     next_id: AtomicU64,
@@ -66,8 +69,9 @@ impl Publisher {
         Ok(Self {
             security: None,
             control_lease: Mutex::new(None),
-            // The UUID variant bits make its low half nonzero.
-            generation: uuid::Uuid::new_v4().as_u128() as u64,
+            // The UUID variant bits make its low half nonzero; the fallback is
+            // unreachable and exists so that nothing here can panic.
+            generation: NonZeroU64::new(uuid::Uuid::new_v4().as_u128() as u64).unwrap_or(NonZeroU64::MIN),
             saved: None,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -141,7 +145,7 @@ impl Publisher {
             }
             if let Some(close) = close {
                 let flow = capsem_proto::router::FlowKey {
-                    generation: self.generation,
+                    generation: self.generation.get(),
                     id,
                 };
                 let report = capsem_proto::router::CloseReport {
@@ -255,7 +259,7 @@ impl Publisher {
                 let (flow, connected) =
                     capsem_proto::router::FlowKey::read_data_header(header).map_err(anyhow::Error::msg)?;
                 let owner = owner.upgrade().context("VM router owner closed")?;
-                ensure!(flow.generation == owner.generation, "stale guest data generation");
+                ensure!(flow.generation == owner.generation.get(), "stale guest data generation");
                 if let Some(sender) = owner
                     .pending
                     .lock()
@@ -292,7 +296,7 @@ impl Publisher {
         flow: capsem_proto::router::FlowKey,
         report: capsem_proto::router::CloseReport,
     ) -> Result<()> {
-        if flow.generation != self.generation {
+        if flow.generation != self.generation.get() {
             return Ok(());
         }
         let mut pending = self.pending.lock().unwrap();

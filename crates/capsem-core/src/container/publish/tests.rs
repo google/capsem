@@ -25,7 +25,7 @@ async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broke
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: pending.id,
     };
     owner
@@ -67,7 +67,7 @@ async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_compl
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: pending.id,
     };
     owner
@@ -112,7 +112,7 @@ async fn terminal_report_survives_data_adoption_and_is_delivered_once_per_genera
     let (close, mut reports) = mpsc::channel(1);
     let (pending, receiver) = owner.request(&source_fixture(), close).unwrap();
     let flow = FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: pending.id,
     };
     let (connection, peer) = StdUnixStream::pair().unwrap();
@@ -187,7 +187,7 @@ async fn a_previous_boot_header_cannot_consume_a_reused_request_id() {
     peer.set_nonblocking(true).unwrap();
     let mut peer = UnixStream::from_std(peer).unwrap();
     let flow = capsem_proto::router::FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: pending.id,
     };
     peer.write_all(&flow.data_header(true)).await.unwrap();

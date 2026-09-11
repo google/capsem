@@ -3,7 +3,6 @@ use super::*;
 use crate::security_engine::network::{ledger::NetworkSecurity, *};
 use crate::security_engine::{RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEvent};
 use std::net::SocketAddr;
-use std::num::NonZeroU64;
 
 pub(super) struct Authority {
     vm: NetworkVm,
@@ -16,7 +15,7 @@ impl Publisher {
             vm: NetworkVm {
                 id,
                 name,
-                generation: NonZeroU64::new(self.generation).expect("nonzero boot generation"),
+                generation: self.generation,
             },
             engine,
         }));
@@ -36,7 +35,7 @@ impl Publisher {
     /// Recheck immediately before writing ConnectPort on the current control
     /// stream. A reconnect must never replay an old queued setup request.
     pub fn pending_connection(&self, flow: capsem_proto::router::FlowKey) -> bool {
-        flow.generation == self.generation
+        flow.generation == self.generation.get()
             && self.pending.lock().unwrap().get(&flow.id).is_some_and(|entry| {
                 entry.data.is_some() && entry.lease.as_ref().is_some_and(|lease| !lease.is_cancelled())
             })

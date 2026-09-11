@@ -112,7 +112,7 @@ async fn a_new_control_lease_cannot_admit_old_queued_setup() {
     let (close, _reports) = mpsc::channel(8);
     let (old, _receiver) = owner.request(&source, close.clone()).unwrap();
     let flow = capsem_proto::router::FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: old.id,
     };
     assert!(owner.pending_connection(flow));
@@ -121,7 +121,7 @@ async fn a_new_control_lease_cannot_admit_old_queued_setup() {
     assert!(!owner.pending_connection(flow));
     let (fresh, _receiver) = owner.request(&source, close).unwrap();
     assert!(owner.pending_connection(capsem_proto::router::FlowKey {
-        generation: owner.generation,
+        generation: owner.generation.get(),
         id: fresh.id
     }));
     drop(old);

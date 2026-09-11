@@ -77,7 +77,7 @@ pub(super) async fn serve(
                     let source = Arc::new(source.into_std()?);
                     let (pending, receiver) = owner.request(&source, guest_close.clone())?;
                     let id = pending.id;
-                    let flow = capsem_proto::router::FlowKey { generation: owner.generation, id };
+                    let flow = capsem_proto::router::FlowKey { generation: owner.generation.get(), id };
                     let audit = AuditFlow::new(authority.clone(), publication_id, host_address, peer, guest_port);
                     let record = audit.clone();
                     let lease = pending.lease.clone();
