@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn closed_audit_emission_reports_failure_instead_of_an_accepted_identity() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let recorder = DebuggingRecorder::new();
+    let snapshots = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    let writer = capsem_logger::DbWriter::open_in_memory(8).unwrap();
+    writer.shutdown_blocking();
+    let asynchronous = emit_security_write(&writer, file_write(None)).await;
+    let synchronous = emit_security_write_blocking(&writer, file_write(None));
+    assert!(
+        asynchronous.is_none() && synchronous.is_none(),
+        "a closed audit writer was reported as accepting an event"
+    );
+    let mut queued = 0;
+    let mut failed = 0;
+    for (key, _, _, value) in snapshots.snapshot().into_vec() {
+        if key.key().name() != SECURITY_EVENT_EMIT_TOTAL {
+            continue;
+        }
+        if let DebugValue::Counter(count) = value {
+            for label in key.key().labels() {
+                if label.key() == "queue_result" {
+                    match label.value() {
+                        "queued" => queued += count,
+                        "failed" => failed += count,
+                        value => panic!("unexpected audit admission result: {value}"),
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(queued, 0);
+    assert_eq!(failed, 2);
+}
+
 #[test]
 fn transport_write_preserves_phase_and_primary_event_identity() {
     use capsem_logger::{TransportEvent, TransportEventKind as Kind};

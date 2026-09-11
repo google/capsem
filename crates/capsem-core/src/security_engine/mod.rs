@@ -13,7 +13,6 @@ use capsem_logger::{
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use serde_json::json;
-use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation};
@@ -27,8 +26,8 @@ mod builtin_actions;
 mod forensics;
 pub mod network;
 use forensics::{
-    compiled_rule_forensic_json, logged_detection_level, logged_rule_action, logger_write_credential_ref,
-    logger_write_trace_id, security_event_forensic_json, trace_runtime_security_event, trace_security_rule_match,
+    compiled_rule_forensic_json, logged_detection_level, logged_rule_action, security_event_forensic_json,
+    trace_security_rule_match,
 };
 pub use network::NetworkSecurityEvent;
 mod plugins;
@@ -41,6 +40,8 @@ pub const SECURITY_PLUGIN_EXECUTION_TOTAL: &str = "security_plugin.execution_tot
 pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.execution_duration_ms";
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
+mod emission;
+pub use emission::{emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent};
 mod event_type;
 pub use event_type::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventTypeParseError};
 
@@ -65,104 +66,6 @@ impl SecurityEventId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct RuntimeSecurityEvent {
-    pub event_id: Option<SecurityEventId>,
-    pub event_type: RuntimeSecurityEventType,
-    pub event_family: RuntimeSecurityEventFamily,
-    pub credential_ref: Option<String>,
-    pub trace_id: Option<String>,
-    logger_write: WriteOp,
-}
-
-impl RuntimeSecurityEvent {
-    pub fn from_logger_write(mut logger_write: WriteOp) -> Self {
-        let event_id = logger_write
-            .ensure_event_id()
-            .and_then(|value| SecurityEventId::parse(value).ok());
-        let event_type = RuntimeSecurityEventType::for_write_op(&logger_write);
-        let event_family = event_type.family();
-        let credential_ref = logger_write_credential_ref(&logger_write);
-        let trace_id = logger_write_trace_id(&logger_write);
-        Self {
-            event_id,
-            event_type,
-            event_family,
-            credential_ref,
-            trace_id,
-            logger_write,
-        }
-    }
-
-    pub fn into_logger_write(self) -> WriteOp {
-        self.logger_write
-    }
-}
-
-pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
-    let event_type = event.event_type.as_str();
-    let event_family = event.event_family.as_str();
-    let span = tracing::debug_span!(
-        target: "capsem.security_event",
-        SECURITY_EVENT_EMIT_SPAN,
-        event_type,
-        event_family,
-        status = tracing::field::Empty,
-        queue_result = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    span.in_scope(|| trace_runtime_security_event(&event));
-    let event_id = event.event_id.clone();
-    db.write(event.into_logger_write()).instrument(span.clone()).await;
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
-        "event_type" => event_type,
-        "event_family" => event_family,
-        "status" => "ok",
-        "queue_result" => "queued")
-    .increment(1);
-    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
-        "event_type" => event_type,
-        "event_family" => event_family)
-    .record(elapsed_ms);
-    span.record("status", "ok");
-    span.record("queue_result", "queued");
-    event_id
-}
-
-pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
-    let event_type = event.event_type.as_str();
-    let event_family = event.event_family.as_str();
-    let span = tracing::debug_span!(
-        target: "capsem.security_event",
-        SECURITY_EVENT_EMIT_SPAN,
-        event_type,
-        event_family,
-        status = tracing::field::Empty,
-        queue_result = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    span.in_scope(|| trace_runtime_security_event(&event));
-    let event_id = event.event_id.clone();
-    span.in_scope(|| db.write_blocking(event.into_logger_write()));
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
-        "event_type" => event_type,
-        "event_family" => event_family,
-        "status" => "ok",
-        "queue_result" => "queued")
-    .increment(1);
-    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
-        "event_type" => event_type,
-        "event_family" => event_family)
-    .record(elapsed_ms);
-    span.record("status", "ok");
-    span.record("queue_result", "queued");
-    event_id
 }
 
 pub async fn emit_file_security_write_and_rules(

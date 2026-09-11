@@ -15,6 +15,7 @@ use crate::events::{
 use crate::schema;
 
 mod model_rows;
+mod producer;
 use model_rows::insert_model_call;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -306,91 +307,6 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
         })
-    }
-
-    /// Clone the stored sender so async work can happen outside the lock.
-    fn clone_sender(&self) -> Option<WriterSender> {
-        self.tx.lock().unwrap().clone()
-    }
-
-    /// Enqueue one operation, yielding while the bounded writer channel is full.
-    pub async fn write(&self, op: WriteOp) {
-        if let Err(error) = self.write_checked(op).await {
-            warn!(error = %error, "db writer dropped write op");
-        }
-    }
-
-    /// Enqueue one operation, yielding while the bounded writer channel is full.
-    /// Reports a closed or missing writer instead of silently dropping the op.
-    pub async fn write_checked(&self, op: WriteOp) -> Result<(), String> {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let Some(tx) = self.clone_sender() else {
-            record_enqueue(started, "missing_sender", &span);
-            return Err("db writer sender missing".to_string());
-        };
-        send_with_backpressure(&tx, WriterMessage::write(op))
-            .await
-            .inspect_err(|_| {
-                record_enqueue(started, "closed", &span);
-            })?;
-        record_enqueue(started, "queued", &span);
-        Ok(())
-    }
-
-    /// Try to enqueue without blocking. Returns false when the queue is full or closed.
-    pub fn try_write(&self, op: WriteOp) -> bool {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let queue_result = match self.clone_sender() {
-            Some(tx) => match tx.try_send(WriterMessage::write(op)) {
-                Ok(()) => "queued",
-                Err(mpsc::TrySendError::Full(_)) => "full",
-                Err(mpsc::TrySendError::Disconnected(_)) => "closed",
-            },
-            None => "missing_sender",
-        };
-        record_enqueue(started, queue_result, &span);
-        queue_result == "queued"
-    }
-
-    /// Blocking send for synchronous producer paths that must not drop
-    /// security events. This deliberately avoids Tokio's `blocking_send`,
-    /// which panics when called from a runtime worker. Backpressure is still
-    /// honored: if the queue is full, this thread waits until the writer
-    /// drains capacity instead of dropping the event.
-    pub fn write_blocking(&self, op: WriteOp) {
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_ENQUEUE_SPAN,
-            status = tracing::field::Empty,
-            queue_result = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let result = self
-            .clone_sender()
-            .ok_or_else(|| "db writer sender missing".to_string())
-            .and_then(|tx| {
-                tx.send(WriterMessage::write(op))
-                    .map_err(|error| format!("db writer channel closed: {error}"))
-            });
-        match result {
-            Ok(()) => record_enqueue(started, "queued", &span),
-            Err(error) => {
-                record_enqueue(started, "closed", &span);
-                warn!(error = %error, "db writer channel closed, dropping blocking write op");
-            }
-        }
     }
 
     /// Wait until the writer thread has committed every operation enqueued

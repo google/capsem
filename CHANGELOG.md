@@ -276,6 +276,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Security audit emitters report failed database admission accurately, allowing
+  security-sensitive callers to refuse work when the audit writer is closed.
+
 - Guest TCP resets propagate across VSOCK with generation-bound close reports
   and acknowledgments; bounded replay credits prevent stalled control traffic
   from accumulating network reports.
