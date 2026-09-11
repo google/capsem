@@ -171,6 +171,14 @@ fn classify_dns_proxy_port() {
 }
 
 #[test]
+fn classify_network_port() {
+    assert_eq!(
+        HostVsockService::from_port(capsem_proto::VSOCK_PORT_NETWORK),
+        Some(HostVsockService::Network)
+    );
+}
+
+#[test]
 fn classify_unknown_port() {
     assert_eq!(HostVsockService::from_port(99999), None);
 }

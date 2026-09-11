@@ -958,6 +958,36 @@ fn dispatch_aux_connection(
 ) {
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
+        Some(HostVsockService::Network) => {
+            // The guest's tun0 packet stream, terminated in smoltcp inside
+            // this process for the S04-004 measurement; the confined
+            // capsem-network process of S04-002 takes the descriptor instead.
+            let vm = vm_id.to_string();
+            tokio::spawn(async move {
+                let stream = conn.try_clone_fd().and_then(|fd| {
+                    capsem_foundation::unix::fd::set_nonblocking(std::os::fd::AsFd::as_fd(&fd), true)?;
+                    tokio::net::UnixStream::from_std(std::os::unix::net::UnixStream::from(fd))
+                });
+                let stream = match stream {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        error!(
+                            operation = "duplicate-network-vsock",
+                            errno = error.raw_os_error(),
+                            error = %error,
+                            "network packet stream descriptor unavailable"
+                        );
+                        return;
+                    }
+                };
+                info!(vm = %vm, "network: guest tun0 packet stream attached");
+                match capsem_network::serve_throughput(stream).await {
+                    Ok(_) => info!(vm = %vm, "network: guest tun0 packet stream ended"),
+                    Err(error) => warn!(vm = %vm, error = %error, "network: guest tun0 packet stream failed"),
+                }
+                drop(conn);
+            });
+        }
         Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
