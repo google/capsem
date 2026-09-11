@@ -74,12 +74,14 @@ approved = [
 ]
 
 [http]
-count = 104
+count = 110
 approved = [
   "DELETE /profiles/{profile_id}/detection/rules/{rule_id}/delete",
   "DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
   "DELETE /profiles/{profile_id}/mcp/servers/{server_id}/delete",
   "DELETE /profiles/{profile_id}/skills/{skill_id}/delete",
+  "DELETE /networks/{id}",
+  "DELETE /networks/{id}/members/{vm_id}",
   "DELETE /vms/{id}/delete",
   "GET /corp/info",
   "GET /detection/latest",
@@ -118,6 +120,8 @@ approved = [
   "GET /triage",
   "GET /update/status",
   "GET /version",
+  "GET /networks",
+  "GET /networks/{id}",
   "GET /vms/list",
   "GET /vms/{id}/detection/latest",
   "GET /vms/{id}/detection/status",
@@ -164,6 +168,7 @@ approved = [
   "POST /run",
   "POST /update/apply",
   "POST /update/check",
+  "POST /networks",
   "POST /vms/create",
   "POST /vms/{id}/exec",
   "POST /vms/{id}/files/content",
@@ -177,6 +182,7 @@ approved = [
   "POST /vms/{id}/start",
   "POST /vms/{id}/stop",
   "PUT /corp/edit",
+  "PUT /networks/{id}/members/{vm_id}",
   "PUT /profiles/{profile_id}/detection/rules/{rule_id}/edit",
   "PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
   "PUT /profiles/{profile_id}/mcp/servers/{server_id}/edit",

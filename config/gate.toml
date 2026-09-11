@@ -1113,9 +1113,9 @@ must_stay_below_lines = 3000
 "crates/capsem-process/src/vsock.rs" = 1455
 "crates/capsem-proto/src/tests.rs" = 1457
 "crates/capsem-service/src/ledger_routes.rs" = 2810
-"crates/capsem-service/src/main.rs" = 1549
+"crates/capsem-service/src/main.rs" = 1548
 "crates/capsem-service/src/profile_routes.rs" = 2167
-"crates/capsem-service/src/vm_files.rs" = 1884
+"crates/capsem-service/src/vm_files.rs" = 1847
 "crates/capsem-service/src/tests/assets_registry.rs" = 1524
 "crates/capsem-service/src/tests/lifecycle.rs" = 2305
 "crates/capsem-service/src/tests/profile_routes.rs" = 2600
@@ -2854,6 +2854,9 @@ measured = [
     "/status",
     "/version",
     "/vms/list",
+    "/networks",
+    "/detection/latest",
+    "/detection/status",
     "/profiles/list",
     "/profiles/status",
     "/stats",
@@ -2865,8 +2868,8 @@ unmeasured = [
     "/corp/info",
     "/corp/reload",
     "/corp/validate",
-    "/detection/latest",
-    "/detection/status",
+    "/networks/{id}",
+    "/networks/{id}/members/{vm_id}",
     "/enforcement/latest",
     "/enforcement/status",
     "/host-logs/{name}",

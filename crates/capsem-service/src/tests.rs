@@ -689,6 +689,7 @@ mod db_handle_ownership;
 mod files_api;
 mod ledger_routes;
 mod lifecycle;
+mod network_routes;
 mod persist_purge;
 mod private_address;
 mod profile_mutations;

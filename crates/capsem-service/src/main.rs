@@ -42,14 +42,15 @@ use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
 mod instance_reaper;
+mod network_routes;
 mod private_address;
-mod vm_spawn;
-use private_address::reserve_registry_addresses;
 mod process_control;
 mod profile_mutation_cache;
 mod profile_status_cache;
+mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod vm_spawn;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
@@ -230,11 +231,9 @@ struct ServiceState {
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
     /// Registry of persistent (named) VMs
     persistent_registry: SharedRegistry,
-    /// The private pool: one lifetime address per VM. The persistent registry
-    /// is its durable half; running ephemeral VMs hold theirs only in memory.
+    /// One lifetime address per VM; the persistent registry is its durable half.
     private_addresses: Mutex<capsem_core::net::address_pool::AddressAllocator>,
-    /// Named networks as groups of VMs; every change is durable in the
-    /// network's own database before a call returns.
+    /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,

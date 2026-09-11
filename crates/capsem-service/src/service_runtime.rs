@@ -169,7 +169,7 @@ pub(super) async fn run_service() -> Result<()> {
     let mut persistent_registry = PersistentRegistry::load(registry_path)?;
     let mut private_addresses =
         capsem_core::net::address_pool::AddressAllocator::new(capsem_config::PrivatePool::DEFAULT);
-    reserve_registry_addresses(&mut persistent_registry, &mut private_addresses);
+    private_address::reserve_registry_addresses(&mut persistent_registry, &mut private_addresses);
     let networks =
         capsem_core::net::network_registry::NetworkRegistry::load(capsem_foundation::paths::capsem_networks_dir())
             .await

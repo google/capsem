@@ -48,6 +48,45 @@ pub struct ProvisionRequest {
     /// be cloned from this existing persistent sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    /// Named networks the new VM joins at create, by name. Every name must
+    /// exist before the VM is provisioned; membership is recorded with the
+    /// VM's lifetime private address.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<String>,
+}
+
+/// Request for POST /networks.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateNetworkRequest {
+    /// A DNS label: members will resolve each other under it.
+    pub name: String,
+}
+
+/// One member of a network: the VM and the lifetime address it brought.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkMemberInfo {
+    pub vm_id: String,
+    pub address: std::net::Ipv4Addr,
+    /// `declared`, `attaching`, `ready`, `failed`: how far the membership has
+    /// come; `detached` rows are history and never listed here.
+    pub state: String,
+    pub updated_unix_ms: i64,
+}
+
+/// Response for GET /networks/{id} and each row of GET /networks.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInfo {
+    /// Immutable; a new network under a reused name has a new id.
+    pub id: String,
+    pub name: String,
+    pub created_unix_ms: i64,
+    pub members: Vec<NetworkMemberInfo>,
+}
+
+/// Response for GET /networks.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkListResponse {
+    pub networks: Vec<NetworkInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

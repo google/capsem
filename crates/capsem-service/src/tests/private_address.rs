@@ -80,7 +80,7 @@ fn registry_addresses_are_reserved_at_startup_and_conflicts_dropped() {
 
     let mut reloaded = PersistentRegistry::load(path).unwrap();
     let mut allocator = capsem_core::net::address_pool::AddressAllocator::new(capsem_config::PrivatePool::DEFAULT);
-    reserve_registry_addresses(&mut reloaded, &mut allocator);
+    crate::private_address::reserve_registry_addresses(&mut reloaded, &mut allocator);
 
     assert_eq!(allocator.in_use(), 1, "one reservation survives");
     assert_eq!(

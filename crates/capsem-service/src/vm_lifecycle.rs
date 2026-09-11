@@ -502,7 +502,7 @@ pub(super) async fn handle_stop(
 }
 
 /// Wall-clock milliseconds for network membership rows.
-fn unix_time_ms() -> i64 {
+pub(super) fn unix_time_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))

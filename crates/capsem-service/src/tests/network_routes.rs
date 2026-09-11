@@ -1,0 +1,128 @@
+//! Named networks over the service API: created, listed, joined by VMs with
+//! their lifetime addresses, and retired only once empty.
+use super::*;
+use axum::http::Method;
+
+fn app(state: &Arc<ServiceState>) -> axum::Router {
+    build_service_router(Arc::clone(state))
+}
+
+async fn create_network(state: &Arc<ServiceState>, name: &str) -> (StatusCode, serde_json::Value) {
+    route_request(app(state), Method::POST, "/networks", Some(json!({ "name": name }))).await
+}
+
+#[tokio::test]
+async fn networks_are_created_listed_inspected_and_retired() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let (status, created) = create_network(&state, "team").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["name"], "team");
+    assert_eq!(created["members"], json!([]));
+    let id = created["id"].as_str().unwrap().to_string();
+
+    let (status, duplicate) = create_network(&state, "team").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{duplicate}");
+    let (status, invalid) = create_network(&state, "Not A Label").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
+
+    let (status, list) = route_request(app(&state), Method::GET, "/networks", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["networks"].as_array().unwrap().len(), 1);
+    assert_eq!(list["networks"][0]["id"], json!(id));
+
+    let (status, inspected) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(inspected, created);
+    let (status, _) = route_request(app(&state), Method::GET, "/networks/not-a-uuid", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "retired networks are history");
+    let (status, again) = create_network(&state, "team").await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ne!(again["id"], json!(id), "a reused name is a new network");
+}
+
+#[tokio::test]
+async fn members_join_with_their_lifetime_address_and_block_deletion() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "running-vm", 4242);
+    let running_address = state.instances.lock().unwrap()["running-vm"].private_address;
+    let stopped_dir = state.run_dir.join("persistent/stopped-vm");
+    capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
+    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
+    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped_id = stopped.id.clone();
+    state.persistent_registry.lock().unwrap().register(stopped).unwrap();
+    let legacy_dir = state.run_dir.join("persistent/legacy-vm");
+    capsem_core::create_virtiofs_session(&legacy_dir, 64).unwrap();
+    let legacy = test_persistent_entry("legacy-vm", legacy_dir);
+    let legacy_id = legacy.id.clone();
+    state.persistent_registry.lock().unwrap().register(legacy).unwrap();
+
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let member = |vm: &str| format!("/networks/{id}/members/{vm}");
+
+    let (status, joined) = route_request(app(&state), Method::PUT, &member("running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    assert_eq!(joined["members"][0]["vm_id"], "running-vm");
+    assert_eq!(joined["members"][0]["address"], json!(running_address.to_string()));
+    assert_eq!(joined["members"][0]["state"], "declared");
+    let (status, joined) = route_request(app(&state), Method::PUT, &member(&stopped_id), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    assert_eq!(
+        joined["members"].as_array().unwrap().len(),
+        2,
+        "a stopped VM joins with its recorded address"
+    );
+
+    let (status, refused) = route_request(app(&state), Method::PUT, &member(&legacy_id), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "no address yet: {refused}");
+    let (status, _) = route_request(app(&state), Method::PUT, &member("ghost-vm"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, refused) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+
+    let (status, left) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK, "{left}");
+    assert_eq!(left["members"].as_array().unwrap().len(), 1);
+    let (status, _) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "leaving twice is not a member");
+    let (status, _) = route_request(app(&state), Method::DELETE, &member(&stopped_id), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK, "empty networks retire");
+}
+
+#[tokio::test]
+async fn deleting_a_vm_leaves_every_network_it_was_in() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let stopped_dir = state.run_dir.join("persistent/stopped-vm");
+    capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
+    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
+    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped_id = stopped.id.clone();
+    state.persistent_registry.lock().unwrap().register(stopped).unwrap();
+    let (_, a) = create_network(&state, "alpha").await;
+    let (_, b) = create_network(&state, "beta").await;
+    for network in [&a, &b] {
+        let path = format!("/networks/{}/members/{stopped_id}", network["id"].as_str().unwrap());
+        let (status, _) = route_request(app(&state), Method::PUT, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let (status, deleted) =
+        route_request(app(&state), Method::DELETE, &format!("/vms/{stopped_id}/delete"), None).await;
+    assert_eq!(status, StatusCode::OK, "{deleted}");
+    for network in [&a, &b] {
+        let path = format!("/networks/{}", network["id"].as_str().unwrap());
+        let (_, inspected) = route_request(app(&state), Method::GET, &path, None).await;
+        assert_eq!(inspected["members"], json!([]), "{inspected}");
+    }
+}
