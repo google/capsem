@@ -6512,7 +6512,9 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
     snapshot = (PROJECT_ROOT / "crates/capsem-agent/src/snapshot.rs").read_text()
     assert 'const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";' in snapshot
 
-    prepare = source.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
+    # Snapshot control moved out of main.rs with the guest control reader.
+    control = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "control_reader.rs").read_text()
+    prepare = control.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
         "Ok(HostToGuest::Unfreeze) => {", maxsplit=1
     )[0]
     assert "freeze_system_filesystem()" in prepare
