@@ -143,8 +143,23 @@ def _cli_paths(source: str, enum_name: str, prefix: str = "") -> list[str]:
     return paths
 
 
+def capsem_cli_source() -> str:
+    """Every module of the CLI crate, tests excluded.
+
+    Command groups live beside the code that runs them (`network_commands.rs`
+    holds `NetworkCommands`), so the enum walk starts from `Commands` in
+    `main.rs` and may resolve a child enum in any sibling module.
+    """
+    sources = sorted(
+        path
+        for path in CLI_SOURCE.parent.rglob("*.rs")
+        if "tests" not in path.relative_to(CLI_SOURCE.parent).parts
+    )
+    return "\n".join(path.read_text() for path in sources)
+
+
 def capsem_cli_surface() -> list[str]:
-    return sorted(_cli_paths(CLI_SOURCE.read_text(), "Commands"))
+    return sorted(_cli_paths(capsem_cli_source(), "Commands"))
 
 
 def just_surface() -> list[str]:
