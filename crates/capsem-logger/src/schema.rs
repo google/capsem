@@ -448,6 +448,7 @@ pub const CREATE_SCHEMA: &str = "
 /// Create all tables and indexes on the given connection.
 mod memory_sync;
 mod network_types;
+pub(crate) mod transport;
 use memory_sync::table_column_names;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
@@ -458,7 +459,8 @@ pub use memory_sync::{
 pub(crate) use memory_sync::{initial_memory_flush_watermarks, MemoryFlushWatermarks};
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(CREATE_SCHEMA)
+    conn.execute_batch(CREATE_SCHEMA)?;
+    transport::upgrade_legacy(conn)
 }
 
 /// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
@@ -639,168 +641,8 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
-    (
-        "net_events",
-        &[
-            "event_id",
-            "timestamp",
-            "domain",
-            "decision",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "model_calls",
-        &[
-            "event_id",
-            "provider",
-            "protocol",
-            "method",
-            "path",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "model_items",
-        &[
-            "event_id",
-            "model_call_id",
-            "kind",
-            "content_hash",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "tool_calls",
-        &[
-            "event_id",
-            "model_call_id",
-            "origin",
-            "call_id",
-            "tool_name",
-            "decision",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "tool_responses",
-        &[
-            "model_call_id",
-            "call_id",
-            "content_preview",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "event_body_blobs",
-        &[
-            "event_id",
-            "event_type",
-            "source_table",
-            "direction",
-            "body_hash",
-            "body",
-            "trace_id",
-            "turn_id",
-        ],
-    ),
-    (
-        "fs_events",
-        &[
-            "event_id",
-            "timestamp",
-            "action",
-            "path",
-            "directory",
-            "name",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "exec_events",
-        &[
-            "event_id",
-            "timestamp",
-            "exec_id",
-            "command",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "dns_events",
-        &[
-            "event_id",
-            "timestamp",
-            "qname",
-            "qtype",
-            "rcode",
-            "decision",
-            "answer_ip",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "audit_events",
-        &[
-            "event_id",
-            "timestamp",
-            "pid",
-            "exe",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "substitution_events",
-        &[
-            "event_id",
-            "timestamp",
-            "substitution_ref",
-            "outcome",
-            "provider",
-            "trace_id",
-        ],
-    ),
-    (
-        "security_rule_events",
-        &[
-            "event_id",
-            "rule_id",
-            "rule_action",
-            "detection_level",
-            "rule_json",
-            "event_json",
-            "credential_ref",
-        ],
-    ),
-    (
-        "security_decision_events",
-        &["event_id", "stage", "effective_decision", "credential_ref"],
-    ),
-    (
-        "security_ask_events",
-        &["event_id", "ask_id", "status", "event_json", "trace_id"],
-    ),
-    ("profile_mutation_events", &["mutation_id", "profile_id", "status"]),
-];
+mod columns;
+use columns::READY_SCHEMA_COLUMNS;
 
 /// Validate that a session DB is structurally ready for ledger routes.
 ///

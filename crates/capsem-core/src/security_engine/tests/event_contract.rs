@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn transport_write_preserves_phase_and_primary_event_identity() {
+    use capsem_logger::{TransportEvent, TransportEventKind as Kind};
+    for (kind, expected) in [
+        (Kind::Connect, RuntimeSecurityEventType::NetworkConnect),
+        (Kind::ConnectResult, RuntimeSecurityEventType::NetworkConnectResult),
+        (Kind::Close, RuntimeSecurityEventType::NetworkClose),
+        (Kind::Lifecycle, RuntimeSecurityEventType::NetworkLifecycle),
+        (Kind::Probe, RuntimeSecurityEventType::NetworkProbe),
+        (Kind::ProbeResult, RuntimeSecurityEventType::NetworkProbeResult),
+    ] {
+        let record = TransportEvent::new(
+            "abcdef123456".into(),
+            1,
+            kind,
+            Some(uuid::Uuid::from_u128(1)),
+            (kind != Kind::Lifecycle).then(|| uuid::Uuid::from_u128(2)),
+            &(),
+        )
+        .unwrap();
+        let mut op = WriteOp::TransportEvent(record);
+        assert_eq!(RuntimeSecurityEventType::for_write_op(&op), expected);
+        assert_eq!(op.ensure_event_id().as_deref(), Some("abcdef123456"));
+        assert_eq!(op.event_id(), Some("abcdef123456"));
+    }
+}
+
+#[test]
 fn network_event_types_and_authorization_fields_are_canonical() {
     for name in [
         "network.connect",

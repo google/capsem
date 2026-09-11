@@ -289,3 +289,17 @@ fn owned(value: impl ToString) -> PolicySubjectValue<'static> {
 
 #[cfg(test)]
 pub(super) mod tests;
+
+impl From<capsem_logger::TransportEventKind> for RuntimeSecurityEventType {
+    fn from(kind: capsem_logger::TransportEventKind) -> Self {
+        use capsem_logger::TransportEventKind as Kind;
+        match kind {
+            Kind::Connect => Self::NetworkConnect,
+            Kind::ConnectResult => Self::NetworkConnectResult,
+            Kind::Close => Self::NetworkClose,
+            Kind::Lifecycle => Self::NetworkLifecycle,
+            Kind::Probe => Self::NetworkProbe,
+            Kind::ProbeResult => Self::NetworkProbeResult,
+        }
+    }
+}
