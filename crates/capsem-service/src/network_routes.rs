@@ -5,12 +5,12 @@
 //! between it and the wire. Attaching records a `declared` membership; the
 //! data plane that makes it `ready` is the network process's concern.
 use super::*;
-use capsem_core::net::network_registry::{NetworkError, NetworkRegistry};
+use capsem_core::net::network_registry::{LogQuery, NetworkError, NetworkRegistry};
 use uuid::Uuid;
 
 pub(super) fn network_error(error: NetworkError) -> AppError {
     let status = match &error {
-        NetworkError::InvalidName(_) => StatusCode::BAD_REQUEST,
+        NetworkError::InvalidName(_) | NetworkError::Cursor(_) => StatusCode::BAD_REQUEST,
         NetworkError::NameTaken { .. } | NetworkError::HasMembers { .. } => StatusCode::CONFLICT,
         NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
@@ -196,4 +196,49 @@ pub(super) async fn handle_network_detach(
         info
     };
     Ok(Json(info))
+}
+
+/// A page of a network's audit history; retired networks keep theirs.
+pub(super) async fn handle_network_logs(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(query): Query<NetworkLogsQuery>,
+) -> Result<Json<NetworkLogsResponse>, AppError> {
+    let network = parse_network_id(&id)?;
+    let query = LogQuery {
+        cursor: query.cursor,
+        limit: query.limit,
+        vm: query.vm,
+        connection: query.connection,
+        event_type: query.event_type,
+        decision: query.decision,
+        since_unix_ms: query.since,
+        until_unix_ms: query.until,
+    };
+    let page = state.networks.lock().await.logs(network, &query).await;
+    let page = page.map_err(network_error)?;
+    let mut events = Vec::with_capacity(page.events.len());
+    for event in page.events {
+        // The ledger wrote this JSON; a row that no longer parses is a broken
+        // database, reported as such rather than shown as an empty event.
+        let parsed = serde_json::from_str(&event.event_json).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("network {network} event {} is not JSON: {error}", event.event_id),
+            )
+        })?;
+        events.push(NetworkLogEvent {
+            sequence: event.sequence,
+            event_id: event.event_id,
+            timestamp_unix_ms: event.timestamp_unix_ms,
+            event_type: event.event_type,
+            connection_id: event.connection_id,
+            event: parsed,
+        });
+    }
+    Ok(Json(NetworkLogsResponse {
+        events,
+        cursor: page.cursor,
+        next_cursor: page.next_cursor,
+    }))
 }

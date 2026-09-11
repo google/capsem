@@ -386,3 +386,14 @@ fn network_info_roundtrip_keeps_member_addresses_as_text() {
     let back: NetworkInfo = serde_json::from_value(value).unwrap();
     assert_eq!(back, info);
 }
+
+#[test]
+fn network_logs_query_reads_type_and_defaults_the_rest() {
+    let query: NetworkLogsQuery = serde_json::from_value(json!({ "type": "network.connect", "limit": 5 })).unwrap();
+    assert_eq!(query.event_type.as_deref(), Some("network.connect"));
+    assert_eq!(query.limit, Some(5));
+    assert_eq!(
+        serde_json::from_value::<NetworkLogsQuery>(json!({})).unwrap(),
+        NetworkLogsQuery::default()
+    );
+}

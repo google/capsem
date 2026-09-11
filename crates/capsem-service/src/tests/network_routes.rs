@@ -126,3 +126,51 @@ async fn deleting_a_vm_leaves_every_network_it_was_in() {
         assert_eq!(inspected["members"], json!([]), "{inspected}");
     }
 }
+
+#[tokio::test]
+async fn network_logs_page_with_a_cursor_and_refuse_a_foreign_one() {
+    use capsem_logger::{TransportEvent, TransportEventKind, WriteOp};
+    let (state, _dir) = make_test_state_with_tempdir();
+    let (_, created) = create_network(&state, "audited").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let network = uuid::Uuid::parse_str(&id).unwrap();
+    let handle = state.networks.lock().await.reader(network).unwrap();
+    for n in 0..3u8 {
+        let event = TransportEvent::new(
+            format!("{:012x}", 0xfeed00 + u32::from(n)),
+            1_000 + i64::from(n),
+            TransportEventKind::Connect,
+            Some(network),
+            Some(uuid::Uuid::from_u128(1 + u128::from(n))),
+            &json!({ "decision": { "effective": "allow" } }),
+        )
+        .unwrap();
+        handle.write(WriteOp::TransportEvent(event)).await.unwrap();
+    }
+    handle.flush().await.unwrap();
+    let (status, page) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?limit=2"), None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["events"].as_array().unwrap().len(), 2);
+    assert_eq!(page["events"][0]["event"]["decision"]["effective"], "allow");
+    let next = page["next_cursor"].as_str().expect("a full page continues").to_string();
+    let (status, rest) = route_request(
+        app(&state),
+        Method::GET,
+        &format!("/networks/{id}/logs?limit=2&cursor={next}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rest}");
+    assert_eq!(rest["events"].as_array().unwrap().len(), 1);
+    assert!(rest["next_cursor"].is_null());
+    let (status, refused) = route_request(
+        app(&state),
+        Method::GET,
+        &format!("/networks/{id}/logs?limit=2&cursor={next}&type=network.close"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    let (status, _) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?limit=0"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

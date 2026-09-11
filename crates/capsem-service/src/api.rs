@@ -89,6 +89,52 @@ pub struct NetworkListResponse {
     pub networks: Vec<NetworkInfo>,
 }
 
+/// Query for GET /networks/{id}/logs. Every filter is optional; `cursor`
+/// continues a previous page and must have been cut with the same filters.
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+pub struct NetworkLogsQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// 1..=1000; 100 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<i64>,
+}
+
+/// One audit row of a network, as written by the transport ledger.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkLogEvent {
+    pub sequence: i64,
+    pub event_id: String,
+    pub timestamp_unix_ms: i64,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    pub event: serde_json::Value,
+}
+
+/// Response for GET /networks/{id}/logs.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkLogsResponse {
+    pub events: Vec<NetworkLogEvent>,
+    /// Continue from here; the same cursor polls for new rows when the page
+    /// was not full.
+    pub cursor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ForkRequest {
     pub name: String,

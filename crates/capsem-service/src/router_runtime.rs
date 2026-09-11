@@ -19,6 +19,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/networks/{id}",
             get(network_routes::handle_network_inspect).delete(network_routes::handle_network_delete),
         )
+        .route("/networks/{id}/logs", get(network_routes::handle_network_logs))
         .route(
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
