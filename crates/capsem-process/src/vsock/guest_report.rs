@@ -1,6 +1,6 @@
-//! Informational guest messages: liveness replies and boot timing.
+//! Guest message classification, replay acknowledgement IDs, and boot timing.
 
-use capsem_proto::{BootStage, GuestToHost};
+use capsem_proto::{BootStage, GuestToHost, HostToGuest};
 use tracing::{info, trace, warn};
 
 /// Replies produced by the periodic control-channel liveness probe.
@@ -46,6 +46,37 @@ pub(super) fn record_boot_timing(stages: Vec<BootStage>) -> Vec<BootStage> {
     info!(target: "capsem.boot", total_ms, stages = clean.len(), "boot timing total");
     trace!(target: "capsem.boot", ?clean, "boot stages");
     clean
+}
+
+/// Returns `Some(id)` for HostToGuest variants whose delivery the host
+/// bridge tracks via the pending-ack map. The agent acks these on
+/// receipt; the bridge replays them on every fresh conn until acked.
+/// Non-ackable variants (Resize, Ping, Shutdown, BootConfig, etc.) are
+/// either side-effect-free or fire-and-forget at boot, so we don't
+/// burden the wire with per-message acks for them.
+pub(super) fn ackable_id(msg: &HostToGuest) -> Option<u64> {
+    match msg {
+        HostToGuest::Exec { id, .. }
+        | HostToGuest::FileWrite { id, .. }
+        | HostToGuest::FileRead { id, .. }
+        | HostToGuest::FileDelete { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
+/// Returns `Some(id)` for `GuestToHost` variants the agent retains in
+/// its symmetric pending_responses map and replays on every fresh
+/// control conn. The host emits `HostToGuest::AckReply { id }` on
+/// receipt so the agent can drop the entry. Mirrors `ackable_id` but
+/// for the return path.
+pub(super) fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
+    match msg {
+        GuestToHost::ExecDone { id, .. }
+        | GuestToHost::FileOpDone { id }
+        | GuestToHost::FileContent { id, .. }
+        | GuestToHost::Error { id, .. } => Some(*id),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

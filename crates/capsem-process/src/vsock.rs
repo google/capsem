@@ -15,7 +15,7 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 mod dns;
 use dns::serve_dns_session;
 mod guest_report;
-use guest_report::is_guest_liveness_message;
+use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
 mod exec_completion;
 mod exec_output;
 mod shutdown;
@@ -1140,37 +1140,6 @@ fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload)?;
     Ok(Some(payload))
-}
-
-/// Returns `Some(id)` for HostToGuest variants whose delivery the host
-/// bridge tracks via the pending-ack map. The agent acks these on
-/// receipt; the bridge replays them on every fresh conn until acked.
-/// Non-ackable variants (Resize, Ping, Shutdown, BootConfig, etc.) are
-/// either side-effect-free or fire-and-forget at boot, so we don't
-/// burden the wire with per-message acks for them.
-fn ackable_id(msg: &HostToGuest) -> Option<u64> {
-    match msg {
-        HostToGuest::Exec { id, .. }
-        | HostToGuest::FileWrite { id, .. }
-        | HostToGuest::FileRead { id, .. }
-        | HostToGuest::FileDelete { id, .. } => Some(*id),
-        _ => None,
-    }
-}
-
-/// Returns `Some(id)` for `GuestToHost` variants the agent retains in
-/// its symmetric pending_responses map and replays on every fresh
-/// control conn. The host emits `HostToGuest::AckReply { id }` on
-/// receipt so the agent can drop the entry. Mirrors `ackable_id` but
-/// for the return path.
-fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
-    match msg {
-        GuestToHost::ExecDone { id, .. }
-        | GuestToHost::FileOpDone { id }
-        | GuestToHost::FileContent { id, .. }
-        | GuestToHost::Error { id, .. } => Some(*id),
-        _ => None,
-    }
 }
 
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;

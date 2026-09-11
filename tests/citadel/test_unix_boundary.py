@@ -42,9 +42,11 @@ DOMAIN_ABI_FILES = {
     Path("crates/capsem-agent/src/audit.rs"),
     Path("crates/capsem-agent/src/bin/capsem_sysutil.rs"),
     Path("crates/capsem-agent/src/control_writer.rs"),
+    # Guest control owns PTY signals and snapshot filesystem/block-device ioctls.
+    Path("crates/capsem-agent/src/control_reader.rs"),
     Path("crates/capsem-agent/src/main.rs"),
     # The guest owns namespace setup on disposable threads, never host Unix policy.
-    Path("crates/capsem-agent/src/port_bridge.rs"),
+    Path("crates/capsem-agent/src/port_bridge/setup.rs"),
     Path("crates/capsem-agent/src/mcp_server.rs"),
     Path("crates/capsem-agent/src/shutdown.rs"),
     Path("crates/capsem-agent/src/terminal_bridge.rs"),
