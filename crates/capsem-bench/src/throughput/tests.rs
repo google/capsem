@@ -51,6 +51,26 @@ async fn bidirectional_moves_bytes_both_ways() {
 }
 
 #[tokio::test]
+async fn bulk_directions_report_no_empty_round_trip_metric() {
+    // The collector refuses a metric with no samples, so an empty
+    // `round_trip_ms` on a bulk run would fail recording after the fact.
+    let address = server().await;
+    for direction in [Direction::Upload, Direction::Download, Direction::Bidirectional] {
+        let result = run(client(address, direction, 1)).await.unwrap();
+        assert!(
+            result["metrics"].get("round_trip_ms").is_none(),
+            "{direction:?} reported round trips: {result}"
+        );
+        for (key, metric) in result["metrics"].as_object().unwrap() {
+            assert!(
+                !metric["samples"].as_array().unwrap().is_empty(),
+                "{key} has no samples"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn latency_records_one_sample_per_round_trip() {
     let address = server().await;
     let result = run(client(address, Direction::Latency, 2)).await.unwrap();

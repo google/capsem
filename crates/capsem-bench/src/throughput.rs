@@ -242,19 +242,26 @@ async fn measure(args: &Args, address: SocketAddr) -> Result<serde_json::Value> 
         "no bytes moved"
     );
     let megabits = |bytes: u64| bytes as f64 * 8.0 / 1e6 / elapsed.as_secs_f64().max(1e-9);
+    let mut metrics = serde_json::json!({
+        "bytes_sent": {"unit": "bytes", "samples": [total.sent]},
+        "bytes_received": {"unit": "bytes", "samples": [total.received]},
+        "send_megabits_per_sec": {"unit": "megabits_per_second", "samples": [megabits(total.sent)]},
+        "receive_megabits_per_sec": {"unit": "megabits_per_second", "samples": [megabits(total.received)]},
+        "elapsed_seconds": {"unit": "seconds", "samples": [elapsed.as_secs_f64()]},
+        "streams": {"unit": "count", "samples": [args.streams]}
+    });
+    // Only the latency direction has round trips. A bulk run used to report
+    // the metric with no samples, which the collector contract refuses --
+    // sixty recorded trials of the tun0 lane were lost to that at the very
+    // end of a twenty-minute run.
+    if !total.round_trips_ms.is_empty() {
+        metrics["round_trip_ms"] = serde_json::json!({"unit": "milliseconds", "samples": total.round_trips_ms});
+    }
     Ok(serde_json::json!({
         "throughput": {"address": address.to_string(), "direction": args.direction.as_str(),
             "streams": args.streams, "seconds": args.seconds, "chunk_bytes": args.chunk_bytes,
             "version": env!("CARGO_PKG_VERSION")},
-        "metrics": {
-            "bytes_sent": {"unit": "bytes", "samples": [total.sent]},
-            "bytes_received": {"unit": "bytes", "samples": [total.received]},
-            "send_megabits_per_sec": {"unit": "megabits_per_second", "samples": [megabits(total.sent)]},
-            "receive_megabits_per_sec": {"unit": "megabits_per_second", "samples": [megabits(total.received)]},
-            "round_trip_ms": {"unit": "milliseconds", "samples": total.round_trips_ms},
-            "elapsed_seconds": {"unit": "seconds", "samples": [elapsed.as_secs_f64()]},
-            "streams": {"unit": "count", "samples": [args.streams]}
-        }
+        "metrics": metrics
     }))
 }
 
