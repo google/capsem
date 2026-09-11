@@ -154,15 +154,15 @@ return 404 without contacting the UDS service.
 |---|---|---|
 | `/profiles/{profile_id}/enforcement/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
 | `/profiles/{profile_id}/enforcement/rules/list` | `GET` | Return compiled profile rule truth, including source, default-rule, priority, action, detection level, and lock metadata. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. |
-| `/profiles/{profile_id}/enforcement/reload` | `POST` | Reload that profile's enforcement rules. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/enforcement/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
 | `/profiles/{profile_id}/detection/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture against the profile detection rules. |
 | `/profiles/{profile_id}/detection/info` | `GET` | Return detection file/config info for the profile. |
 | `/profiles/{profile_id}/detection/rules/list` | `GET` | Return compiled profile detection rule truth. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. |
-| `/profiles/{profile_id}/detection/reload` | `POST` | Reload that profile's detection rules. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/detection/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
 | `/profiles/{profile_id}/plugins/list` | `GET` | Return profile plugin config plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. No runtime counters. |
 | `/profiles/{profile_id}/plugins/info` | `GET` | Return plugin subsystem info for the profile. |
 | `/profiles/{profile_id}/plugins/{plugin_id}/info` | `GET` | Inspect one profile plugin config object plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. |
@@ -329,9 +329,10 @@ Published TCP ports evaluate the destination VM's current rules and plugins
 before requesting any guest connection. Both profiles have a visible default
 expose allow rule; a more specific deny or ask prevents setup. An unavailable
 audit writer, evaluation error, or expired guest control lease also refuses
-setup. Existing connections retain their decision until closed; editing a rule
-affects new connections. A control disconnect immediately revokes live sockets,
-and queued requests from that lease cannot cross a replacement control stream.
+setup. Existing connections retain their decision until closed; a rule edit is
+pushed to the running VM before the edit route returns and applies to new
+connections. A control disconnect immediately revokes live sockets, and queued
+requests from that lease cannot cross a replacement control stream.
 
 The primary transport ledger records requests, setup results, and close reports
 with one connection ID. Matched rules use that same event identity and the

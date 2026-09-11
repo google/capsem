@@ -273,94 +273,6 @@ async fn handle_profiles_reload_reports_active_catalog_status() {
     assert_eq!(response["catalog"]["ready_count"], 0);
 }
 
-#[tokio::test]
-async fn reload_refreshes_session_runtime_profile_from_source_profile() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let (state, _dir) = make_test_state_with_tempdir();
-    let profile = materialized_test_profile_for("code");
-    install_test_profile_catalog(&state, &profile);
-    let session_dir = state.run_dir.join("sessions/runtime-refresh");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "runtime-refresh", std::process::id(), session_dir.clone());
-
-    state
-        .refresh_active_profiles(Some("code"))
-        .expect("initial runtime profile materialization");
-    let active_profile = session_dir.join("vm/active_profile.toml");
-    assert!(active_profile.exists(), "session must carry one active profile file");
-    assert!(
-        !std::fs::read_to_string(&active_profile)
-            .unwrap()
-            .contains("block_local_echo"),
-        "fresh active profile should start from the original source profile"
-    );
-
-    let source_enforcement = state.run_dir.join("config/profiles/code/enforcement.toml");
-    let mut updated = std::fs::read_to_string(&source_enforcement).unwrap();
-    updated.push_str(
-        r#"
-
-[profiles.rules.block_local_echo]
-name = "block_local_echo"
-action = "block"
-priority = 10
-reason = "test blocks local echo through security rules"
-match = 'mcp.tool_call.name == "local__echo"'
-"#,
-    );
-    std::fs::write(&source_enforcement, updated).unwrap();
-
-    state
-        .refresh_active_profiles(Some("code"))
-        .expect("reload must refresh session-local runtime profile config");
-    let refreshed = std::fs::read_to_string(&active_profile).unwrap();
-    assert!(
-        refreshed.contains("block_local_echo"),
-        "reload must materialize source profile edits into the active profile"
-    );
-
-    let Json(plugin_info) = update_plugin_for_scope(
-        &state,
-        "dummy_pre_eicar".to_string(),
-        profile_plugin_scope(&state, "code".to_string()).unwrap(),
-        PluginUpdate {
-            mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
-            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
-        },
-    )
-    .await
-    .expect("plugin edit should update profile override");
-    assert_eq!(
-        plugin_info.config.mode,
-        capsem_core::net::policy_config::SecurityPluginMode::Block
-    );
-    assert_eq!(
-        plugin_info.config.detection_level,
-        capsem_core::net::policy_config::DetectionLevel::Critical
-    );
-    state
-        .refresh_active_profiles(Some("code"))
-        .expect("plugin override must refresh runtime profile config");
-    let overlay_path = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
-    assert!(
-        !overlay_path.exists(),
-        "runtime overlay must not exist after active profile materialization"
-    );
-    let active_text = std::fs::read_to_string(&active_profile).unwrap();
-    assert!(
-        active_text.contains("[plugins.dummy_pre_eicar]"),
-        "active profile must carry profile plugin overrides into launched VMs"
-    );
-    assert!(
-        active_text.contains("mode = \"block\""),
-        "active profile must carry edited plugin mode"
-    );
-    assert!(
-        active_text.contains("detection_level = \"critical\""),
-        "active profile must carry edited plugin detection level"
-    );
-}
-
 #[test]
 fn profile_catalog_reload_rejects_invalid_directory_catalog() {
     let state = make_test_state();
@@ -2387,6 +2299,8 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     let session_dir = dir.path().join("sessions").join("route-ledger-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
     insert_fake_instance_with_session_dir(&state, "route-ledger-vm", std::process::id(), session_dir.clone());
+    let uds_path = state.instances.lock().unwrap()["route-ledger-vm"].uds_path.clone();
+    let process = profile_rule_push::spawn_fake_process_reload_ack(&uds_path, 1);
 
     let rule = capsem_core::net::policy_config::SecurityRule {
         name: "openai_http_observed".to_string(),
@@ -2417,6 +2331,10 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     let save_body = to_bytes(save_response.into_body(), usize::MAX).await.unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&save_body).unwrap();
     assert_eq!(saved["compiled_rule_id"], "profiles.rules.openai_http_observed");
+    assert!(
+        matches!(process.await.unwrap().as_slice(), [ServiceToProcess::ReloadConfig]),
+        "the rule edit must reach the running VM before the route returns"
+    );
 
     let profile = capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code")).unwrap();
     let compiled = profile

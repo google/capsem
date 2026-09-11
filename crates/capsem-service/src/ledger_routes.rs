@@ -2027,40 +2027,9 @@ pub(super) async fn handle_profile_plugin_update(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    let _reload = handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
+    push_profile_to_running_instances(&state, Some(scope.profile_id.as_str())).await?;
     let info = plugin_info_for(&state, &plugin_id, scope, true).await?;
     Ok(Json(info))
-}
-
-#[cfg(test)]
-pub(super) async fn update_plugin_for_scope(
-    state: &Arc<ServiceState>,
-    plugin_id: String,
-    scope: PluginScope,
-    update: PluginUpdate,
-) -> Result<Json<PluginInfo>, AppError> {
-    let catalog = plugin_catalog();
-    let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
-    };
-    let mut config = effective_plugin_policy(state, &scope.profile_id)
-        .get(&plugin_id)
-        .copied()
-        .unwrap_or(catalog_entry.default_config);
-    if let Some(mode) = update.mode {
-        config.mode = mode;
-    }
-    if let Some(detection_level) = update.detection_level {
-        config.detection_level = detection_level;
-    }
-    state
-        .plugin_policy_by_profile
-        .lock()
-        .unwrap()
-        .entry(scope.profile_id.clone())
-        .or_default()
-        .insert(plugin_id.clone(), config);
-    Ok(Json(plugin_info_for(state, &plugin_id, scope, false).await?))
 }
 
 #[derive(Debug, Default)]
@@ -2466,6 +2435,7 @@ pub(super) async fn handle_enforcement_rule_upsert(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_upsert", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
         compiled_rule_id: compiled.rule_id,
@@ -2543,6 +2513,7 @@ pub(super) async fn handle_detection_rule_upsert(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_upsert", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
         compiled_rule_id: compiled.rule_id,
@@ -2583,6 +2554,7 @@ pub(super) async fn handle_enforcement_rule_delete(
     })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 
@@ -2612,6 +2584,7 @@ pub(super) async fn handle_detection_rule_delete(
     })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_delete", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 

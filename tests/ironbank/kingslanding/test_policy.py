@@ -82,10 +82,11 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
             )
             assert result["rule"]["action"] == policy
 
-        # A profile edit is delivered to the existing owner asynchronously.
-        # Wait for an actual refusal, then measure through the same observer
-        # socket: opening a measurement connection would perturb Redis's count.
-        wait_for(lambda: _probe(port)[0], "live expose policy reload", timeout=15)
+        # The edit route returns only after the running owner acknowledged the
+        # reload, so the very next connection must already be refused. Measure
+        # through the same observer socket so measurement does not perturb
+        # Redis's count.
+        assert _probe(port)[0], "edited policy still admitted a connection"
         baseline = _accepted_count(stream)
         denied_peers = set()
         for _ in range(10):

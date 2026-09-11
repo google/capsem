@@ -281,6 +281,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Editing or deleting a profile enforcement or detection rule through the API
+  now reaches running VMs on that profile before the route returns, as plugin
+  edits already did; previously running VMs kept the old rules until an explicit
+  profile reload.
 - Session ledger routes (`security/latest`, `detection/latest`,
   `security/status`, `timeline`, `history*`, `stats/detail`) read through the
   logger on every request. They no longer serve a cached response while a

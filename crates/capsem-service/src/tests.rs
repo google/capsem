@@ -7,6 +7,7 @@ use tower::ServiceExt;
 mod asset_wait;
 mod instance_reaper;
 mod profile_asset_status;
+mod profile_rule_push;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
