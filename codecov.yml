@@ -130,6 +130,12 @@ component_management:
       paths:
         - crates/capsem-router/src/**
 
+    # The host end of a guest tun0: smoltcp over the framed VSOCK packet stream.
+    - component_id: private-network
+      name: Private Network
+      paths:
+        - crates/capsem-network/src/**
+
     # Runtime half of the asset contract: manifest hash extraction plus the
     # download/verify path that resolves recorded digests before boot.
     # capsem-admin owns the generation half, under the `admin` component.
