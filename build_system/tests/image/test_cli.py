@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from capsem_builder.image import cli as cli_module
 from capsem_builder.image.cli import cli
+from capsem_builder.release import project_root
 from click.testing import CliRunner
 
 
@@ -185,8 +187,10 @@ def test_agent_defaults_to_current_image_config() -> None:
     ):
         result = runner.invoke(cli, ["agent", "--arch", "arm64"])
 
-    assert result.exit_code == 0
-    load_config.assert_called_once_with(Path("config/docker/image"))
+    assert result.exit_code == 0, result.output
+    # Resolved against the checkout, so the command means the same thing from
+    # the repository root and from build_system/.
+    load_config.assert_called_once_with(project_root(cli_module.__file__) / "config/docker/image")
     materialize.assert_called_once()
     assert materialize.call_args.args[:2] == (config.build, "arm64")
     assert materialize.call_args.args[3] == Path("cache/target/build/linux-agent/arm64")
