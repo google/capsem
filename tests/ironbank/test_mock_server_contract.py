@@ -99,6 +99,7 @@ def test_mock_server_advertises_all_release_protocol_surfaces() -> None:
         } <= set(ready["endpoints"])
         assert {
             "fixture.capsem.test",
+            "egress.capsem.test",
             "api.openai.com",
             "api.anthropic.com",
             "daily-cloudcode-pa.googleapis.com",
