@@ -28,7 +28,6 @@ pytestmark = pytest.mark.integration
 
 THROUGHPUT_PORT = 5201
 GATEWAY = "10.128.0.1"
-GUEST_ADDRESS = "10.128.0.2"
 SECONDS = 3
 TRIALS = 3
 MATRIX = [
@@ -111,7 +110,7 @@ def probe(argv):
     return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
 
 
-def client_args(direction, streams):
+def client_args(direction, streams, seconds=SECONDS):
     return [
         "throughput",
         "--direction",
@@ -119,7 +118,7 @@ def client_args(direction, streams):
         "--streams",
         str(streams),
         "--seconds",
-        str(SECONDS),
+        str(seconds),
     ]
 
 
@@ -174,9 +173,7 @@ def test_private_link_and_published_port_transport_samples(
             probe(
                 [
                     BENCH,
-                    *client_args("latency", 1),
-                    "--seconds",
-                    "1",
+                    *client_args("latency", 1, seconds=1),
                     "--address",
                     published,
                 ]
@@ -190,15 +187,14 @@ def test_private_link_and_published_port_transport_samples(
         service,
         vm_id,
         "capsem-tun",
-        f"capsem-tun --address {GUEST_ADDRESS} --peer {GATEWAY}",
+        # The VM's lifetime address comes from the service, never guessed here.
+        f"capsem-tun --address {container['vm']['private_address']} --peer {GATEWAY}",
     )
     gateway = f"{GATEWAY}:{THROUGHPUT_PORT}"
     tun_probe = shlex.join(
         [
             "capsem-bench-rs",
-            *client_args("latency", 1),
-            "--seconds",
-            "1",
+            *client_args("latency", 1, seconds=1),
             "--address",
             gateway,
         ]
@@ -213,7 +209,25 @@ def test_private_link_and_published_port_transport_samples(
     )
 
     metrics = {}
-    for lane, run in (
+    try:
+        measure_lanes(service, vm_id, published, gateway, output, identity, metrics)
+    finally:
+        # The helpers' logs are the evidence when a lane never answers.
+        for name in ("capsem-tun", "throughput-server"):
+            log = guest(service, vm_id, f"cat /var/tmp/{name}.log", check=False)
+            (output / f"{name}.log").write_text(
+                log.get("stdout", "") + log.get("stderr", "")
+            )
+        print(f"PRIVATE LINK EVIDENCE: {output}")
+    (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
+    (output / "comparison.json").write_text(
+        json.dumps(compare(metrics), indent=2) + "\n"
+    )
+    record(output, metrics, identity["source_commit"])
+
+
+def measure_lanes(service, vm_id, published, gateway, output, identity, metrics):
+    lanes = (
         ("host_published", lambda args: probe([BENCH, *args, "--address", published])),
         (
             "guest_tun",
@@ -223,18 +237,17 @@ def test_private_link_and_published_port_transport_samples(
                 shlex.join(["capsem-bench-rs", *args, "--address", gateway]),
             ),
         ),
-    ):
+    )
+    for lane, run in lanes:
         for direction, streams in MATRIX:
             for trial in range(TRIALS):
                 args = client_args(direction, streams)
                 result = run(args)
-                raw = (
-                    result.stdout
-                    if isinstance(result, subprocess.CompletedProcess)
-                    else result["stdout"]
-                )
                 if isinstance(result, subprocess.CompletedProcess):
                     assert result.returncode == 0, result.stderr
+                    raw = result.stdout
+                else:
+                    raw = result["stdout"]
                 document = json.loads(raw)
                 label = f"{lane}.{direction}.s{streams}.r{trial}"
                 (output / f"{label}.json").write_text(raw)
@@ -246,21 +259,10 @@ def test_private_link_and_published_port_transport_samples(
                     metrics.setdefault(key, {"unit": metric["unit"], "samples": []})[
                         "samples"
                     ].extend(metric["samples"])
-    (output / "capsem-tun.log").write_text(
-        guest(service, vm_id, "cat /var/tmp/capsem-tun.log", check=False).get(
-            "stdout", ""
-        )
-    )
-    (output / "throughput-server.log").write_text(
-        guest(service, vm_id, "cat /var/tmp/throughput-server.log", check=False).get(
-            "stdout", ""
-        )
-    )
-    (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
-    (output / "comparison.json").write_text(
-        json.dumps(compare(metrics), indent=2) + "\n"
-    )
 
+
+def record(output, metrics, source_commit):
+    """The same store and report the Redis benchmark uses."""
     collectors = output / "collectors"
     collectors.mkdir()
     (collectors / "vsock").write_text(json.dumps({"metrics": metrics}))
@@ -279,7 +281,7 @@ def test_private_link_and_published_port_transport_samples(
             "--channel",
             "spike",
             "--commit",
-            identity["source_commit"],
+            source_commit,
         ],
         capture_output=True,
         timeout=30,
@@ -295,7 +297,6 @@ def test_private_link_and_published_port_transport_samples(
     )
     assert report.returncode == 0, report.stderr
     (output / "report.txt").write_bytes(report.stdout)
-    print(f"PRIVATE LINK EVIDENCE: {output}")
 
 
 def compare(metrics):
@@ -313,6 +314,8 @@ def compare(metrics):
     cells = {}
     for direction, streams in MATRIX:
         cell = f"{direction}.s{streams}"
+        if f"guest_tun.{cell}.elapsed_seconds" not in metrics:
+            continue
         if direction == "latency":
             published = median(f"host_published.{cell}.round_trip_ms")
             tun = median(f"guest_tun.{cell}.round_trip_ms")
