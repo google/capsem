@@ -356,6 +356,9 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         # lane it is in -- and refuse to rehearse inside a release, where that
         # path is the lane rather than a rehearsal of it.
         "test-rehearsal",
+        # The container E2E owner boots real VMs from qualified assets like
+        # the functional module it mirrors.
+        "test-kingslanding",
         # The per-lane verbs CI calls, which compose the three modules above.
         "qualify-assets",
         "qualify-binaries",
