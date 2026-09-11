@@ -24,8 +24,16 @@ Installed binaries, services, and profiles are not changed by this spike.
 - Packaged `umoci` unpacks layers inside the guest. The trusted launcher replaces
   image hooks and runtime configuration, creates a read-only root, bounded writable
   scratch/volumes, restricted capabilities, private namespaces and CPU/memory/pids
-  cgroups. The container cannot create VSOCK sockets. A trusted prestart hook brings
-  up only its private loopback interface before the image entrypoint executes.
+  cgroups. The container cannot create VSOCK sockets.
+- A trusted prestart hook gives the container one veth whose VM end is its only
+  gateway. Every port the VM intercepts (`nat OUTPUT` redirects for DNS 53 and the
+  HTTP/HTTPS ports) is mirrored as a DNAT to the same loopback proxies, so container
+  traffic goes through the host MITM, DNS handler, rules, plugins and ledger exactly
+  like VM traffic; anything else arriving from that interface is rejected, so the
+  container cannot reach the VM's other listeners or its dummy address. The VM's CA
+  bundle is bind-mounted read-only and exported through `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS`; images that pin
+  certificates or use private trust stores fail TLS, by design.
 - `-p HOST:GUEST` binds IPv4 loopback on the host. Host port zero chooses an unused
   port and prints it. Each mapping owns a Rust companion with a two-worker async
   runtime, at most 128 active connections, bounded queues and setup deadlines.

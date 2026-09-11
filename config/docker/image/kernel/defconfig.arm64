@@ -124,6 +124,12 @@ CONFIG_NFT_COMPAT=y
 CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
 CONFIG_NF_NAT_REDIRECT=y
 
+# Container egress: one veth pair per workload, its VM end DNAT'ed to the
+# same loopback proxies (guest/artifacts/container/launch.py). iptables-nft
+# reaches the DNAT target through the xt_nat compat module.
+CONFIG_VETH=y
+CONFIG_NETFILTER_XT_NAT=y
+
 # ==========================================
 # 8. PROCESS MANAGEMENT
 # ==========================================

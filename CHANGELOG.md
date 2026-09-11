@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verified OCI images, runs the image command in an image-named VM with live logs,
   and retains a named VM controlled by the existing lifecycle commands. Registry-specific
   CA trust and username/token authentication are supported.
+- Containers started with `capsem run docker://IMAGE` reach the internet through
+  the VM's existing DNS and HTTP(S) interception: the same rules, plugins, and
+  ledger apply, the container trusts the Capsem CA read-only, and it can reach
+  nothing else inside the VM.
 - Both profiles include `runc`; guest kernels support offline OCI process
   namespaces and cgroup CPU, memory, and process limits.
 - Both profiles include `umoci` for OCI image layer unpacking inside the VM.
