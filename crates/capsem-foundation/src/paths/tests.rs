@@ -92,6 +92,17 @@ fn sessions_dir_under_isolated_home() {
 }
 
 #[test]
+fn network_db_lives_beside_sessions_not_under_one() {
+    let _lock = lock_env();
+    let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
+    assert_eq!(capsem_networks_dir(), PathBuf::from("/tmp/isolated/networks"));
+    assert_eq!(
+        network_db_path("net-1"),
+        PathBuf::from("/tmp/isolated/networks/net-1/network.db")
+    );
+}
+
+#[test]
 fn service_socket_and_pidfile_under_run_dir() {
     let _lock = lock_env();
     let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
