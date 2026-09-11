@@ -36,13 +36,27 @@ SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
 
 
 def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
+    """A checkout whose `[runlog]` keys are overridden.
+
+    Scoped to that section: `failure_tail_lines` also exists under `[assets]`,
+    and replacing the first match left the runlog value untouched -- unnoticed
+    while the runner under test never applied a tail at all.
+    """
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
-    source = SOURCE
+    lines = SOURCE.splitlines()
+    start = lines.index("[runlog]")
     for key, value in overrides.items():
-        original = next(line for line in source.splitlines() if line.startswith(f"{key} = "))
-        source = source.replace(original, f"{key} = {value}")
-    (tmp_path / "config" / "gate.toml").write_text(source, encoding="utf-8")
+        at = next(i for i in range(start, len(lines)) if lines[i].startswith(f"{key} = "))
+        lines[at] = f"{key} = {value}"
+    (tmp_path / "config" / "gate.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return gate_config.load(tmp_path)
+
+
+def _after_command_line(error: BaseException) -> str:
+    """The excerpt an error carries, without the command line that precedes
+    it -- that line repeats the script, so a marker literal in a script would
+    satisfy any assertion about the excerpt."""
+    return str(error).split("\n", 1)[1] if "\n" in str(error) else ""
 
 
 #: Writes to both streams, so "combined" is a claim a test can check.
@@ -61,7 +75,10 @@ def _run(
     import sys
 
     with RunLog.open(config, "test") as log:
-        runner = GuardedRunner(Runner(config.root), journal=log)
+        # Sized from the config under test, as the real commands size theirs.
+        # Without it the tail is empty and every "the error names X" assertion
+        # below is satisfied by the command line, which repeats the script.
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=log)
         with log.step(step(label, Run([sys.executable, "-c", script]))):
             runner.run([sys.executable, "-c", script], check=check, console=console)
         return log.step_log(label)
@@ -87,6 +104,34 @@ def test_a_note_made_during_a_step_is_in_the_run_record(tmp_path: Path) -> None:
     assert [(note["step"], note["message"]) for note in notes] == [
         ("assets", "host assets (arm64) are stale; rebuilding")
     ]
+
+
+def test_a_failed_pytest_step_reports_each_failure_and_its_cause(tmp_path: Path) -> None:
+    """Not the log's last lines. With several errors sharing one long message
+    the tail was the middle of that message; the cause had to be grepped out
+    of the console."""
+    config = _checkout(tmp_path, failure_tail_lines=3, pytest_failure_lines=2)
+    # Built from pieces: the error repeats the command line, so a literal here
+    # would satisfy the assertions below without any excerpt at all.
+    script = (
+        "cause = 'Unknown ' + 'device type'; verdict = 'FAI' + 'LED';"
+        "print('=== FAILURES ===');"
+        "print('____ test_boot ____');"
+        "print('E   AssertionError: runc: ' + cause);"
+        "[print(f'E     noise-{n}') for n in range(30)];"
+        "print('=== short test summary info ===');"
+        "print(verdict + ' tests/test_vm.py::test_boot - AssertionError');"
+        "print('=== 1 failed in 1.00s ===');"
+        "import sys; sys.exit(1)"
+    )
+
+    with pytest.raises(GateError) as raised:
+        _run(config, "kingslanding", script, console=ConsoleMode.LOG_ONLY)
+
+    message = _after_command_line(raised.value)
+    assert "FAILED tests/test_vm.py::test_boot" in message
+    assert "Unknown device type" in message
+    assert "noise-5" not in message, "only the first lines of each failure's message"
 
 
 def test_a_step_keeps_what_its_commands_printed(tmp_path: Path) -> None:
@@ -165,13 +210,14 @@ def test_log_only_keeps_full_evidence_without_terminal_churn(
 def test_log_only_failure_still_surfaces_the_configured_tail(tmp_path: Path) -> None:
     config = _checkout(tmp_path, failure_tail_lines=2)
 
-    with pytest.raises(GateError, match="LOG-ONLY-FAILURE"):
+    with pytest.raises(GateError) as raised:
         _run(
             config,
             "dependency-materialize",
-            "import sys; print('earlier'); print('LOG-ONLY-FAILURE'); sys.exit(9)",
+            "import sys; print('earlier'); print('LOG-ONLY-' + 'FAILURE'); sys.exit(9)",
             console=ConsoleMode.LOG_ONLY,
         )
+    assert "LOG-ONLY-FAILURE" in _after_command_line(raised.value)
 
 
 def test_concurrent_steps_never_share_a_file(tmp_path: Path) -> None:
@@ -207,14 +253,18 @@ def test_a_failure_carries_its_own_tail(tmp_path: Path) -> None:
     script = (
         "import sys; "
         "[print(f'line-{n}') for n in range(50)]; "
-        "print('THE-REAL-ERROR', file=sys.stderr); "
+        # Flushed, as a tool that reports its error last does; unflushed
+        # stdout would land after the error in the log and the tail would
+        # rightly miss it.
+        "sys.stdout.flush(); "
+        "print('THE-REAL-' + 'ERROR', file=sys.stderr); "
         "sys.exit(3)"
     )
 
     with pytest.raises(GateError) as raised:
         _run(config, "build", script)
 
-    message = str(raised.value)
+    message = _after_command_line(raised.value)
     assert "THE-REAL-ERROR" in message
     assert "line-0" not in message, "the whole log belongs in steps/, not the error"
     assert len(re.findall(r"line-\d+", message)) <= 3

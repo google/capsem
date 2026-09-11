@@ -248,12 +248,8 @@ class GateCommand(CommandHooks, Recorded, ABC):
             qualificationflow.begin(log, decision, commit, self.qualification_policy)
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
-            runner = GuardedRunner(
-                self._runner,
-                journal=log,
-                tail_lines=self._config.runlog.failure_tail_lines,
-                checkpoint=None if watch is None else watch.checkpoint,
-            )
+            checkpoint = None if watch is None else watch.checkpoint
+            runner = GuardedRunner.sized_by(self._runner, self._config, journal=log, checkpoint=checkpoint)
             acquiring = preflight.holdings(
                 self._config, runner, self.name,
                 exclusive=self.exclusive,
@@ -263,10 +259,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
                 from .egress import guarded_runner_of
 
                 outside_runner = guarded_runner_of(
-                    acquired,
-                    journal=log,
-                    tail_lines=self._config.runlog.failure_tail_lines,
-                    checkpoint=None if watch is None else watch.checkpoint,
+                    acquired, self._config, journal=log, checkpoint=checkpoint
                 )
                 plan.run(
                     Context(

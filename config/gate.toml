@@ -2791,6 +2791,11 @@ slow_action_seconds = 30
 # log stays in `steps/`; this is the part that has to be in front of whoever is
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
+# A failed pytest command is summarised instead: its short test summary, then
+# this many `E ` lines of each failure's message. The tail of a log with four
+# errors sharing one long assertion is the middle of that assertion; the runc
+# hook error that explained a real-VM failure had to be grepped out of it.
+pytest_failure_lines = 12
 
 # Nothing bounds how long `fast-test` may take, and deliberately so. The
 # wall-clock budget that did was removed after it failed two releases: a

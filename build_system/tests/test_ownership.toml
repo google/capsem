@@ -878,3 +878,8 @@ target = "build_system/tests/image/test_manifest_arches.py"
 owner = "packaging"
 source = "tests/test_router_signing.py"
 target = "build_system/tests/packaging/test_router_signing.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_pytest_excerpt.py"
+target = "build_system/tests/gate/test_pytest_excerpt.py"
