@@ -67,6 +67,28 @@ def _run(
         return log.step_log(label)
 
 
+def test_a_note_made_during_a_step_is_in_the_run_record(tmp_path: Path) -> None:
+    """Notes are the run's narrative -- why assets were rebuilt, what was
+    reused. The console had them; `run.jsonl` had none, so a later reader
+    (or the digest) could not know why a step took five minutes."""
+    import json
+
+    config = _checkout(tmp_path)
+    with RunLog.open(config, "test") as log:
+        runner = GuardedRunner(Runner(config.root), journal=log)
+        with log.step(step("assets", Run(["true"]))):
+            runner.note("host assets (arm64) are stale; rebuilding")
+        events = log.directory / config.runlog.events
+    notes = [
+        json.loads(line)
+        for line in events.read_text(encoding="utf-8").splitlines()
+        if '"note"' in line
+    ]
+    assert [(note["step"], note["message"]) for note in notes] == [
+        ("assets", "host assets (arm64) are stale; rebuilding")
+    ]
+
+
 def test_a_step_keeps_what_its_commands_printed(tmp_path: Path) -> None:
     config = _checkout(tmp_path)
 

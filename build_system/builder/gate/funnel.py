@@ -217,4 +217,12 @@ class GuardedRunner(Runner):
         self._inner.step(message)
 
     def note(self, message: str) -> None:
+        """To the terminal and to the run record.
+
+        A note is why a step did what it did -- assets rebuilt because their
+        identity moved, a lane reused. Console-only notes left every run's
+        `run.jsonl` without a single one, so nothing after the run could
+        explain a five-minute step.
+        """
         self._inner.note(message)
+        self._journal.note(message)
