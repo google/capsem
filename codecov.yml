@@ -82,6 +82,9 @@ component_management:
         - crates/capsem-core/src/net/mitm_proxy/**
         - crates/capsem-core/src/net/parsers/**
         - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/address_pool.rs
+        - crates/capsem-core/src/net/network_registry.rs
+        - crates/capsem-core/src/net/network_registry/**
 
     # Policy engine and security-rule evaluation, settings registry, corp
     # lockdown/MDM, and the credential broker's storage boundary.
