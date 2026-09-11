@@ -1,6 +1,6 @@
 //! How `capsem list`, `capsem info` and `capsem network` describe sessions
 //! and networks on screen.
-use crate::client::{NetworkInfo, SessionInfo};
+use crate::client::{NetworkInfo, NetworkLogEvent, SessionInfo};
 
 pub(crate) fn format_uptime(secs: Option<u64>) -> String {
     match secs {
@@ -135,6 +135,15 @@ pub(crate) fn print_network_info(network: &NetworkInfo) {
     for member in &network.members {
         println!("  {:<38} {:<16} {}", member.vm_id, member.address, member.state);
     }
+}
+
+pub(crate) fn print_network_log_event(event: &NetworkLogEvent) {
+    let decision = event.event["decision"]["effective"].as_str().unwrap_or("-");
+    let connection = event.connection_id.as_deref().unwrap_or("-");
+    println!(
+        "{:<8} {:<15} {:<26} {:<8} {:<38} {}",
+        event.sequence, event.timestamp_unix_ms, event.event_type, decision, connection, event.event_id
+    );
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ pub(crate) const GROUPED_HELP: &str = "\
   \x1b[32;1mnetwork delete\x1b[0m      Retire an empty network
   \x1b[32;1mnetwork connect\x1b[0m     Connect a session to a network
   \x1b[32;1mnetwork disconnect\x1b[0m  Disconnect a session from a network
+  \x1b[32;1mnetwork logs\x1b[0m        Show a network's audit log (-f to follow)
 
 \x1b[36;1;4mMCP:\x1b[0m
   \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status

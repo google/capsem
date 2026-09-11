@@ -28,3 +28,33 @@ fn parse_network_commands() {
     let cli = Cli::parse_from(["capsem", "network", "create", "team"]);
     assert!(matches!(cli.command.unwrap(), Commands::Network(NetworkCommands::Create { name }) if name == "team"));
 }
+
+#[test]
+fn parse_network_logs_with_follow_and_filters() {
+    let cli = Cli::parse_from([
+        "capsem",
+        "network",
+        "logs",
+        "team",
+        "-f",
+        "--limit",
+        "10",
+        "--type",
+        "network.connect",
+    ]);
+    match cli.command.unwrap() {
+        Commands::Network(NetworkCommands::Logs {
+            network,
+            follow,
+            limit,
+            event_type,
+            ..
+        }) => {
+            assert_eq!(network, "team");
+            assert!(follow);
+            assert_eq!(limit, 10);
+            assert_eq!(event_type.as_deref(), Some("network.connect"));
+        }
+        _ => panic!("expected network logs"),
+    }
+}

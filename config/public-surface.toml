@@ -37,7 +37,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 38
+count = 39
 approved = [
   "assets ensure",
   "assets status",
@@ -63,6 +63,7 @@ approved = [
   "network disconnect",
   "network inspect",
   "network list",
+  "network logs",
   "persist",
   "purge",
   "restart",
@@ -80,7 +81,7 @@ approved = [
 ]
 
 [http]
-count = 110
+count = 111
 approved = [
   "DELETE /profiles/{profile_id}/detection/rules/{rule_id}/delete",
   "DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
@@ -128,6 +129,7 @@ approved = [
   "GET /version",
   "GET /networks",
   "GET /networks/{id}",
+  "GET /networks/{id}/logs",
   "GET /vms/list",
   "GET /vms/{id}/detection/latest",
   "GET /vms/{id}/detection/status",

@@ -294,6 +294,19 @@ resume. `capsem create --network team` joins a network at create time.
 capsem network disconnect my-vm team
 ```
 
+### network logs
+
+```bash
+capsem network logs team
+capsem network logs team -f --type network.connect --decision block
+```
+
+The network's audit history, oldest first, as recorded in the network's own
+database: connections, their results, closes and lifecycle events, each with
+the decision that applied. `-f` keeps printing new events until Ctrl-C. The
+history is kept by network id, so it survives disconnecting every member and
+deleting the network; a new network under the same name starts empty.
+
 ## Service commands
 
 The background service (`capsem-service`) runs as a daemon. It auto-starts on login via LaunchAgent (macOS) or systemd (Linux).
