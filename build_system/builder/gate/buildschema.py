@@ -75,7 +75,7 @@ class KingslandingConfig(Strict):
     fixture_script: str
     fixture_dir: str
     suite_path: str
-    benchmark_path: str
+    benchmark_paths: tuple[str, ...]
 
 
 class FunctionalConfig(Strict):

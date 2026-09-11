@@ -2229,7 +2229,12 @@ assets_dir_variable = "CAPSEM_ASSETS_DIR"
 fixture_script = "tests/fixtures/oci/prepare_redis.py"
 fixture_dir = "cache/target/tests/redis-image"
 suite_path = "tests/ironbank/kingslanding"
-benchmark_path = "tests/ironbank/kingslanding/test_redis_benchmark.py"
+# Exploratory measurement modules: run with the suite when a benchmark is
+# wanted, ignored when only the acceptance proof is.
+benchmark_paths = [
+    "tests/ironbank/kingslanding/test_redis_benchmark.py",
+    "tests/ironbank/kingslanding/test_private_link_benchmark.py",
+]
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts

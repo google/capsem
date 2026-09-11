@@ -34,7 +34,7 @@ def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytest
     return pytestsuite.Suite(
         label=f"pytest.kingslanding.{profile}",
         paths=(settings.suite_path,),
-        ignores=() if benchmark else (settings.benchmark_path,),
+        ignores=() if benchmark else settings.benchmark_paths,
         profile=profile,
         contends=(config.exclusive("workspace_binaries"), config.exclusive("apple_vz")),
     )
