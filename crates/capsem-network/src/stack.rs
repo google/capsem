@@ -28,6 +28,13 @@ pub trait App {
     fn step(&mut self, sockets: &mut SocketSet<'static>) -> Progress;
 }
 
+/// Framed bytes waiting for a peer that has stopped reading. Past this the
+/// device's transmit queue is left full, which smoltcp reads as a busy link
+/// and stops producing segments -- including retransmissions, which would
+/// otherwise keep adding copies of the same window for as long as the peer
+/// stays stalled.
+const OUTGOING_HIGH_WATER_BYTES: usize = 8 * 1024 * 1024;
+
 pub struct Stack<IO> {
     reader: ReadHalf<IO>,
     writer: WriteHalf<IO>,
@@ -91,7 +98,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> Stack<IO> {
                     Progress::Idle => break false,
                 }
             };
-            self.frame_outgoing();
+            if self.outgoing.len() - self.written < OUTGOING_HIGH_WATER_BYTES {
+                self.frame_outgoing();
+            }
             if done {
                 return self.drain().await.map(|delivered| delivered && true);
             }
