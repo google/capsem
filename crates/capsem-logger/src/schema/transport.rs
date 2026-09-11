@@ -1,6 +1,6 @@
 //! One versioned additive migration for session transport records.
 //! A current schema missing this ledger is corruption, never an empty history.
-use super::{columns::READY_SCHEMA_COLUMNS, table_column_names};
+use super::{columns::READY_SCHEMA_COLUMNS, table_column_names, table_exists};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 const VERSION: i64 = 1;
@@ -20,29 +20,16 @@ const CREATE_TRANSPORT: &str = "
 ";
 
 pub(crate) fn upgrade_legacy(conn: &Connection) -> rusqlite::Result<()> {
-    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == VERSION {
-        return validate(conn);
-    }
-    if version != 0 {
-        return Err(rusqlite::Error::InvalidParameterName(format!(
-            "unsupported session schema version {version}"
-        )));
+    if is_current(conn)? {
+        return Ok(());
     }
     let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
     // Another process may have finished the migration while this reader waited.
-    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == VERSION {
-        validate(&tx)?;
+    if is_current(&tx)? {
         return tx.commit();
     }
-    if version != 0 {
-        return Err(rusqlite::Error::InvalidParameterName(format!(
-            "unsupported session schema version {version}"
-        )));
-    }
     for (table, required) in READY_SCHEMA_COLUMNS {
-        if *table == "transport_events" {
+        if matches!(*table, "transport_events" | "transport_schema") {
             continue;
         }
         let columns = table_column_names(&tx, "main", table)?;
@@ -57,7 +44,13 @@ pub(crate) fn upgrade_legacy(conn: &Connection) -> rusqlite::Result<()> {
     }
     tx.execute_batch(CREATE_TRANSPORT)?;
     validate(&tx)?;
-    tx.pragma_update(None, "user_version", VERSION)?;
+    tx.execute_batch(
+        "CREATE TABLE transport_schema (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            version INTEGER NOT NULL
+         );
+         INSERT INTO transport_schema(id,version) VALUES(1,1);",
+    )?;
     tx.commit()
 }
 
@@ -75,4 +68,22 @@ fn validate(conn: &Connection) -> rusqlite::Result<()> {
         }
     }
     Ok(())
+}
+
+// user_version belongs to SessionIndex in the shared main.db. This marker is
+// logger-owned and disk-only; absence means legacy, a malformed marker is an error.
+fn is_current(conn: &Connection) -> rusqlite::Result<bool> {
+    if !table_exists(conn, "main", "transport_schema")? {
+        return Ok(false);
+    }
+    let version: i64 = conn.query_row("SELECT version FROM main.transport_schema WHERE id=1", [], |row| {
+        row.get(0)
+    })?;
+    if version != VERSION {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "unsupported transport schema version {version}"
+        )));
+    }
+    validate(conn)?;
+    Ok(true)
 }

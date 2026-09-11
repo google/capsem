@@ -171,4 +171,5 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "event_json",
         ],
     ),
+    ("transport_schema", &["id", "version"]),
 ];

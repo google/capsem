@@ -7,7 +7,7 @@ use std::{
 use rusqlite::{Connection, OptionalExtension};
 
 const MEMORY_SCHEMA: &str = "mem";
-const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs"];
+const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs", "transport_schema"];
 static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
@@ -1277,7 +1277,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
             ON profile_mutation_events(category, target_kind, target_key);"
     ));
-    network_types::migrate(conn)
+    network_types::migrate(conn).and_then(|()| transport::upgrade_legacy(conn))
 }
 
 /// Apply read-safe pragmas for DB-owned query connections.

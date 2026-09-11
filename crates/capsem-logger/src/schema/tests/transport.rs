@@ -1,6 +1,59 @@
 use crate::schema::create_tables;
 use rusqlite::Connection;
 
+#[test]
+fn writer_finishes_older_column_migrations_before_transport_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(crate::schema::CREATE_SCHEMA).unwrap();
+    conn.execute_batch("ALTER TABLE dns_events DROP COLUMN answer_ip")
+        .unwrap();
+    let writer = crate::DbWriter::open(&path, 8).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transport_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+    writer.shutdown_blocking();
+}
+
+#[test]
+fn malformed_or_future_transport_markers_fail_without_reinitializing() {
+    for change in [
+        "DELETE FROM transport_schema",
+        "UPDATE transport_schema SET version=2",
+        "ALTER TABLE transport_events DROP COLUMN connection_id",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = Connection::open(&path).unwrap();
+        create_tables(&conn).unwrap();
+        // Drop the index before SQLite permits dropping its indexed column.
+        conn.execute_batch("DROP INDEX idx_transport_events_connection")
+            .unwrap();
+        conn.execute_batch(change).unwrap();
+        assert!(crate::DbReader::open(&path).is_err());
+        assert!(crate::DbWriter::open(&path, 8).is_err());
+    }
+}
+
+#[test]
+fn transport_upgrade_preserves_the_shared_session_index_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("main.db");
+    let index = crate::SessionIndex::open(&path).unwrap();
+    drop(index);
+    let conn = Connection::open(&path).unwrap();
+    let before: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    assert!(before > 1);
+    let writer = crate::DbWriter::open(&path, 8).unwrap();
+    writer.shutdown_blocking();
+    let after: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    assert_eq!(after, before);
+    crate::DbReader::open(&path).unwrap().ready().unwrap();
+    crate::SessionIndex::open(&path).unwrap();
+}
+
 #[tokio::test]
 async fn a_current_database_missing_transport_rows_is_corrupt_and_not_recreated() {
     let dir = tempfile::tempdir().unwrap();

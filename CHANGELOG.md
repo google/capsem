@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The logger supports bounded primary transport audit records, with indexed
-  connection/network identities and an additive upgrade for retained sessions.
+  connection/network identities and an additive upgrade for retained sessions
+  that preserves the shared session index's schema version.
 - Security rules recognize typed `network` routing facts. Network boundary
   events validate owner identities and require an explicit allow; retained
   security ledgers accept their new event types through a checked migration.
