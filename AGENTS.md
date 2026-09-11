@@ -229,6 +229,10 @@ Telemetry and security ledgers are database-owned.
 - Service routes, UI handlers, MCP helpers, and benchmark harnesses must not
   call `rusqlite::Connection::open` or `DbReader::open` directly.
 - They must not create service-owned logged-data projection caches.
+- Whether a ledger changed is the DB object's answer (`read_cache_epoch`, the
+  reader's `data_version` sync), never the file's size or mtime: a WAL-only
+  commit changes neither, and a route once served stale rows for months on
+  that fingerprint. `tests/citadel/test_db_freshness_boundary.py` holds it.
 - They may own query intent, but the logger DB object owns query execution.
 - `capsem-logger` owns SQLite connection threads, `mem`/disk table layout,
   batching, flushing, rehydration, WAL tuning, and future FTS5/search.
