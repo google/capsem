@@ -18,6 +18,8 @@ impl WriteOp {
             WriteOp::SecurityAskEvent(_) => "security_ask_event",
             WriteOp::SecurityDecisionEvent(_) => "security_decision_event",
             WriteOp::ProfileMutationEvent(_) => "profile_mutation_event",
+            WriteOp::Network(_) => "network",
+            WriteOp::NetworkMembership(_) => "network_membership",
         }
     }
 
@@ -39,7 +41,8 @@ impl WriteOp {
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
             WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.clone()),
-            WriteOp::ExecEventComplete(_) => None,
+            // Registry rows are state, not events: keyed by their ids, no event id.
+            WriteOp::ExecEventComplete(_) | WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
         }
     }
 
@@ -58,7 +61,7 @@ impl WriteOp {
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
             WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.as_str()),
-            WriteOp::ExecEventComplete(_) => None,
+            WriteOp::ExecEventComplete(_) | WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
         }
     }
 }

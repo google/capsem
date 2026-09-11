@@ -7,7 +7,6 @@ use std::{
 use rusqlite::{Connection, OptionalExtension};
 
 const MEMORY_SCHEMA: &str = "mem";
-const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs", "transport_schema"];
 static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
@@ -449,7 +448,6 @@ pub const CREATE_SCHEMA: &str = "
 mod memory_sync;
 mod network_types;
 pub(crate) mod transport;
-use memory_sync::table_column_names;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
 pub use memory_sync::{
@@ -457,6 +455,7 @@ pub use memory_sync::{
     sync_memory_tables_from_disk,
 };
 pub(crate) use memory_sync::{initial_memory_flush_watermarks, MemoryFlushWatermarks};
+pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CREATE_SCHEMA)?;
@@ -504,7 +503,7 @@ pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
+pub(crate) fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
     let query = if schema == "main" {
         "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1".to_string()
     } else {
@@ -524,10 +523,6 @@ fn attach_memory_schema(conn: &Connection, memory_uri: &str) -> rusqlite::Result
     }
     let escaped_uri = memory_uri.replace('\'', "''");
     conn.execute_batch(&format!("ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"))
-}
-
-pub(crate) fn is_disk_only_table(name: &str) -> bool {
-    DISK_ONLY_TABLES.contains(&name)
 }
 
 pub(crate) fn hot_ledger_tables() -> BTreeSet<&'static str> {

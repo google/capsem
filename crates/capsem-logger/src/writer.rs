@@ -9,13 +9,18 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::events::{
-    AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, ProfileMutationEvent,
-    SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SubstitutionEvent, TransportEvent,
+    AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, NetworkMembership,
+    NetworkRecord, ProfileMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SubstitutionEvent,
+    TransportEvent,
 };
 use crate::schema;
 
+mod flush_faults;
 mod model_rows;
 mod producer;
+use flush_faults::take_disk_flush_failure_for_tests;
+#[cfg(test)]
+pub(crate) use flush_faults::{fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests};
 use model_rows::insert_model_call;
 
 /// Maximum bytes stored for any preview/content field (256 KB).
@@ -43,54 +48,6 @@ pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(test)]
-static FAIL_DISK_FLUSHES_FOR_TESTS: std::sync::Mutex<Option<(PathBuf, usize)>> = std::sync::Mutex::new(None);
-
-#[cfg(test)]
-pub(crate) fn fail_disk_flushes_for_tests(count: usize) {
-    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
-    if count == 0 {
-        *guard = None;
-    } else {
-        *guard = Some((PathBuf::new(), count));
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn fail_disk_flushes_for_path_for_tests(path: &Path, count: usize) {
-    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
-    if count == 0 {
-        *guard = None;
-    } else {
-        *guard = Some((path.to_path_buf(), count));
-    }
-}
-
-#[cfg(test)]
-fn take_disk_flush_failure_for_tests(db_path: Option<&Path>) -> bool {
-    let mut guard = FAIL_DISK_FLUSHES_FOR_TESTS.lock().unwrap();
-    let Some((configured_path, remaining)) = guard.as_mut() else {
-        return false;
-    };
-    if *remaining == 0 {
-        *guard = None;
-        return false;
-    }
-    if !configured_path.as_os_str().is_empty() && db_path != Some(configured_path.as_path()) {
-        return false;
-    }
-    *remaining -= 1;
-    if *remaining == 0 {
-        *guard = None;
-    }
-    true
-}
-
-#[cfg(not(test))]
-fn take_disk_flush_failure_for_tests(_db_path: Option<&Path>) -> bool {
-    false
-}
 
 fn new_event_id() -> String {
     let value = Uuid::new_v4().simple().to_string();
@@ -142,6 +99,9 @@ pub enum WriteOp {
     SecurityAskEvent(SecurityAskEvent),
     SecurityDecisionEvent(SecurityDecisionEvent),
     ProfileMutationEvent(ProfileMutationEvent),
+    /// Registry rows of a network database; upserted by key, disk-only.
+    Network(NetworkRecord),
+    NetworkMembership(NetworkMembership),
 }
 
 /// What a flush barrier reports back: `Err` when the disk flush the barrier
@@ -674,6 +634,8 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
         WriteOp::ProfileMutationEvent(_) => {
             tables.insert("profile_mutation_events");
         }
+        // Disk-only registry tables: written to main directly, nothing to flush.
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
     }
 }
 
@@ -769,6 +731,8 @@ fn execute_memory_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Resul
             WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e, WriteTarget::Memory)?,
             WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(&tx, e, WriteTarget::Memory)?,
             WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(&tx, e, WriteTarget::Memory)?,
+            WriteOp::Network(n) => event_rows::upsert_network(&tx, n, WriteTarget::Memory)?,
+            WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(&tx, m, WriteTarget::Memory)?,
         }
     }
     tx.commit()?;

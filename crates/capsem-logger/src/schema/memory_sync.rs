@@ -4,6 +4,21 @@
 
 use super::*;
 
+/// Tables that live on disk only and never mirror into the memory schema:
+/// body blobs are too large to keep hot, the schema markers are not data, and
+/// the network registry tables (`network_db`) are small state, not a ledger.
+const DISK_ONLY_TABLES: &[&str] = &[
+    "event_body_blobs",
+    "transport_schema",
+    "network",
+    "network_members",
+    "network_schema",
+];
+
+pub(crate) fn is_disk_only_table(name: &str) -> bool {
+    DISK_ONLY_TABLES.contains(&name)
+}
+
 /// Reconcile the attached DB-owned memory schema with the current disk schema.
 ///
 /// An external reader can observe `session.db` after SQLite creates the file but
@@ -52,7 +67,7 @@ pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<
     Ok(())
 }
 
-pub(super) fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
+pub(crate) fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?

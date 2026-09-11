@@ -3,7 +3,9 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+mod network;
 mod transport;
+pub use network::{MembershipState, NetworkMembership, NetworkRecord, NetworkState};
 pub use transport::{TransportEvent, TransportEventKind};
 
 pub use capsem_proto::credential_reference::{credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX};
