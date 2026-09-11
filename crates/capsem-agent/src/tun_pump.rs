@@ -17,6 +17,7 @@ use std::net::Ipv4Addr;
 use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -25,6 +26,39 @@ use nix::libc;
 use vsock_io::VSOCK_HOST_CID;
 
 const HEADER_BYTES: usize = 2;
+
+/// What each direction moved, printed when the link ends so a stalled
+/// transfer can be read from the log rather than reproduced.
+pub struct Counters {
+    pub frames: AtomicU64,
+    pub bytes: AtomicU64,
+    pub largest: AtomicU64,
+}
+
+impl Counters {
+    pub const fn new() -> Self {
+        Self {
+            frames: AtomicU64::new(0),
+            bytes: AtomicU64::new(0),
+            largest: AtomicU64::new(0),
+        }
+    }
+
+    fn record(&self, length: usize) {
+        self.frames.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(length as u64, Ordering::Relaxed);
+        self.largest.fetch_max(length as u64, Ordering::Relaxed);
+    }
+}
+
+impl Default for Counters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub static DEVICE_TO_STREAM: Counters = Counters::new();
+pub static STREAM_TO_DEVICE: Counters = Counters::new();
 /// A frame's u16 length bounds the packet, and so the device MTU.
 pub const MAX_PACKET_BYTES: usize = u16::MAX as usize;
 const DEVICE: &str = "tun0";
@@ -63,6 +97,7 @@ pub fn device_to_stream(device: &mut impl PacketDevice, stream: &mut impl Write,
         }
         frame[..HEADER_BYTES].copy_from_slice(&(length as u16).to_be_bytes());
         stream.write_all(&frame[..HEADER_BYTES + length])?;
+        DEVICE_TO_STREAM.record(length);
     }
 }
 
@@ -87,6 +122,7 @@ pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, 
         }
         stream.read_exact(&mut packet[..length])?;
         device.write_packet(&packet[..length])?;
+        STREAM_TO_DEVICE.record(length);
     }
 }
 
@@ -256,6 +292,17 @@ fn run(options: Options) -> io::Result<()> {
 }
 
 fn report(direction: &str, outcome: io::Result<()>) -> ! {
+    for (name, counters) in [
+        ("device to host", &DEVICE_TO_STREAM),
+        ("host to device", &STREAM_TO_DEVICE),
+    ] {
+        eprintln!(
+            "[capsem-tun] {name}: {} frames, {} bytes, largest {}",
+            counters.frames.load(Ordering::Relaxed),
+            counters.bytes.load(Ordering::Relaxed),
+            counters.largest.load(Ordering::Relaxed)
+        );
+    }
     match outcome {
         Ok(()) => {
             eprintln!("[capsem-tun] {direction}: link closed");
