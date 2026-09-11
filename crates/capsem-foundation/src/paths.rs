@@ -68,7 +68,13 @@ pub fn capsem_networks_dir() -> PathBuf {
 
 /// Return the logger-owned database of one named network.
 pub fn network_db_path(network_id: &str) -> PathBuf {
-    capsem_networks_dir().join(network_id).join("network.db")
+    network_db_path_in(&capsem_networks_dir(), network_id)
+}
+
+/// The same layout under an explicit networks root, for registries built
+/// against a directory rather than the home.
+pub fn network_db_path_in(networks_dir: &std::path::Path, network_id: &str) -> PathBuf {
+    networks_dir.join(network_id).join("network.db")
 }
 
 /// Return `<capsem_home>/bin` (installed binaries directory).
