@@ -83,12 +83,14 @@ fn reservations_reject_what_they_must() {
 #[test]
 fn racing_allocations_never_share_an_address() {
     let allocator = std::sync::Arc::new(std::sync::Mutex::new(AddressAllocator::new(small_pool())));
-    let handles: Vec<_> = (0..5)
-        .map(|_| {
-            let allocator = std::sync::Arc::clone(&allocator);
-            std::thread::spawn(move || allocator.lock().unwrap().allocate().unwrap())
-        })
-        .collect();
+    // Every thread is spawned before any is joined, or there is no race.
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        let allocator = std::sync::Arc::clone(&allocator);
+        handles.push(std::thread::spawn(move || {
+            allocator.lock().unwrap().allocate().unwrap()
+        }));
+    }
     let mut handed: Vec<Ipv4Addr> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
     handed.sort();
     handed.dedup();
