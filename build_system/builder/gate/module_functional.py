@@ -49,7 +49,8 @@ class FunctionalModule(
         if self.qualification.pulled:
             functional(plan, self._config, qualification=self.qualification)
         else:
-            prepared = runtimeprepare.prepare(plan, self._config, after=())
+            permission = self.rebuild_permission
+            prepared = runtimeprepare.prepare(plan, self._config, permission=permission)
             functional(
                 plan,
                 self._config,

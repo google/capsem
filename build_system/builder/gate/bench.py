@@ -127,8 +127,8 @@ class BenchCommand(GateCommand, name="bench", help="measure performance and reco
         prepared = runtimeprepare.prepare(
             plan,
             self._config,
-            after=(),
             guest=not bool(self._args.quick),
+            permission=self.rebuild_permission,
             build_label="bench.build",
             sign_label="bench.sign",
         )
@@ -166,12 +166,14 @@ class BenchReportCommand(
         plan.add(
             step(
                 "bench.report",
-                Run([
-                    str(self._config.path(settings.binary)),
-                    "report",
-                    "--store",
-                    str(self._config.path(settings.store)),
-                ]),
+                Run(
+                    [
+                        str(self._config.path(settings.binary)),
+                        "report",
+                        "--store",
+                        str(self._config.path(settings.store)),
+                    ]
+                ),
                 kind=Kind.CAPSEM,
                 needs=frozenset({Needs.DISK}),
                 speed=Speed.FAST,

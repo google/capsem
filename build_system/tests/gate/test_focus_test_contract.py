@@ -53,11 +53,15 @@ def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> Non
 
 def test_release_system_focus_is_source_only_and_needs_no_local_package() -> None:
     assert focus.TARGETS["release-system"] is module_contracts.ReleaseContractsModule
-    plan = focus.FocusTestCommand(
-        RecordingRunner(ROOT),
-        _args("release-system"),
-        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
-    ).plan().describe()
+    plan = (
+        focus.FocusTestCommand(
+            RecordingRunner(ROOT),
+            _args("release-system"),
+            qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+        )
+        .plan()
+        .describe()
+    )
 
     assert "contracts.release" in plan
     assert "contracts.build-system" in plan
@@ -131,8 +135,12 @@ def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: P
     for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
         (native / name).write_bytes(b"fixture")
     plan = Plan("glowup-early-content")
-    glowup(plan, config, qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
-           local_content=content)
+    glowup(
+        plan,
+        config,
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+        local_content=content,
+    )
     runner = RecordingRunner(ROOT)
     with pytest.raises(GateError, match="manifest does not declare"):
         for action in plan.step_named("glowup.content").actions:
@@ -142,9 +150,12 @@ def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: P
 
 def test_pulled_glowup_does_not_rebuild_source_assets() -> None:
     command = focus.FocusTestCommand(
-        RecordingRunner(ROOT), _args("install"),
+        RecordingRunner(ROOT),
+        _args("install"),
         qualification=BinaryQualification(
-            input_dir="pulled", package="pulled/capsem.deb", bin_dir="pulled/bin",
+            input_dir="pulled",
+            package="pulled/capsem.deb",
+            bin_dir="pulled/bin",
         ),
     )
     assert not any(label.startswith("assets.build.") for label in command.plan().labels)
@@ -162,9 +173,7 @@ def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> Non
     assert command.private_checkout == owner.private_checkout
     assert command._sandbox_mode == owner._sandbox_mode
     assert "reexec" not in vars(type(command))
-    assert re.search(
-        r"(?<![\w-])capsem-gate(?![\w-])", command.plan().describe()
-    ) is None
+    assert re.search(r"(?<![\w-])capsem-gate(?![\w-])", command.plan().describe()) is None
 
 
 @pytest.mark.parametrize(
@@ -176,10 +185,13 @@ def test_unknown_focus_names_and_modes_fail_during_parsing(argv: list[str]) -> N
         cli.build_parser().parse_args(argv)
 
 
-def test_the_public_recipe_passes_only_the_group_and_reuse_mode() -> None:
+def test_the_public_recipe_passes_only_the_group_the_mode_and_slow() -> None:
+    """`slow` is the one extra knob: it forwards `--slow`, the permission to
+    rebuild host assets whose expensive inputs changed, and nothing else."""
     recipe = (ROOT / "justfile").read_text(encoding="utf-8")
-    assert f'{variables.FOCUS_TEST} group mode="reuse":' in recipe
+    assert f'{variables.FOCUS_TEST} group mode="reuse" slow="":' in recipe
     assert f"capsem-gate {variables.FOCUS_TEST}" in recipe
+    assert '{{ if slow != "" { "--slow" } else { "" } }}' in recipe
 
 
 def test_the_just_skill_lists_every_focus_owner() -> None:

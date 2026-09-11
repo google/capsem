@@ -22,6 +22,7 @@ from .config import Arch, GateConfig
 from .context import Context
 from .execution import Kind, Needs, Speed, Step, step
 from .filesystem import digest_of, write_text
+from .rebuildpermission import DEFAULT_PERMISSION, ExpensiveRebuildRefused, RebuildPermission
 
 
 def _current_arch_entries(config: GateConfig, arch: Arch) -> dict | None:
@@ -94,7 +95,18 @@ def record_identity(config: GateConfig) -> str:
     return identity
 
 
-def stale(config: GateConfig) -> str | None:
+@dataclass(frozen=True)
+class Staleness:
+    """Why complete host assets may not be reused."""
+
+    reason: str
+    #: The inputs whose digests moved; empty when the record itself is unusable.
+    changed: tuple[str, ...] = ()
+    #: The changed inputs the gate refuses to honour without `--slow`.
+    expensive: tuple[str, ...] = ()
+
+
+def stale(config: GateConfig) -> Staleness | None:
     """Why complete host assets may not be reused, or None when they may."""
     try:
         document = json.loads(record_path(config).read_text(encoding="utf-8"))
@@ -103,7 +115,9 @@ def stale(config: GateConfig) -> str | None:
         if not isinstance(recorded_identity, str) or not isinstance(recorded_inputs, dict):
             raise TypeError("malformed host asset identity record")
     except (OSError, ValueError, KeyError, TypeError):
-        return "have no identity record beside them, so they cannot prove they are current"
+        return Staleness(
+            "have no identity record beside them, so they cannot prove they are current"
+        )
     identity = assetidentity.lane_identity(config)
     if identity == recorded_identity:
         return None
@@ -117,9 +131,11 @@ def stale(config: GateConfig) -> str | None:
     named = ", ".join(changed[:shown])
     if len(changed) > shown:
         named += f", and {len(changed) - shown} more"
-    return (
+    return Staleness(
         f"are stale: identity {identity[:12]} differs from recorded "
-        f"{recorded_identity[:12]}; changed inputs: {named}"
+        f"{recorded_identity[:12]}; changed inputs: {named}",
+        tuple(changed),
+        tuple(path for path in changed if config.assets.is_expensive(path)),
     )
 
 
@@ -127,14 +143,22 @@ def stale(config: GateConfig) -> str | None:
 class Decision:
     needed: bool
     reason: str
+    #: Set when the rebuild is needed but not permitted.
+    refusal: str | None = None
 
 
 class AssetRecovery:
     """One thread-safe warm/cold decision shared by a recovery cohort."""
 
-    def __init__(self, config: GateConfig, arch: Arch) -> None:
+    def __init__(
+        self,
+        config: GateConfig,
+        arch: Arch,
+        permission: RebuildPermission = DEFAULT_PERMISSION,
+    ) -> None:
         self._config = config
         self._arch = arch
+        self._permission = permission
         self._decision: Decision | None = None
         self._announced = False
         self._lock = Lock()
@@ -155,7 +179,23 @@ class AssetRecovery:
             )
         why = stale(self._config)
         if why is not None:
-            return Decision(True, f"host assets ({self._arch.name}) {why}; rebuilding")
+            reason = f"host assets ({self._arch.name}) {why.reason}"
+            if why.expensive and not self._permission.slow:
+                expensive = ", ".join(why.expensive)
+                return Decision(
+                    True,
+                    f"{reason}; refusing to rebuild without --slow (expensive: {expensive})",
+                    refusal=(
+                        f"{reason}.\n"
+                        f"Expensive inputs changed: {expensive}. Rebuilding for them means the "
+                        "guest Rust builder image, every guest agent, the initrd, the kernel and "
+                        "rootfs images and the host binaries: minutes, not seconds. If they were "
+                        "meant to change, rerun with --slow (`just focus-test <group> reuse slow`, "
+                        "`just test <commit> normal '' slow`). If not, restore them; a stray "
+                        "dependency or lock update is what this refusal exists to catch."
+                    ),
+                )
+            return Decision(True, f"{reason}; rebuilding")
         identity = assetidentity.lane_identity(self._config)
         return Decision(
             False,
@@ -212,7 +252,10 @@ class WhenHostAssetsStale(Action, name="when-host-assets-stale"):
 
     def perform(self, context: Context) -> None:
         self._recovery.announce(context)
-        if self._recovery.needed():
+        decision = self._recovery.decision()
+        if decision.refusal is not None:
+            raise ExpensiveRebuildRefused(decision.refusal)
+        if decision.needed:
             self._action.perform(context)
 
 

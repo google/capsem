@@ -8,12 +8,13 @@ from pathlib import Path
 import blake3
 import pytest
 from capsem_builder.cache.config import load_policy
-from capsem_builder.gate import assetcondition, assetidentity, imagebuild
+from capsem_builder.gate import assetcondition, assetidentity, assetrecovery, bench, imagebuild
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.actions import Action
 from capsem_builder.gate.assetcondition import AssetRecovery
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.rebuildpermission import ExpensiveRebuildRefused, RebuildPermission
 from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -111,7 +112,7 @@ def _warm_checkout(tmp_path: Path):
 def _recovery_plan(config, monkeypatch) -> Plan:
     monkeypatch.setattr(imagebuild, "profiles", lambda _config: ["code"])
     plan = Plan("asset-recovery")
-    imagebuild.check_assets(plan, config)
+    assetrecovery.check_assets(plan, config)
     return plan
 
 
@@ -190,11 +191,9 @@ def test_warm_assets_are_reused_only_while_their_inputs_are_unchanged(tmp_path: 
     assert calls == []
     assert any("current" in note and arch.name in note for note in runner.notes), runner.notes
 
-    defconfig = config.root / "config" / "docker" / "image" / "kernel" / "defconfig.arm64"
-    defconfig.parent.mkdir(parents=True)
-    defconfig.write_text("CONFIG_VETH=y\n", encoding="utf-8")
+    _change_kernel_defconfig(config)
     runner = RecordingRunner(tmp_path)
-    AssetRecovery(config, arch).when(_Probe(calls)).perform(
+    AssetRecovery(config, arch, RebuildPermission(slow=True)).when(_Probe(calls)).perform(
         Context(runner, config, journal=RecordingJournal())
     )
 
@@ -202,6 +201,125 @@ def test_warm_assets_are_reused_only_while_their_inputs_are_unchanged(tmp_path: 
     note = "\n".join(runner.notes)
     assert "stale" in note, runner.notes
     assert "config/docker/image/kernel/defconfig.arm64" in note, runner.notes
+
+
+def _change_kernel_defconfig(config) -> None:
+    defconfig = config.root / "config" / "docker" / "image" / "kernel" / "defconfig.arm64"
+    defconfig.parent.mkdir(parents=True)
+    defconfig.write_text("CONFIG_VETH=y\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Honouring a changed input is the most expensive thing the gate does: the
+# guest Rust builder image, every guest agent, the initrd, the images and the
+# host binaries, twenty minutes on a warm machine. It was silently paid for a
+# Cargo.lock that moved by accident, twice in one afternoon, while the run
+# looked like a slow cache hit. Missing assets are still rebuilt without
+# asking -- there is nothing cheaper to do -- but a stale input is a refusal
+# that names the input and the flag, so the cost is chosen and batched.
+# ---------------------------------------------------------------------------
+
+
+def test_stale_inputs_are_refused_unless_the_run_said_slow(tmp_path: Path) -> None:
+    config = _warm_checkout(tmp_path)
+    arch = config.host_arch()
+    _change_kernel_defconfig(config)
+    calls: list[str] = []
+    runner = RecordingRunner(tmp_path)
+    context = Context(runner, config, journal=RecordingJournal())
+
+    with pytest.raises(ExpensiveRebuildRefused) as refused:
+        AssetRecovery(config, arch).when(_Probe(calls)).perform(context)
+
+    assert calls == [], "the expensive action ran before the refusal"
+    message = str(refused.value)
+    assert "config/docker/image/kernel/defconfig.arm64" in message
+    assert "--slow" in message
+    assert any("refusing" in note for note in runner.notes), runner.notes
+
+
+def test_source_only_changes_rebuild_without_slow(tmp_path: Path) -> None:
+    """A core edit must rebuild to be tested; refusing it would teach --slow
+    as a reflex and stop it protecting the lock files."""
+    config = _warm_checkout(tmp_path)
+    arch = config.host_arch()
+    source = config.root / "crates" / "capsem-core" / "src" / "lib.rs"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("pub fn changed() {}\n", encoding="utf-8")
+    calls: list[str] = []
+    runner = RecordingRunner(tmp_path)
+
+    AssetRecovery(config, arch).when(_Probe(calls)).perform(
+        Context(runner, config, journal=RecordingJournal())
+    )
+
+    assert calls == ["performed"]
+    note = "\n".join(runner.notes)
+    assert "crates/capsem-core/src/lib.rs" in note, runner.notes
+    assert "refusing" not in note, runner.notes
+
+
+def test_expensive_inputs_are_a_subset_of_the_identity_roots() -> None:
+    """The refusal names inputs the identity digests; a path outside the roots
+    would never be seen as changed and the guard would be silently empty."""
+    from capsem_builder.gate.assetschema import AssetsConfig
+
+    config = gate_config.load(PROJECT_ROOT)
+    assert config.assets.expensive_inputs, "the guard has nothing to refuse"
+    for path in config.assets.expensive_inputs:
+        assert config.assets.is_expensive(path)
+    assert not config.assets.is_expensive("crates/capsem-core/src/lib.rs")
+    with pytest.raises(ValueError, match="outside"):
+        AssetsConfig.model_validate(
+            config.assets.model_dump() | {"expensive_inputs": ("web/app/package.json",)}
+        )
+
+
+def test_missing_assets_are_rebuilt_without_slow(tmp_path: Path) -> None:
+    config = _warm_checkout(tmp_path)
+    arch = config.host_arch()
+    (config.path(config.imagebuild.output) / arch.name / config.artifacts.bootable[0]).unlink()
+    calls: list[str] = []
+    context = Context(RecordingRunner(tmp_path), config, journal=RecordingJournal())
+
+    AssetRecovery(config, arch).when(_Probe(calls)).perform(context)
+
+    assert calls == ["performed"]
+
+
+def test_a_refused_cohort_refuses_every_action_before_any_runs(tmp_path: Path) -> None:
+    """The decision is shared: the first conditional step raises, and a later
+    step in the same cohort raises the same way rather than proceeding as if
+    the first had rebuilt."""
+    config = _warm_checkout(tmp_path)
+    _change_kernel_defconfig(config)
+    recovery = AssetRecovery(config, config.host_arch())
+    calls: list[str] = []
+    context = Context(RecordingRunner(tmp_path), config, journal=RecordingJournal())
+
+    for _ in range(2):
+        with pytest.raises(ExpensiveRebuildRefused):
+            recovery.when(_Probe(calls)).perform(context)
+    assert calls == []
+
+
+def test_every_gate_command_that_recovers_assets_accepts_slow() -> None:
+    """The refusal names a flag; every command whose plan can reach the
+    recovery must parse it, or the message sends the reader to an error."""
+    from capsem_builder.gate.cli import build_parser
+
+    parser = build_parser()
+    for argv in (
+        ["candidate"],
+        ["test-candidate"],
+        ["focus-test", "kingslanding"],
+        [bench.BenchCommand.name],
+        ["check-assets"],
+        ["test-kingslanding"],
+    ):
+        args = parser.parse_args([*argv, "--slow"])
+        assert RebuildPermission.from_args(args).slow, argv
+        assert not RebuildPermission.from_args(parser.parse_args(argv)).slow, argv
 
 
 def test_warm_assets_without_an_identity_record_are_rebuilt(tmp_path: Path) -> None:
@@ -353,7 +471,7 @@ def test_profile_recovery_builds_are_ordered_and_invalidate_completion_first(
     monkeypatch.setattr(imagebuild, "profiles", lambda _config: ["code", "co-work"])
 
     plan = Plan("asset-recovery-order")
-    images = imagebuild.check_assets(plan, config)
+    images = assetrecovery.check_assets(plan, config)
 
     first, second = images
     assert (first.label, second.label) in plan.edges

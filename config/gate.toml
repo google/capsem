@@ -707,6 +707,23 @@ identity_roots = [
     ".cargo",
     "rust-toolchain.toml",
 ]
+# The subset of `identity_roots` whose change is refused without `--slow`.
+# Honouring one costs the guest Rust builder image, every guest agent, the
+# initrd, the images and the host binaries -- twenty minutes on a warm
+# machine -- and it is usually accidental: a stray dependency, a lock file
+# moved by an unrelated `cargo add`. Source crates are deliberately not here.
+# A change to `crates/capsem-core` must rebuild to be tested at all, so
+# refusing it offers no decision and would only teach `--slow` as a reflex.
+expensive_inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    ".cargo",
+    "rust-toolchain.toml",
+    "build_system/pyproject.toml",
+    "build_system/uv.lock",
+    "build_system/builder/image",
+    "config/docker/image/kernel",
+]
 lane_receipt = ".lane-receipt.json"
 # The host asset tree (`imagebuild.output`) gets the same identity recorded
 # beside it after its last image build, with one digest per input. The warm

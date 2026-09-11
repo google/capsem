@@ -35,6 +35,7 @@ from .qualification import Qualification
 from .qualification import from_environment as qualification_for
 from .qualification import is_release as qualification_is_release
 from .qualificationevidence import QualificationPolicy
+from .rebuildpermission import RebuildPermission
 from .recording import Recorded
 from .scopeenv import command_environment
 from .sourcecommit import SourceCommit, qualified_commit
@@ -106,6 +107,11 @@ class GateCommand(CommandHooks, Recorded, ABC):
         self._qualification = qualification
         if qualification is None and self.uses_qualification:
             self._qualification = qualification_for(self._config)
+
+    @property
+    def rebuild_permission(self) -> RebuildPermission:
+        """Whether this run may rebuild host assets whose inputs changed: `--slow`."""
+        return RebuildPermission.from_args(self._args)
 
     @property
     def qualification(self) -> Qualification:

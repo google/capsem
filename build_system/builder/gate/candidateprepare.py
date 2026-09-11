@@ -10,10 +10,15 @@ from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Remove
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
+from .rebuildpermission import DEFAULT_PERMISSION, RebuildPermission
 
 
 def prepare(
-    plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...],
+    permission: RebuildPermission = DEFAULT_PERMISSION,
 ) -> runtimeprepare.Preparation:
     """Establish everything the expensive candidate phases assume.
 
@@ -97,7 +102,7 @@ def prepare(
     built_harness = phase.add(harness, after=(checked,))
     fit = phase.add(fitness, after=(built_harness,))
     dependencies = packagepreflight.fragment(plan, config, after=(fit,))
-    return runtimeprepare.prepare(plan, config, after=(dependencies,))
+    return runtimeprepare.prepare(plan, config, after=(dependencies,), permission=permission)
 
 
 def _enforce_cache(config: GateConfig) -> Call:

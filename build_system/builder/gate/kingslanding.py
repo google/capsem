@@ -54,7 +54,11 @@ class KingslandingModule(
         ready = (
             ()
             if self.qualification.pulled
-            else (runtimeprepare.prepare(plan, self._config, after=()).ready,)
+            else (
+                runtimeprepare.prepare(
+                    plan, self._config, permission=self.rebuild_permission
+                ).ready,
+            )
         )
         phase = plan.phase("kingslanding")
         fixture = phase.add(prefetch(self._config), after=ready)
