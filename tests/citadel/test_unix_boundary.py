@@ -47,6 +47,8 @@ DOMAIN_ABI_FILES = {
     Path("crates/capsem-agent/src/main.rs"),
     # The guest owns namespace setup on disposable threads, never host Unix policy.
     Path("crates/capsem-agent/src/port_bridge/setup.rs"),
+    # The tun pump owns the tun/ifreq ioctls that name, address and raise tun0.
+    Path("crates/capsem-agent/src/tun_pump.rs"),
     Path("crates/capsem-agent/src/mcp_server.rs"),
     Path("crates/capsem-agent/src/shutdown.rs"),
     Path("crates/capsem-agent/src/terminal_bridge.rs"),

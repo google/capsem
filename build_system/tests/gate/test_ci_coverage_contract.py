@@ -144,6 +144,7 @@ def test_workspace_crates_and_bins_enumerated() -> None:
         "capsem-service",
         "capsem-sysutil",
         "capsem-tray",
+        "capsem-tun",
         "capsem-tui",
     }
     discovered_binary_targets = {

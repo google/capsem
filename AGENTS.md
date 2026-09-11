@@ -50,7 +50,7 @@ crates/capsem-router/     Confined TCP publication companion (data descriptors o
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
-crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil (musl)
+crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)

@@ -55,6 +55,7 @@ GUEST_BINARIES = [
     "capsem-dns-proxy",
     "capsem-mcp-server",
     "capsem-sysutil",
+    "capsem-tun",
     "capsem-bench-rs",
 ]
 

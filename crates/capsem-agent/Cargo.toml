@@ -29,6 +29,10 @@ path = "src/mcp_server.rs"
 name = "capsem-sysutil"
 path = "src/bin/capsem_sysutil.rs"
 
+[[bin]]
+name = "capsem-tun"
+path = "src/tun_pump.rs"
+
 [dependencies]
 nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
 rmp-serde = { workspace = true }

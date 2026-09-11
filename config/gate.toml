@@ -1461,7 +1461,7 @@ materialize_config = "build_system/scripts/build/materialize-config.sh"
 # The guest binaries the initrd carries, all cross-compiled to musl.
 binaries = [
     "capsem-pty-agent", "capsem-net-proxy", "capsem-dns-proxy",
-    "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
+    "capsem-mcp-server", "capsem-sysutil", "capsem-tun", "capsem-bench-rs",
 ]
 staging = "cache/target/build/linux-agent"
 # The guest builder's source_roots and sealed image identity own freshness.
