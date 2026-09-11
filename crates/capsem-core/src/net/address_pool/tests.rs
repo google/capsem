@@ -79,3 +79,19 @@ fn reservations_reject_what_they_must() {
     let handed: Vec<_> = (0..4).map(|_| allocator.allocate().unwrap()).collect();
     assert!(!handed.contains(&Ipv4Addr::new(192, 168, 7, 12)));
 }
+
+#[test]
+fn racing_allocations_never_share_an_address() {
+    let allocator = std::sync::Arc::new(std::sync::Mutex::new(AddressAllocator::new(small_pool())));
+    let handles: Vec<_> = (0..5)
+        .map(|_| {
+            let allocator = std::sync::Arc::clone(&allocator);
+            std::thread::spawn(move || allocator.lock().unwrap().allocate().unwrap())
+        })
+        .collect();
+    let mut handed: Vec<Ipv4Addr> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    handed.sort();
+    handed.dedup();
+    assert_eq!(handed.len(), 5, "five racing callers, five distinct addresses");
+    assert!(allocator.lock().unwrap().allocate().is_err(), "and nothing left over");
+}
