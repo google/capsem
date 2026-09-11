@@ -9,6 +9,15 @@ fn vsock_dns_proxy_port_constant() {
 }
 
 #[test]
+fn vsock_network_port_constant() {
+    // Pinned like the DNS port: the guest `capsem-tun` pump and the host
+    // dispatch both name this exact port for the tun0 packet stream.
+    assert_eq!(VSOCK_PORT_NETWORK, 5009);
+    assert_eq!(HostVsockService::from_port(5009), Some(HostVsockService::Network));
+    assert_eq!(HostVsockService::Network.as_str(), "network");
+}
+
+#[test]
 fn vsock_port_constants_are_distinct() {
     let ports = [
         VSOCK_PORT_CONTROL,
@@ -19,6 +28,7 @@ fn vsock_port_constants_are_distinct() {
         VSOCK_PORT_AUDIT,
         VSOCK_PORT_DNS_PROXY,
         VSOCK_PORT_PUBLICATION,
+        VSOCK_PORT_NETWORK,
     ];
     let unique: std::collections::HashSet<_> = ports.iter().collect();
     assert_eq!(unique.len(), ports.len(), "vsock port collision");
@@ -38,6 +48,7 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
             VSOCK_PORT_AUDIT,
             VSOCK_PORT_DNS_PROXY,
             VSOCK_PORT_PUBLICATION,
+            VSOCK_PORT_NETWORK,
         ],
         "boot must use the typed host VSOCK service registry, not an inline array"
     );

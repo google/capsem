@@ -127,6 +127,9 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
+/// The guest's tun0 packet stream: `capsem-tun` pumps raw IP frames over one
+/// connection to the host network endpoint that terminates them in smoltcp.
+pub const VSOCK_PORT_NETWORK: u32 = 5009;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -145,6 +148,7 @@ pub enum HostVsockService {
     Audit,
     DnsProxy,
     Publication,
+    Network,
 }
 
 impl HostVsockService {
@@ -158,6 +162,7 @@ impl HostVsockService {
             Self::Audit => VSOCK_PORT_AUDIT,
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
             Self::Publication => VSOCK_PORT_PUBLICATION,
+            Self::Network => VSOCK_PORT_NETWORK,
         }
     }
 
@@ -171,6 +176,7 @@ impl HostVsockService {
             Self::Audit => "audit",
             Self::DnsProxy => "dns_proxy",
             Self::Publication => "publication",
+            Self::Network => "network",
         }
     }
 
@@ -184,6 +190,7 @@ impl HostVsockService {
             VSOCK_PORT_AUDIT => Some(Self::Audit),
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
             VSOCK_PORT_PUBLICATION => Some(Self::Publication),
+            VSOCK_PORT_NETWORK => Some(Self::Network),
             _ => None,
         }
     }
@@ -198,6 +205,7 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::Audit,
     HostVsockService::DnsProxy,
     HostVsockService::Publication,
+    HostVsockService::Network,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -209,6 +217,7 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_AUDIT,
     VSOCK_PORT_DNS_PROXY,
     VSOCK_PORT_PUBLICATION,
+    VSOCK_PORT_NETWORK,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {
