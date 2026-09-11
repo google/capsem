@@ -34,6 +34,9 @@ pub struct ProvisionRequest {
     pub env: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    /// Named networks to join at create.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -966,6 +969,9 @@ impl UdsClient {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+mod networks;
+pub use networks::*;
 
 #[cfg(test)]
 mod tests;

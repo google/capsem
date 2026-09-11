@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Named networks: `capsem network list|create|inspect|delete|connect|disconnect`
+  and `capsem create --network NAME` group VMs that may reach each other on
+  their private addresses, over `/networks` routes on the service and gateway.
 - Every VM receives one private IPv4 address for its whole life from the
   host pool `10.128.0.0/9`, kept across stop and resume for named VMs and shown
   as `private_address` by `/vms/list`, `/vms/{id}/info`, `capsem list` and

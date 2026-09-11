@@ -1,10 +1,16 @@
 mod client;
 mod completions;
 mod container_run;
+mod grouped_help;
+use grouped_help::GROUPED_HELP;
+mod network_commands;
 mod paths;
 mod platform;
+mod route_ids;
 mod service_install;
 mod session_display;
+use network_commands::NetworkCommands;
+use route_ids::resolve_session_route_id;
 use session_display::{format_uptime, print_session_info, session_blocked_reason};
 mod support;
 mod support_bundle;
@@ -207,44 +213,6 @@ const fn cli_styles() -> Styles {
         .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
 }
 
-const GROUPED_HELP: &str = "\
-\x1b[36;1;4mSession Commands:\x1b[0m
-  \x1b[32;1mcreate\x1b[0m       Create and boot a new session
-  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
-  \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
-  \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
-  \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)
-  \x1b[32;1mexec\x1b[0m         Execute a command in a running session
-  \x1b[32;1mrun\x1b[0m          Run a command in a fresh session (destroyed after)
-  \x1b[32;1mlist\x1b[0m         List all sessions (running + suspended persistent)
-  \x1b[32;1minfo\x1b[0m         Show detailed information about a session
-  \x1b[32;1mlogs\x1b[0m         Show logs from a session
-  \x1b[32;1mdelete\x1b[0m       Delete a session and all its state
-  \x1b[32;1mfork\x1b[0m         Fork a session into a reusable snapshot
-  \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
-  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
-
-\x1b[36;1;4mService:\x1b[0m
-  \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
-  \x1b[32;1mstatus\x1b[0m       Show service status
-  \x1b[32;1mstart\x1b[0m        Start the background service
-  \x1b[32;1mstop\x1b[0m         Stop the background service
-  \x1b[32;1massets\x1b[0m       Inspect or repair VM assets
-
-\x1b[36;1;4mMCP:\x1b[0m
-  \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
-  \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
-  \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
-  \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
-
-\x1b[36;1;4mMisc:\x1b[0m
-  \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
-  \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
-  \x1b[32;1mdebug\x1b[0m        Write a redacted support bundle for bug reports
-  \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
-  \x1b[32;1mversion\x1b[0m      Show version and build information
-  \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
-
 #[derive(Parser)]
 #[command(
     author,
@@ -278,6 +246,10 @@ enum Commands {
     /// Inspect or repair VM assets
     #[command(subcommand)]
     Assets(AssetsCommands),
+
+    /// Manage named networks: groups of sessions that can reach each other
+    #[command(subcommand)]
+    Network(NetworkCommands),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -366,6 +338,9 @@ enum SessionCommands {
         /// Clone state from an existing persistent session
         #[arg(long, alias = "image")]
         from: Option<String>,
+        /// Named networks to join (repeatable: --network NAME)
+        #[arg(long = "network")]
+        network: Vec<String>,
     },
     /// Open an interactive shell in a session
     ///
@@ -697,13 +672,6 @@ fn print_asset_status(status: &AssetStatusResponse) {
             None => println!("  {:<14} {}", asset.name, asset.status),
         }
     }
-}
-
-async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> anyhow::Result<String> {
-    client
-        .listed_session_id(typed)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown session name or id: {typed}"))
 }
 
 fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
@@ -1556,6 +1524,7 @@ async fn main() -> Result<()> {
             cpu,
             env,
             from,
+            network,
         }) => {
             client::validate_id(profile)?;
             let persistent = name.is_some() || from.is_some();
@@ -1567,6 +1536,7 @@ async fn main() -> Result<()> {
                 persistent,
                 env: client::parse_env_vars(env)?,
                 from: from.clone(),
+                networks: network.clone(),
             };
 
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", &req).await?;
@@ -1897,6 +1867,7 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
+        Commands::Network(command) => network_commands::run(&client, command).await?,
         Commands::Mcp(McpCommands::Servers { profile }) => {
             client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> =
@@ -2050,6 +2021,7 @@ async fn main() -> Result<()> {
                 persistent: false,
                 env: Some(doctor_env),
                 from: None,
+                networks: Vec::new(),
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;

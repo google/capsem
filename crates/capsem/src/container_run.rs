@@ -123,6 +123,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
         persistent: true,
         env: None,
         from: None,
+        networks: Vec::new(),
     };
     // Keep the create request alive until it returns the authoritative VM id.
     // Signals are already registered and remain queued while boot completes.

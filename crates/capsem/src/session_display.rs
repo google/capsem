@@ -1,5 +1,6 @@
-//! How `capsem list` and `capsem info` describe a session on screen.
-use crate::client::SessionInfo;
+//! How `capsem list`, `capsem info` and `capsem network` describe sessions
+//! and networks on screen.
+use crate::client::{NetworkInfo, SessionInfo};
 
 pub(crate) fn format_uptime(secs: Option<u64>) -> String {
     match secs {
@@ -109,6 +110,30 @@ pub(crate) fn print_session_info(info: &SessionInfo) {
         if let Some(fe) = info.total_file_events {
             println!("  File Events:   {}", fe);
         }
+    }
+}
+
+pub(crate) fn print_network_list(networks: &[NetworkInfo]) {
+    if networks.is_empty() {
+        println!("No networks.");
+        return;
+    }
+    println!("{:<38} {:<20} {:<8}", "ID", "NAME", "MEMBERS");
+    for network in networks {
+        println!("{:<38} {:<20} {:<8}", network.id, network.name, network.members.len());
+    }
+}
+
+pub(crate) fn print_network_info(network: &NetworkInfo) {
+    println!("Network: {}", network.name);
+    println!("ID:      {}", network.id);
+    if network.members.is_empty() {
+        println!("Members: none");
+        return;
+    }
+    println!("Members:");
+    for member in &network.members {
+        println!("  {:<38} {:<16} {}", member.vm_id, member.address, member.state);
     }
 }
 

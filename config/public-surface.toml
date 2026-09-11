@@ -37,7 +37,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 32
+count = 38
 approved = [
   "assets ensure",
   "assets status",
@@ -57,6 +57,12 @@ approved = [
   "mcp refresh",
   "mcp servers",
   "mcp tools",
+  "network connect",
+  "network create",
+  "network delete",
+  "network disconnect",
+  "network inspect",
+  "network list",
   "persist",
   "purge",
   "restart",
