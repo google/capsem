@@ -15,6 +15,7 @@
 
 pub mod device;
 pub mod frames;
+pub mod relay;
 pub mod stack;
 pub mod throughput;
 
