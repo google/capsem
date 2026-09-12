@@ -43,14 +43,14 @@ impl Publisher {
 }
 
 #[derive(Clone)]
-pub(super) struct AuditFlow {
+pub struct AuditFlow {
     authority: Arc<Authority>,
     facts: NetworkFlow,
     started: std::time::Instant,
 }
 
 impl AuditFlow {
-    pub fn new(
+    pub(super) fn new(
         authority: Arc<Authority>,
         publication_id: uuid::Uuid,
         listener: SocketAddr,
@@ -69,6 +69,36 @@ impl AuditFlow {
                 source: NetworkEndpoint {
                     vm: None,
                     address: peer,
+                },
+                destination: NetworkEndpoint {
+                    vm: Some(authority.vm.clone()),
+                    address: (Ipv4Addr::LOCALHOST, port).into(),
+                },
+                report: None,
+            },
+            authority,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    /// A private connection another member's owner handed over: this VM is
+    /// the destination, the source is the member the service named.
+    pub(super) fn private(
+        authority: Arc<Authority>,
+        network: NetworkIdentity,
+        source: NetworkVm,
+        source_address: SocketAddr,
+        port: u16,
+    ) -> Self {
+        Self {
+            facts: NetworkFlow {
+                connection_id: uuid::Uuid::new_v4(),
+                route: NetworkRoute::Private { network },
+                side: NetworkSide::Destination,
+                protocol: NetworkProtocol::Tcp,
+                source: NetworkEndpoint {
+                    vm: Some(source),
+                    address: source_address,
                 },
                 destination: NetworkEndpoint {
                     vm: Some(authority.vm.clone()),

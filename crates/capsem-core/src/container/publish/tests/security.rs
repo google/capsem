@@ -11,7 +11,8 @@ fn engine(action: &str, plugin_block: bool) -> Arc<NetworkSecurity> {
         String::new()
     } else {
         format!(
-            "[profiles.rules.expose]\nname = \"expose\"\naction = \"{action}\"\nmatch = 'network.mode == \"expose\"'"
+            "[profiles.rules.expose]\nname = \"expose\"\naction = \"{action}\"\nmatch = 'network.mode == \"expose\"'\n\
+             [profiles.rules.private]\nname = \"private\"\naction = \"{action}\"\nmatch = 'network.mode == \"private\"'"
         )
     };
     let rules = SecurityRuleSet::compile_profile(
@@ -74,11 +75,11 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
         let stop = CancellationToken::new();
         let broker = tokio::spawn(broker::serve(
             owner.clone(),
-            6379,
-            listener,
+            owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
             control,
             router,
             stop.clone(),
+            capsem_router::Class::Expose,
         ));
         // Denial may enqueue cleanup, but must never request a guest socket.
         let opened = tokio::time::timeout(Duration::from_millis(100), async {
@@ -143,17 +144,24 @@ async fn missing_security_context_never_requests_a_guest_connection() {
     let (control, mut requests) = mpsc::channel(32);
     let stop = CancellationToken::new();
     let _client = tokio::net::TcpStream::connect(address).await.unwrap();
+    // Without a security context there is no feeder at all: the listener is
+    // never served, so no broker exists to request a guest destination.
+    let feeder = owner.clone().accept_publication(listener, 6379, stop.clone());
+    assert!(feeder.is_err(), "a publisher without security fed a broker");
+    let (feed, incoming) = mpsc::channel(1);
+    drop(feed);
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        6379,
-        listener,
+        incoming,
         control,
         router,
         stop.clone(),
+        capsem_router::Class::Expose,
     ));
     let requested = tokio::time::timeout(Duration::from_millis(100), requests.recv()).await;
     stop.cancel();
-    let _result = broker.await.unwrap();
+    let result = broker.await.unwrap();
+    assert!(result.is_err(), "the broker refused to run without a security context");
     owner.shutdown().await;
     assert!(
         requested.is_err() || requested.unwrap().is_none(),
@@ -228,11 +236,11 @@ async fn a_control_lease_that_never_came_up_is_audited_as_unreachable() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        6379,
-        listener,
+        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
         control,
         fake_router(),
         stop.clone(),
+        capsem_router::Class::Expose,
     ));
 
     let rows = recorded_connect_results(&engine, &path).await;
@@ -259,11 +267,11 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        6379,
-        listener,
+        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
         control,
         fake_router(),
         stop.clone(),
+        capsem_router::Class::Expose,
     ));
     // Setup reached the guest request and is waiting on the bridge's reply.
     let request = tokio::time::timeout(Duration::from_secs(5), requests.recv())

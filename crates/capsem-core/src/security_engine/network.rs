@@ -15,6 +15,16 @@ pub struct NetworkIdentity {
     pub name: String,
 }
 
+impl NetworkIdentity {
+    /// From the wire, where the id travels as text.
+    pub fn parse(id: &str, name: String) -> Result<Self, String> {
+        Ok(Self {
+            id: Uuid::parse_str(id).map_err(|error| format!("network id {id:?}: {error}"))?,
+            name,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NetworkVm {
     pub id: String,

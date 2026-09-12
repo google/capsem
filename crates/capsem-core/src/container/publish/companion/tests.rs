@@ -24,9 +24,20 @@ async fn late_ack_after_removal_does_not_interrupt_another_publication() {
     let (second, mut second_events) = mpsc::channel(4);
     let (source, _client) = StdUnixStream::pair().unwrap();
     let (destination, _server) = StdUnixStream::pair().unwrap();
-    let first = router.grant(source.as_fd(), destination.as_fd(), first).await.unwrap();
+    let first = router
+        .grant(source.as_fd(), destination.as_fd(), first, capsem_router::Class::Expose)
+        .await
+        .unwrap();
     let _first_pair = receiver.recv().await.unwrap();
-    let second = router.grant(source.as_fd(), destination.as_fd(), second).await.unwrap();
+    let second = router
+        .grant(
+            source.as_fd(),
+            destination.as_fd(),
+            second,
+            capsem_router::Class::Expose,
+        )
+        .await
+        .unwrap();
     let _second_pair = receiver.recv().await.unwrap();
     router.abort(first).await.unwrap();
     assert!(matches!(Grant::decode(receiver.recv().await.unwrap()).unwrap(), Grant::Abort { id } if id == first));

@@ -3,12 +3,13 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+mod private;
 mod security;
 
-fn source_fixture() -> Arc<std::net::TcpStream> {
+fn source_fixture() -> Arc<Source> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    Arc::new(listener.accept().unwrap().0)
+    Arc::new(Source::Tcp(listener.accept().unwrap().0))
 }
 
 #[tokio::test]
@@ -21,7 +22,7 @@ async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broke
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
         .unwrap();
-    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let source = Arc::new(Source::Tcp(listener.accept().await.unwrap().0.into_std().unwrap()));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
@@ -63,7 +64,7 @@ async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_compl
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
         .unwrap();
-    let source = Arc::new(listener.accept().await.unwrap().0.into_std().unwrap());
+    let source = Arc::new(Source::Tcp(listener.accept().await.unwrap().0.into_std().unwrap()));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
@@ -220,7 +221,17 @@ async fn serve_fixture(
         monitor.closed.cancel();
         result
     });
-    let result = broker::serve(owner, guest_port, listener, control, router.clone(), cancellation).await;
+    let result = broker::serve(
+        owner.clone(),
+        owner
+            .accept_publication(listener, guest_port, cancellation.clone())
+            .unwrap(),
+        control,
+        router.clone(),
+        cancellation,
+        capsem_router::Class::Expose,
+    )
+    .await;
     router.closed.cancel();
     let events = readers.join_next().await.unwrap().unwrap();
     result.and(events)
@@ -294,11 +305,14 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
         let address = listener.local_addr().unwrap();
         brokers.spawn(broker::serve(
             owner.clone(),
-            guest_port,
-            listener,
+            owner
+                .clone()
+                .accept_publication(listener, guest_port, cancellation.clone())
+                .unwrap(),
             control.clone(),
             router.clone(),
             cancellation.clone(),
+            capsem_router::Class::Expose,
         ));
         for _ in 0..5 {
             clients.push(tokio::net::TcpStream::connect(address).await.unwrap());

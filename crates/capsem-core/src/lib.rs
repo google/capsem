@@ -11,6 +11,7 @@ pub mod mcp;
 pub mod net;
 pub mod pty_log;
 pub mod security_engine;
+pub mod service_uds;
 pub mod session;
 #[cfg(test)]
 pub(crate) mod test_support;

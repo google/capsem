@@ -3,7 +3,6 @@ use super::*;
 use crate::security_engine::network::NetworkReason;
 use crate::security_engine::{RuntimeSecurityEventType as Type, SecurityEnforcementAction as Action};
 use capsem_router::MAX_CONNECTIONS;
-use tokio::net::TcpListener;
 use tokio::time::Instant;
 
 struct Active {
@@ -13,24 +12,24 @@ struct Active {
     graceful: bool,
     _permit: tokio::sync::OwnedSemaphorePermit,
     setup: tokio::task::AbortHandle,
-    source: Arc<std::net::TcpStream>,
+    source: Arc<Source>,
     connection: Option<VsockConnection>,
     acknowledgement: Option<Instant>,
     accepted: bool,
     close_deadline: Option<Instant>,
+    _keepalive: Option<capsem_foundation::unix::router_channel::Receiver>,
 }
 impl Drop for Active {
     fn drop(&mut self) {
         self.setup.abort();
         let shutdown = if self.graceful {
-            capsem_foundation::unix::fd::tcp_clear_reset_on_close(self.source.as_fd())
-                .and_then(|_| self.source.shutdown(std::net::Shutdown::Both))
+            self.source.close_gracefully()
         } else {
-            capsem_foundation::unix::fd::reset_tcp(self.source.as_fd()).map(|_| ())
+            self.source.reset()
         };
         if let Err(error) = shutdown {
             tracing::debug!(%error, "publication source shutdown");
-            if let Err(error) = self.source.shutdown(std::net::Shutdown::Both) {
+            if let Err(error) = self.source.close_gracefully() {
                 tracing::debug!(%error, "publication source fallback shutdown");
             }
         }
@@ -44,15 +43,14 @@ impl Drop for Active {
 
 pub(super) async fn serve(
     owner: Arc<Publisher>,
-    guest_port: u16,
-    listener: TcpListener,
+    mut incoming: mpsc::Receiver<Incoming>,
     control: mpsc::Sender<ServiceToProcess>,
     router: Arc<companion::Router>,
     cancellation: CancellationToken,
+    class: capsem_router::Class,
 ) -> Result<()> {
-    let authority = owner.security.clone().context("publication security context missing")?;
-    let host_address = listener.local_addr()?;
-    let publication_id = uuid::Uuid::new_v4();
+    ensure!(owner.security.is_some(), "publication security context missing");
+    let (ingress, setup_slots, setup_rate) = owner.budget(class);
     let mut active: HashMap<u64, Active> = HashMap::new();
     let mut connecting: HashMap<u64, Active> = HashMap::new();
     let mut setups = tokio::task::JoinSet::new();
@@ -64,26 +62,24 @@ pub(super) async fn serve(
             tokio::select! {
                 _ = cancellation.cancelled() => return Ok(()),
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
-                accepted = listener.accept(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
-                    let (source, peer) = accepted?;
-                    let Ok(permit) = owner.ingress.clone().try_acquire_owned() else {
-                        tracing::debug!(%peer, "VM ingress connection quota exhausted");
+                arrival = incoming.recv(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
+                    let Some(Incoming { source, audit, port: guest_port, keepalive }) = arrival else {
+                        return Ok(());
+                    };
+                    let Ok(permit) = ingress.clone().try_acquire_owned() else {
+                        tracing::debug!(?class, "VM ingress connection quota exhausted");
                         continue;
                     };
-                    source.set_nodelay(true)?;
-                    capsem_foundation::unix::fd::set_stream_buffers(source.as_fd(),
-                        capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
-                    capsem_foundation::unix::fd::tcp_reset_on_close(source.as_fd())?;
-                    let source = Arc::new(source.into_std()?);
+                    source.prepare()?;
+                    let source = Arc::new(source);
                     let (pending, receiver) = owner.request(&source, guest_close.clone())?;
                     let id = pending.id;
                     let flow = capsem_proto::router::FlowKey { generation: owner.generation.get(), id };
-                    let audit = AuditFlow::new(authority.clone(), publication_id, host_address, peer, guest_port);
                     let record = audit.clone();
                     let lease = pending.lease.clone();
                     let control = control.clone();
-                    let slots = owner.setups.clone();
-                    let rate = owner.setup_rate.clone();
+                    let slots = setup_slots.clone();
+                    let rate = setup_rate.clone();
                     let setup = setups.spawn(async move {
                         let mut reason = NetworkReason::Io;
                         let result = tokio::time::timeout(Duration::from_secs(8), async {
@@ -124,8 +120,8 @@ pub(super) async fn serve(
                         };
                         (id, result, reason)
                     });
-                    tracing::debug!(connection_id = id, %peer, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
+                    tracing::debug!(connection_id = id, guest_port, ?class, "publication connection accepted");
+                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None, _keepalive: keepalive });
                 }
                 Some((guest, report)) = guest_records.recv() => {
                     if report.reason != capsem_proto::router::CloseReason::Complete {
@@ -193,7 +189,7 @@ pub(super) async fn serve(
                                     capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                                 flow.connection = Some(connection);
                                 flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
-                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await
+                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone(), class).await
                             }.await;
                             match grant {
                                 Ok(id) => { active.insert(id, flow); }

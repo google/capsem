@@ -30,6 +30,7 @@ impl Router {
         source: BorrowedFd<'_>,
         destination: BorrowedFd<'_>,
         observer: mpsc::Sender<Event>,
+        class: capsem_router::Class,
     ) -> Result<u64> {
         let mut writer = self.writer.lock().await;
         ensure!(!self.closed.is_cancelled(), "VM router is closed");
@@ -42,7 +43,7 @@ impl Router {
                 &writer.sender,
                 Grant::Connected {
                     id,
-                    class: capsem_router::Class::Expose,
+                    class,
                     source,
                     destination,
                 },
