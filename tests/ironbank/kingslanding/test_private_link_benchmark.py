@@ -42,7 +42,20 @@ BENCH = str(BIN_DIR / "capsem-bench-rs")
 
 
 @pytest.fixture
-def container(service, tmp_path):
+def evidence():
+    """Where a test's evidence outlives the run: the gate removes its
+    temporary directories, so a log copied to tmp_path was gone before
+    anyone could read it."""
+    return Path(
+        tempfile.mkdtemp(
+            prefix="private-link-",
+            dir=benchmark_output_dir(PROJECT_ROOT, "kingslanding"),
+        )
+    )
+
+
+@pytest.fixture
+def container(service, tmp_path, evidence):
     """The Redis image as a container with one published port; the throughput
     server runs in its network namespace from the guest binary."""
     with (
@@ -84,7 +97,8 @@ def container(service, tmp_path):
                 "workspace/.capsem-agent-stdio.log",
             ):
                 for log in service.tmp_dir.glob(f"persistent/*/{name}"):
-                    (tmp_path / Path(name).name).write_bytes(log.read_bytes())
+                    (evidence / Path(name).name).write_bytes(log.read_bytes())
+            print(f"PRIVATE LINK EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -132,14 +146,9 @@ def client_args(direction, streams, seconds=SECONDS):
 
 
 def test_private_link_and_published_port_transport_samples(
-    container, service, tmp_path
+    container, service, evidence
 ):
-    output = Path(
-        tempfile.mkdtemp(
-            prefix="private-link-",
-            dir=benchmark_output_dir(PROJECT_ROOT, "kingslanding"),
-        )
-    )
+    output = evidence
     doctor = subprocess.run(
         [BENCH, "doctor", "--json"], capture_output=True, timeout=15, check=False
     )
@@ -247,7 +256,6 @@ def test_private_link_and_published_port_transport_samples(
             check=False,
         )
         (output / "guest-helpers.txt").write_text(json.dumps(helpers, indent=2))
-        print(f"PRIVATE LINK EVIDENCE: {output}")
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     (output / "comparison.json").write_text(
         json.dumps(compare(metrics), indent=2) + "\n"
