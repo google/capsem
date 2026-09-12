@@ -160,6 +160,9 @@ impl ServiceState {
         child_cmd
             .arg("--env")
             .arg(format!("CAPSEM_PRIVATE_ADDRESS={}", lease.address));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -452,6 +455,9 @@ impl ServiceState {
         child_cmd
             .arg("--env")
             .arg(format!("CAPSEM_PRIVATE_ADDRESS={private_address}"));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
