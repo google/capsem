@@ -4,7 +4,7 @@ A host client, a published port, the confined router copying bytes into the
 container: `capsem-bench-rs throughput` records every direction and stream
 count through the benchmark store. The tun0 lane this file once measured
 against it is gone with its smoltcp endpoint (S04-004 no-go, artifacts A026
-and A028); tun0 now carries private datagrams between members. Kingslanding
+and A028); tap0 now carries private datagrams between members. Kingslanding
 uses a pinned native image prepared before hermetic execution; the image
 only provides the container.
 """
@@ -29,7 +29,6 @@ __all__ = ["service"]
 pytestmark = pytest.mark.integration
 
 THROUGHPUT_PORT = 5201
-GATEWAY = "10.128.0.1"
 SECONDS = 3
 TRIALS = 3
 MATRIX = [
@@ -197,15 +196,11 @@ def test_private_link_and_published_port_transport_samples(
         "published throughput server",
         timeout=30,
     )
-    # The agent brought tun0 up at boot with the address the service named;
-    # the test never starts the pump itself.
-    device = guest(service, vm_id, "ip -o addr show tun0")
-    # A point-to-point link prints `inet A peer G/9`: the address, the
-    # gateway as peer, and the pool prefix that routes 10.128.0.0/9 here.
-    assert (
-        f"inet {container['vm']['private_address']} peer {GATEWAY}/9"
-        in device["stdout"]
-    ), device
+    # The agent brought tap0 up at boot with the address the service named
+    # and the pool prefix that routes 10.128.0.0/9 into it; the test never
+    # starts the pump itself.
+    device = guest(service, vm_id, "ip -o addr show tap0")
+    assert f"inet {container['vm']['private_address']}/9" in device["stdout"], device
 
     metrics = {}
     try:
@@ -226,7 +221,7 @@ def test_private_link_and_published_port_transport_samples(
         helpers = guest(
             service,
             vm_id,
-            "ls -la /var/tmp; pgrep -a capsem-tun; ip -o addr show tun0",
+            "ls -la /var/tmp; pgrep -a capsem-tun; ip -o addr show tap0",
             check=False,
         )
         (output / "guest-helpers.txt").write_text(json.dumps(helpers, indent=2))

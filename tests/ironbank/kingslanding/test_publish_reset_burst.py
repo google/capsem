@@ -34,8 +34,6 @@ COLLAPSE_LINES = (
     "virtual machine stopped",
     "guest close report rejected",
     "guest control lease missing",
-    "guest tun0 packet stream ended",
-    "guest tun0 packet stream failed",
 )
 
 
@@ -78,9 +76,9 @@ def test_a_reset_burst_on_a_published_port_leaves_every_guest_link_up(
         # The control lease: a fresh publication is set up and answers.
         again = probe(latency)
         assert again.returncode == 0, f"round {round_number}: {again.stderr}"
-        # Exec and the tun0 stream: the guest answers and still holds its link.
-        device = guest(service, vm_id, "ip -o addr show tun0", timeout=20)
-        assert f"inet {container['vm']['private_address']} peer" in device["stdout"], (
+        # Exec and the link: the guest answers and still holds tap0.
+        device = guest(service, vm_id, "ip -o addr show tap0", timeout=20)
+        assert f"inet {container['vm']['private_address']}/9" in device["stdout"], (
             device
         )
         log = owner_log(service)
