@@ -5,6 +5,7 @@ mod job_store;
 mod mcp_runtime;
 mod private_handoff;
 mod private_link;
+mod private_names;
 mod private_seats;
 mod runtime_config;
 mod terminal;
@@ -438,7 +439,7 @@ async fn run_async_main_loop(
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
-    private_seats::bind(
+    let seats = private_seats::bind(
         private_seats::Seats {
             id: &args.id,
             env: &args.env,
@@ -609,13 +610,22 @@ async fn run_async_main_loop(
     } else {
         DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
     };
-    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_cache(
-        Arc::clone(&net_state.policy),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::new(dns_resolver),
-        Arc::new(DnsAnswerCache::default()),
+    // The private zone is the service's to answer, for this VM's networks.
+    let private_names = Arc::new(private_names::ServicePrivateNames::new(
+        seats.service_socket,
+        seats.owner_secret,
+        args.id.clone(),
     ));
+    let dns_handler = Arc::new(
+        capsem_core::net::dns::DnsHandler::with_cache(
+            Arc::clone(&net_state.policy),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::new(dns_resolver),
+            Arc::new(DnsAnswerCache::default()),
+        )
+        .with_private_names(private_names),
+    );
 
     let sched_clone = Arc::clone(&scheduler);
     tokio::spawn(async move {

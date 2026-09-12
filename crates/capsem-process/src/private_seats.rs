@@ -29,7 +29,18 @@ fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, Un
     Ok((path, listener))
 }
 
-pub(crate) fn bind(seats: Seats<'_>, job_store: &Arc<JobStore>, control: mpsc::Sender<ServiceToProcess>) -> Result<()> {
+/// What the seats were bound with, for the other things this owner asks
+/// the service on its VM's behalf.
+pub(crate) struct Bound {
+    pub service_socket: std::path::PathBuf,
+    pub owner_secret: String,
+}
+
+pub(crate) fn bind(
+    seats: Seats<'_>,
+    job_store: &Arc<JobStore>,
+    control: mpsc::Sender<ServiceToProcess>,
+) -> Result<Bound> {
     // The run directory the service named; otherwise where the service put
     // our IPC socket, walked up.
     let walked_up = seats
@@ -65,13 +76,15 @@ pub(crate) fn bind(seats: Seats<'_>, job_store: &Arc<JobStore>, control: mpsc::S
         handoff_path,
         job_store.publisher.clone(),
         control,
-        service_socket,
-        owner_secret,
+        service_socket.clone(),
+        owner_secret.clone(),
         seats.id.to_string(),
         link,
     ));
     let _ = job_store.private.set(Arc::clone(&handoff));
     tokio::spawn(handoff.serve(handoff_listener));
-
-    Ok(())
+    Ok(Bound {
+        service_socket,
+        owner_secret,
+    })
 }
