@@ -79,7 +79,17 @@ pub enum NetworkSide {
 #[serde(rename_all = "snake_case")]
 pub enum NetworkProtocol {
     Tcp,
+    Udp,
+    /// ICMP echo between members: no ports, the echo identifier is not one.
+    Icmp,
     SyntheticPing,
+}
+
+impl NetworkProtocol {
+    /// Whether the endpoints of this protocol carry no port.
+    pub fn portless(self) -> bool {
+        matches!(self, Self::Icmp | Self::SyntheticPing)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -177,7 +187,10 @@ impl NetworkSecurityEvent {
                         validate_vm(vm)?;
                     }
                     require(!endpoint.address.ip().is_unspecified(), "unspecified endpoint address")?;
-                    require(probe == (endpoint.address.port() == 0), "invalid endpoint port")?;
+                    require(
+                        flow.protocol.portless() == (endpoint.address.port() == 0),
+                        "invalid endpoint port",
+                    )?;
                 }
                 require(flow.destination.vm.is_some(), "missing destination VM identity")?;
                 match &flow.route {
@@ -240,6 +253,8 @@ impl NetworkSecurityEvent {
             })),
             "protocol" => Some(borrowed(match flow.protocol {
                 NetworkProtocol::Tcp => "tcp",
+                NetworkProtocol::Udp => "udp",
+                NetworkProtocol::Icmp => "icmp",
                 NetworkProtocol::SyntheticPing => "synthetic_ping",
             })),
             "publication.id" => match flow.route {

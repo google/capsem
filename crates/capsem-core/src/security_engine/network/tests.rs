@@ -189,6 +189,53 @@ fn lifecycle_and_synthetic_probe_cannot_masquerade_as_tcp_connects() {
 }
 
 #[test]
+fn udp_and_icmp_flows_are_rule_visible_protocols() {
+    let mut udp = private_flow();
+    udp.protocol = NetworkProtocol::Udp;
+    let udp = NetworkSecurityEvent::Flow(udp);
+    udp.validate(RuntimeSecurityEventType::NetworkConnect).unwrap();
+    assert!(
+        udp.validate(RuntimeSecurityEventType::NetworkProbe).is_err(),
+        "a datagram flow is not a probe"
+    );
+    let only_udp = rules(
+        "[profiles.rules.udp]\nname = \"udp\"\naction = \"allow\"\nmatch = 'network.mode == \"private\" && network.protocol == \"udp\"'",
+    );
+    let allowed = evaluate_security_boundary(
+        &only_udp,
+        BTreeMap::new(),
+        SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(udp),
+    )
+    .unwrap();
+    assert_eq!(allowed.enforcement.action, SecurityEnforcementAction::Allow);
+    let tcp = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
+        .with_network(NetworkSecurityEvent::Flow(private_flow()));
+    let blocked = evaluate_security_boundary(&only_udp, BTreeMap::new(), tcp).unwrap();
+    assert_eq!(
+        blocked.enforcement.action,
+        SecurityEnforcementAction::Block,
+        "a udp rule says nothing about tcp"
+    );
+
+    let mut icmp = private_flow();
+    icmp.protocol = NetworkProtocol::Icmp;
+    let with_ports = NetworkSecurityEvent::Flow(icmp.clone());
+    assert!(
+        with_ports.validate(RuntimeSecurityEventType::NetworkConnect).is_err(),
+        "icmp has no ports"
+    );
+    icmp.source.address.set_port(0);
+    icmp.destination.address.set_port(0);
+    let icmp = NetworkSecurityEvent::Flow(icmp);
+    icmp.validate(RuntimeSecurityEventType::NetworkConnect).unwrap();
+    assert!(
+        format!("{:?}", icmp.get("protocol")).contains("icmp"),
+        "{:?}",
+        icmp.get("protocol")
+    );
+}
+
+#[test]
 fn network_boundary_requires_an_explicit_allow() {
     let policy = rules("");
     let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
