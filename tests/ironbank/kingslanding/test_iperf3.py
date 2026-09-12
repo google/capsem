@@ -161,9 +161,9 @@ def test_native_iperf3_transfers_both_ways_over_the_private_path(
                 "unit": "megabits_per_second",
                 "samples": [udp["end"]["sum"]["bits_per_second"] / 1e6],
             },
-            "iperf3.udp.lost_percent": {
-                "unit": "percent",
-                "samples": [udp["end"]["sum"]["lost_percent"]],
+            "iperf3.udp.lost_ratio": {
+                "unit": "ratio",
+                "samples": [udp["end"]["sum"]["lost_percent"] / 100.0],
             },
             "iperf3.udp.jitter_ms": {
                 "unit": "milliseconds",
