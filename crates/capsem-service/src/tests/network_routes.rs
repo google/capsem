@@ -254,6 +254,115 @@ async fn private_connect(state: &Arc<ServiceState>, request: serde_json::Value) 
     route_request(app(state), Method::POST, "/networks/private/connect", Some(request)).await
 }
 
+async fn private_datagram(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    route_request(app(state), Method::POST, "/networks/private/datagram", Some(request)).await
+}
+
+#[tokio::test]
+async fn a_private_datagram_flow_is_admitted_like_a_connection_and_names_its_protocol() {
+    let (state, dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-a", 4242);
+    insert_fake_instance(&state, "vm-b", 4243);
+    owner_secret(&state, "vm-a", "secret-a");
+    let address_b = state.instances.lock().unwrap()["vm-b"].private_address;
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    for vm in ["vm-a", "vm-b"] {
+        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let owner_b = spawn_fake_process(&uds_b, 2, |message| {
+        let reply = match message {
+            ServiceToProcess::PrivateAccept {
+                id,
+                protocol,
+                port,
+                source_port,
+                ..
+            } => {
+                match protocol.as_str() {
+                    "udp" => assert_eq!((*port, *source_port), (5353, 40000)),
+                    "icmp" => assert_eq!((*port, *source_port), (0, 0x4242)),
+                    other => panic!("unexpected protocol {other}"),
+                }
+                Some(ProcessToService::PrivateAcceptResult {
+                    id: *id,
+                    handoff_socket: "/run/vm-b/private-relay.sock".into(),
+                    error: None,
+                })
+            }
+            other => panic!("unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+    let base = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b.to_string() });
+    let mut udp = base.clone();
+    udp["protocol"] = json!("udp");
+    udp["port"] = json!(5353);
+    udp["source_port"] = json!(40000);
+    let (status, admitted) = private_datagram(&state, udp).await;
+    assert_eq!(status, StatusCode::OK, "{admitted}");
+    assert_eq!(admitted["relay_socket"], "/run/vm-b/private-relay.sock");
+    assert_eq!(admitted["destination_vm"], "vm-b");
+    assert_eq!(admitted["token"].as_str().unwrap().len(), 16);
+    let mut icmp = base.clone();
+    icmp["protocol"] = json!("icmp");
+    icmp["port"] = json!(0);
+    icmp["source_port"] = json!(0x4242);
+    let (status, admitted) = private_datagram(&state, icmp).await;
+    assert_eq!(status, StatusCode::OK, "{admitted}");
+    assert_eq!(owner_b.await.unwrap().len(), 2);
+
+    // What the service refuses before any owner is asked.
+    let mut portless_udp = base.clone();
+    portless_udp["protocol"] = json!("udp");
+    portless_udp["port"] = json!(0);
+    portless_udp["source_port"] = json!(40000);
+    assert_eq!(private_datagram(&state, portless_udp).await.0, StatusCode::BAD_REQUEST);
+    let mut icmp_with_port = base.clone();
+    icmp_with_port["protocol"] = json!("icmp");
+    icmp_with_port["port"] = json!(7);
+    icmp_with_port["source_port"] = json!(1);
+    assert_eq!(
+        private_datagram(&state, icmp_with_port).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut sctp = base.clone();
+    sctp["protocol"] = json!("sctp");
+    sctp["port"] = json!(7);
+    sctp["source_port"] = json!(1);
+    assert_eq!(private_datagram(&state, sctp).await.0, StatusCode::BAD_REQUEST);
+    let mut stranger = base.clone();
+    stranger["protocol"] = json!("udp");
+    stranger["destination"] = json!("10.128.0.9");
+    stranger["port"] = json!(53);
+    stranger["source_port"] = json!(40000);
+    assert_eq!(private_datagram(&state, stranger).await.0, StatusCode::NOT_FOUND);
+
+    let (status, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    assert_eq!(status, StatusCode::OK, "{logs}");
+    let events = logs["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2, "one row per admitted flow: {logs}");
+    let protocols: Vec<_> = events
+        .iter()
+        .map(|event| event["event"]["network"]["protocol"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        protocols.contains(&"udp".to_string()) && protocols.contains(&"icmp".to_string()),
+        "{protocols:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| event["event"]["decision"]["effective"] == "allow"),
+        "{logs}"
+    );
+    drop(dir);
+}
+
 #[tokio::test]
 async fn a_private_connection_is_admitted_through_the_destination_owner_and_audited_for_both() {
     let (state, dir) = make_test_state_with_tempdir();

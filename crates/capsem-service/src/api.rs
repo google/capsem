@@ -154,6 +154,33 @@ pub struct PrivateConnectRequest {
     pub process_name: String,
 }
 
+/// A VM owner asking to relay a datagram flow (UDP, or ICMP echo) from its
+/// guest to a member's private address.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PrivateDatagramRequest {
+    pub source_vm: String,
+    pub owner_secret: String,
+    #[serde(default)]
+    pub source_generation: u64,
+    /// "udp" or "icmp".
+    pub protocol: String,
+    pub destination: std::net::Ipv4Addr,
+    /// The destination port for UDP; 0 for ICMP.
+    pub port: u16,
+    /// The source port for UDP; the echo identifier for ICMP.
+    pub source_port: u16,
+}
+
+/// Where an admitted datagram flow goes: the destination owner's relay
+/// socket and the one-time token its frames travel under.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PrivateDatagramResponse {
+    pub network: String,
+    pub destination_vm: String,
+    pub relay_socket: String,
+    pub token: String,
+}
+
 /// Where an admitted private connection goes: the destination owner's
 /// handoff socket and the one-time token it will accept the stream under.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
