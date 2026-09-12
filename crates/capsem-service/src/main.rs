@@ -53,6 +53,7 @@ mod profile_status_cache;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod switches;
 mod vm_spawn;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
@@ -223,11 +224,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
-// Service state
-
 struct ServiceState {
-    /// Map of instance ID to Process Info
-    instances: Mutex<HashMap<String, InstanceInfo>>,
+    instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
     /// resolve a handle here and call `ready/query`; they do not open SQLite
     /// readers or create per-route projection caches.
@@ -240,7 +238,8 @@ struct ServiceState {
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
-    service_socket: PathBuf, // this service's own, where an owner asks on a guest's behalf
+    service_socket: PathBuf,      // this service's own, where an owner asks on a guest's behalf
+    switches: switches::Switches, // one confined switch per network, and its links
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,

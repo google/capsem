@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UDP and ICMP between members of a network on their private addresses: every
+  guest's `tap0` is one ethernet link to the network's own confined switch
+  (`capsem-router --switch`), which forwards frames between members after
+  pinning their source, answers ARP itself and drops everything else. TCP
+  keeps its per-connection admission. A VM's profile decides once per attach
+  (`network.protocol == "link"`), and `capsem network logs` shows each link
+  and its end with frame counts; a member reads `ready` once linked.
 - TCP between members of a network on their private addresses: a guest's
   connect to a member is intercepted, admitted by the service per connection
   under the security rules, audited in the network's history from both VMs,

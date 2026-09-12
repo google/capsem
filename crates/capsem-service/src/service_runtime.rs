@@ -255,6 +255,7 @@ pub(super) async fn run_service() -> Result<()> {
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         service_socket: service_sock.clone(),
+        switches: switches::Switches::confined(),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(manifest),
         current_version,

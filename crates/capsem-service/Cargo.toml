@@ -17,6 +17,7 @@ capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-proto = { path = "../capsem-proto" }
+capsem-router = { path = "../capsem-router" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

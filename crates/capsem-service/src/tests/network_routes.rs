@@ -2,6 +2,7 @@
 //! their lifetime addresses, and retired only once empty.
 use super::*;
 use axum::http::Method;
+use std::time::Duration;
 
 fn app(state: &Arc<ServiceState>) -> axum::Router {
     build_service_router(Arc::clone(state))
@@ -71,7 +72,9 @@ async fn members_join_with_their_lifetime_address_and_block_deletion() {
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(joined["members"][0]["vm_id"], "running-vm");
     assert_eq!(joined["members"][0]["address"], json!(running_address.to_string()));
-    assert_eq!(joined["members"][0]["state"], "declared");
+    // A running VM is linked at once; this fake owner has no seat, so the
+    // link fails and the membership says so.
+    assert_eq!(joined["members"][0]["state"], "failed");
     let (status, joined) = route_request(app(&state), Method::PUT, &member(&stopped_id), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(
@@ -250,117 +253,20 @@ fn owner_secret(state: &ServiceState, vm: &str, secret: &str) {
     state.instances.lock().unwrap().get_mut(vm).unwrap().owner_secret = secret.into();
 }
 
+/// The TCP admission rows of a logs page; a running member's link rows
+/// (these fake owners have no seat, so theirs say `block`) sit beside them.
+fn tcp_events(logs: &serde_json::Value) -> Vec<serde_json::Value> {
+    logs["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["event"]["network"]["protocol"] == "tcp")
+        .cloned()
+        .collect()
+}
+
 async fn private_connect(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
     route_request(app(state), Method::POST, "/networks/private/connect", Some(request)).await
-}
-
-async fn private_datagram(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
-    route_request(app(state), Method::POST, "/networks/private/datagram", Some(request)).await
-}
-
-#[tokio::test]
-async fn a_private_datagram_flow_is_admitted_like_a_connection_and_names_its_protocol() {
-    let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    insert_fake_instance(&state, "vm-a", 4242);
-    insert_fake_instance(&state, "vm-b", 4243);
-    owner_secret(&state, "vm-a", "secret-a");
-    let address_b = state.instances.lock().unwrap()["vm-b"].private_address;
-    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
-    let (_, created) = create_network(&state, "team").await;
-    let id = created["id"].as_str().unwrap().to_string();
-    for vm in ["vm-a", "vm-b"] {
-        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let owner_b = spawn_fake_process(&uds_b, 2, |message| {
-        let reply = match message {
-            ServiceToProcess::PrivateAccept {
-                id,
-                protocol,
-                port,
-                source_port,
-                ..
-            } => {
-                match protocol.as_str() {
-                    "udp" => assert_eq!((*port, *source_port), (5353, 40000)),
-                    "icmp" => assert_eq!((*port, *source_port), (0, 0x4242)),
-                    other => panic!("unexpected protocol {other}"),
-                }
-                Some(ProcessToService::PrivateAcceptResult {
-                    id: *id,
-                    handoff_socket: "/run/vm-b/private-relay.sock".into(),
-                    error: None,
-                })
-            }
-            other => panic!("unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    });
-    let base = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b.to_string() });
-    let mut udp = base.clone();
-    udp["protocol"] = json!("udp");
-    udp["port"] = json!(5353);
-    udp["source_port"] = json!(40000);
-    let (status, admitted) = private_datagram(&state, udp).await;
-    assert_eq!(status, StatusCode::OK, "{admitted}");
-    assert_eq!(admitted["relay_socket"], "/run/vm-b/private-relay.sock");
-    assert_eq!(admitted["destination_vm"], "vm-b");
-    assert_eq!(admitted["token"].as_str().unwrap().len(), 16);
-    let mut icmp = base.clone();
-    icmp["protocol"] = json!("icmp");
-    icmp["port"] = json!(0);
-    icmp["source_port"] = json!(0x4242);
-    let (status, admitted) = private_datagram(&state, icmp).await;
-    assert_eq!(status, StatusCode::OK, "{admitted}");
-    assert_eq!(owner_b.await.unwrap().len(), 2);
-
-    // What the service refuses before any owner is asked.
-    let mut portless_udp = base.clone();
-    portless_udp["protocol"] = json!("udp");
-    portless_udp["port"] = json!(0);
-    portless_udp["source_port"] = json!(40000);
-    assert_eq!(private_datagram(&state, portless_udp).await.0, StatusCode::BAD_REQUEST);
-    let mut icmp_with_port = base.clone();
-    icmp_with_port["protocol"] = json!("icmp");
-    icmp_with_port["port"] = json!(7);
-    icmp_with_port["source_port"] = json!(1);
-    assert_eq!(
-        private_datagram(&state, icmp_with_port).await.0,
-        StatusCode::BAD_REQUEST
-    );
-    let mut sctp = base.clone();
-    sctp["protocol"] = json!("sctp");
-    sctp["port"] = json!(7);
-    sctp["source_port"] = json!(1);
-    assert_eq!(private_datagram(&state, sctp).await.0, StatusCode::BAD_REQUEST);
-    let mut stranger = base.clone();
-    stranger["protocol"] = json!("udp");
-    stranger["destination"] = json!("10.128.0.9");
-    stranger["port"] = json!(53);
-    stranger["source_port"] = json!(40000);
-    assert_eq!(private_datagram(&state, stranger).await.0, StatusCode::NOT_FOUND);
-
-    let (status, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    assert_eq!(status, StatusCode::OK, "{logs}");
-    let events = logs["events"].as_array().unwrap();
-    assert_eq!(events.len(), 2, "one row per admitted flow: {logs}");
-    let protocols: Vec<_> = events
-        .iter()
-        .map(|event| event["event"]["network"]["protocol"].as_str().unwrap().to_string())
-        .collect();
-    assert!(
-        protocols.contains(&"udp".to_string()) && protocols.contains(&"icmp".to_string()),
-        "{protocols:?}"
-    );
-    assert!(
-        events
-            .iter()
-            .all(|event| event["event"]["decision"]["effective"] == "allow"),
-        "{logs}"
-    );
-    drop(dir);
 }
 
 #[tokio::test]
@@ -417,7 +323,7 @@ async fn a_private_connection_is_admitted_through_the_destination_owner_and_audi
 
     let (status, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
     assert_eq!(status, StatusCode::OK, "{logs}");
-    let events = logs["events"].as_array().unwrap();
+    let events = tcp_events(&logs);
     assert_eq!(events.len(), 1, "{logs}");
     let facts = &events[0]["event"];
     assert_eq!(facts["network"]["context"], "private");
@@ -427,16 +333,8 @@ async fn a_private_connection_is_admitted_through_the_destination_owner_and_audi
     assert_eq!(facts["decision"]["effective"], "allow");
     let (_, by_a) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-a"), None).await;
     let (_, by_b) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-b"), None).await;
-    assert_eq!(
-        by_a["events"].as_array().unwrap().len(),
-        1,
-        "visible from the source: {by_a}"
-    );
-    assert_eq!(
-        by_b["events"].as_array().unwrap().len(),
-        1,
-        "and from the destination: {by_b}"
-    );
+    assert_eq!(tcp_events(&by_a).len(), 1, "visible from the source: {by_a}");
+    assert_eq!(tcp_events(&by_b).len(), 1, "and from the destination: {by_b}");
     drop(dir);
 }
 
@@ -488,7 +386,7 @@ async fn a_private_connection_is_refused_before_any_owner_is_asked() {
         None,
     )
     .await;
-    let events = logs["events"].as_array().unwrap();
+    let events = tcp_events(&logs);
     assert_eq!(events.len(), 1, "{logs}");
     assert_eq!(events[0]["event"]["decision"]["reason"], "destination_stopped");
 }
@@ -525,7 +423,7 @@ async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     owner_b.await.unwrap();
     let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    let events = logs["events"].as_array().unwrap();
+    let events = tcp_events(&logs);
     assert_eq!(events.len(), 1, "{logs}");
     assert_eq!(events[0]["event"]["decision"]["reason"], "destination_refused");
 
@@ -534,11 +432,9 @@ async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited
     let (status, refused) = private_connect(&state, request).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{refused}");
     let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    assert_eq!(logs["events"].as_array().unwrap().len(), 2, "{logs}");
-    assert_eq!(
-        logs["events"][1]["event"]["decision"]["reason"],
-        "destination_unreachable"
-    );
+    let events = tcp_events(&logs);
+    assert_eq!(events.len(), 2, "{logs}");
+    assert_eq!(events[1]["event"]["decision"]["reason"], "destination_unreachable");
 }
 
 #[tokio::test]
@@ -580,8 +476,200 @@ async fn a_membership_that_changes_while_the_owner_answers_is_never_granted() {
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     owner_b.await.unwrap();
     let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    let events = logs["events"].as_array().unwrap();
+    let events = tcp_events(&logs);
     assert_eq!(events.len(), 1, "{logs}");
     assert_eq!(events[0]["event"]["decision"]["effective"], "block");
     assert_eq!(events[0]["event"]["decision"]["reason"], "membership_changed");
+}
+
+/// A fake owner's link seat: answers LinkAttach with its handoff socket,
+/// takes the token there, hands back one end of a socket pair as the guest
+/// stream, and reports when the service lets the link go.
+struct FakeLinkSeat {
+    guest_end: Mutex<Option<std::os::unix::net::UnixStream>>,
+    released: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+fn fake_link_seat(
+    uds: &std::path::Path,
+    refuse: bool,
+) -> (Arc<FakeLinkSeat>, tokio::task::JoinHandle<Vec<ServiceToProcess>>) {
+    use capsem_foundation::unix::router_channel::{Receiver, Sender};
+    use std::os::fd::AsRawFd;
+    let handoff = uds.with_file_name("vm-b-handoff.sock");
+    let _ = std::fs::remove_file(&handoff);
+    let listener = tokio::net::UnixListener::bind(&handoff).unwrap();
+    let (switch_end, guest_end) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (released_tx, released_rx) = tokio::sync::oneshot::channel();
+    let seat = Arc::new(FakeLinkSeat {
+        guest_end: Mutex::new(Some(guest_end)),
+        released: Mutex::new(Some(released_rx)),
+    });
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let std = stream.into_std().unwrap();
+        let receiver = Receiver::new(std.try_clone().unwrap()).unwrap();
+        let frame = receiver.recv().await.unwrap();
+        assert_eq!(frame.bytes[1], 5, "a link request");
+        let sender = Sender::new(std.try_clone().unwrap()).unwrap();
+        sender.send(&frame.bytes, &[switch_end.as_raw_fd()]).await.unwrap();
+        drop(switch_end);
+        std.set_nonblocking(true).unwrap();
+        let mut watch = tokio::net::UnixStream::from_std(std).unwrap();
+        let mut sink = [0u8; 8];
+        while tokio::io::AsyncReadExt::read(&mut watch, &mut sink).await.unwrap_or(0) != 0 {}
+        let _ = released_tx.send(());
+    });
+    let owner = spawn_fake_process(uds, 1, move |message| {
+        let reply = match message {
+            ServiceToProcess::LinkAttach {
+                id,
+                token,
+                network_name,
+                ..
+            } => {
+                assert_eq!(token.len(), 16);
+                assert_eq!(network_name, "team");
+                Some(ProcessToService::LinkAttachResult {
+                    id: *id,
+                    handoff_socket: if refuse {
+                        String::new()
+                    } else {
+                        handoff.to_string_lossy().into_owned()
+                    },
+                    error: refuse.then(|| "this VM's profile blocks the link".into()),
+                })
+            }
+            other => panic!("unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+    (seat, owner)
+}
+
+async fn member_state(state: &Arc<ServiceState>, network: &str, vm: &str) -> String {
+    let (_, info) = route_request(app(state), Method::GET, &format!("/networks/{network}"), None).await;
+    info["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["vm_id"] == vm)
+        .map(|member| member["state"].as_str().unwrap().to_string())
+        .unwrap_or_else(|| "absent".into())
+}
+
+#[tokio::test]
+async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_leaves() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, owner) = fake_link_seat(&uds_b, false);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+
+    let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    assert_eq!(joined["members"][0]["state"], "ready", "{joined}");
+    assert!(matches!(owner.await.unwrap()[0], ServiceToProcess::LinkAttach { .. }));
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    let linked = logs["events"].as_array().unwrap().iter().any(|event| {
+        event["event"]["network"]["protocol"] == "link"
+            && event["event"]["network"]["destination"]["vm"]["id"] == "vm-b"
+            && event["event"]["decision"]["effective"] == "allow"
+    });
+    assert!(linked, "{logs}");
+
+    // Leaving unlinks: the switch drops the stream and the owner's handoff
+    // connection ends, so it lets go of the guest stream.
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{id}/members/vm-b"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let released = seat.released.lock().unwrap().take().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), released)
+        .await
+        .expect("the service let the link go")
+        .unwrap();
+    let guest_end = seat.guest_end.lock().unwrap().take().unwrap();
+    guest_end.set_nonblocking(true).unwrap();
+    let mut guest_end = tokio::net::UnixStream::from_std(guest_end).unwrap();
+    let read = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::io::AsyncReadExt::read(&mut guest_end, &mut [0u8; 1]),
+    )
+    .await
+    .expect("the switch closed the stream")
+    .unwrap();
+    assert_eq!(read, 0);
+    assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+}
+
+#[tokio::test]
+async fn a_member_whose_stream_ends_falls_back_to_declared() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, _owner) = fake_link_seat(&uds_b, false);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(member_state(&state, &id, "vm-b").await, "ready");
+    // The guest's end goes away (the VM stopped): the switch reports the
+    // close, the membership stays as a declared one, the owner is let go.
+    drop(seat.guest_end.lock().unwrap().take());
+    let released = seat.released.lock().unwrap().take().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), released)
+        .await
+        .expect("the service let the link go")
+        .unwrap();
+    let mut observed = String::new();
+    for _ in 0..50 {
+        observed = member_state(&state, &id, "vm-b").await;
+        if observed == "declared" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(observed, "declared");
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    let closed = logs["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["event_type"] == "network.close" && event["event"]["network"]["protocol"] == "link");
+    assert!(closed, "{logs}");
+}
+
+#[tokio::test]
+async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_seat, _owner) = fake_link_seat(&uds_b, true);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    assert_eq!(joined["members"][0]["state"], "failed", "{joined}");
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    let blocked = logs["events"].as_array().unwrap().iter().any(|event| {
+        event["event"]["network"]["protocol"] == "link"
+            && event["event"]["decision"]["effective"] == "block"
+            && event["event"]["decision"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("blocks the link")
+    });
+    assert!(blocked, "{logs}");
 }

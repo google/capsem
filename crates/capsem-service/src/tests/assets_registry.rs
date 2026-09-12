@@ -858,6 +858,7 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
         service_socket: PathBuf::from("/nonexistent/service.sock"),
+        switches: switches::Switches::in_process(),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(None),
         current_version: "0.0.0".into(),

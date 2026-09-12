@@ -1,5 +1,6 @@
-//! Private flow admission: a VM owner asks, the service decides, the
-//! destination owner takes the stream (TCP) or the frames (UDP, ICMP echo).
+//! Private connection admission: a VM owner asks, the service decides, the
+//! destination owner takes the stream. Datagrams never come here: they ride
+//! each member's link to the network's switch (`switches`).
 //!
 //! The owner proves itself with the secret minted for its VM at spawn. The
 //! registry says whether the destination is a member of an active network
@@ -56,19 +57,18 @@ fn now_hex_id() -> String {
     )
 }
 
-/// What both routes admit: who asks, for which flow, to where.
+/// What the route admits: who asks, for which connection, to where.
 struct Ask {
     source_vm: String,
     owner_secret: String,
     source_generation: u64,
-    protocol: &'static str,
     destination: std::net::Ipv4Addr,
     port: u16,
     source_port: u16,
     process_name: String,
 }
 
-/// The grant: the destination owner's socket for this protocol, the token.
+/// The grant: the destination owner's handoff socket and the token.
 struct Admitted {
     network: uuid::Uuid,
     destination_vm: String,
@@ -92,7 +92,7 @@ fn audit_event(
         &json!({
             "network": {
                 "context": "private",
-                "protocol": ask.protocol,
+                "protocol": "tcp",
                 "source": { "vm": { "id": ask.source_vm }, "port": ask.source_port, "process": ask.process_name },
                 "destination": { "vm": { "id": peer.vm_id }, "address": peer.address.to_string(), "port": ask.port },
             },
@@ -180,7 +180,6 @@ async fn admit(state: &ServiceState, ask: Ask) -> Result<Admitted, AppError> {
         source_address: network_routes::vm_private_address(state, &ask.source_vm)?,
         source_port: ask.source_port,
         port: ask.port,
-        protocol: ask.protocol.to_string(),
     };
     let reply = vm_files::send_ipc_command(&destination_uds, accept, Some(ACCEPT_TIMEOUT_SECS)).await;
     let (decision, reason, outcome) = match &reply {
@@ -254,7 +253,6 @@ pub(super) async fn handle_private_connect(
             source_vm: request.source_vm,
             owner_secret: request.owner_secret,
             source_generation: request.source_generation,
-            protocol: "tcp",
             destination: request.destination,
             port: request.port,
             source_port: request.source_port,
@@ -266,44 +264,6 @@ pub(super) async fn handle_private_connect(
         network: admitted.network.to_string(),
         destination_vm: admitted.destination_vm,
         handoff_socket: admitted.socket,
-        token: admitted.token,
-    }))
-}
-
-pub(super) async fn handle_private_datagram(
-    State(state): State<Arc<ServiceState>>,
-    Json(request): Json<PrivateDatagramRequest>,
-) -> Result<Json<PrivateDatagramResponse>, AppError> {
-    let protocol = match request.protocol.as_str() {
-        "udp" if request.port != 0 && request.source_port != 0 => "udp",
-        "udp" => return Err(AppError(StatusCode::BAD_REQUEST, "a udp flow names both ports".into())),
-        "icmp" if request.port == 0 => "icmp",
-        "icmp" => return Err(AppError(StatusCode::BAD_REQUEST, "icmp echo has no port".into())),
-        other => {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                format!("unknown datagram protocol {other:?}"),
-            ))
-        }
-    };
-    let admitted = admit(
-        &state,
-        Ask {
-            source_vm: request.source_vm,
-            owner_secret: request.owner_secret,
-            source_generation: request.source_generation,
-            protocol,
-            destination: request.destination,
-            port: request.port,
-            source_port: request.source_port,
-            process_name: String::new(),
-        },
-    )
-    .await?;
-    Ok(Json(PrivateDatagramResponse {
-        network: admitted.network.to_string(),
-        destination_vm: admitted.destination_vm,
-        relay_socket: admitted.socket,
         token: admitted.token,
     }))
 }
