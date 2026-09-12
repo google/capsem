@@ -13,9 +13,9 @@ const ICMP_HEADER_BYTES: usize = 8;
 
 #[derive(clap::Args, Debug, Clone)]
 pub(crate) struct Args {
-    /// The address to echo against.
+    /// The address to echo against, or a name the guest's resolver answers.
     #[arg(long)]
-    pub address: Ipv4Addr,
+    pub address: String,
     #[arg(long, default_value_t = 10)]
     pub count: u16,
     /// Payload bytes after the ICMP header.
@@ -72,15 +72,22 @@ pub(crate) fn echo_reply(bytes: &[u8], identifier: u16) -> Option<u16> {
 pub(crate) async fn run(args: Args) -> Result<serde_json::Value> {
     ensure!((1..=10_000).contains(&args.count), "count must be 1..10000");
     ensure!(args.size <= 65_000, "size must fit one packet");
-    tokio::task::spawn_blocking(move || measure(&args))
+    let target = match args.address.parse::<Ipv4Addr>() {
+        Ok(address) => address,
+        Err(_) => match crate::udp::resolve(&format!("{}:0", args.address)).await?.ip() {
+            std::net::IpAddr::V4(address) => address,
+            std::net::IpAddr::V6(_) => anyhow::bail!("{} names no IPv4 address", args.address),
+        },
+    };
+    tokio::task::spawn_blocking(move || measure(&args, target))
         .await
         .context("ping task failed")?
 }
 
-fn measure(args: &Args) -> Result<serde_json::Value> {
+fn measure(args: &Args, target: Ipv4Addr) -> Result<serde_json::Value> {
     let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).context("open a raw ICMP socket")?;
     socket.set_read_timeout(Some(Duration::from_millis(args.timeout_ms)))?;
-    let target = SocketAddrV4::new(args.address, 0);
+    let target = SocketAddrV4::new(target, 0);
     let identifier = (std::process::id() & 0xffff) as u16;
     let mut round_trips_ms = Vec::with_capacity(usize::from(args.count));
     let mut buffer = vec![std::mem::MaybeUninit::<u8>::uninit(); 65_536];
@@ -90,7 +97,7 @@ fn measure(args: &Args) -> Result<serde_json::Value> {
         let sent = Instant::now();
         socket
             .send_to(&request, &target.into())
-            .with_context(|| format!("send echo request to {}", args.address))?;
+            .with_context(|| format!("send echo request to {}", target.ip()))?;
         let deadline = sent + Duration::from_millis(args.timeout_ms);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -121,7 +128,7 @@ fn measure(args: &Args) -> Result<serde_json::Value> {
         metrics["round_trip_ms"] = serde_json::json!({"unit": "milliseconds", "samples": round_trips_ms});
     }
     Ok(serde_json::json!({
-        "ping": {"address": args.address.to_string(), "count": args.count, "size": args.size,
+        "ping": {"address": args.address.clone(), "target": target.ip().to_string(), "count": args.count, "size": args.size,
             "version": env!("CARGO_PKG_VERSION")},
         "metrics": metrics
     }))

@@ -9,7 +9,7 @@ async fn echo_server() -> SocketAddr {
 
 fn client(address: SocketAddr, count: u32, size: usize) -> Args {
     Args {
-        address: Some(address),
+        address: Some(address.to_string()),
         serve: None,
         count,
         size,
@@ -64,4 +64,19 @@ fn a_datagram_carries_its_sequence_first() {
     assert_eq!(sequence_of(&bytes), Some(7));
     assert_eq!(sequence_of(&bytes[..3]), None, "too short to carry one");
     assert_eq!(datagram(9, 4).len(), 4, "the sequence alone is the smallest datagram");
+}
+
+#[tokio::test]
+async fn a_host_name_is_resolved_before_measuring() {
+    let address = echo_server().await;
+    let mut args = client(address, 3, 64);
+    args.address = Some(format!("localhost:{}", address.port()));
+    let result = run(args).await.unwrap();
+    assert_eq!(sample(&result, "received"), 3.0);
+    let mut malformed = client(address, 1, 64);
+    malformed.address = Some("no-port-here".into());
+    assert!(
+        run(malformed).await.is_err(),
+        "a target without a port is an error, not a loss"
+    );
 }

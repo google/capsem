@@ -33,9 +33,10 @@ pub(crate) fn bound(address: SocketAddr) -> Result<UdpSocket> {
 
 #[derive(clap::Args, Debug, Clone)]
 pub(crate) struct Args {
-    /// Echo server to measure against (client mode).
+    /// Echo server to measure against (client mode): `host:port`, the host
+    /// an address or a name the guest's resolver answers.
     #[arg(long, required_unless_present = "serve", conflicts_with = "serve")]
-    pub address: Option<SocketAddr>,
+    pub address: Option<String>,
     /// Run the echo server on this address instead of measuring.
     #[arg(long)]
     pub serve: Option<SocketAddr>,
@@ -77,8 +78,29 @@ pub(crate) async fn run(args: Args) -> Result<serde_json::Value> {
         eprintln!("udp echo server listening on {}", socket.local_addr()?);
         return serve(socket).await;
     }
-    let address = args.address.context("--address is required in client mode")?;
+    let address = resolve(
+        args.address
+            .as_deref()
+            .context("--address is required in client mode")?,
+    )
+    .await?;
     measure(&args, address).await
+}
+
+/// The address a `host:port` names through the system resolver, IPv4 first:
+/// the private link carries no IPv6, and a name with both should measure
+/// the family that reaches the peer.
+pub(crate) async fn resolve(target: &str) -> Result<SocketAddr> {
+    let addresses: Vec<SocketAddr> = tokio::net::lookup_host(target)
+        .await
+        .with_context(|| format!("resolve {target}"))?
+        .collect();
+    addresses
+        .iter()
+        .find(|address| address.is_ipv4())
+        .or(addresses.first())
+        .copied()
+        .with_context(|| format!("{target} names no address"))
 }
 
 /// Echo until the socket fails.
@@ -117,8 +139,24 @@ async fn measure(args: &Args, address: SocketAddr) -> Result<serde_json::Value> 
         // A refused or unreachable send is a lost datagram, like any other.
         let _ = socket.send(&bytes).await;
         receive(&socket, &mut buffer, &mut sent_at, &mut round_trips_ms);
-        if !interval.is_zero() {
-            tokio::time::sleep(interval).await;
+        // The interval is spent listening, so a round trip is timed when
+        // the echo lands and not when the next send happens to look.
+        let next = Instant::now() + interval;
+        loop {
+            let remaining = next.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, socket.recv(&mut buffer)).await {
+                Ok(Ok(length)) => {
+                    if let Some(started) = sequence_of(&buffer[..length]).and_then(|sequence| sent_at.remove(&sequence))
+                    {
+                        round_trips_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                    }
+                }
+                Ok(Err(_)) => continue,
+                Err(_) => break,
+            }
         }
     }
     let deadline = Instant::now() + Duration::from_millis(args.wait_ms);
