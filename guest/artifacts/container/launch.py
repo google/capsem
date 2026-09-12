@@ -23,7 +23,8 @@ CONTAINER_ADDRESS = "10.0.1.2"
 NAT_CHAIN = "CAPSEM_CONTAINER_NAT"
 INPUT_CHAIN = "CAPSEM_CONTAINER_IN"
 REDIRECT_RULE = re.compile(
-    r"^-A OUTPUT -p (udp|tcp) -m \1 --dport (\d+) -j REDIRECT --to-ports (\d+)$"
+    r"^-A OUTPUT (?:-d (\S+) )?-p (udp|tcp) -m \2 (?:--dport (\d+) )?"
+    r"-j REDIRECT --to-ports (\d+)$"
 )
 
 
@@ -182,7 +183,9 @@ def resolv_conf():
 
 
 def derive_redirects(output_rules):
-    """(protocol, destination port, proxy port) for every VM interception rule.
+    """(protocol, destination port, proxy port, destination) for every VM
+    interception rule; the port or the destination may be None when the rule
+    matched on the other alone.
 
     The VM's `nat OUTPUT` chain is the single statement of which ports are
     intercepted and where; mirroring it keeps the container on exactly the
@@ -192,7 +195,10 @@ def derive_redirects(output_rules):
     for line in output_rules.splitlines():
         match = REDIRECT_RULE.match(line.strip())
         if match:
-            redirects.append((match.group(1), int(match.group(2)), int(match.group(3))))
+            destination, protocol, port, proxy = match.groups()
+            redirects.append(
+                (protocol, int(port) if port else None, int(proxy), destination)
+            )
     return redirects
 
 
@@ -215,11 +221,21 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     (sysctl_root / "net/ipv4/conf" / HOST_LINK / "route_localnet").write_text("1\n")
     run(*namespace, "ip", "link", "set", "lo", "up")
     run(*namespace, "ip", "link", "set", "capsem1", "name", CONTAINER_LINK)
-    run(*namespace, "ip", "addr", "add", f"{CONTAINER_ADDRESS}/30", "dev", CONTAINER_LINK)
+    run(
+        *namespace,
+        "ip",
+        "addr",
+        "add",
+        f"{CONTAINER_ADDRESS}/30",
+        "dev",
+        CONTAINER_LINK,
+    )
     run(*namespace, "ip", "link", "set", CONTAINER_LINK, "up")
     run(*namespace, "ip", "route", "add", "default", "via", GATEWAY)
 
-    rules = run(IPTABLES, "-t", "nat", "-S", "OUTPUT", capture_output=True, text=True).stdout
+    rules = run(
+        IPTABLES, "-t", "nat", "-S", "OUTPUT", capture_output=True, text=True
+    ).stdout
     redirects = derive_redirects(rules)
     if not redirects:
         raise ValueError("VM has no interception rules for the container to mirror")
@@ -227,14 +243,40 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
         table_args = ["-t", table] if table == "nat" else []
         run(IPTABLES, *table_args, "-N", chain, check=False)
         run(IPTABLES, *table_args, "-F", chain)
-    for protocol, port, proxy in redirects:
+    for protocol, port, proxy, destination in redirects:
+        match_args = ["-d", destination] if destination else []
+        if port is not None:
+            match_args += ["--dport", str(port)]
         run(
-            IPTABLES, "-t", "nat", "-A", NAT_CHAIN, "-i", HOST_LINK, "-p", protocol,
-            "--dport", str(port), "-j", "DNAT", "--to-destination", f"127.0.0.1:{proxy}",
+            IPTABLES,
+            "-t",
+            "nat",
+            "-A",
+            NAT_CHAIN,
+            "-i",
+            HOST_LINK,
+            "-p",
+            protocol,
+            *match_args,
+            "-j",
+            "DNAT",
+            "--to-destination",
+            f"127.0.0.1:{proxy}",
         )
         run(
-            IPTABLES, "-A", INPUT_CHAIN, "-i", HOST_LINK, "-d", "127.0.0.1", "-p", protocol,
-            "--dport", str(proxy), "-j", "ACCEPT",
+            IPTABLES,
+            "-A",
+            INPUT_CHAIN,
+            "-i",
+            HOST_LINK,
+            "-d",
+            "127.0.0.1",
+            "-p",
+            protocol,
+            "--dport",
+            str(proxy),
+            "-j",
+            "ACCEPT",
         )
     run(IPTABLES, "-A", INPUT_CHAIN, "-i", HOST_LINK, "-j", "DROP")
     for table_args, parent, target in (
@@ -242,7 +284,10 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
         ([], "INPUT", ["-j", INPUT_CHAIN]),
         ([], "FORWARD", ["-i", HOST_LINK, "-j", "DROP"]),
     ):
-        if run(IPTABLES, *table_args, "-C", parent, *target, check=False).returncode != 0:
+        if (
+            run(IPTABLES, *table_args, "-C", parent, *target, check=False).returncode
+            != 0
+        ):
             run(IPTABLES, *table_args, "-I", parent, *target)
 
 

@@ -69,7 +69,11 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
 def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
     options = {"args": [], "env": {"NODE_EXTRA_CA_CERTS": "/mine"}}
     config = launcher.configure(unpacked(), image(), options)
-    binds = {mount["destination"]: mount for mount in config["mounts"] if mount["type"] == "bind"}
+    binds = {
+        mount["destination"]: mount
+        for mount in config["mounts"]
+        if mount["type"] == "bind"
+    }
     # Only these two host files ever enter a container, and only read-only.
     assert set(binds) == {"/etc/resolv.conf", launcher.CA_BUNDLE}
     assert binds[launcher.CA_BUNDLE]["source"] == launcher.CA_BUNDLE
@@ -88,6 +92,7 @@ VM_OUTPUT_RULES = """\
 -P OUTPUT ACCEPT
 -A OUTPUT -p udp -m udp --dport 53 -j REDIRECT --to-ports 1053
 -A OUTPUT -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 1053
+-A OUTPUT -d 10.128.0.0/9 -p tcp -m tcp -j REDIRECT --to-ports 10128
 -A OUTPUT -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 10443
 -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 10080
 -A OUTPUT -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 10080
@@ -96,11 +101,12 @@ VM_OUTPUT_RULES = """\
 
 def test_gateway_redirects_mirror_the_vm_interception_rules(launcher):
     assert launcher.derive_redirects(VM_OUTPUT_RULES) == [
-        ("udp", 53, 1053),
-        ("tcp", 53, 1053),
-        ("tcp", 443, 10443),
-        ("tcp", 80, 10080),
-        ("tcp", 8080, 10080),
+        ("udp", 53, 1053, None),
+        ("tcp", 53, 1053, None),
+        ("tcp", None, 10128, "10.128.0.0/9"),
+        ("tcp", 443, 10443, None),
+        ("tcp", 80, 10080, None),
+        ("tcp", 8080, 10080, None),
     ]
     assert launcher.derive_redirects("-P OUTPUT ACCEPT\n") == []
 
@@ -135,26 +141,82 @@ def test_network_ready_hook_pins_the_container_to_the_vm_proxies(launcher, tmp_p
     ns = ["nsenter", "-t", "4242", "-n"]
     iptables = launcher.IPTABLES
     # The container gets its own end of a veth pair, one address and one route.
-    assert ["ip", "link", "add", "capsem0", "type", "veth", "peer", "name", "capsem1"] in calls
+    assert [
+        "ip",
+        "link",
+        "add",
+        "capsem0",
+        "type",
+        "veth",
+        "peer",
+        "name",
+        "capsem1",
+    ] in calls
     assert ["ip", "link", "set", "capsem1", "netns", "4242"] in calls
-    assert [*ns, "ip", "addr", "add", f"{launcher.CONTAINER_ADDRESS}/30", "dev", "eth0"] in calls
+    assert [
+        *ns,
+        "ip",
+        "addr",
+        "add",
+        f"{launcher.CONTAINER_ADDRESS}/30",
+        "dev",
+        "eth0",
+    ] in calls
     assert [*ns, "ip", "route", "add", "default", "via", launcher.GATEWAY] in calls
     assert (tmp_path / "net/ipv4/conf/capsem0/route_localnet").read_text() == "1\n"
     # Every VM redirect is mirrored as a DNAT to the loopback proxy ...
-    for proto, dport, target in launcher.derive_redirects(VM_OUTPUT_RULES):
-        dnat = [iptables, "-t", "nat", "-A", launcher.NAT_CHAIN, "-i", "capsem0", "-p", proto]
-        dnat += ["--dport", str(dport), "-j", "DNAT", "--to-destination", f"127.0.0.1:{target}"]
+    for proto, dport, target, destination in launcher.derive_redirects(VM_OUTPUT_RULES):
+        dnat = [
+            iptables,
+            "-t",
+            "nat",
+            "-A",
+            launcher.NAT_CHAIN,
+            "-i",
+            "capsem0",
+            "-p",
+            proto,
+        ]
+        if destination:
+            dnat += ["-d", destination]
+        if dport is not None:
+            dnat += ["--dport", str(dport)]
+        dnat += ["-j", "DNAT", "--to-destination", f"127.0.0.1:{target}"]
         assert dnat in calls
-        accept = [iptables, "-A", launcher.INPUT_CHAIN, "-i", "capsem0", "-d", "127.0.0.1", "-p", proto]
+        accept = [
+            iptables,
+            "-A",
+            launcher.INPUT_CHAIN,
+            "-i",
+            "capsem0",
+            "-d",
+            "127.0.0.1",
+            "-p",
+            proto,
+        ]
         accept += ["--dport", str(target), "-j", "ACCEPT"]
         assert accept in calls
     # ... and nothing else in the VM is reachable from the container.
     reject = [iptables, "-A", launcher.INPUT_CHAIN, "-i", "capsem0", "-j", "DROP"]
     assert reject in calls
-    accepts = [i for i, call in enumerate(calls) if call[:3] == [iptables, "-A", launcher.INPUT_CHAIN] and call[-1] == "ACCEPT"]
-    assert accepts and max(accepts) < calls.index(reject), "accepts must precede the drop"
+    accepts = [
+        i
+        for i, call in enumerate(calls)
+        if call[:3] == [iptables, "-A", launcher.INPUT_CHAIN] and call[-1] == "ACCEPT"
+    ]
+    assert accepts and max(accepts) < calls.index(reject), (
+        "accepts must precede the drop"
+    )
     assert [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"] in calls
-    assert [iptables, "-t", "nat", "-I", "PREROUTING", "-j", launcher.NAT_CHAIN] in calls
+    assert [
+        iptables,
+        "-t",
+        "nat",
+        "-I",
+        "PREROUTING",
+        "-j",
+        launcher.NAT_CHAIN,
+    ] in calls
     assert [iptables, "-I", "INPUT", "-j", launcher.INPUT_CHAIN] in calls
 
 
@@ -162,7 +224,15 @@ def test_network_ready_hook_does_not_duplicate_chain_jumps(launcher, tmp_path):
     run = FakeRun(VM_OUTPUT_RULES, jump_exists=True)
     launcher.network_ready(7, run=run, sysctl_root=hook_environment(tmp_path))
     iptables = launcher.IPTABLES
-    assert [iptables, "-t", "nat", "-I", "PREROUTING", "-j", launcher.NAT_CHAIN] not in run.calls
+    assert [
+        iptables,
+        "-t",
+        "nat",
+        "-I",
+        "PREROUTING",
+        "-j",
+        launcher.NAT_CHAIN,
+    ] not in run.calls
     assert [iptables, "-I", "INPUT", "-j", launcher.INPUT_CHAIN] not in run.calls
     assert [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"] not in run.calls
     # The chains themselves are flushed so a second workload starts clean.

@@ -18,6 +18,28 @@ fn http_listen_port_is_10080() {
 }
 
 #[test]
+fn private_listen_port_is_10128_and_targets_the_private_vsock_service() {
+    assert_eq!(LISTEN_PORT_PRIVATE, 10128);
+    assert_eq!(VSOCK_PORT_PRIVATE, 5010);
+    assert_ne!(LISTEN_PORT_PRIVATE, LISTEN_PORT_HTTP);
+    assert_ne!(LISTEN_PORT_PRIVATE, LISTEN_PORT_HTTPS);
+}
+
+#[test]
+fn a_private_preamble_is_the_header_then_the_meta_line() {
+    let mut preamble = ConnectHeader {
+        destination: std::net::Ipv4Addr::new(10, 128, 0, 9),
+        port: 6379,
+    }
+    .encode()
+    .to_vec();
+    preamble.extend_from_slice(&encode_meta_line("redis-cli"));
+    let header: [u8; capsem_proto::privatelink::HEADER_BYTES] = preamble[..8].try_into().unwrap();
+    assert_eq!(ConnectHeader::decode(&header).unwrap().port, 6379);
+    assert!(preamble[8..].starts_with(b"\0CAPSEM_META:"));
+}
+
+#[test]
 fn http_and_https_listen_ports_are_distinct() {
     // Same vsock target on the host, but distinct guest-side
     // listen ports so iptables can route 80/443 to the right

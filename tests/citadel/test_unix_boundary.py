@@ -49,6 +49,9 @@ DOMAIN_ABI_FILES = {
     Path("crates/capsem-agent/src/port_bridge/setup.rs"),
     # The tun pump owns the tun/ifreq ioctls that name, address and raise tun0.
     Path("crates/capsem-agent/src/tun_pump.rs"),
+    # The guest proxy owns SO_ORIGINAL_DST, the netfilter ABI that gives an
+    # intercepted private connection back its destination.
+    Path("crates/capsem-agent/src/net_proxy.rs"),
     Path("crates/capsem-agent/src/mcp_server.rs"),
     Path("crates/capsem-agent/src/shutdown.rs"),
     Path("crates/capsem-agent/src/terminal_bridge.rs"),
