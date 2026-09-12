@@ -82,6 +82,16 @@ pub enum ServiceToProcess {
     ConnectPort { flow: crate::router::FlowKey, port: u16 },
     /// Internal VM-owner cancellation for bounded generation-bound flows.
     AbortPorts { flows: Vec<crate::router::FlowKey> },
+    /// The service admitted a private TCP connection from `source_vm` to
+    /// `port` on this VM. The owner answers with the handoff socket the
+    /// source owner should deliver the stream to, keyed by `token`.
+    PrivateAccept {
+        id: u64,
+        token: String,
+        source_vm: String,
+        source_address: std::net::Ipv4Addr,
+        port: u16,
+    },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -160,6 +170,13 @@ pub enum ProcessToService {
         id: u64,
         host_port: u16,
         router_pid: u32,
+        error: Option<String>,
+    },
+    /// Response to PrivateAccept: where the source owner hands the stream
+    /// over, or why this owner will not take it.
+    PrivateAcceptResult {
+        id: u64,
+        handoff_socket: String,
         error: Option<String>,
     },
 }
