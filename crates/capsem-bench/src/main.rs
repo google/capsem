@@ -7,6 +7,7 @@ mod commands;
 mod comparison;
 #[cfg(feature = "host")]
 mod machine;
+mod ping;
 mod protocol;
 #[cfg(feature = "host")]
 mod protocol_record;
@@ -21,6 +22,7 @@ mod stats;
 #[cfg(feature = "host")]
 mod store;
 mod throughput;
+mod udp;
 
 use anyhow::Result;
 use clap::Parser;
@@ -60,6 +62,8 @@ async fn main() -> Result<()> {
     })) {
         Command::Redis(args) => println!("{}", serde_json::to_string(&redis::run(args).await?)?),
         Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
+        Command::Udp(args) => println!("{}", serde_json::to_string(&udp::run(args).await?)?),
+        Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();

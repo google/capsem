@@ -153,6 +153,7 @@ large_futures = "deny"
 
 [workspace.dependencies]
 anyhow = "1"
+socket2 = "0.6"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
