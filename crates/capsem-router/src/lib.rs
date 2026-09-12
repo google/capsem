@@ -176,6 +176,17 @@ impl Drop for Stream {
             if let Err(error) = fd::tcp_clear_reset_on_close(self.socket.as_fd()) {
                 tracing::error!(%error, "router graceful TCP close configuration failed");
             }
+        } else if !self.graceful {
+            // An abruptly ended VSOCK endpoint is closed, never shut down.
+            // With the guest still sending, sixteen shutdown() calls on
+            // Virtualization.framework descriptors in one burst made the
+            // framework stop the whole VM ("Internal Virtualization error",
+            // VZErrorDomain code 1): every stream to the guest ended in the
+            // same millisecond, three runs in five. A write-side shutdown
+            // alone did it too; closing this duplicate did not, forty bursts
+            // running. The owner, which holds the framework object, ends the
+            // connection once this copy is gone (S04-018).
+            return;
         }
         if let Err(error) = fd::shutdown(self.socket.as_fd(), fd::SocketShutdown::Both) {
             tracing::debug!(%error, "router endpoint shutdown");

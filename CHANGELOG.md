@@ -1385,10 +1385,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A VM no longer loses its control link, tun0 stream and exec when a host
-  client resets many published connections at once: the owner's reset of a
-  connection the kernel already tore down is not an error, and one flow's
-  close report can never end the link every other flow rides on.
+- A VM no longer dies when a host client resets many published connections
+  at once. Shutting down a Virtualization.framework VSOCK descriptor while
+  the guest was still sending made the framework stop the whole VM with an
+  internal error; the confined router now closes such a descriptor without
+  shutting it down. When the framework does stop a VM, the owner records the
+  framework's reason, exits, and the service reports the VM as stopped
+  instead of running until every exec has timed out.
 - `clippy::cast_lossless` is denied, with its 116 sites converted. It is the
   one member of the numeric-cast family that cannot be wrong -- it flags
   `x as u64` where `u64::from(x)` is infallible -- so every fix is mechanical
