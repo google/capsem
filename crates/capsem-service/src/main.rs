@@ -232,7 +232,6 @@ struct ServiceState {
     /// resolve a handle here and call `ready/query`; they do not open SQLite
     /// readers or create per-route projection caches.
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
-    /// Registry of persistent (named) VMs
     persistent_registry: SharedRegistry,
     /// One lifetime address per VM; the persistent registry is its durable half.
     private_addresses: Mutex<capsem_core::net::address_pool::AddressAllocator>,
@@ -241,6 +240,7 @@ struct ServiceState {
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
+    service_socket: PathBuf, // this service's own, where an owner asks on a guest's behalf
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,

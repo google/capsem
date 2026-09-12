@@ -254,6 +254,7 @@ pub(super) async fn run_service() -> Result<()> {
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
+        service_socket: service_sock.clone(),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(manifest),
         current_version,

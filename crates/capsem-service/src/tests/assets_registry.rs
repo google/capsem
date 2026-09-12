@@ -7,7 +7,6 @@ fn resolve_asset_paths_prefers_erofs_when_present() {
     std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
     std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-
     let resolved = state.resolve_asset_paths().unwrap();
     assert_eq!(resolved.rootfs, dir.path().join("rootfs.erofs"));
 }
@@ -858,6 +857,7 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
+        service_socket: PathBuf::from("/nonexistent/service.sock"),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(None),
         current_version: "0.0.0".into(),

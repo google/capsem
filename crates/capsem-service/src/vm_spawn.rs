@@ -235,6 +235,8 @@ impl ServiceState {
                 // of the run tree and cannot be walked back up.
                 .arg("--run-dir")
                 .arg(&self.run_dir)
+                .arg("--service-socket")
+                .arg(&self.service_socket)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -546,6 +548,8 @@ impl ServiceState {
                 // of the run tree and cannot be walked back up.
                 .arg("--run-dir")
                 .arg(&self.run_dir)
+                .arg("--service-socket")
+                .arg(&self.service_socket)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()

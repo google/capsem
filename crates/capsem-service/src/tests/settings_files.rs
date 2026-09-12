@@ -187,6 +187,7 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: run_dir.join("assets"),
         run_dir: run_dir.clone(),
+        service_socket: PathBuf::from("/nonexistent/service.sock"),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
