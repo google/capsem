@@ -483,44 +483,64 @@ async fn a_membership_that_changes_while_the_owner_answers_is_never_granted() {
 }
 
 /// A fake owner's link seat: answers LinkAttach with its handoff socket,
-/// takes the token there, hands back one end of a socket pair as the guest
-/// stream, and reports when the service lets the link go.
+/// takes the token there `links` times, hands back one end of a fresh
+/// socket pair as the guest stream each time, and reports each time the
+/// service lets a link go.
 struct FakeLinkSeat {
-    guest_end: Mutex<Option<std::os::unix::net::UnixStream>>,
-    released: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// The guest end of each stream handed over, in order.
+    guest_ends: Mutex<Vec<std::os::unix::net::UnixStream>>,
+    /// One signal per handoff connection the service let go of.
+    released: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<()>>>,
+}
+
+impl FakeLinkSeat {
+    fn guest_end(&self) -> std::os::unix::net::UnixStream {
+        self.guest_ends.lock().unwrap().remove(0)
+    }
 }
 
 fn fake_link_seat(
     uds: &std::path::Path,
     refuse: bool,
+    links: usize,
 ) -> (Arc<FakeLinkSeat>, tokio::task::JoinHandle<Vec<ServiceToProcess>>) {
     use capsem_foundation::unix::router_channel::{Receiver, Sender};
     use std::os::fd::AsRawFd;
     let handoff = uds.with_file_name("vm-b-handoff.sock");
     let _ = std::fs::remove_file(&handoff);
     let listener = tokio::net::UnixListener::bind(&handoff).unwrap();
-    let (switch_end, guest_end) = std::os::unix::net::UnixStream::pair().unwrap();
-    let (released_tx, released_rx) = tokio::sync::oneshot::channel();
+    let (released_tx, released_rx) = tokio::sync::mpsc::unbounded_channel();
     let seat = Arc::new(FakeLinkSeat {
-        guest_end: Mutex::new(Some(guest_end)),
+        guest_ends: Mutex::new(Vec::new()),
         released: Mutex::new(Some(released_rx)),
     });
+    let ends = Arc::clone(&seat);
     tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let std = stream.into_std().unwrap();
-        let receiver = Receiver::new(std.try_clone().unwrap()).unwrap();
-        let frame = receiver.recv().await.unwrap();
-        assert_eq!(frame.bytes[1], 5, "a link request");
-        let sender = Sender::new(std.try_clone().unwrap()).unwrap();
-        sender.send(&frame.bytes, &[switch_end.as_raw_fd()]).await.unwrap();
-        drop(switch_end);
-        std.set_nonblocking(true).unwrap();
-        let mut watch = tokio::net::UnixStream::from_std(std).unwrap();
-        let mut sink = [0u8; 8];
-        while tokio::io::AsyncReadExt::read(&mut watch, &mut sink).await.unwrap_or(0) != 0 {}
-        let _ = released_tx.send(());
+        for _ in 0..links {
+            let (switch_end, guest_end) = std::os::unix::net::UnixStream::pair().unwrap();
+            ends.guest_ends.lock().unwrap().push(guest_end);
+            let (stream, _) = listener.accept().await.unwrap();
+            let std = stream.into_std().unwrap();
+            let receiver = Receiver::new(std.try_clone().unwrap()).unwrap();
+            let frame = receiver.recv().await.unwrap();
+            assert_eq!(frame.bytes[1], 5, "a link request");
+            let sender = Sender::new(std.try_clone().unwrap()).unwrap();
+            sender.send(&frame.bytes, &[switch_end.as_raw_fd()]).await.unwrap();
+            std.set_nonblocking(true).unwrap();
+            let released = released_tx.clone();
+            tokio::spawn(async move {
+                // Darwin may flush a descriptor only an in-flight message
+                // refers to: the owner keeps its copy until the service lets
+                // go, as the real seat does.
+                let _switch_end = switch_end;
+                let mut watch = tokio::net::UnixStream::from_std(std).unwrap();
+                let mut sink = [0u8; 8];
+                while tokio::io::AsyncReadExt::read(&mut watch, &mut sink).await.unwrap_or(0) != 0 {}
+                let _ = released.send(());
+            });
+        }
     });
-    let owner = spawn_fake_process(uds, 1, move |message| {
+    let owner = spawn_fake_process(uds, links, move |message| {
         let reply = match message {
             ServiceToProcess::LinkAttach {
                 id,
@@ -565,7 +585,7 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false);
+    let (seat, owner) = fake_link_seat(&uds_b, false, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
 
@@ -591,12 +611,12 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let released = seat.released.lock().unwrap().take().unwrap();
-    tokio::time::timeout(Duration::from_secs(3), released)
+    let mut released = seat.released.lock().unwrap().take().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), released.recv())
         .await
         .expect("the service let the link go")
         .unwrap();
-    let guest_end = seat.guest_end.lock().unwrap().take().unwrap();
+    let guest_end = seat.guest_end();
     guest_end.set_nonblocking(true).unwrap();
     let mut guest_end = tokio::net::UnixStream::from_std(guest_end).unwrap();
     let read = tokio::time::timeout(
@@ -611,35 +631,45 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
 }
 
 #[tokio::test]
-async fn a_member_whose_stream_ends_falls_back_to_declared() {
+async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, _owner) = fake_link_seat(&uds_b, false);
+    let (seat, owner) = fake_link_seat(&uds_b, false, 2);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(member_state(&state, &id, "vm-b").await, "ready");
-    // The guest's end goes away (the VM stopped): the switch reports the
-    // close, the membership stays as a declared one, the owner is let go.
-    drop(seat.guest_end.lock().unwrap().take());
-    let released = seat.released.lock().unwrap().take().unwrap();
-    tokio::time::timeout(Duration::from_secs(3), released)
+    // The guest's end goes away (its pump died): the switch reports the
+    // close, the membership falls back to declared, the owner is let go, and
+    // the running member is asked for its fresh stream and is ready again.
+    drop(seat.guest_end());
+    let mut released = seat.released.lock().unwrap().take().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), released.recv())
         .await
         .expect("the service let the link go")
         .unwrap();
-    let mut observed = String::new();
-    for _ in 0..50 {
-        observed = member_state(&state, &id, "vm-b").await;
-        if observed == "declared" {
+    let mut seen = Vec::new();
+    for _ in 0..200 {
+        let observed = member_state(&state, &id, "vm-b").await;
+        if seen.last() != Some(&observed) {
+            seen.push(observed.clone());
+        }
+        if seen.contains(&"declared".to_string()) && observed == "ready" {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(observed, "declared");
+    let (_, history) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    assert!(
+        seen.contains(&"declared".to_string()) && seen.last() == Some(&"ready".to_string()),
+        "{seen:?} {history}"
+    );
+    let messages = owner.await.unwrap();
+    assert_eq!(messages.len(), 2, "asked twice: once on attach, once after the close");
     let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
     let closed = logs["events"]
         .as_array()
@@ -656,7 +686,7 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (_seat, _owner) = fake_link_seat(&uds_b, true);
+    let (_seat, _owner) = fake_link_seat(&uds_b, true, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;

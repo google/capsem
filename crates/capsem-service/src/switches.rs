@@ -218,7 +218,9 @@ fn relink_orphans(
     })
 }
 
-/// The switch reported a link's end: the VM stopped, died, or was unlinked.
+/// The switch reported a link's end: the VM stopped, died, or its pump did.
+/// A member whose owner still runs is linked again once the pump has
+/// reconnected; one that is gone stays `declared` until it resumes.
 async fn link_closed(state: &Arc<ServiceState>, network: Uuid, id: u64, report: &CloseReport) {
     let linked = state
         .switches
@@ -250,6 +252,24 @@ async fn link_closed(state: &Arc<ServiceState>, network: Uuid, id: u64, report: 
         }
         Err(error) => warn!(%network, %error, "link close row was not built"),
     }
+    tokio::spawn(relink_later(Arc::clone(state), network, linked.vm_id));
+}
+
+/// A member whose owner still runs is linked again after its link closed:
+/// its pump restarts after its first backoff and the owner waits for the
+/// fresh stream. Boxed: linking starts a switch whose watcher reports
+/// closes here.
+fn relink_later(
+    state: Arc<ServiceState>,
+    network: Uuid,
+    vm_id: String,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Err(error) = link(&state, network, &vm_id).await {
+            info!(%network, vm_id, %error, "member not relinked after its link closed");
+        }
+    })
 }
 
 /// Ask the owner for the guest stream and grant it to the switch.
