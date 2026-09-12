@@ -110,6 +110,8 @@ fn options_require_both_ends_and_bound_the_mtu() {
     assert_eq!(parsed.address, Ipv4Addr::new(10, 128, 0, 2));
     assert_eq!(parsed.peer, Ipv4Addr::new(10, 128, 0, 1));
     assert_eq!(parsed.mtu, MAX_PACKET_BYTES);
+    assert_eq!(parsed.prefix, 32, "a bare link routes only the peer");
+    assert_eq!(parsed.netmask(), Ipv4Addr::new(255, 255, 255, 255));
     let parsed =
         parse_options(["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "1500"].map(String::from)).unwrap();
     assert_eq!(parsed.mtu, 1500);
@@ -120,8 +122,22 @@ fn options_require_both_ends_and_bound_the_mtu() {
         vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "100"],
         vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "70000"],
         vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--bogus", "1"],
+        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "0"],
+        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "33"],
         vec!["--address"],
     ] {
         assert!(parse_options(bad.iter().map(|s| s.to_string())).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn the_pool_prefix_becomes_the_device_netmask() {
+    let parsed =
+        parse_options(["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "9"].map(String::from)).unwrap();
+    assert_eq!(parsed.prefix, 9);
+    assert_eq!(
+        parsed.netmask(),
+        Ipv4Addr::new(255, 128, 0, 0),
+        "10.128.0.0/9 routes into tun0"
+    );
 }

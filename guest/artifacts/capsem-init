@@ -516,8 +516,8 @@ if [ -x /capsem-bench-rs ]; then
     chmod 555 /newroot/usr/local/bin/capsem-bench-rs
     echo "[capsem-init] capsem-bench-rs deployed"
 fi
-# The private-link pump. Started on demand for now (the tun0 lane of the
-# S04-004 measurement); capsem-init brings tun0 up at boot once S04-001 lands.
+# The private-link pump. capsem-agent starts it once the host has named the
+# VM's private address in the boot environment, and restarts it if it exits.
 if [ -x /capsem-tun ]; then
     cp /capsem-tun /newroot/usr/local/bin/capsem-tun
     chmod 555 /newroot/usr/local/bin/capsem-tun

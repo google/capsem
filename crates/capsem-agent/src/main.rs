@@ -12,6 +12,8 @@ mod shutdown;
 mod snapshot;
 use snapshot::thaw_system_filesystem;
 mod terminal_bridge;
+mod tun_supervisor;
+mod venv;
 use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 #[cfg(test)]
 use control_writer::{frame_or_drop, SharedCtrlReceiver};
@@ -356,6 +358,7 @@ fn main() {
                     &mut blog,
                     &format!("BootConfigDone: {} env vars, {} files", boot_env.len(), file_count,),
                 );
+                blog_line(&mut blog, &tun_supervisor::start(&boot_env));
                 eprintln!(
                     "[capsem-agent] boot config done ({} env vars, {} files)",
                     boot_env.len(),
@@ -380,43 +383,8 @@ fn main() {
     // when done. The shell environment should point at the stable /root/.venv
     // contract immediately, but BootReady must not wait for Python packaging
     // setup when the first command is often a simple readiness probe.
-    const VENV_DIR: &str = "/root/.venv";
-    const VENV_TARGET: &str = "/run/capsem-venv";
-    const VENV_READY: &str = "/run/capsem-venv-ready";
-    boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
-    if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
-        *path_val = format!("{VENV_DIR}/bin:{path_val}");
-    }
+    venv::activate(&mut boot_env);
     blog_line(&mut blog, "venv path activated in boot_env");
-    std::thread::spawn(move || {
-        let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
-        for _ in 0..30 {
-            if std::path::Path::new(VENV_READY).exists() || venv_activate.exists() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        if !venv_activate.exists() {
-            eprintln!("[capsem-agent] venv missing after init wait; creating fallback");
-            let _ = std::fs::remove_file(VENV_TARGET);
-            let _ = std::fs::remove_dir_all(VENV_TARGET);
-            let _ = std::fs::remove_file(VENV_DIR);
-            let _ = std::os::unix::fs::symlink(VENV_TARGET, VENV_DIR);
-            let created = std::process::Command::new("uv")
-                .args(["venv", "--system-site-packages", VENV_TARGET])
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-                || std::process::Command::new("python3")
-                    .args(["-m", "venv", "--system-site-packages", VENV_TARGET])
-                    .status()
-                    .map(|status| status.success())
-                    .unwrap_or(false);
-            if created {
-                let _ = std::fs::write(VENV_READY, b"");
-            }
-        }
-    });
 
     // Step 4c: Set hostname from CAPSEM_VM_NAME if present.
     if let Some((_, name)) = boot_env.iter().find(|(k, _)| k == "CAPSEM_VM_NAME") {

@@ -1,11 +1,13 @@
 // capsem-tun: the guest end of the private network link.
 //
-// Opens `tun0`, gives it the address the host assigned, and pumps raw IP
-// packets between the device and one VSOCK connection to the host network
-// endpoint (port 5009), each packet framed with a big-endian u16 length. The
-// kernel routes into tun0; the host's smoltcp terminates. Nothing here reads
-// a packet: this is a wire, not a stack, and it has no authority beyond the
-// one device and the one connection it opens at start.
+// Opens `tun0`, gives it the address the host assigned and the pool's
+// netmask so every private address routes into it, and pumps raw IP packets
+// between the device and one VSOCK connection to the host network endpoint
+// (port 5009), each packet framed with a big-endian u16 length. The kernel
+// routes into tun0; the host relays by destination. Nothing here reads a
+// packet: this is a wire, not a stack, and it has no authority beyond the
+// one device and the one connection it opens at start. The agent starts it
+// once the host has named the address (`tun_supervisor` in capsem-agent).
 //
 // The frame format is shared with `crates/capsem-network/src/frames.rs`.
 
@@ -129,12 +131,26 @@ pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, 
 pub struct Options {
     pub address: Ipv4Addr,
     pub peer: Ipv4Addr,
+    /// The pool's prefix length: with it the kernel routes the whole pool
+    /// into the device, not only the peer.
+    pub prefix: u8,
     pub mtu: usize,
+}
+
+impl Options {
+    pub fn netmask(&self) -> Ipv4Addr {
+        Ipv4Addr::from_bits(if self.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - self.prefix)
+        })
+    }
 }
 
 pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut address = None;
     let mut peer = None;
+    let mut prefix = 32u8;
     let mut mtu = MAX_PACKET_BYTES;
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
@@ -142,6 +158,12 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
         match flag.as_str() {
             "--address" => address = Some(value.parse().map_err(|_| format!("invalid address {value}"))?),
             "--peer" => peer = Some(value.parse().map_err(|_| format!("invalid peer {value}"))?),
+            "--prefix" => {
+                prefix = value.parse().map_err(|_| format!("invalid prefix {value}"))?;
+                if !(1..=32).contains(&prefix) {
+                    return Err("prefix must be 1..=32".into());
+                }
+            }
             "--mtu" => {
                 mtu = value.parse().map_err(|_| format!("invalid mtu {value}"))?;
                 if !(576..=MAX_PACKET_BYTES).contains(&mtu) {
@@ -154,6 +176,7 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
     Ok(Options {
         address: address.ok_or("--address is required")?,
         peer: peer.ok_or("--peer is required")?,
+        prefix,
         mtu,
     })
 }
@@ -175,6 +198,7 @@ mod tun {
     const SIOCSIFFLAGS: u32 = 0x8914;
     const SIOCSIFADDR: u32 = 0x8916;
     const SIOCSIFDSTADDR: u32 = 0x8918;
+    const SIOCSIFNETMASK: u32 = 0x891c;
     const SIOCSIFMTU: u32 = 0x8922;
     const IFF_TUN: u16 = 0x0001;
     const IFF_NO_PI: u16 = 0x1000;
@@ -230,6 +254,9 @@ mod tun {
         request[NAME_BYTES..NAME_BYTES + 8].copy_from_slice(&sockaddr_in(options.peer));
         ioctl(&socket, SIOCSIFDSTADDR, &mut request)?;
         let mut request = ifreq(name);
+        request[NAME_BYTES..NAME_BYTES + 8].copy_from_slice(&sockaddr_in(options.netmask()));
+        ioctl(&socket, SIOCSIFNETMASK, &mut request)?;
+        let mut request = ifreq(name);
         request[NAME_BYTES..NAME_BYTES + 4].copy_from_slice(&(options.mtu as i32).to_ne_bytes());
         ioctl(&socket, SIOCSIFMTU, &mut request)?;
         let mut request = ifreq(name);
@@ -272,8 +299,8 @@ fn run(options: Options) -> io::Result<()> {
         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
     )?;
     eprintln!(
-        "[capsem-tun] {DEVICE} {} -> {} mtu {} attached to host port {VSOCK_PORT_NETWORK}",
-        options.address, options.peer, options.mtu
+        "[capsem-tun] {DEVICE} {}/{} -> {} mtu {} attached to host port {VSOCK_PORT_NETWORK}",
+        options.address, options.prefix, options.peer, options.mtu
     );
     let mut device_reader = device.try_clone()?;
     let mut stream_writer = stream.try_clone()?;
@@ -320,7 +347,7 @@ fn main() {
         Ok(options) => options,
         Err(error) => {
             eprintln!("[capsem-tun] {error}");
-            eprintln!("usage: capsem-tun --address A.B.C.D --peer A.B.C.D [--mtu N]");
+            eprintln!("usage: capsem-tun --address A.B.C.D --peer A.B.C.D [--prefix N] [--mtu N]");
             process::exit(2);
         }
     };
