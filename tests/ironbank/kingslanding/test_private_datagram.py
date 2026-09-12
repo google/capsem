@@ -31,6 +31,15 @@ __all__ = ["evidence", "members", "service"]
 pytestmark = pytest.mark.integration
 
 ECHO_PORT = 5202
+# The container's own resolver, for a probe that runs from the guest's
+# mount namespace inside the container's network namespace: the guest's
+# resolv.conf names a loopback proxy the container's namespace cannot
+# reach, while the container resolves through its gateway (launch.py).
+AS_CONTAINER = (
+    "printf 'nameserver 10.0.1.1\\n' > /var/tmp/container-resolv.conf && "
+    "unshare -m sh -c 'mount --bind /var/tmp/container-resolv.conf /etc/resolv.conf"
+    ' && exec nsenter -t "$(cat /var/tmp/capsem-container/workload.pid)" -n "$@"\' sh'
+)
 # What the switch never lets through, and what the owner logs when the VM
 # is gone from under it: none of it may appear during a burst.
 FATAL_LINES = ("virtual machine stopped",)
@@ -52,26 +61,28 @@ def linked(service, network, *vms):
 
 
 def probe_fails(service, vm, *args, timeout=40):
-    """Run one bench probe inside `vm`'s container expecting it to fail
-    before measuring (an unresolvable name); its stderr."""
+    """Run one bench probe inside `vm`'s container, with its resolver,
+    expecting it to fail before measuring (an unresolvable name); its output."""
     result = guest(
         service,
         vm["id"],
-        f"{IN_CONTAINER} " + shlex.join(["capsem-bench-rs", *args]),
+        f"{AS_CONTAINER} " + shlex.join(["capsem-bench-rs", *args]),
         timeout=timeout,
         check=False,
     )
     assert result.get("exit_code") not in (None, 0), result
-    return result.get("stderr", "")
+    return result.get("stdout", "") + result.get("stderr", "")
 
 
-def probe(service, vm, *args, timeout=40, recorded=None, lane=None):
+def probe(service, vm, *args, timeout=40, recorded=None, lane=None, by_name=False):
     """Run one bench probe inside `vm`'s container; its JSON report. With
-    `recorded` and `lane`, every metric joins the store under that lane."""
+    `recorded` and `lane`, every metric joins the store under that lane;
+    `by_name` gives the probe the container's resolver."""
     result = guest(
         service,
         vm["id"],
-        f"{IN_CONTAINER} " + shlex.join(["capsem-bench-rs", *args]),
+        f"{AS_CONTAINER if by_name else IN_CONTAINER} "
+        + shlex.join(["capsem-bench-rs", *args]),
         timeout=timeout,
         check=False,
     )
@@ -98,6 +109,7 @@ def udp(
     wait_ms=2000,
     recorded=None,
     lane=None,
+    by_name=False,
 ):
     return probe(
         service,
@@ -115,6 +127,7 @@ def udp(
         str(wait_ms),
         recorded=recorded,
         lane=lane,
+        by_name=by_name,
     )
 
 
@@ -188,12 +201,19 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
 
     # Members have names on the private zone, answered by the host for the
     # asker's networks only; a stranger's name does not resolve at all.
-    named = udp(service, alpha, "beta.team.capsem.internal", 20, 64)
+    named = udp(service, alpha, "beta.team.capsem.internal", 20, 64, by_name=True)
     assert named["received"] >= 19, named
-    short = udp(service, alpha, "beta.capsem.internal", 5, 64)
+    short = udp(service, alpha, "beta.capsem.internal", 5, 64, by_name=True)
     assert short["received"] >= 4, short
     by_name = probe(
-        service, alpha, "ping", "--address", "beta.team.capsem.internal", "--count", "3"
+        service,
+        alpha,
+        "ping",
+        "--address",
+        "beta.team.capsem.internal",
+        "--count",
+        "3",
+        by_name=True,
     )
     assert by_name["received"] >= 2, by_name
     unresolved = probe_fails(
@@ -209,8 +229,8 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
     lookup = guest(
         service,
         alpha["id"],
-        f"{IN_CONTAINER} getent hosts beta.team.capsem.internal; "
-        f"{IN_CONTAINER} getent hosts {beta['private_address']}",
+        f"{AS_CONTAINER} getent hosts beta.team.capsem.internal; "
+        f"{AS_CONTAINER} getent hosts {beta['private_address']}",
         check=False,
     )
     assert beta["private_address"] in lookup.get("stdout", ""), lookup
