@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
@@ -7,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tracing::{debug, error, info, warn};
 
 use crate::job_store::{JobResult, JobStore};

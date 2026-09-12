@@ -322,6 +322,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A private connection between members of a network no longer occasionally
+  times out after eight seconds: the owner's IPC channel released its socket
+  before leaving the event loop, and a new connection reusing the number could
+  never wake. About one admission in two thousand was affected.
 - A private TCP connection whose client finished sending and closed no longer
   stays open on both VM owners for the VM's life; the destination's private
   connection quota was exhausted after sixty-odd such transfers.
