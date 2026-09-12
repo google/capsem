@@ -71,7 +71,7 @@ def until_echo(service, alpha, beta, what, timeout=90):
 
 def switch_pids():
     out = subprocess.run(
-        ["pgrep", "-f", "capsem-router --switch"],
+        ["pgrep", "-f", "capsem-router .*--switch"],
         capture_output=True,
         text=True,
         check=False,
