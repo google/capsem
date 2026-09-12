@@ -128,7 +128,7 @@ def test_internal_routes_carry_a_reason_and_are_a_tight_inventory() -> None:
     # asking the service to admit a private connection or a private datagram
     # flow -- all control traffic between local processes over the service
     # UDS, never a page the gateway would proxy or a benchmark would time.
-    assert len(internal) <= 3, (
+    assert len(internal) <= 2, (
         "the internal service-only route inventory grew; prefer a public, "
         "measured gateway route unless the control-plane exception is real"
     )
