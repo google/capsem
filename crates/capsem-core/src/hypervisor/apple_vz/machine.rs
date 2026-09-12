@@ -125,6 +125,9 @@ fn load_or_create_machine_identifier(path: Option<&std::path::Path>) -> Result<R
 /// Internal wrapper around VZVirtualMachine.
 pub(crate) struct AppleVzMachine {
     inner: Retained<ObjcVZVirtualMachine>,
+    /// Hears the framework stop the VM; kept alive with it.
+    _delegate: Retained<super::lifecycle::VmDelegate>,
+    stopped: std::sync::Arc<super::lifecycle::StopWitness>,
 }
 
 // VZVirtualMachine is main-thread-only, but we manage that with dispatch.
@@ -232,9 +235,19 @@ impl AppleVzMachine {
             unsafe { ObjcVZVirtualMachine::initWithConfiguration(ObjcVZVirtualMachine::alloc(), &vz_config) }
         };
 
+        let stopped = std::sync::Arc::new(super::lifecycle::StopWitness::default());
+        let delegate = super::lifecycle::VmDelegate::new(stopped.clone());
+        unsafe { vm.setDelegate(Some(&super::lifecycle::VmDelegate::protocol(&delegate))) };
         info!("virtual machine created");
 
-        Ok((Self { inner: vm }, serial_console))
+        Ok((
+            Self {
+                inner: vm,
+                _delegate: delegate,
+                stopped,
+            },
+            serial_console,
+        ))
     }
 
     /// Access the underlying VZVirtualMachine for embedding in a VZVirtualMachineView.
@@ -400,6 +413,11 @@ impl AppleVzMachine {
 
     pub fn supports_checkpoint(&self) -> bool {
         true
+    }
+
+    /// Why the framework stopped the VM, once it has.
+    pub fn stop_reason(&self) -> Option<String> {
+        self.stopped.reason()
     }
 
     /// Get the current VM state.

@@ -48,6 +48,11 @@ pub trait VmHandle: Send {
 
     /// Get the current VM state.
     fn state(&self) -> VmState;
+    /// Why the hypervisor stopped the VM on its own, once it has; the
+    /// owner learns of a VM that ended underneath it only through this.
+    fn stop_reason(&self) -> Option<String> {
+        None
+    }
 
     /// Access the serial console for boot log streaming and input.
     fn serial(&self) -> &dyn SerialConsole;
