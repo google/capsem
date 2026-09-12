@@ -41,9 +41,12 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
+mod instance;
 mod instance_reaper;
+use instance::InstanceInfo;
 mod network_routes;
 mod private_address;
+mod private_routes;
 mod process_control;
 mod profile_mutation_cache;
 mod profile_status_cache;
@@ -393,32 +396,6 @@ struct AssetReconcileState {
     last_error: Option<String>,
     #[serde(default)]
     last_downloaded: Option<usize>,
-}
-
-struct InstanceInfo {
-    id: String,
-    name: String,
-    profile_id: String,
-    profile_revision: String,
-    profile_payload_hash: String,
-    asset_pins: BootAssetPins,
-    pid: u32,
-    uds_path: PathBuf,
-    session_dir: PathBuf,
-    ram_mb: u64,
-    cpus: u32,
-    #[allow(dead_code)]
-    start_time: std::time::Instant,
-    base_version: String,
-    /// Whether this is a persistent (named) VM
-    persistent: bool,
-    /// Environment variables injected at boot
-    #[allow(dead_code)]
-    env: Option<std::collections::HashMap<String, String>>,
-    /// Sandbox this VM was cloned from, if any
-    forked_from: Option<String>,
-    /// The VM's address on the private link, held for its whole life.
-    private_address: std::net::Ipv4Addr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

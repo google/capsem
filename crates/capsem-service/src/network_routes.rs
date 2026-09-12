@@ -37,7 +37,9 @@ pub(super) fn network_error(error: NetworkError) -> AppError {
     let status = match &error {
         NetworkError::InvalidName(_) | NetworkError::Cursor(_) => StatusCode::BAD_REQUEST,
         NetworkError::NameTaken { .. } | NetworkError::HasMembers { .. } => StatusCode::CONFLICT,
-        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
+        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } | NetworkError::NoPrivatePath { .. } => {
+            StatusCode::NOT_FOUND
+        }
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     };
     AppError(status, error.to_string())

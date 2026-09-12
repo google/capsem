@@ -245,3 +245,189 @@ async fn network_logs_page_with_a_cursor_and_refuse_a_foreign_one() {
     let (status, _) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?limit=0"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+fn owner_secret(state: &ServiceState, vm: &str, secret: &str) {
+    state.instances.lock().unwrap().get_mut(vm).unwrap().owner_secret = secret.into();
+}
+
+async fn private_connect(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    route_request(app(state), Method::POST, "/networks/private/connect", Some(request)).await
+}
+
+#[tokio::test]
+async fn a_private_connection_is_admitted_through_the_destination_owner_and_audited_for_both() {
+    let (state, dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-a", 4242);
+    insert_fake_instance(&state, "vm-b", 4243);
+    owner_secret(&state, "vm-a", "secret-a");
+    let address_b = state.instances.lock().unwrap()["vm-b"].private_address;
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    for vm in ["vm-a", "vm-b"] {
+        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let owner_b = spawn_fake_process(&uds_b, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::PrivateAccept {
+                id,
+                token,
+                source_vm,
+                port,
+                ..
+            } => {
+                assert_eq!(source_vm, "vm-a");
+                assert_eq!(*port, 6379);
+                assert!(!token.is_empty());
+                Some(ProcessToService::PrivateAcceptResult {
+                    id: *id,
+                    handoff_socket: "/run/vm-b/private-handoff.sock".into(),
+                    error: None,
+                })
+            }
+            other => panic!("unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+    let request = json!({
+        "source_vm": "vm-a", "owner_secret": "secret-a",
+        "destination": address_b.to_string(), "port": 6379, "process_name": "redis-cli",
+    });
+
+    let (status, admitted) = private_connect(&state, request.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{admitted}");
+    assert_eq!(admitted["destination_vm"], "vm-b");
+    assert_eq!(admitted["network"], json!(id));
+    assert_eq!(admitted["handoff_socket"], "/run/vm-b/private-handoff.sock");
+    assert!(!admitted["token"].as_str().unwrap().is_empty());
+    let messages = owner_b.await.unwrap();
+    assert!(matches!(messages[0], ServiceToProcess::PrivateAccept { .. }));
+
+    let (status, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    assert_eq!(status, StatusCode::OK, "{logs}");
+    let events = logs["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "{logs}");
+    let facts = &events[0]["event"];
+    assert_eq!(facts["network"]["context"], "private");
+    assert_eq!(facts["network"]["source"]["vm"]["id"], "vm-a");
+    assert_eq!(facts["network"]["destination"]["vm"]["id"], "vm-b");
+    assert_eq!(facts["network"]["destination"]["port"], 6379);
+    assert_eq!(facts["decision"]["effective"], "allow");
+    let (_, by_a) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-a"), None).await;
+    let (_, by_b) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-b"), None).await;
+    assert_eq!(
+        by_a["events"].as_array().unwrap().len(),
+        1,
+        "visible from the source: {by_a}"
+    );
+    assert_eq!(
+        by_b["events"].as_array().unwrap().len(),
+        1,
+        "and from the destination: {by_b}"
+    );
+    drop(dir);
+}
+
+#[tokio::test]
+async fn a_private_connection_is_refused_before_any_owner_is_asked() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-a", 4242);
+    insert_fake_instance(&state, "vm-b", 4243);
+    insert_fake_instance(&state, "vm-c", 4244);
+    owner_secret(&state, "vm-a", "secret-a");
+    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
+    let address_c = state.instances.lock().unwrap()["vm-c"].private_address.to_string();
+    let (_, team) = create_network(&state, "team").await;
+    let (_, other) = create_network(&state, "other").await;
+    for (network, vm) in [(&team, "vm-a"), (&team, "vm-b"), (&other, "vm-c")] {
+        let path = format!("/networks/{}/members/{vm}", network["id"].as_str().unwrap());
+        let (status, _) = route_request(app(&state), Method::PUT, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let request = |secret: &str, destination: &str| json!({ "source_vm": "vm-a", "owner_secret": secret, "destination": destination, "port": 80 });
+    // No fake owner listens anywhere: every refusal below happens first.
+    let (status, _) = private_connect(&state, request("wrong", &address_b)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a wrong secret is not an owner");
+    let (status, _) = private_connect(&state, request("secret-a", &address_c)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a member of another network is unreachable"
+    );
+    let (status, _) = private_connect(&state, request("secret-a", "10.128.7.7")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nobody's address");
+    let (status, _) = private_connect(
+        &state,
+        json!({ "source_vm": "ghost", "owner_secret": "x", "destination": address_b, "port": 80 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "no such running VM");
+
+    // The destination is a member but stopped: refused and audited as such.
+    assert!(state.evict_instance("vm-b").is_some());
+    let (status, refused) = private_connect(&state, request("secret-a", &address_b)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    let id = team["id"].as_str().unwrap();
+    let (_, logs) = route_request(
+        app(&state),
+        Method::GET,
+        &format!("/networks/{id}/logs?decision=block"),
+        None,
+    )
+    .await;
+    let events = logs["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "{logs}");
+    assert_eq!(events[0]["event"]["decision"]["reason"], "destination_stopped");
+}
+
+#[tokio::test]
+async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-a", 4242);
+    insert_fake_instance(&state, "vm-b", 4243);
+    owner_secret(&state, "vm-a", "secret-a");
+    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    let (_, team) = create_network(&state, "team").await;
+    let id = team["id"].as_str().unwrap().to_string();
+    for vm in ["vm-a", "vm-b"] {
+        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let owner_b = spawn_fake_process(&uds_b, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::PrivateAccept { id, .. } => Some(ProcessToService::PrivateAcceptResult {
+                id: *id,
+                handoff_socket: String::new(),
+                error: Some("private handoff not available on this owner".into()),
+            }),
+            other => panic!("unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80 });
+    let (status, refused) = private_connect(&state, request.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    owner_b.await.unwrap();
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    let events = logs["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "{logs}");
+    assert_eq!(events[0]["event"]["decision"]["reason"], "destination_refused");
+
+    // Nobody listening on the destination's socket: unreachable, not a hang.
+    let _ = std::fs::remove_file(&uds_b);
+    let (status, refused) = private_connect(&state, request).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{refused}");
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    assert_eq!(logs["events"].as_array().unwrap().len(), 2, "{logs}");
+    assert_eq!(
+        logs["events"][1]["event"]["decision"]["reason"],
+        "destination_unreachable"
+    );
+}

@@ -46,21 +46,9 @@ async fn handle_fork_creates_persistent_sandbox() {
         InstanceInfo {
             id: "fork-src".into(),
             name: "fork-src".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
-            pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/fork-src.sock"),
             session_dir: session_dir.clone(),
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            ..test_instance(&state)
         },
     );
     let result = handle_fork(
@@ -120,21 +108,9 @@ async fn handle_fork_duplicate_returns_conflict() {
         InstanceInfo {
             id: "dup-src".into(),
             name: "dup-src".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
-            pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/dup-src.sock"),
             session_dir,
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            ..test_instance(&state)
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -217,21 +193,9 @@ async fn handle_persist_preserves_profile_identity() {
         InstanceInfo {
             id: "persist-src".into(),
             name: "persist-src".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
-            pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/persist-src.sock"),
             session_dir: session_dir.clone(),
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            ..test_instance(&state)
         },
     );
 
@@ -897,21 +861,10 @@ async fn handle_suspend_rejects_ephemeral_vm() {
             InstanceInfo {
                 id: "eph-vm".into(),
                 name: "eph-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                pid: 0,
                 uds_path: state.run_dir.join("instances/eph-vm.sock"),
                 session_dir: state.run_dir.join("sessions/eph-vm"),
-                ram_mb: 2048,
-                cpus: 2,
-                start_time: std::time::Instant::now(),
-                base_version: "0.0.0".into(),
-                persistent: false,
-                env: None,
-                forked_from: None,
-                private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+                pid: 0,
+                ..test_instance(&state)
             },
         );
     }
@@ -994,21 +947,11 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
         InstanceInfo {
             id: vm_id.clone(),
             name: "resume-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
-            pid: 0,
             uds_path: uds_path.clone(),
             session_dir,
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
+            pid: 0,
             persistent: true,
-            env: None,
-            forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            ..test_instance(&state)
         },
     );
 

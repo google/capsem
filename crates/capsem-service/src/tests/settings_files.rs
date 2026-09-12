@@ -267,6 +267,7 @@ fn resolve_rejects_symlink_escape() {
             env: None,
             forked_from: None,
             private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            owner_secret: String::new(),
         },
     );
 
@@ -303,6 +304,7 @@ fn resolve_valid_path_inside_workspace() {
             env: None,
             forked_from: None,
             private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            owner_secret: String::new(),
         },
     );
 

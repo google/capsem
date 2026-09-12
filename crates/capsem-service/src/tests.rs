@@ -220,6 +220,30 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     })
 }
 
+/// The fields every fake instance shares; a test names only what it varies.
+pub(crate) fn test_instance(state: &ServiceState) -> InstanceInfo {
+    InstanceInfo {
+        id: String::new(),
+        name: String::new(),
+        profile_id: "code".into(),
+        profile_revision: test_profile_revision(),
+        profile_payload_hash: test_profile_payload_hash(),
+        asset_pins: test_asset_pins(),
+        pid: std::process::id(),
+        uds_path: PathBuf::new(),
+        session_dir: PathBuf::new(),
+        ram_mb: 2048,
+        cpus: 2,
+        start_time: std::time::Instant::now(),
+        base_version: "0.0.0".into(),
+        persistent: false,
+        env: None,
+        forked_from: None,
+        private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+        owner_secret: String::new(),
+    }
+}
+
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
     insert_fake_instance_with_session_dir(state, id, pid, state.run_dir.join("sessions").join(id));
 }
@@ -322,6 +346,7 @@ fn insert_fake_instance_with_session_dir_and_pins(
             env: None,
             forked_from: None,
             private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            owner_secret: String::new(),
         },
     );
 }

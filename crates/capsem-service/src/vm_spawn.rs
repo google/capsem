@@ -144,6 +144,7 @@ impl ServiceState {
         }
 
         let process_log_path = session_dir.join("process.log");
+        let owner_secret = private_routes::mint_owner_secret(&session_dir)?;
         let process_log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -334,6 +335,7 @@ impl ServiceState {
                 env,
                 forked_from: from,
                 private_address,
+                owner_secret,
             },
         );
         drop(instances);
@@ -437,6 +439,7 @@ impl ServiceState {
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
         let process_log_path = entry.session_dir.join("process.log");
+        let owner_secret = private_routes::mint_owner_secret(&entry.session_dir)?;
         let process_log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -596,6 +599,7 @@ impl ServiceState {
                 env: None,
                 forked_from: entry.forked_from,
                 private_address,
+                owner_secret,
             },
         );
         drop(instances);

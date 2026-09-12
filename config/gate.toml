@@ -1130,11 +1130,11 @@ must_stay_below_lines = 3000
 "crates/capsem-process/src/vsock.rs" = 1455
 "crates/capsem-proto/src/tests.rs" = 1457
 "crates/capsem-service/src/ledger_routes.rs" = 2810
-"crates/capsem-service/src/main.rs" = 1548
+"crates/capsem-service/src/main.rs" = 1525
 "crates/capsem-service/src/profile_routes.rs" = 2167
 "crates/capsem-service/src/vm_files.rs" = 1847
 "crates/capsem-service/src/tests/assets_registry.rs" = 1524
-"crates/capsem-service/src/tests/lifecycle.rs" = 2305
+"crates/capsem-service/src/tests/lifecycle.rs" = 2248
 "crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 2190
 "crates/capsem-tui/src/ui.rs" = 1081
@@ -2866,7 +2866,7 @@ slowest_steps = 10
 # `internal` is a reasoned, ratcheted inventory for service-UDS control routes
 # that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
-internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/connect" = "VM owners ask the service to admit a private TCP connection over the local service UDS; never a gateway route" }
 measured = [
     "/status",
     "/version",
