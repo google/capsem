@@ -2866,7 +2866,7 @@ slowest_steps = 10
 # `internal` is a reasoned, ratcheted inventory for service-UDS control routes
 # that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
-internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/connect" = "VM owners ask the service to admit a private TCP connection over the local service UDS; never a gateway route" }
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/connect" = "VM owners ask the service to admit a private TCP connection over the local service UDS; never a gateway route", "/networks/private/datagram" = "VM owners ask the service to admit a private UDP or ICMP echo flow over the local service UDS; never a gateway route" }
 measured = [
     "/status",
     "/version",
