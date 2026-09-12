@@ -93,10 +93,13 @@ fn configure_tcp_linger(fd: BorrowedFd<'_>, enabled: bool) -> io::Result<bool> {
 /// Revoke a TCP connection immediately, even while another process retains a
 /// duplicate descriptor. The trusted endpoint owner calls this, not the router.
 pub fn reset_tcp(fd: BorrowedFd<'_>) -> io::Result<bool> {
-    if !tcp_reset_on_close(fd)? {
-        return Ok(false);
+    match tcp_reset_on_close(fd) {
+        Ok(false) => return Ok(false),
+        Ok(true) => {}
+        Err(error) if already_torn_down(&error) => return Ok(true),
+        Err(error) => return Err(error),
     }
-    retry_eintr(|| {
+    let result = retry_eintr(|| {
         #[cfg(target_os = "macos")]
         // SAFETY: disconnectx acts only on this borrowed socket. Linger zero
         // makes XNU tcp_disconnect use tcp_drop instead of sending FIN.
@@ -117,8 +120,24 @@ pub fn reset_tcp(fd: BorrowedFd<'_>) -> io::Result<bool> {
             Err(Errno::last())
         }
     })
-    .map_err(errno::io)?;
-    Ok(true)
+    .map_err(errno::io);
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if already_torn_down(&error) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// A connection the peer already reset has nothing left to reset: XNU
+/// answers EINVAL to both the linger option and `disconnectx` once the
+/// socket left ESTABLISHED, Linux ENOTCONN or EPIPE. The caller wanted the
+/// peer gone and it is; reporting an error here once ended a VM's whole
+/// control link when a host client reset sixteen streams at once.
+fn already_torn_down(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOTCONN | libc::ECONNRESET | libc::EPIPE)
+    )
 }
 
 /// Restore default close behavior after a TCP stream completed normally.

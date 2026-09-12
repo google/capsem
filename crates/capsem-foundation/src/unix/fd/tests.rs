@@ -61,6 +61,29 @@ fn tcp_reset_revokes_retained_copies_without_waiting_for_their_close() {
 }
 
 #[test]
+fn resetting_a_connection_the_peer_already_reset_is_not_an_error() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    // Unread data at the client when it closes makes the kernel answer with
+    // a reset instead of a FIN: the connection is gone before we look.
+    server.write_all(b"unread").unwrap();
+    drop(client);
+    server
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let observed = server.read(&mut [0]);
+    assert!(
+        matches!(
+            observed.as_ref().map_err(std::io::Error::kind),
+            Ok(0) | Err(std::io::ErrorKind::ConnectionReset)
+        ),
+        "{observed:?}"
+    );
+    assert!(super::reset_tcp(server.as_fd()).unwrap(), "already reset is reset");
+}
+
+#[test]
 fn clearing_armed_reset_restores_graceful_tcp_close() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
