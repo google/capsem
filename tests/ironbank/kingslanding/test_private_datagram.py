@@ -121,14 +121,26 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
         timeout=60,
     )
 
-    # Ordinary datagrams, a frame-sized one, and one the guest fragments.
-    small = udp(service, alpha, beta["private_address"], 200, 1400)
+    # Ordinary datagrams, a frame-sized one, and one the guest fragments;
+    # each lane's counts and round trips go to the benchmark store.
+    lanes = {"b1400": (200, 1400), "b60000": (20, 60_000), "b65507": (10, 65_507)}
+    results = {
+        lane: udp(
+            service,
+            alpha,
+            beta["private_address"],
+            count,
+            size,
+            recorded=recorded,
+            lane=f"private_udp.{lane}",
+        )
+        for lane, (count, size) in lanes.items()
+    }
+    small = results["b1400"]
     assert small["received"] >= 195, small
     assert small["round_trips"] and max(small["round_trips"]) < 500, small
-    large = udp(service, alpha, beta["private_address"], 20, 60_000)
-    assert large["received"] >= 19, large
-    fragmented = udp(service, alpha, beta["private_address"], 10, 65_507)
-    assert fragmented["received"] >= 9, fragmented
+    assert results["b60000"]["received"] >= 19, results
+    assert results["b65507"]["received"] >= 9, results
 
     # The second VM's kernel answers echo requests on the link.
     ping = probe(
@@ -141,8 +153,15 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
         "20",
         "--interval-ms",
         "20",
+        recorded=recorded,
+        lane="private_ping",
     )
     assert ping["received"] >= 19, ping
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, timeout=5, text=True
+    ).strip()
+    record(evidence, recorded, source_commit)
+    assert (evidence / "report.txt").exists()
 
     # A private address that belongs to no member gets nothing, in bound.
     stranger = udp(service, alpha, STRANGER, 5, 64, wait_ms=1000)
