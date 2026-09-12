@@ -189,14 +189,15 @@ impl PrivateLink {
         let mut watch = tokio::net::UnixStream::from_std(socket)?;
         let mut sink = [0u8; 64];
         while watch.read(&mut sink).await? != 0 {}
-        {
-            let mut guest = self.guest.lock().unwrap();
-            if *self.epoch.lock().unwrap() == epoch {
-                drop(guest.take());
-            }
-            *self.released.lock().unwrap() = epoch;
-            *self.held.lock().unwrap() = None;
-        }
+        let current = *self.epoch.lock().unwrap() == epoch;
+        let stream = if current {
+            self.guest.lock().unwrap().take()
+        } else {
+            None
+        };
+        drop(stream);
+        *self.released.lock().unwrap() = epoch;
+        *self.held.lock().unwrap() = None;
         link.audit
             .record(RuntimeSecurityEventType::NetworkClose, NetworkReason::Complete, 0, 0)
             .await?;
