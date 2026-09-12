@@ -433,7 +433,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 )
                                 .await
                             }
-                            _ => break, // Error or closed, wait for rekey
+                            Some(Err(error)) => {
+                                warn!(%error, "control bridge: guest frame failed; waiting for rekey");
+                                break;
+                            }
+                            None => {
+                                info!("control bridge: guest closed the control stream; waiting for rekey");
+                                break;
+                            }
                         }
                     }
                     // Connection reset
@@ -962,15 +969,8 @@ fn dispatch_aux_connection(
         Some(HostVsockService::Network | HostVsockService::Private) => streams::serve(conn, job_store, vm_id),
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
         Some(HostVsockService::DnsProxy) => {
-            // DNS proxy connections are long-lived framed sessions.
-            // The guest keeps a small worker pool of persistent vsock
-            // fds; each frame is one DNS query/response round trip.
-            // T3.3 -- after the handler returns we build a `DnsEvent`
-            // and push it through the shared `DbWriter` so a
-            // `dns_events` row is recorded for every query (allowed,
-            // denied, error). `trace_id` is the ambient capsem trace
-            // id so a single agent action joins across `dns_events`
-            // and `net_events`.
+            // Long-lived framed session, one DNS round trip per frame; every
+            // query becomes a `dns_events` row under the ambient trace id.
             let handler = Arc::clone(dns_handler);
             let db_for_dns = Arc::clone(db);
             let security_rules = Arc::clone(security_rules);
