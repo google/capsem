@@ -113,17 +113,26 @@ def test_gateway_redirects_mirror_the_vm_interception_rules(launcher):
 
 
 class FakeRun:
-    """Records every command the hook issues and answers the two it reads."""
+    """Records every command the hook issues and answers the three it reads."""
 
-    def __init__(self, rules, jump_exists=False):
+    def __init__(self, rules, jump_exists=False, tap0_address=None):
         self.calls = []
         self.rules = rules
         self.jump_exists = jump_exists
+        self.tap0_address = tap0_address
 
     def __call__(self, *argv, check=True, **kwargs):
         self.calls.append(list(argv))
-        stdout = self.rules if "-S" in argv else ""
+        stdout = ""
         returncode = 0
+        if "-S" in argv:
+            stdout = self.rules
+        elif argv[:3] == ("ip", "-o", "addr"):
+            assert not check, "the link is probed without raising"
+            if self.tap0_address:
+                stdout = f"4: tap0    inet {self.tap0_address}/9 scope global tap0\n"
+            else:
+                returncode = 1
         if "-C" in argv:
             assert not check, "chain existence must be probed without raising"
             returncode = 0 if self.jump_exists else 1
@@ -315,3 +324,88 @@ def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_pat
     layout.mkdir()
     with pytest.raises(ValueError, match="digest"):
         launcher.assemble(stage, layout)
+
+
+def test_network_ready_hook_opens_the_private_link_to_the_container(launcher, tmp_path):
+    """With a private link up, container UDP and ICMP to the pool leave through
+    tap0 as the VM's own address, and UDP arriving on tap0 lands in the
+    container; TCP keeps its DNAT to the proxy and everything else stays
+    dropped."""
+    run = FakeRun(VM_OUTPUT_RULES, tap0_address="10.129.7.200")
+    root = hook_environment(tmp_path)
+    (root / "net/ipv4").mkdir(parents=True, exist_ok=True)
+    launcher.network_ready(4242, run=run, sysctl_root=root)
+    calls = run.calls
+    iptables = launcher.IPTABLES
+    assert (root / "net/ipv4/ip_forward").read_text() == "1\n"
+    snat = [
+        iptables,
+        "-t",
+        "nat",
+        "-A",
+        "POSTROUTING",
+        "-o",
+        "tap0",
+        "-s",
+        launcher.CONTAINER_ADDRESS,
+        "-j",
+        "SNAT",
+        "--to-source",
+        "10.129.7.200",
+    ]
+    assert snat in calls
+    dnat = [
+        iptables,
+        "-t",
+        "nat",
+        "-A",
+        launcher.NAT_CHAIN,
+        "-i",
+        "tap0",
+        "-p",
+        "udp",
+        "-j",
+        "DNAT",
+        "--to-destination",
+        launcher.CONTAINER_ADDRESS,
+    ]
+    assert dnat in calls
+    for proto in ("udp", "icmp"):
+        out = [
+            iptables,
+            "-I",
+            "FORWARD",
+            "-i",
+            "capsem0",
+            "-o",
+            "tap0",
+            "-d",
+            launcher.PRIVATE_POOL,
+            "-p",
+            proto,
+            "-j",
+            "ACCEPT",
+        ]
+        assert out in calls
+    back = [iptables, "-I", "FORWARD", "-i", "tap0", "-o", "capsem0", "-j", "ACCEPT"]
+    assert back in calls
+    drop = [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"]
+    # Inserted after the drop, so they sit above it in the chain.
+    assert calls.index(back) > calls.index(drop)
+    assert all(
+        calls.index(call) > calls.index(drop)
+        for call in calls
+        if call[-1] == "ACCEPT" and "FORWARD" in call
+    )
+
+
+def test_network_ready_hook_without_a_private_link_adds_no_link_rules(
+    launcher, tmp_path
+):
+    run = FakeRun(VM_OUTPUT_RULES)
+    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    # The link is probed and found absent; no rule names it.
+    assert not any(
+        launcher.IPTABLES == call[0] and "tap0" in call for call in run.calls
+    )
+    assert not (tmp_path / "net/ipv4/ip_forward").exists()
