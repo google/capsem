@@ -88,6 +88,21 @@ pub fn terminal_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(private_fallback_dir()?.join(format!("{short}-ws.sock")))
 }
 
+/// Where a VM owner takes private connections other owners hand over: the
+/// same shortening rules as the terminal socket, one path per VM.
+pub fn private_handoff_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
+    let preferred = run_dir.join("instances").join(format!("{id}-handoff.sock"));
+    if preferred.as_os_str().len() < SUN_PATH_MAX {
+        return Ok(ensured(preferred));
+    }
+    let mut digest = blake3::Hasher::new();
+    digest.update(run_dir.as_os_str().as_encoded_bytes());
+    digest.update(id.as_bytes());
+    digest.update(b"handoff");
+    let short = &digest.finalize().to_hex()[..16];
+    Ok(private_fallback_dir()?.join(format!("{short}-handoff.sock")))
+}
+
 /// A path with a directory to bind in.
 ///
 /// Only the fallback branch created its directory; the preferred branch
