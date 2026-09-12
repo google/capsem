@@ -51,6 +51,20 @@ def linked(service, network, *vms):
     )
 
 
+def probe_fails(service, vm, *args, timeout=40):
+    """Run one bench probe inside `vm`'s container expecting it to fail
+    before measuring (an unresolvable name); its stderr."""
+    result = guest(
+        service,
+        vm["id"],
+        f"{IN_CONTAINER} " + shlex.join(["capsem-bench-rs", *args]),
+        timeout=timeout,
+        check=False,
+    )
+    assert result.get("exit_code") not in (None, 0), result
+    return result.get("stderr", "")
+
+
 def probe(service, vm, *args, timeout=40, recorded=None, lane=None):
     """Run one bench probe inside `vm`'s container; its JSON report. With
     `recorded` and `lane`, every metric joins the store under that lane."""
@@ -172,6 +186,36 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
     record(evidence, recorded, source_commit)
     assert (evidence / "report.txt").exists()
 
+    # Members have names on the private zone, answered by the host for the
+    # asker's networks only; a stranger's name does not resolve at all.
+    named = udp(service, alpha, "beta.team.capsem.internal", 20, 64)
+    assert named["received"] >= 19, named
+    short = udp(service, alpha, "beta.capsem.internal", 5, 64)
+    assert short["received"] >= 4, short
+    by_name = probe(
+        service, alpha, "ping", "--address", "beta.team.capsem.internal", "--count", "3"
+    )
+    assert by_name["received"] >= 2, by_name
+    unresolved = probe_fails(
+        service,
+        alpha,
+        "udp",
+        "--address",
+        f"stranger.team.capsem.internal:{ECHO_PORT}",
+        "--count",
+        "1",
+    )
+    assert "resolve" in unresolved, unresolved
+    lookup = guest(
+        service,
+        alpha["id"],
+        f"{IN_CONTAINER} getent hosts beta.team.capsem.internal; "
+        f"{IN_CONTAINER} getent hosts {beta['private_address']}",
+        check=False,
+    )
+    assert beta["private_address"] in lookup.get("stdout", ""), lookup
+    assert "beta.team.capsem.internal" in lookup.get("stdout", ""), lookup
+
     # A private address that belongs to no member gets nothing, in bound.
     stranger = udp(service, alpha, STRANGER, 5, 64, wait_ms=1000)
     assert stranger["received"] == 0, stranger
@@ -224,6 +268,16 @@ def test_leaving_ends_the_link_and_joining_again_restores_it(members, service):
     client.delete(f"/networks/{network}/members/{beta['id']}")
     gone = udp(service, alpha, beta["private_address"], 5, 64, wait_ms=1000)
     assert gone["received"] == 0, gone
+    # The name went with the membership.
+    probe_fails(
+        service,
+        alpha,
+        "udp",
+        "--address",
+        f"beta.team.capsem.internal:{ECHO_PORT}",
+        "--count",
+        "1",
+    )
 
     # Joining again: the pump reconnected, the owner holds a fresh stream,
     # and the switch takes it.
