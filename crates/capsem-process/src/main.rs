@@ -4,6 +4,8 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod private_handoff;
+mod private_relay;
+mod private_seats;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -436,39 +438,18 @@ async fn run_async_main_loop(
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
-    // Private connections need the service's socket and the run directory
-    // the service named; both derive from where the service put our IPC
-    // socket when it did not pass a run directory.
-    {
-        let walked_up = args
-            .uds_path
-            .parent()
-            .and_then(|instances| instances.parent())
-            .unwrap_or_else(|| Path::new("/tmp"))
-            .to_path_buf();
-        let run_dir = args.run_dir.clone().unwrap_or(walked_up);
-        let handoff_path = capsem_foundation::uds::private_handoff_socket_path(&run_dir, &args.id)?;
-        if handoff_path.exists() {
-            std::fs::remove_file(&handoff_path)?;
-        }
-        let handoff_listener = UnixListener::bind(&handoff_path).context("bind private handoff socket")?;
-        std::fs::set_permissions(&handoff_path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-        let owner_secret = std::fs::read_to_string(session_dir.join("owner-secret"))
-            .map(|secret| secret.trim().to_string())
-            .unwrap_or_default();
-        let handoff = Arc::new(private_handoff::PrivateHandoff::new(
-            handoff_path,
-            job_store.publisher.clone(),
-            ctrl_tx.clone(),
-            args.service_socket
-                .clone()
-                .unwrap_or_else(|| run_dir.join("service.sock")),
-            owner_secret,
-            args.id.clone(),
-        ));
-        let _ = job_store.private.set(Arc::clone(&handoff));
-        tokio::spawn(handoff.serve(handoff_listener));
-    }
+    private_seats::bind(
+        private_seats::Seats {
+            id: &args.id,
+            env: &args.env,
+            service_socket: args.service_socket.as_deref(),
+            uds_path: &args.uds_path,
+            run_dir: args.run_dir.as_deref(),
+            session_dir: &session_dir,
+        },
+        &job_store,
+        ctrl_tx.clone(),
+    )?;
     let restored = job_store
         .publisher
         .restore(ctrl_tx.clone())

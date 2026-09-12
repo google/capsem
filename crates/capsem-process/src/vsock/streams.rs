@@ -25,39 +25,20 @@ pub(super) fn serve_mitm(conn: VsockConnection, config: Arc<capsem_core::net::mi
 pub(super) fn serve(conn: VsockConnection, job_store: &Arc<crate::job_store::JobStore>, vm_id: &str) {
     match capsem_proto::HostVsockService::from_port(conn.port) {
         Some(capsem_proto::HostVsockService::Private) => serve_private(conn, Arc::clone(job_store), vm_id),
-        _ => serve_network(conn, vm_id),
+        _ => serve_network(conn, job_store, vm_id),
     }
 }
 
-/// The guest's tun0 packet stream, terminated in smoltcp inside this process
-/// for the S04-004 measurement; the confined capsem-network process of
-/// S04-002 takes the descriptor instead.
-fn serve_network(conn: VsockConnection, vm_id: &str) {
-    let vm = vm_id.to_string();
-    tokio::spawn(async move {
-        let stream = conn.try_clone_fd().and_then(|fd| {
-            capsem_foundation::unix::fd::set_nonblocking(fd.as_fd(), true)?;
-            tokio::net::UnixStream::from_std(std::os::unix::net::UnixStream::from(fd))
-        });
-        let stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                error!(
-                    operation = "duplicate-network-vsock",
-                    errno = error.raw_os_error(),
-                    error = %error,
-                    "network packet stream descriptor unavailable"
-                );
-                return;
-            }
-        };
-        info!(vm = %vm, "network: guest tun0 packet stream attached");
-        match capsem_network::serve_throughput(stream).await {
-            Ok(_) => info!(vm = %vm, "network: guest tun0 packet stream ended"),
-            Err(error) => warn!(vm = %vm, error = %error, "network: guest tun0 packet stream failed"),
+/// The guest's tun0 packet stream: the owner's datagram relay takes it,
+/// as the source of its guest's flows and the sink for its peers'.
+fn serve_network(conn: VsockConnection, job_store: &Arc<crate::job_store::JobStore>, vm_id: &str) {
+    match job_store.relay.get() {
+        Some(relay) => {
+            info!(vm = %vm_id, "network: guest tun0 packet stream attached");
+            relay.attach_guest(conn);
         }
-        drop(conn);
-    });
+        None => warn!(vm = %vm_id, "network: guest tun0 packet stream refused; no datagram relay on this owner"),
+    }
 }
 
 /// A guest connection to a private address: the header names where it was

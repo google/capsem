@@ -156,9 +156,13 @@ impl PrivateHandoff {
             .context("unknown, reused or expired private connection token")?;
         let mut fds = frame.fds;
         ensure!(fds.len() == 1, "handoff carried {} descriptors, not one", fds.len());
-        let audit = self
-            .publisher
-            .private_audit(accept.network, accept.source, accept.source_address, accept.port)?;
+        let audit = self.publisher.private_audit(
+            accept.network,
+            accept.source,
+            accept.source_address,
+            accept.port,
+            capsem_core::security_engine::network::NetworkProtocol::Tcp,
+        )?;
         self.start_broker().await?;
         let arrival = Incoming {
             source: Source::Stream(fds.pop().unwrap()),

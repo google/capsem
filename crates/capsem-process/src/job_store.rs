@@ -39,6 +39,8 @@ pub(crate) struct JobStore {
     /// Private connections in and out of this VM; set once the owner has its
     /// handoff socket, absent in fixtures that never take one.
     pub(crate) private: std::sync::OnceLock<Arc<crate::private_handoff::PrivateHandoff>>,
+    /// The datagram twin of `private`, set once the relay socket is bound.
+    pub(crate) relay: std::sync::OnceLock<Arc<crate::private_relay::PrivateRelay>>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -86,6 +88,7 @@ impl JobStore {
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
             private: std::sync::OnceLock::new(),
+            relay: std::sync::OnceLock::new(),
         }
     }
 

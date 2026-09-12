@@ -328,19 +328,20 @@ pub(crate) async fn handle_ipc_connection(
                 protocol,
             } => {
                 let output = ipc_tx_out.clone();
-                let accepted = job_store
-                    .private
-                    .get()
-                    .context("no private handoff on this owner")
-                    .and_then(|handoff| {
-                        anyhow::ensure!(protocol == "tcp", "datagram flows are not relayed by this owner yet");
-                        let network =
-                            capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
-                                .map_err(anyhow::Error::msg)?;
-                        let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
+                let accepted = (|| {
+                    let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
+                        .map_err(anyhow::Error::msg)?;
+                    let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
+                    if protocol == "tcp" {
+                        let handoff = job_store.private.get().context("no private handoff on this owner")?;
                         handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
-                        Ok(handoff.socket_path().to_string_lossy().into_owned())
-                    });
+                        return Ok(handoff.socket_path().to_string_lossy().into_owned());
+                    }
+                    let relay = job_store.relay.get().context("no datagram relay on this owner")?;
+                    let protocol = crate::private_relay::parse_protocol(&protocol)?;
+                    relay.expect(&token, network, source, source_address, source_port, port, protocol)?;
+                    Ok::<_, anyhow::Error>(relay.socket_path().to_string_lossy().into_owned())
+                })();
                 let response = match accepted {
                     Ok(handoff_socket) => ProcessToService::PrivateAcceptResult {
                         id,
