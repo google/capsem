@@ -837,7 +837,6 @@ fn drain_dead_instances_releases_mutex_before_returning() {
 // it's renamed to a `-failed-*` sibling instead so process.log,
 // mcp-aggregator.stderr.log, serial.log, and session.db survive.
 // Cap: MAX_FAILED_SESSIONS (5).
-// -----------------------------------------------------------------------
 
 pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     let run_dir = test_root.join("run");
