@@ -1,11 +1,12 @@
-"""Exploratory private-link measurements: the tun0 lane against the FD-pair lane.
+"""Exploratory published-port measurements on the FD-pair data plane.
 
-The same `capsem-bench-rs throughput` client runs on both sides of Capsem.
-`host_published` is today's data plane: a host client, a published port, the
-confined router copying bytes into the container. `guest_tun` is the proposed
-one: a guest client, tun0, capsem-tun pumping packets over VSOCK, smoltcp in
-the VM owner terminating them. Kingslanding uses a pinned native image
-prepared before hermetic execution; the image only provides the container.
+A host client, a published port, the confined router copying bytes into the
+container: `capsem-bench-rs throughput` records every direction and stream
+count through the benchmark store. The tun0 lane this file once measured
+against it is gone with its smoltcp endpoint (S04-004 no-go, artifacts A026
+and A028); tun0 now carries private datagrams between members. Kingslanding
+uses a pinned native image prepared before hermetic execution; the image
+only provides the container.
 """
 
 import hashlib
@@ -167,7 +168,6 @@ def test_private_link_and_published_port_transport_samples(
         },
         "lanes": {
             "host_published": "host client -> published port -> capsem-router -> VSOCK -> container",
-            "guest_tun": "guest client -> tun0 -> capsem-tun -> VSOCK -> smoltcp in capsem-process",
         },
         "classification": "exploratory; no release baseline or performance threshold",
         "trials": [],
@@ -206,35 +206,13 @@ def test_private_link_and_published_port_transport_samples(
         f"inet {container['vm']['private_address']} peer {GATEWAY}/9"
         in device["stdout"]
     ), device
-    gateway = f"{GATEWAY}:{THROUGHPUT_PORT}"
-    tun_probe = shlex.join(
-        [
-            "capsem-bench-rs",
-            *client_args("latency", 1, seconds=1),
-            "--address",
-            gateway,
-        ]
-    )
-    wait_for(
-        lambda: (
-            guest(service, vm_id, tun_probe, timeout=15, check=False).get("exit_code")
-            == 0
-        ),
-        "tun0 lane answers",
-        timeout=30,
-    )
 
     metrics = {}
     try:
-        measure_lanes(service, vm_id, published, gateway, output, identity, metrics)
+        measure_lane(published, output, identity, metrics)
     finally:
-        # The helpers' logs are the evidence when a lane never answers.
-        # The pump is the agent's child, so its lines are in the agent's log.
+        # The helpers' logs are the evidence when the lane never answers.
         for name, command in (
-            (
-                "capsem-tun",
-                "grep capsem-tun /tmp/capsem-agent-stdio.log; pgrep -a capsem-tun",
-            ),
             ("throughput-server", "cat /var/tmp/throughput-server.log"),
         ):
             log = guest(service, vm_id, command, check=False)
@@ -253,45 +231,28 @@ def test_private_link_and_published_port_transport_samples(
         )
         (output / "guest-helpers.txt").write_text(json.dumps(helpers, indent=2))
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
-    (output / "comparison.json").write_text(
-        json.dumps(compare(metrics), indent=2) + "\n"
-    )
     record(output, metrics, identity["source_commit"])
 
 
-def measure_lanes(service, vm_id, published, gateway, output, identity, metrics):
-    lanes = (
-        ("host_published", lambda args: probe([BENCH, *args, "--address", published])),
-        (
-            "guest_tun",
-            lambda args: guest(
-                service,
-                vm_id,
-                shlex.join(["capsem-bench-rs", *args, "--address", gateway]),
-            ),
-        ),
-    )
-    for lane, run in lanes:
-        for direction, streams in MATRIX:
-            for trial in range(TRIALS):
-                args = client_args(direction, streams)
-                result = run(args)
-                if isinstance(result, subprocess.CompletedProcess):
-                    assert result.returncode == 0, result.stderr
-                    raw = result.stdout
-                else:
-                    raw = result["stdout"]
-                document = json.loads(raw)
-                label = f"{lane}.{direction}.s{streams}.r{trial}"
-                (output / f"{label}.json").write_text(raw)
-                identity["trials"].append(
-                    {"label": label, "args": args, "settings": document["throughput"]}
-                )
-                for name, metric in document["metrics"].items():
-                    key = f"{lane}.{direction}.s{streams}.{name}"
-                    metrics.setdefault(key, {"unit": metric["unit"], "samples": []})[
-                        "samples"
-                    ].extend(metric["samples"])
+def measure_lane(published, output, identity, metrics):
+    lane = "host_published"
+    for direction, streams in MATRIX:
+        for trial in range(TRIALS):
+            args = client_args(direction, streams)
+            result = probe([BENCH, *args, "--address", published])
+            assert result.returncode == 0, result.stderr
+            raw = result.stdout
+            document = json.loads(raw)
+            label = f"{lane}.{direction}.s{streams}.r{trial}"
+            (output / f"{label}.json").write_text(raw)
+            identity["trials"].append(
+                {"label": label, "args": args, "settings": document["throughput"]}
+            )
+            for name, metric in document["metrics"].items():
+                key = f"{lane}.{direction}.s{streams}.{name}"
+                metrics.setdefault(key, {"unit": metric["unit"], "samples": []})[
+                    "samples"
+                ].extend(metric["samples"])
 
 
 def record(output, metrics, source_commit):
@@ -330,51 +291,6 @@ def record(output, metrics, source_commit):
     )
     assert report.returncode == 0, report.stderr
     (output / "report.txt").write_bytes(report.stdout)
-
-
-def compare(metrics):
-    """Per cell, the tun0 lane as a fraction of the FD-pair lane: throughput
-    on the direction's moving side, median round trip for latency."""
-
-    def mean(key):
-        samples = metrics[key]["samples"]
-        return sum(samples) / len(samples)
-
-    def median(key):
-        samples = sorted(metrics[key]["samples"])
-        return samples[len(samples) // 2]
-
-    cells = {}
-    for direction, streams in MATRIX:
-        cell = f"{direction}.s{streams}"
-        if f"guest_tun.{cell}.elapsed_seconds" not in metrics:
-            continue
-        if direction == "latency":
-            published = median(f"host_published.{cell}.round_trip_ms")
-            tun = median(f"guest_tun.{cell}.round_trip_ms")
-            cells[cell] = {
-                "published_median_ms": published,
-                "tun_median_ms": tun,
-                "tun_over_published": tun / published,
-            }
-            continue
-        sides = {
-            "upload": ["send"],
-            "download": ["receive"],
-            "bidirectional": ["send", "receive"],
-        }[direction]
-        for side in sides:
-            published = mean(f"host_published.{cell}.{side}_megabits_per_sec")
-            tun = mean(f"guest_tun.{cell}.{side}_megabits_per_sec")
-            cells[f"{cell}.{side}"] = {
-                "published_mbit_s": published,
-                "tun_mbit_s": tun,
-                "tun_over_published": tun / published if published else None,
-            }
-    return {
-        "decision_rule": "proceed if the tun0 lane keeps roughly a third of the FD-pair throughput",
-        "cells": cells,
-    }
 
 
 def test_private_tcp_is_intercepted_and_refused_before_any_byte(container, service):
