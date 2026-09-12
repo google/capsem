@@ -112,6 +112,32 @@ impl AuditFlow {
         }
     }
 
+    /// This VM's link to a network's switch: its own address on both ends,
+    /// no ports, judged once when the service links it.
+    pub(super) fn link(authority: Arc<Authority>, network: NetworkIdentity, own: Ipv4Addr) -> Self {
+        let endpoint = || NetworkEndpoint {
+            vm: Some(authority.vm.clone()),
+            address: (own, 0).into(),
+        };
+        Self {
+            facts: NetworkFlow {
+                connection_id: uuid::Uuid::new_v4(),
+                route: NetworkRoute::Private { network },
+                side: NetworkSide::Destination,
+                protocol: NetworkProtocol::Link,
+                source: endpoint(),
+                destination: endpoint(),
+                report: None,
+            },
+            authority,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    pub fn facts(&self) -> &NetworkFlow {
+        &self.facts
+    }
+
     pub async fn authorize(&self) -> Result<SecurityEnforcementAction> {
         let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
             .with_network(NetworkSecurityEvent::Flow(self.facts.clone()));

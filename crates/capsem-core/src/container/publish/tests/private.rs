@@ -206,3 +206,29 @@ async fn the_private_quota_refuses_the_stream_past_the_last_seat() {
     fixture.broker.await.unwrap().unwrap();
     fixture.owner.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_link_audit_is_this_vms_own_portless_private_flow() {
+    let owner = security::authorized_publisher(capsem_config::router::RouterConfig::default());
+    let audit = owner
+        .private_link_audit(network(), Ipv4Addr::new(10, 128, 0, 3))
+        .unwrap();
+    assert_eq!(
+        audit.authorize().await.unwrap(),
+        crate::security_engine::SecurityEnforcementAction::Allow
+    );
+    let facts = audit.facts();
+    assert_eq!(facts.protocol, crate::security_engine::network::NetworkProtocol::Link);
+    assert_eq!(facts.source.address, "10.128.0.3:0".parse().unwrap());
+    assert_eq!(facts.destination.address, "10.128.0.3:0".parse().unwrap());
+    assert_eq!(facts.source.vm.as_ref().map(|vm| vm.id.as_str()), Some("vm-id"));
+    audit
+        .record(
+            crate::security_engine::RuntimeSecurityEventType::NetworkClose,
+            crate::security_engine::network::NetworkReason::Complete,
+            3,
+            4,
+        )
+        .await
+        .unwrap();
+}

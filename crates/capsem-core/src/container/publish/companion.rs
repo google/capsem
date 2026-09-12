@@ -121,36 +121,18 @@ impl Router {
 }
 
 pub(super) async fn start(owner: &Publisher) -> Result<Arc<Router>> {
-    let binary = std::env::current_exe()?.with_file_name("capsem-router");
-    let (parent, child_socket) = StdUnixStream::pair()?;
-    let mut child = tokio::process::Command::new(binary)
-        .args(["--parent-pid", &std::process::id().to_string()])
-        .arg("--expose-limit")
-        .arg(owner.budgets.expose.connections.to_string())
-        .arg("--private-limit")
-        .arg(owner.budgets.private.connections.to_string())
-        .env_clear()
-        .current_dir("/")
-        .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_socket)))
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .spawn()
-        .context("start confined VM router")?;
-    let pid = child.id().context("router exited during startup")?;
-    parent.set_nonblocking(true)?;
-    let sender = Sender::new(parent.try_clone()?)?;
-    let mut events = UnixStream::from_std(parent)?;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        send_grant(&sender, Grant::Hello).await?;
-        match Event::read(&mut events).await.context("read router startup response")? {
-            Event::Ready => Ok(()),
-            Event::ConfinementFailed => anyhow::bail!("router could not install its sandbox"),
-            _ => anyhow::bail!("router did not confirm confinement"),
-        }
-    })
-    .await
-    .context("router startup timed out")??;
+    let crate::net::router_process::Confined {
+        mut child,
+        pid,
+        sender,
+        events,
+    } = crate::net::router_process::spawn(&[
+        "--expose-limit".into(),
+        owner.budgets.expose.connections.to_string(),
+        "--private-limit".into(),
+        owner.budgets.private.connections.to_string(),
+    ])
+    .await?;
     let router = Arc::new(Router::new(pid, sender, owner.cancellation.child_token()));
     let monitor = router.clone();
     owner.spawn(async move {

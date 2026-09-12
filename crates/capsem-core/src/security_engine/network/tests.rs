@@ -189,49 +189,39 @@ fn lifecycle_and_synthetic_probe_cannot_masquerade_as_tcp_connects() {
 }
 
 #[test]
-fn udp_and_icmp_flows_are_rule_visible_protocols() {
-    let mut udp = private_flow();
-    udp.protocol = NetworkProtocol::Udp;
-    let udp = NetworkSecurityEvent::Flow(udp);
-    udp.validate(RuntimeSecurityEventType::NetworkConnect).unwrap();
+fn a_private_link_is_a_rule_visible_portless_protocol() {
+    let mut link = private_flow();
+    link.protocol = NetworkProtocol::Link;
+    let with_ports = NetworkSecurityEvent::Flow(link.clone());
     assert!(
-        udp.validate(RuntimeSecurityEventType::NetworkProbe).is_err(),
-        "a datagram flow is not a probe"
+        with_ports.validate(RuntimeSecurityEventType::NetworkConnect).is_err(),
+        "a link has no ports"
     );
-    let only_udp = rules(
-        "[profiles.rules.udp]\nname = \"udp\"\naction = \"allow\"\nmatch = 'network.mode == \"private\" && network.protocol == \"udp\"'",
+    link.source.address.set_port(0);
+    link.destination.address.set_port(0);
+    let link = NetworkSecurityEvent::Flow(link);
+    link.validate(RuntimeSecurityEventType::NetworkConnect).unwrap();
+    assert!(
+        link.validate(RuntimeSecurityEventType::NetworkProbe).is_err(),
+        "a link is not a probe"
+    );
+    let only_link = rules(
+        "[profiles.rules.link]\nname = \"link\"\naction = \"allow\"\nmatch = 'network.mode == \"private\" && network.protocol == \"link\"'",
     );
     let allowed = evaluate_security_boundary(
-        &only_udp,
+        &only_link,
         BTreeMap::new(),
-        SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(udp),
+        SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(link),
     )
     .unwrap();
     assert_eq!(allowed.enforcement.action, SecurityEnforcementAction::Allow);
     let tcp = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
         .with_network(NetworkSecurityEvent::Flow(private_flow()));
-    let blocked = evaluate_security_boundary(&only_udp, BTreeMap::new(), tcp).unwrap();
+    let blocked = evaluate_security_boundary(&only_link, BTreeMap::new(), tcp).unwrap();
     assert_eq!(
         blocked.enforcement.action,
         SecurityEnforcementAction::Block,
-        "a udp rule says nothing about tcp"
-    );
-
-    let mut icmp = private_flow();
-    icmp.protocol = NetworkProtocol::Icmp;
-    let with_ports = NetworkSecurityEvent::Flow(icmp.clone());
-    assert!(
-        with_ports.validate(RuntimeSecurityEventType::NetworkConnect).is_err(),
-        "icmp has no ports"
-    );
-    icmp.source.address.set_port(0);
-    icmp.destination.address.set_port(0);
-    let icmp = NetworkSecurityEvent::Flow(icmp);
-    icmp.validate(RuntimeSecurityEventType::NetworkConnect).unwrap();
-    assert!(
-        format!("{:?}", icmp.get("protocol")).contains("icmp"),
-        "{:?}",
-        icmp.get("protocol")
+        "a link rule says nothing about tcp"
     );
 }
 

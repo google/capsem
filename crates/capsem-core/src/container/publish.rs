@@ -9,7 +9,6 @@ use std::net::Ipv4Addr;
 use std::num::NonZeroU64;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
-use std::process::Stdio;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -496,6 +495,17 @@ impl Publisher {
             port,
             protocol,
         ))
+    }
+
+    /// The audit facts of this VM's link to a network's switch, against
+    /// this owner's security authority.
+    pub fn private_link_audit(
+        &self,
+        network: crate::security_engine::network::NetworkIdentity,
+        own: Ipv4Addr,
+    ) -> Result<security::AuditFlow> {
+        let authority = self.security.clone().context("publication security context missing")?;
+        Ok(security::AuditFlow::link(authority, network, own))
     }
 
     /// Accept host clients on a published port and hand each to a broker

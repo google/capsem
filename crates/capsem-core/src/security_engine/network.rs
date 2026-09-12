@@ -79,16 +79,16 @@ pub enum NetworkSide {
 #[serde(rename_all = "snake_case")]
 pub enum NetworkProtocol {
     Tcp,
-    Udp,
-    /// ICMP echo between members: no ports, the echo identifier is not one.
-    Icmp,
+    /// The VM's frame link to a network's switch, evaluated once per attach:
+    /// every UDP and ICMP packet between members rides it.
+    Link,
     SyntheticPing,
 }
 
 impl NetworkProtocol {
     /// Whether the endpoints of this protocol carry no port.
     pub fn portless(self) -> bool {
-        matches!(self, Self::Icmp | Self::SyntheticPing)
+        matches!(self, Self::Link | Self::SyntheticPing)
     }
 }
 
@@ -253,8 +253,7 @@ impl NetworkSecurityEvent {
             })),
             "protocol" => Some(borrowed(match flow.protocol {
                 NetworkProtocol::Tcp => "tcp",
-                NetworkProtocol::Udp => "udp",
-                NetworkProtocol::Icmp => "icmp",
+                NetworkProtocol::Link => "link",
                 NetworkProtocol::SyntheticPing => "synthetic_ping",
             })),
             "publication.id" => match flow.route {
