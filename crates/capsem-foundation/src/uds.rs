@@ -88,15 +88,11 @@ pub fn terminal_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(private_fallback_dir()?.join(format!("{short}-ws.sock")))
 }
 
-/// Where a VM owner takes private connections other owners hand over: the
-/// same shortening rules as the terminal socket, one path per VM.
+/// Where a VM owner takes private connections other owners hand over and
+/// the service asks the guest link from: the same shortening rules as the
+/// terminal socket, one path per VM.
 pub fn private_handoff_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     owner_socket_path(run_dir, id, "handoff")
-}
-
-/// Where a VM owner takes private datagram flows other owners relay.
-pub fn private_relay_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
-    owner_socket_path(run_dir, id, "relay")
 }
 
 fn owner_socket_path(run_dir: &Path, id: &str, role: &str) -> io::Result<PathBuf> {
