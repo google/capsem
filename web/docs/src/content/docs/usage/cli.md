@@ -251,6 +251,16 @@ VMs allowed to reach each other on those addresses. A network name is a DNS
 label; deleting a network frees the name, and a new network under that name
 is a different network with its own history.
 
+Members reach each other by address or by name: `<vm>.<network>.capsem.internal`
+(and `<vm>.capsem.internal` when only one of the VM's networks answers it)
+resolves to the member's address, and the address resolves back. Names are
+answered on the host, only for members of a shared network, with no TTL, and
+never forwarded upstream. TCP between members is admitted per connection
+under the VM's security rules; UDP and ICMP ride each member's link to the
+network's own confined switch, which forwards frames between members and
+nothing else. A member shows `ready` in `network inspect` once its link is up
+and `declared` while its VM is stopped.
+
 ### network list
 
 ```bash
@@ -269,7 +279,8 @@ capsem network create team
 capsem network inspect team
 ```
 
-Shows the network's id and every member with its address and membership state.
+Shows the network's id and every member with its address and membership state
+(`declared`, `attaching`, `ready`, `failed`, `detached`).
 
 ### network delete
 

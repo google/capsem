@@ -27,7 +27,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Guest-side:**
 - **capsem-init** (`capsem-init`): PID 1, sets up air-gapped networking, mounts filesystems, deploys guest binaries, launches daemons, writes boot timing JSONL
 - **capsem-pty-agent** (`capsem-pty-agent`): main guest agent -- PTY bridge, control channel, exec, file I/O, shutdown handler (see "Guest agent architecture" below)
-- **capsem-tun** (`capsem-tun`): guest end of the private link. Opens `tun0`, addresses it, and pumps raw IP packets as u16-framed frames over one vsock:5009 connection to the host's smoltcp endpoint (`capsem-network`). A wire, not a stack: it parses nothing.
+- **capsem-tun** (`capsem-tun`): guest end of the private link. Opens `tap0` with the MAC its pool address implies (`capsem_proto::privatelink::mac_of`), MTU 65521, and pumps ethernet frames as u16-framed records over one vsock:5009 connection. The VM owner holds that stream and hands a duplicate to the network's confined switch when the service links the VM (`LinkAttach` over IPC, then the token on the owner's handoff socket). A wire, not a stack: it parses nothing. TCP to members never reaches it: the guest REDIRECTs it to the owner's per-connection admission path.
 - **capsem-sysutil** (`capsem-sysutil`): guest suspend helper. Opens its own vsock:5004 connection independently of the agent, so suspend works even if the agent is hung. Symlinked by capsem-init only to `/usr/local/bin/suspend`; in-VM shutdown commands are disabled.
 - **capsem-net-proxy** (`capsem-net-proxy`): redirects HTTPS traffic to host MITM proxy via vsock
 - **capsem-mcp-server** (`capsem-mcp-server`): guest MCP stdio-to-framed-vsock relay for tool calls to the host MITM MCP endpoint
