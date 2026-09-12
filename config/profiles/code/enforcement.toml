@@ -71,5 +71,12 @@ match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"
 name = "expose"
 action = "allow"
 priority = "default"
-reason = "Allow explicitly published loopback TCP ports; private network traffic still requires its own rule."
+reason = "Allow explicitly published loopback TCP ports."
 match = 'network.mode == "expose" && network.side == "destination" && network.protocol == "tcp"'
+
+[default.private]
+name = "private"
+action = "allow"
+priority = "default"
+reason = "Allow TCP from a member of a shared named network to this VM: joining the network is the authorization, and a stricter rule can still narrow it by network or port."
+match = 'network.mode == "private" && network.side == "destination" && network.protocol == "tcp"'
