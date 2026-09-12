@@ -17,7 +17,11 @@ import pytest
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_private_datagram import linked
-from tests.ironbank.kingslanding.test_private_link_benchmark import evidence
+from tests.ironbank.kingslanding.test_private_link_benchmark import (
+    IN_CONTAINER,
+    evidence,
+    guest,
+)
 from tests.ironbank.kingslanding.test_run import (
     command,
     environment,
@@ -47,18 +51,35 @@ def server(service, tmp_path, reference, certificate):
             stderr=err,
         )
         try:
+            rows = []
 
-            def ready():
+            def created():
                 assert process.poll() is None, stderr.read_text()
-                return b"Server listening on" in stdout.read_bytes()
+                rows[:] = [
+                    row
+                    for row in service.client().get("/vms/list")["sandboxes"]
+                    if row.get("name") == SERVER
+                ]
+                return len(rows) == 1
 
-            wait_for(ready, "iperf3 server container startup", timeout=180)
-            rows = [
-                row
-                for row in service.client().get("/vms/list")["sandboxes"]
-                if row.get("name") == SERVER
-            ]
-            assert len(rows) == 1, rows
+            wait_for(created, "iperf3 server VM", timeout=120)
+
+            # iperf3 buffers its "Server listening" line behind a pipe; the
+            # listening socket in the container's namespace is the signal.
+            def listening():
+                assert process.poll() is None, stderr.read_text()
+                sockets = guest(
+                    service,
+                    rows[0]["id"],
+                    f"{IN_CONTAINER} cat /proc/net/tcp",
+                    check=False,
+                )
+                return any(
+                    ":1451 " in line and " 0A " in line
+                    for line in sockets.get("stdout", "").splitlines()
+                )
+
+            wait_for(listening, "iperf3 server listening on 5201", timeout=180)
             yield rows[0]
         finally:
             if process.poll() is None:
