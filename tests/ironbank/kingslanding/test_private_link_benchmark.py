@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -370,3 +371,51 @@ def compare(metrics):
         "decision_rule": "proceed if the tun0 lane keeps roughly a third of the FD-pair throughput",
         "cells": cells,
     }
+
+
+def test_private_tcp_is_intercepted_and_refused_before_any_byte(container, service):
+    """The guest proxy intercepts TCP to a private address, carries the
+    original destination to the VM owner over VSOCK 5010, and the owner refuses
+    it while no private path exists: a fast failure with the destination in the
+    owner's log, from the VM and from inside the container alike."""
+    vm_id = container["vm"]["id"]
+    listeners = guest(service, vm_id, "ss -ltn")
+    assert "127.0.0.1:10128" in listeners["stdout"], listeners
+    destination = "10.128.0.9"
+    for label, prefix in (("vm", ""), ("container", f"{IN_CONTAINER} ")):
+        started = time.monotonic()
+        attempt = guest(
+            service,
+            vm_id,
+            prefix
+            + shlex.join(
+                [
+                    "capsem-bench-rs",
+                    *client_args("latency", 1, seconds=1),
+                    "--address",
+                    f"{destination}:{THROUGHPUT_PORT}",
+                ]
+            ),
+            timeout=15,
+            check=False,
+        )
+        elapsed = time.monotonic() - started
+        assert attempt.get("exit_code") not in (None, 0), (label, attempt)
+        assert elapsed < 10, (
+            f"{label}: a refusal must not wait for a deadline: {elapsed:.1f}s"
+        )
+
+    def refused_in_owner_log():
+        for log in service.tmp_dir.glob("persistent/*/process.log"):
+            text = log.read_text(errors="replace")
+            if (
+                "private connection refused" in text
+                and f'"destination":"{destination}"' in text
+                and f'"port":{THROUGHPUT_PORT}' in text
+            ):
+                return True
+        return False
+
+    wait_for(
+        refused_in_owner_log, "owner logged the refused private destination", timeout=20
+    )
