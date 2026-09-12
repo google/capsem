@@ -131,6 +131,11 @@ struct Args {
     /// gateway dialled `{run_dir}/instances/...`.
     #[arg(long)]
     run_dir: Option<PathBuf>,
+    /// The service's own socket, where this owner asks on a guest's behalf
+    /// (private connections). Given by the service: it is not always
+    /// `{run_dir}/service.sock`.
+    #[arg(long)]
+    service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
@@ -455,7 +460,9 @@ async fn run_async_main_loop(
             handoff_path,
             job_store.publisher.clone(),
             ctrl_tx.clone(),
-            run_dir.join("service.sock"),
+            args.service_socket
+                .clone()
+                .unwrap_or_else(|| run_dir.join("service.sock")),
             owner_secret,
             args.id.clone(),
         ));
