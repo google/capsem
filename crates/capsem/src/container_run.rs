@@ -193,7 +193,8 @@ async fn stream(vm: &ProvisionResponse, ports: &[container::PortMapping]) -> Res
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
     .await?;
-    let (sender, receiver) = tokio_unix_ipc::channel_from_std::<ServiceToProcess, ProcessToService>(socket)?;
+    let (sender, receiver) =
+        capsem_foundation::ipc_channel::channel_from_std::<ServiceToProcess, ProcessToService>(socket)?;
     for mapping in ports {
         sender
             .send(ServiceToProcess::PublishPort {

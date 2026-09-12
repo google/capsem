@@ -26,7 +26,6 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 clap.workspace = true
-tokio-unix-ipc.workspace = true
 reqwest.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

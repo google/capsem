@@ -1991,8 +1991,8 @@ async fn main() -> Result<()> {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { bundle }) => {
+            use capsem_foundation::ipc_channel::channel_from_std;
             use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-            use tokio_unix_ipc::channel_from_std;
 
             // Log file: ~/.capsem/run/doctor-latest.log (always overwritten)
             let log_path = run_dir.join("doctor-latest.log");
