@@ -14,6 +14,7 @@ import json
 import subprocess
 
 import pytest
+from helpers.constants import PROJECT_ROOT
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_private_datagram import linked
@@ -21,6 +22,7 @@ from tests.ironbank.kingslanding.test_private_link_benchmark import (
     IN_CONTAINER,
     evidence,
     guest,
+    record,
 )
 from tests.ironbank.kingslanding.test_run import (
     command,
@@ -137,3 +139,38 @@ def test_native_iperf3_transfers_both_ways_over_the_private_path(
             for event in api.get(f"/networks/{network}/logs").get("events", [])
         }
         assert {"tcp", "link"} <= protocols, protocols
+        # The native numbers join the benchmark store beside the bench's own.
+        metrics = {
+            "iperf3.forward.megabits_per_sec": {
+                "unit": "megabits_per_second",
+                "samples": [forward["end"]["sum_received"]["bits_per_second"] / 1e6],
+            },
+            "iperf3.forward.retransmits": {
+                "unit": "count",
+                "samples": [forward["end"]["sum_sent"].get("retransmits", 0)],
+            },
+            "iperf3.reverse.megabits_per_sec": {
+                "unit": "megabits_per_second",
+                "samples": [reverse["end"]["sum_received"]["bits_per_second"] / 1e6],
+            },
+            "iperf3.reverse.retransmits": {
+                "unit": "count",
+                "samples": [reverse["end"]["sum_sent"].get("retransmits", 0)],
+            },
+            "iperf3.udp.megabits_per_sec": {
+                "unit": "megabits_per_second",
+                "samples": [udp["end"]["sum"]["bits_per_second"] / 1e6],
+            },
+            "iperf3.udp.lost_percent": {
+                "unit": "percent",
+                "samples": [udp["end"]["sum"]["lost_percent"]],
+            },
+            "iperf3.udp.jitter_ms": {
+                "unit": "milliseconds",
+                "samples": [udp["end"]["sum"]["jitter_ms"]],
+            },
+        }
+        source_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, timeout=5, text=True
+        ).strip()
+        record(evidence, metrics, source_commit)
