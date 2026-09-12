@@ -91,10 +91,123 @@ async fn membership_records_the_vm_and_its_address_and_blocks_retirement() {
             vm_id: "vm-c".into()
         })
     );
-    assert_eq!(registry.detach_everywhere("vm-a", 7).await.unwrap(), vec![net.id]);
+    assert_eq!(
+        registry.vm_deleted("vm-a", 7).await.unwrap(),
+        vec![Departure {
+            network: net.id,
+            retired: false
+        }],
+        "vm-b is still a member, so the network stays"
+    );
     registry.detach(net.id, "vm-b", 8).await.unwrap();
     registry.retire(net.id, 9).await.unwrap();
     assert_eq!(registry.retire(net.id, 10).await, Err(NetworkError::NotFound(net.id)));
+    assert_eq!(
+        registry
+            .attach(
+                net.id,
+                "vm-a",
+                Ipv4Addr::new(10, 128, 0, 5),
+                MembershipState::Declared,
+                11
+            )
+            .await,
+        Err(NetworkError::NotFound(net.id)),
+        "a retired network never takes a member again"
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_vm_retires_only_the_networks_it_leaves_empty() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let shared = registry.create("shared", 1).await.unwrap();
+    let solo = registry.create("solo", 1).await.unwrap();
+    let idle = registry.create("idle", 1).await.unwrap();
+    let address = Ipv4Addr::new(10, 128, 0, 9);
+    for (network, vm) in [(shared.id, "vm-a"), (shared.id, "vm-b"), (solo.id, "vm-a")] {
+        registry
+            .attach(network, vm, address, MembershipState::Declared, 2)
+            .await
+            .unwrap();
+    }
+
+    let mut departures = registry.vm_deleted("vm-a", 3).await.unwrap();
+    departures.sort_by_key(|departure| departure.network);
+    let mut expected = vec![
+        Departure {
+            network: shared.id,
+            retired: false,
+        },
+        Departure {
+            network: solo.id,
+            retired: true,
+        },
+    ];
+    expected.sort_by_key(|departure| departure.network);
+    assert_eq!(departures, expected);
+    assert_eq!(
+        registry.members(shared.id).unwrap().len(),
+        1,
+        "vm-b keeps the shared network"
+    );
+    assert!(
+        registry.summary(solo.id).is_none(),
+        "the last member took the network with it"
+    );
+    assert!(
+        registry.summary(idle.id).is_some(),
+        "a network nobody joined is not affected"
+    );
+    assert!(registry.find("solo").is_none(), "the retired name is free again");
+    assert!(
+        registry.vm_deleted("vm-a", 4).await.unwrap().is_empty(),
+        "deleting twice leaves nothing"
+    );
+    assert_eq!(
+        registry.logs(solo.id, &LogQuery::default()).await.unwrap().events.len(),
+        0,
+        "the retired network's history is still readable"
+    );
+}
+
+#[tokio::test]
+async fn retired_databases_are_swept_after_the_retention_window_and_survive_a_reload() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root.clone());
+    let early = registry.create("early", 1_000).await.unwrap();
+    let late = registry.create("late", 1_000).await.unwrap();
+    registry.retire(early.id, 2_000).await.unwrap();
+    registry.retire(late.id, 5_000).await.unwrap();
+    registry.logs(early.id, &LogQuery::default()).await.unwrap();
+    let retention = std::time::Duration::from_millis(1_000);
+
+    assert!(
+        registry.sweep_retired(2_999, retention).is_empty(),
+        "nothing is a day early"
+    );
+    assert_eq!(registry.sweep_retired(3_000, retention), vec![early.id]);
+    assert!(
+        !root.join(early.id.to_string()).exists(),
+        "the database directory is gone"
+    );
+    assert!(root.join(late.id.to_string()).exists(), "the younger one stays");
+    assert!(
+        registry.retired_readers.is_empty(),
+        "the reader was released with the files"
+    );
+    assert_eq!(
+        registry.logs(early.id, &LogQuery::default()).await.unwrap_err(),
+        NetworkError::NotFound(early.id)
+    );
+
+    // A restarted service learns when the survivors retired and sweeps them.
+    let mut reloaded = NetworkRegistry::load(root.clone()).await.unwrap();
+    assert!(reloaded.list().is_empty());
+    assert!(reloaded.sweep_retired(5_999, retention).is_empty());
+    assert_eq!(reloaded.sweep_retired(6_000, retention), vec![late.id]);
+    assert!(!root.join(late.id.to_string()).exists());
+    assert!(reloaded.sweep_retired(1_000_000, retention).is_empty(), "swept once");
 }
 
 #[tokio::test]

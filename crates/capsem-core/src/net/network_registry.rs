@@ -22,6 +22,20 @@ use uuid::Uuid;
 mod logs;
 pub use logs::{LogEvent, LogPage, LogQuery, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT};
 
+/// How long a retired network's database, and with it its audit history,
+/// stays on disk: long enough to answer "what talked to what last month",
+/// bounded so a host that creates and retires networks daily is not keeping
+/// every one of them forever.
+pub const NETWORK_AUDIT_RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// What a deleted VM left behind in one network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Departure {
+    pub network: Uuid,
+    /// The VM was the last member, so the network retired with it.
+    pub retired: bool,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NetworkError {
     #[error("network name {0:?} must be a DNS label: 1-63 lowercase letters, digits or hyphens, not at the ends")]
@@ -68,6 +82,9 @@ pub struct NetworkRegistry {
     networks: BTreeMap<Uuid, NetworkEntry>,
     /// Readers of retired networks, opened on first history read.
     retired_readers: BTreeMap<Uuid, Arc<DbHandle>>,
+    /// Retired databases still on disk, by the moment they retired: what the
+    /// retention sweep works from.
+    retired: BTreeMap<Uuid, i64>,
 }
 
 impl std::fmt::Debug for NetworkRegistry {
@@ -86,6 +103,7 @@ impl NetworkRegistry {
             root,
             networks: BTreeMap::new(),
             retired_readers: BTreeMap::new(),
+            retired: BTreeMap::new(),
         }
     }
 
@@ -108,7 +126,7 @@ impl NetworkRegistry {
             let handle = Arc::new(open(&path)?);
             let network = handle
                 .query(
-                    "SELECT name, state, created_unix_ms FROM network WHERE id = ?1",
+                    "SELECT name, state, created_unix_ms, retired_unix_ms FROM network WHERE id = ?1",
                     &[id.to_string().into()],
                 )
                 .await
@@ -117,6 +135,7 @@ impl NetworkRegistry {
                 return Err(database(&path, "network table has no row for this database"));
             };
             if row[1].as_str() != Some("active") {
+                registry.retired.insert(id, integer(&path, &row[3])?);
                 continue;
             }
             let name = text(&path, &row[0])?;
@@ -236,7 +255,39 @@ impl NetworkRegistry {
             .map_err(|error| database(&path, error))?;
         write_durably(&entry.handle, &path, WriteOp::Network(record)).await?;
         self.networks.remove(&id);
+        self.retired.insert(id, now_unix_ms);
         Ok(())
+    }
+
+    /// Remove retired databases older than `retention`, releasing their
+    /// readers first; the ids removed. One that cannot be removed stays
+    /// listed and is tried again on the next sweep.
+    pub fn sweep_retired(&mut self, now_unix_ms: i64, retention: std::time::Duration) -> Vec<Uuid> {
+        let cutoff = now_unix_ms.saturating_sub(i64::try_from(retention.as_millis()).unwrap_or(i64::MAX));
+        let expired: Vec<Uuid> = self
+            .retired
+            .iter()
+            .filter(|(_, retired_unix_ms)| **retired_unix_ms <= cutoff)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut removed = Vec::new();
+        for id in expired {
+            self.retired_readers.remove(&id);
+            let dir = self.root.join(id.to_string());
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => {
+                    self.retired.remove(&id);
+                    removed.push(id);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    self.retired.remove(&id);
+                }
+                Err(error) => {
+                    tracing::warn!(network = %id, path = %dir.display(), %error, "retired network database not removed");
+                }
+            }
+        }
+        removed
     }
 
     /// Record a VM in a network with its lifetime address; a second call for
@@ -280,13 +331,21 @@ impl NetworkRegistry {
         Ok(())
     }
 
-    /// Detach a VM from every network it is in; the networks it left.
-    pub async fn detach_everywhere(&mut self, vm_id: &str, now_unix_ms: i64) -> Result<Vec<Uuid>, NetworkError> {
-        let ids = self.memberships_of(vm_id);
-        for id in &ids {
-            self.detach(*id, vm_id, now_unix_ms).await?;
+    /// A deleted VM leaves every network it was in, and a network it leaves
+    /// empty retires with it: its members were its purpose, and its history
+    /// stays for the retention window. A disconnect is different -- the VM
+    /// is still there and may come back -- so it never retires anything.
+    pub async fn vm_deleted(&mut self, vm_id: &str, now_unix_ms: i64) -> Result<Vec<Departure>, NetworkError> {
+        let mut departures = Vec::new();
+        for network in self.memberships_of(vm_id) {
+            self.detach(network, vm_id, now_unix_ms).await?;
+            let retired = self.members(network).is_some_and(|members| members.is_empty());
+            if retired {
+                self.retire(network, now_unix_ms).await?;
+            }
+            departures.push(Departure { network, retired });
         }
-        Ok(ids)
+        Ok(departures)
     }
 }
 
