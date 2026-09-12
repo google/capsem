@@ -295,6 +295,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, so it is computed rather than maintained.
 
 ### Fixed
+- Ledger reads no longer fail with "database table is locked" or stall while the
+  writer is busy: `capsem network logs -f` and the session ledger routes read
+  through SQLite's `read_uncommitted` on the shared memory tables.
 
 - Published-port connection audits record `unreachable` when the guest bridge
   never came up and `cancelled` when it was lost during setup; both were

@@ -78,6 +78,7 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/network_db.rs"),
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/schema.rs"),
+    Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/session_index.rs"),
     Path("crates/capsem-logger/src/writer.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),

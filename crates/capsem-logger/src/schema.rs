@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Mutex,
 };
 
@@ -557,87 +557,14 @@ fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
         .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
 }
 
-/// SQLite mmap window for file-backed ledger databases.
-///
-/// Keep this in the DB layer: routes and security components should not know
-/// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
-/// tables.
-pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
-pub const DB_SQLITE_MMAP_CONFIG_BYTES: &str = "db.sqlite_mmap_config_bytes";
-pub const DB_SQLITE_MMAP_EFFECTIVE_BYTES: &str = "db.sqlite_mmap_effective_bytes";
-pub const DB_SQLITE_FILE_SIZE_BYTES: &str = "db.sqlite_file_size_bytes";
-pub const DB_SQLITE_WAL_SIZE_BYTES: &str = "db.sqlite_wal_size_bytes";
-pub const DB_SQLITE_MMAP_COVERAGE_RATIO: &str = "db.sqlite_mmap_coverage_ratio";
-pub const DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL: &str = "db.sqlite_mmap_budget_checks_total";
-
-fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
-    conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
-}
-
-fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
-    PathBuf::from(format!("{}{}", path.display(), suffix))
-}
-
-fn file_len(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
-}
-
-pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'static str, phase: &'static str) {
-    let effective_mmap: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap_or(0);
-    let db_file_size = file_len(path);
-    let wal_file_size = file_len(&sqlite_sidecar_path(path, "-wal"));
-    let status = if db_file_size == 0 {
-        "empty"
-    } else if db_file_size <= effective_mmap.max(0) as u64 {
-        "within_window"
-    } else {
-        "over_window"
-    };
-    let coverage_ratio = if db_file_size == 0 {
-        1.0
-    } else {
-        (effective_mmap.max(0) as u64).min(db_file_size) as f64 / db_file_size as f64
-    };
-
-    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase).set(SQLITE_MMAP_SIZE_BYTES as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase).set(effective_mmap as f64);
-    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase).set(db_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase).set(wal_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase).set(coverage_ratio);
-    ::metrics::counter!(
-        DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL,
-        "role" => role,
-        "phase" => phase,
-        "status" => status
-    )
-    .increment(1);
-
-    tracing::debug!(
-        target: "capsem.db",
-        db_path = %path.display(),
-        role,
-        phase,
-        mmap_config_bytes = SQLITE_MMAP_SIZE_BYTES,
-        mmap_effective_bytes = effective_mmap,
-        db_file_size_bytes = db_file_size,
-        wal_file_size_bytes = wal_file_size,
-        mmap_coverage_ratio = coverage_ratio,
-        mmap_budget_status = status,
-        "sqlite mmap telemetry recorded"
-    );
-}
-
-/// Apply write-mode pragmas: WAL journal + relaxed synchronous.
-/// Only call on read-write connections (the writer).
-pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    apply_mmap_pragma(conn)?;
-    Ok(())
-}
-
 mod columns;
+mod pragmas;
 use columns::READY_SCHEMA_COLUMNS;
+pub use pragmas::{
+    apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_telemetry, DB_SQLITE_FILE_SIZE_BYTES,
+    DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL, DB_SQLITE_MMAP_CONFIG_BYTES, DB_SQLITE_MMAP_COVERAGE_RATIO,
+    DB_SQLITE_MMAP_EFFECTIVE_BYTES, DB_SQLITE_WAL_SIZE_BYTES, SQLITE_MMAP_SIZE_BYTES,
+};
 
 /// Validate that a session DB is structurally ready for ledger routes.
 ///
@@ -1273,17 +1200,6 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             ON profile_mutation_events(category, target_kind, target_key);"
     ));
     network_types::migrate(conn).and_then(|()| transport::upgrade_legacy(conn))
-}
-
-/// Apply read-safe pragmas for DB-owned query connections.
-///
-/// These connections may be opened read-write briefly so the DB layer can
-/// attach and populate its private `mem` schema. After setup, `query_only`
-/// prevents writes through the read worker.
-pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
-    apply_mmap_pragma(conn)?;
-    conn.pragma_update(None, "query_only", "ON")?;
-    Ok(())
 }
 
 #[cfg(test)]
