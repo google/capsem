@@ -78,5 +78,5 @@ match = 'network.mode == "expose" && network.side == "destination" && network.pr
 name = "private"
 action = "allow"
 priority = "default"
-reason = "Allow TCP from a member of a shared named network to this VM: joining the network is the authorization, and a stricter rule can still narrow it by network or port."
-match = 'network.mode == "private" && network.side == "destination" && network.protocol == "tcp"'
+reason = "Allow TCP, UDP and ICMP echo from a member of a shared named network to this VM: joining the network is the authorization, and a stricter rule can still narrow it by network, protocol or port."
+match = 'network.mode == "private" && network.side == "destination" && (network.protocol == "tcp" || network.protocol == "udp" || network.protocol == "icmp")'
