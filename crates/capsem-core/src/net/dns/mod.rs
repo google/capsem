@@ -39,6 +39,7 @@
 
 pub mod cache;
 mod coalesce;
+pub mod private;
 pub mod resolver;
 pub mod server;
 pub mod telemetry;

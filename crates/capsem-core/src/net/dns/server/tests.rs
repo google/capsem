@@ -387,3 +387,91 @@ async fn a_denied_nxdomain_is_not_a_cached_negative_answer() {
     assert!(cache.is_empty(), "a policy denial never enters the answer cache");
     assert_eq!(seen.load(Ordering::SeqCst), 0, "and never reaches the upstream");
 }
+
+/// Two members as the service would answer them for one asker.
+struct TwoMembers;
+
+impl super::super::private::PrivateNames for TwoMembers {
+    fn address_of<'a>(&'a self, name: &'a str) -> super::super::private::Lookup<'a, std::net::Ipv4Addr> {
+        Box::pin(async move {
+            match name {
+                "beta.team" | "beta" => Some(std::net::Ipv4Addr::new(10, 128, 0, 3)),
+                "alpha.team" => Some(std::net::Ipv4Addr::new(10, 128, 0, 2)),
+                _ => None,
+            }
+        })
+    }
+
+    fn name_of(&self, address: std::net::Ipv4Addr) -> super::super::private::Lookup<'_, String> {
+        Box::pin(async move {
+            (address == std::net::Ipv4Addr::new(10, 128, 0, 3)).then(|| "beta.team.capsem.internal".to_string())
+        })
+    }
+}
+
+#[tokio::test]
+async fn private_names_are_answered_on_the_host_with_no_ttl_and_never_asked_upstream() {
+    let (upstream, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+    let handler = handler_with(upstream, "", None).with_private_names(Arc::new(TwoMembers));
+    let hit = handler
+        .handle(&build_query_bytes("beta.team.capsem.internal.", RecordType::A, 7))
+        .await;
+    assert_eq!(hit.decision, Decision::Redirected, "{hit:?}");
+    assert_eq!(hit.rcode, 0);
+    let message = Message::from_vec(&hit.answer_bytes).unwrap();
+    assert_eq!(message.metadata.id, 7);
+    let answer = &message.answers[0];
+    assert_eq!(answer.data.to_string(), "10.128.0.3");
+    assert_eq!(answer.ttl, 0, "nothing caches a membership");
+    assert_eq!(hit.matched_rule.as_deref(), Some("private:capsem.internal"));
+
+    let short = handler
+        .handle(&build_query_bytes("beta.capsem.internal.", RecordType::A, 8))
+        .await;
+    assert_eq!(short.rcode, 0);
+    let six = handler
+        .handle(&build_query_bytes("beta.team.capsem.internal.", RecordType::AAAA, 9))
+        .await;
+    assert_eq!(six.rcode, 0, "the name exists");
+    assert!(
+        Message::from_vec(&six.answer_bytes).unwrap().answers.is_empty(),
+        "no IPv6 on the link"
+    );
+
+    let reverse = handler
+        .handle(&build_query_bytes("3.0.128.10.in-addr.arpa.", RecordType::PTR, 10))
+        .await;
+    assert_eq!(reverse.rcode, 0, "{reverse:?}");
+    let message = Message::from_vec(&reverse.answer_bytes).unwrap();
+    assert_eq!(message.answers[0].data.to_string(), "beta.team.capsem.internal.");
+
+    for (name, qtype) in [
+        ("stranger.team.capsem.internal.", RecordType::A),
+        ("beta.other.capsem.internal.", RecordType::A),
+        ("capsem.internal.", RecordType::A),
+        ("9.0.128.10.in-addr.arpa.", RecordType::PTR),
+    ] {
+        let miss = handler.handle(&build_query_bytes(name, qtype, 11)).await;
+        assert_eq!(miss.rcode, 3, "{name} is nobody's: {miss:?}");
+        assert_eq!(miss.decision, Decision::Denied);
+    }
+    assert_eq!(seen.load(Ordering::SeqCst), 0, "the private zone never leaves the host");
+
+    // Outside the zone and the pool, the upstream answers as before.
+    let public = handler
+        .handle(&build_query_bytes("example.com.", RecordType::A, 12))
+        .await;
+    assert_eq!(public.decision, Decision::Allowed);
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn without_private_names_the_zone_is_nxdomain_and_still_never_upstream() {
+    let (upstream, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+    let handler = handler_with(upstream, "", None);
+    let miss = handler
+        .handle(&build_query_bytes("beta.team.capsem.internal.", RecordType::A, 1))
+        .await;
+    assert_eq!(miss.rcode, 3);
+    assert_eq!(seen.load(Ordering::SeqCst), 0);
+}
