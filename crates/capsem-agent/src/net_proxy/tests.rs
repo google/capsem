@@ -30,13 +30,16 @@ fn a_private_preamble_is_the_header_then_the_meta_line() {
     let mut preamble = ConnectHeader {
         destination: std::net::Ipv4Addr::new(10, 128, 0, 9),
         port: 6379,
+        source_port: 40001,
     }
     .encode()
     .to_vec();
     preamble.extend_from_slice(&encode_meta_line("redis-cli"));
-    let header: [u8; capsem_proto::privatelink::HEADER_BYTES] = preamble[..8].try_into().unwrap();
-    assert_eq!(ConnectHeader::decode(&header).unwrap().port, 6379);
-    assert!(preamble[8..].starts_with(b"\0CAPSEM_META:"));
+    let header: [u8; capsem_proto::privatelink::HEADER_BYTES] =
+        preamble[..capsem_proto::privatelink::HEADER_BYTES].try_into().unwrap();
+    let decoded = ConnectHeader::decode(&header).unwrap();
+    assert_eq!((decoded.port, decoded.source_port), (6379, 40001));
+    assert!(preamble[capsem_proto::privatelink::HEADER_BYTES..].starts_with(b"\0CAPSEM_META:"));
 }
 
 #[test]

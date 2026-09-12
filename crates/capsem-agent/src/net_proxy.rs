@@ -266,7 +266,13 @@ async fn handle_private_connection(mut tcp_stream: TcpStream, attributor: Arc<Pr
             return;
         }
     };
-    let mut preamble = ConnectHeader { destination, port }.encode().to_vec();
+    let mut preamble = ConnectHeader {
+        destination,
+        port,
+        source_port: peer_addr.port(),
+    }
+    .encode()
+    .to_vec();
     preamble.extend_from_slice(&encode_meta_line(&process_name));
     if let Err(e) = vsock_stream.write_all(&preamble).await {
         eprintln!("[capsem-net-proxy] failed to send private connect header: {e}");
