@@ -215,8 +215,12 @@ def test_private_link_and_published_port_transport_samples(
         # The helpers' logs are the evidence when a lane never answers.
         for name in ("capsem-tun", "throughput-server"):
             log = guest(service, vm_id, f"cat /var/tmp/{name}.log", check=False)
+            # The whole response: an exec that never answered is itself the
+            # evidence, and an empty log with no exit code said nothing.
             (output / f"{name}.log").write_text(
                 log.get("stdout", "") + log.get("stderr", "")
+                if log.get("exit_code") == 0
+                else json.dumps(log, indent=2)
             )
         helpers = guest(
             service,

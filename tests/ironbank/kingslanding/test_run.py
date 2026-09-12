@@ -39,11 +39,18 @@ def service(tmp_path):
         (tmp_path / "service.log").write_bytes(
             (instance.tmp_dir / "service.log").read_bytes()
         )
-        for log in instance.home_dir.rglob("*.log*"):
-            if log.is_file() and log.stat().st_size < 2 * 1024 * 1024:
-                target = tmp_path / "host-logs" / log.relative_to(instance.home_dir)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(log.read_bytes())
+        # The session directory under the run dir holds the guest's serial
+        # console and the VM owner's log. A guest that stopped answering left
+        # only "IPC command timed out" behind until these were kept too.
+        for root, name in (
+            (instance.home_dir, "host-logs"),
+            (instance.tmp_dir, "run-logs"),
+        ):
+            for log in root.rglob("*.log*"):
+                if log.is_file() and log.stat().st_size < 8 * 1024 * 1024:
+                    target = tmp_path / name / log.relative_to(root)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(log.read_bytes())
         instance.stop()
 
 
