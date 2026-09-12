@@ -49,7 +49,7 @@ env/
 # crates/capsem-process/src/job_store/, and macOS sets core.ignorecase=true,
 # so the match is case-insensitive and silent.
 *.DS_Store
-private/
+/private/
 
 # Dev setup sentinel (written by just doctor)
 .dev-setup
