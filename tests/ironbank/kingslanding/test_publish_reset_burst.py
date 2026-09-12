@@ -31,6 +31,7 @@ ROUNDS = 3
 STREAMS = 16
 # What the owner logged when the link collapsed; none of it may appear.
 COLLAPSE_LINES = (
+    "virtual machine stopped",
     "guest close report rejected",
     "guest control lease missing",
     "guest tun0 packet stream ended",
