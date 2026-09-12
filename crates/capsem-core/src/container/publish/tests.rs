@@ -54,6 +54,49 @@ async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broke
     owner.shutdown().await;
 }
 
+/// At the end of a bidirectional trial the host client resets every
+/// connection at once; the guest reports each close and the owner resets a
+/// source the peer has already torn down. That reset cannot be applied and
+/// must not be an error: the report is bookkeeping, and an error here used
+/// to end the control link and with it every flow of the VM (S04-018).
+#[tokio::test]
+async fn a_close_report_for_a_source_the_peer_already_reset_is_accepted() {
+    use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
+    let owner = Arc::new(security::authorized_publisher(
+        capsem_config::router::RouterConfig::default(),
+    ));
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let accepted = listener.accept().await.unwrap().0.into_std().unwrap();
+    let source = Arc::new(Source::Tcp(accepted));
+    let (close, mut reports) = mpsc::channel(1);
+    let (pending, _data) = owner.request(&source, close).unwrap();
+    let flow = FlowKey {
+        generation: owner.generation.get(),
+        id: pending.id,
+    };
+    // The host client resets first; the kernel has already torn the
+    // connection down by the time the guest's report arrives.
+    capsem_foundation::unix::fd::reset_tcp(client.as_fd()).unwrap();
+    drop(client);
+    let probe = std::net::TcpStream::from(source.as_fd().try_clone_to_owned().unwrap());
+    probe.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let _ = std::io::Read::read(&mut &probe, &mut [0u8; 1]);
+    owner
+        .report_close(
+            flow,
+            CloseReport {
+                reason: CloseReason::Reset,
+                from_source: 0,
+                to_source: 0,
+            },
+        )
+        .expect("a reset the peer already applied is not an error");
+    assert_eq!(reports.try_recv().unwrap().0, flow);
+    drop(pending);
+    owner.shutdown().await;
+}
+
 #[tokio::test]
 async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_complete() {
     use capsem_proto::router::{CloseReason, CloseReport, FlowKey};
