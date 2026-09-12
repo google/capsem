@@ -298,6 +298,7 @@ fn main() -> Result<()> {
     let shutdown_for_loop = Arc::clone(&shutdown);
     let shutdown_for_loop_error = Arc::clone(&shutdown);
     let vm_for_signal = Arc::clone(&vm_arc);
+    let vm_for_exit = Arc::clone(&vm_arc);
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(
             args,
@@ -360,6 +361,12 @@ fn main() -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     rt.block_on(tokio::signal::ctrl_c())?;
 
+    // A VM the hypervisor stopped on its own is not a clean exit: the
+    // service keeps the session directory and reports the VM as exited
+    // unexpectedly, which is what happened.
+    if let Some(reason) = rt.block_on(async { vm_for_exit.lock().await.stop_reason() }) {
+        anyhow::bail!("the hypervisor stopped the VM: {reason}");
+    }
     Ok(())
 }
 
