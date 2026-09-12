@@ -94,8 +94,13 @@ pub enum ServiceToProcess {
         source_name: String,
         source_generation: u64,
         source_address: std::net::Ipv4Addr,
+        /// The source's port, or the echo identifier for ICMP.
         source_port: u16,
+        /// The destination port; 0 for ICMP.
         port: u16,
+        /// "tcp" takes a stream on the handoff socket; "udp" and "icmp" take
+        /// frames on the relay socket.
+        protocol: String,
     },
 }
 
