@@ -29,6 +29,16 @@ def prefetch(config: GateConfig) -> Step:
     )
 
 
+def greyjoy_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+    """The chaos suite: the same fixture, its own owner, adversaries only."""
+    return pytestsuite.Suite(
+        label=f"pytest.greyjoy.{profile}",
+        paths=(config.functional.greyjoy.suite_path,),
+        profile=profile,
+        contends=(config.exclusive("workspace_binaries"), config.exclusive("apple_vz")),
+    )
+
+
 def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytestsuite.Suite:
     settings = config.functional.kingslanding
     return pytestsuite.Suite(
@@ -64,6 +74,37 @@ class KingslandingModule(
         fixture = phase.add(prefetch(self._config), after=ready)
         phase.add(
             suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
+                self._config
+            ),
+            after=(fixture,),
+        )
+        return plan
+
+
+class GreyjoyModule(
+    InWorkspace,
+    GateCommand,
+    name="test-greyjoy",
+    help="adversaries against private networks through real VMs: kills, floods, deletions",
+):
+    uses_qualification = True
+    outside_egress = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        ready = (
+            ()
+            if self.qualification.pulled
+            else (
+                runtimeprepare.prepare(
+                    plan, self._config, permission=self.rebuild_permission
+                ).ready,
+            )
+        )
+        phase = plan.phase("greyjoy")
+        fixture = phase.add(prefetch(self._config), after=ready)
+        phase.add(
+            greyjoy_suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
                 self._config
             ),
             after=(fixture,),

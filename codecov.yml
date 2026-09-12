@@ -133,11 +133,17 @@ component_management:
       paths:
         - crates/capsem-router/src/**
 
-    # The host end of a guest tun0: smoltcp over the framed VSOCK packet stream.
+    # The private link between VMs: the frame codec and switch verdict, the
+    # service's switch host and the shared confined-child spawn, and the UDS
+    # client owners use to ask the service on their VM's behalf.
     - component_id: private-network
       name: Private Network
       paths:
         - crates/capsem-network/src/**
+        - crates/capsem-core/src/net/router_process.rs
+        - crates/capsem-core/src/net/switch_host.rs
+        - crates/capsem-core/src/net/switch_host/**
+        - crates/capsem-core/src/service_uds.rs
 
     # Runtime half of the asset contract: manifest hash extraction plus the
     # download/verify path that resolves recorded digests before boot.

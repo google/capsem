@@ -50,6 +50,7 @@ TARGETS: dict[str, type[GateCommand]] = {
     "benchmark": bench.BenchCommand,
     "binaries": staticmodule.StaticModule,
     "functional": vmmodules.FunctionalModule,
+    "greyjoy": kingslanding.GreyjoyModule,
     "kingslanding": kingslanding.KingslandingModule,
     "install": vmmodules.GlowupModule,
     "release-system": module_contracts.ReleaseContractsModule,

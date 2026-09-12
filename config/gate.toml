@@ -2184,6 +2184,7 @@ coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-re
 #                    and a guard with two owners has none
 broad_ignores = [
     "tests/ironbank/kingslanding",
+    "tests/ironbank/greyjoy",
     "tests/capsem-recipes",
     "tests/capsem_install",
     "tests/capsem-build-chain",
@@ -2241,6 +2242,10 @@ binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
 config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
+
+# The chaos suite shares kingslanding's fixture and runs after it.
+[functional.greyjoy]
+suite_path = "tests/ironbank/greyjoy"
 
 [functional.kingslanding]
 fixture_script = "tests/fixtures/oci/prepare_redis.py"

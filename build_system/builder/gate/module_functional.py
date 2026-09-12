@@ -268,6 +268,10 @@ def _profile_lane(
         after=(current,),
     )
     current = phase.add(
+        selected(kingslanding.greyjoy_suite(config, profile=profile)).as_step(config),
+        after=(current,),
+    )
+    current = phase.add(
         selected(pytestsuite.host_snapshot(config, profile=profile)).as_step(config),
         after=(current,),
     )

@@ -78,8 +78,13 @@ class KingslandingConfig(Strict):
     benchmark_paths: tuple[str, ...]
 
 
+class GreyjoyConfig(Strict):
+    suite_path: str
+
+
 class FunctionalConfig(Strict):
     kingslanding: KingslandingConfig
+    greyjoy: GreyjoyConfig
     injection_script: str
     integration_script: str
     binary: str
