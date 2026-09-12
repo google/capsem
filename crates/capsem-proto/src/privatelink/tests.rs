@@ -53,3 +53,21 @@ fn a_member_mac_is_locally_administered_unicast_and_names_its_address() {
 fn the_link_mtu_fills_a_u16_frame_with_its_ethernet_header() {
     assert_eq!(LINK_MTU + ETHERNET_HEADER_BYTES, usize::from(u16::MAX));
 }
+
+#[test]
+fn a_seat_frame_names_its_kind_and_token_and_refuses_others() {
+    let frame = seat_frame(SEAT_LINK, 0x00ff_00ff_00ff_00ff);
+    assert_eq!(frame, [1, 5, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff]);
+    assert_eq!(decode_seat_frame(&frame).unwrap(), (SEAT_LINK, 0x00ff_00ff_00ff_00ff));
+    assert_eq!(
+        decode_seat_frame(&seat_frame(SEAT_HANDOFF, 7)).unwrap(),
+        (SEAT_HANDOFF, 7)
+    );
+    assert!(
+        decode_seat_frame(&seat_frame(1, 7)).is_err(),
+        "a router grant is not a seat frame"
+    );
+    let mut wrong_version = frame;
+    wrong_version[0] = 3;
+    assert!(decode_seat_frame(&wrong_version).is_err());
+}

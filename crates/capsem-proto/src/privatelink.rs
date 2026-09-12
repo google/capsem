@@ -28,6 +28,35 @@ pub const fn mac_of(address: Ipv4Addr) -> [u8; 6] {
     [0x02, 0xca, a, b, c, d]
 }
 
+/// A frame on a VM owner's handoff socket: the version, what is asked, and
+/// the one-time token the service or a source owner was given for it. The
+/// size is the router channel record's, so the frame can carry a descriptor.
+pub const SEAT_FRAME_BYTES: usize = 10;
+pub const SEAT_FRAME_VERSION: u8 = 1;
+/// A source owner delivers a TCP stream under an admitted connection's token.
+pub const SEAT_HANDOFF: u8 = 4;
+/// The service asks the guest's link stream under a LinkAttach token.
+pub const SEAT_LINK: u8 = 5;
+
+pub fn seat_frame(kind: u8, token: u64) -> [u8; SEAT_FRAME_BYTES] {
+    let mut frame = [0u8; SEAT_FRAME_BYTES];
+    frame[0] = SEAT_FRAME_VERSION;
+    frame[1] = kind;
+    frame[2..].copy_from_slice(&token.to_be_bytes());
+    frame
+}
+
+/// The kind and token of a seat frame, or why it is not one.
+pub fn decode_seat_frame(bytes: &[u8; SEAT_FRAME_BYTES]) -> Result<(u8, u64), String> {
+    if bytes[0] != SEAT_FRAME_VERSION {
+        return Err(format!("seat frame version {} is not {SEAT_FRAME_VERSION}", bytes[0]));
+    }
+    if bytes[1] != SEAT_HANDOFF && bytes[1] != SEAT_LINK {
+        return Err(format!("seat frame kind {} is neither a handoff nor a link", bytes[1]));
+    }
+    Ok((bytes[1], u64::from_be_bytes(bytes[2..].try_into().unwrap())))
+}
+
 /// Fixed size on the wire: version, protocol, address, port, source port.
 pub const HEADER_BYTES: usize = 10;
 const VERSION: u8 = 2;
