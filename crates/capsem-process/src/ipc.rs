@@ -325,6 +325,7 @@ pub(crate) async fn handle_ipc_connection(
                 source_address,
                 source_port,
                 port,
+                protocol,
             } => {
                 let output = ipc_tx_out.clone();
                 let accepted = job_store
@@ -332,6 +333,7 @@ pub(crate) async fn handle_ipc_connection(
                     .get()
                     .context("no private handoff on this owner")
                     .and_then(|handoff| {
+                        anyhow::ensure!(protocol == "tcp", "datagram flows are not relayed by this owner yet");
                         let network =
                             capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
                                 .map_err(anyhow::Error::msg)?;
