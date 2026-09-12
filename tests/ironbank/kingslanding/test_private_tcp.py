@@ -184,6 +184,25 @@ def test_members_reach_each_other_on_private_addresses_and_strangers_are_refused
 
     wait_for(audited, "network history records the admitted connection", timeout=20)
 
+    # The upload's client finished sending and closed; the flow must end on
+    # the destination owner, not sit open for the VM's life.
+    def closed_flows():
+        return sum(
+            log.read_text(errors="replace").count('"publication closed"')
+            for log in service.tmp_dir.glob(f"persistent/{beta['id']}/process.log")
+        )
+
+    before = closed_flows()
+    bulk, elapsed = connect_from(
+        service, alpha, target, "upload", seconds=1, timeout=20
+    )
+    assert bulk.get("exit_code") == 0, bulk
+    wait_for(
+        lambda: closed_flows() > before,
+        "the finished upload is closed on the destination owner",
+        timeout=20,
+    )
+
     # A private address that belongs to no member is refused before any byte.
     stranger, elapsed = connect_from(service, alpha, f"{STRANGER}:{THROUGHPUT_PORT}")
     assert stranger.get("exit_code") not in (None, 0), stranger
