@@ -74,8 +74,12 @@ def container(service, tmp_path):
             assert len(rows) == 1
             yield {"port": int(mappings[0][0]), "vm": rows[0], "reference": reference}
         finally:
-            for log in service.tmp_dir.glob("persistent/*/process.log"):
-                (tmp_path / "process.log").write_bytes(log.read_bytes())
+            # The VM owner's log and the guest's serial console: when every
+            # VSOCK link to the guest ends at once, the console is the only
+            # witness on the guest side.
+            for name in ("process.log", "serial.log"):
+                for log in service.tmp_dir.glob(f"persistent/*/{name}"):
+                    (tmp_path / name).write_bytes(log.read_bytes())
             if process.poll() is None:
                 process.terminate()
                 try:
