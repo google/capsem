@@ -441,6 +441,7 @@ async fn run_async_main_loop(
     private_seats::bind(
         private_seats::Seats {
             id: &args.id,
+            env: &args.env,
             service_socket: args.service_socket.as_deref(),
             uds_path: &args.uds_path,
             run_dir: args.run_dir.as_deref(),

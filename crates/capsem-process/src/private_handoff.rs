@@ -1,5 +1,8 @@
 //! Private connections between members, from this owner's two seats.
 //!
+//! The service asks the guest's link stream on this socket too, under a
+//! token of its own kind (`private_link`).
+//!
 //! As the **destination**, the service tells this owner (`PrivateAccept`)
 //! that a connection from a member is admitted under a one-time token; the
 //! source owner then delivers the stream on this owner's handoff socket with
@@ -56,6 +59,8 @@ pub(crate) struct PrivateHandoff {
     service_socket: PathBuf,
     owner_secret: String,
     vm_id: String,
+    /// The link seat, asked on this same socket by the service.
+    link: Arc<crate::private_link::PrivateLink>,
 }
 
 impl PrivateHandoff {
@@ -66,6 +71,7 @@ impl PrivateHandoff {
         service_socket: PathBuf,
         owner_secret: String,
         vm_id: String,
+        link: Arc<crate::private_link::PrivateLink>,
     ) -> Self {
         let (feed, broker_input) = mpsc::channel(MAX_PENDING);
         Self {
@@ -79,6 +85,7 @@ impl PrivateHandoff {
             service_socket,
             owner_secret,
             vm_id,
+            link,
         }
     }
 
@@ -144,11 +151,17 @@ impl PrivateHandoff {
     }
 
     async fn take(self: &Arc<Self>, stream: tokio::net::UnixStream) -> Result<()> {
-        let receiver = Receiver::new(stream.into_std()?)?;
+        let socket = stream.into_std()?;
+        let receiver = Receiver::new(socket.try_clone()?)?;
         let frame = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
             .await
             .context("handoff frame timed out")??;
-        let token = decode_token(&frame)?;
+        let (kind, token) = decode_token(&frame)?;
+        if kind == crate::private_link::FRAME_LINK {
+            ensure!(frame.fds.is_empty(), "a link request carries no descriptor");
+            drop(receiver);
+            return self.link.take(token, socket).await;
+        }
         // The token is spent by the first frame naming it, whatever its
         // shape: one-time means one delivery attempt.
         let accept = self
@@ -264,14 +277,19 @@ fn encode_token(token: u64) -> [u8; FRAME_SIZE] {
     frame
 }
 
-fn decode_token(frame: &Frame) -> Result<u64> {
+/// The frame's kind (a stream handoff or a link request) and its token.
+fn decode_token(frame: &Frame) -> Result<(u8, u64)> {
     ensure!(
         frame.bytes[0] == FRAME_VERSION,
         "handoff frame version {}",
         frame.bytes[0]
     );
-    ensure!(frame.bytes[1] == FRAME_HANDOFF, "handoff frame kind {}", frame.bytes[1]);
-    Ok(u64::from_be_bytes(frame.bytes[2..].try_into().unwrap()))
+    let kind = frame.bytes[1];
+    ensure!(
+        kind == FRAME_HANDOFF || kind == crate::private_link::FRAME_LINK,
+        "handoff frame kind {kind}"
+    );
+    Ok((kind, u64::from_be_bytes(frame.bytes[2..].try_into().unwrap())))
 }
 
 /// What the service told us about the source, as the audit facts want it.

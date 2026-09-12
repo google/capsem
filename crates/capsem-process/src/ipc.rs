@@ -325,17 +325,12 @@ pub(crate) async fn handle_ipc_connection(
                 source_address,
                 source_port,
                 port,
-                protocol,
             } => {
                 let output = ipc_tx_out.clone();
                 let accepted = (|| {
                     let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
                         .map_err(anyhow::Error::msg)?;
                     let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
-                    anyhow::ensure!(
-                        protocol == "tcp",
-                        "only TCP connections are handed over; {protocol} rides the link"
-                    );
                     let handoff = job_store.private.get().context("no private handoff on this owner")?;
                     handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
                     Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
@@ -354,6 +349,40 @@ pub(crate) async fn handle_ipc_connection(
                 };
                 tokio::spawn(async move {
                     capsem_core::try_send!("private_accept_result", output.send(response).await);
+                });
+            }
+            ServiceToProcess::LinkAttach {
+                id,
+                token,
+                network,
+                network_name,
+            } => {
+                let output = ipc_tx_out.clone();
+                let job_store = Arc::clone(&job_store);
+                tokio::spawn(async move {
+                    let linked = async {
+                        let network =
+                            capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
+                                .map_err(anyhow::Error::msg)?;
+                        let link = job_store.link.get().context("no link seat on this owner")?;
+                        link.expect(&token, network).await?;
+                        let handoff = job_store.private.get().context("no private handoff on this owner")?;
+                        Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
+                    }
+                    .await;
+                    let response = match linked {
+                        Ok(handoff_socket) => ProcessToService::LinkAttachResult {
+                            id,
+                            handoff_socket,
+                            error: None,
+                        },
+                        Err(error) => ProcessToService::LinkAttachResult {
+                            id,
+                            handoff_socket: String::new(),
+                            error: Some(format!("{error:#}")),
+                        },
+                    };
+                    capsem_core::try_send!("link_attach_result", output.send(response).await);
                 });
             }
             ServiceToProcess::WriteFile { id, path, data }
@@ -952,7 +981,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
         ServiceToProcess::PublishPort { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => IpcAction::Unexpected,
-        ServiceToProcess::PrivateAccept { .. } => IpcAction::Job,
+        ServiceToProcess::PrivateAccept { .. } | ServiceToProcess::LinkAttach { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,

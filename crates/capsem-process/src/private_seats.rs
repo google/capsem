@@ -1,5 +1,6 @@
-//! Binding this owner's private seat at start: the handoff socket other
-//! owners deliver TCP streams to and the service asks the guest link from.
+//! Binding this owner's private seats at start: the link seat holding the
+//! guest stream, and the handoff socket other owners deliver TCP streams to
+//! and the service asks that stream from.
 //! It needs the service's socket, the run directory the service named and
 //! the secret it minted for this VM.
 use crate::job_store::JobStore;
@@ -12,6 +13,7 @@ use tokio::sync::mpsc;
 
 pub(crate) struct Seats<'a> {
     pub id: &'a str,
+    pub env: &'a [String],
     pub service_socket: Option<&'a Path>,
     pub uds_path: &'a Path,
     pub run_dir: Option<&'a Path>,
@@ -45,6 +47,16 @@ pub(crate) fn bind(seats: Seats<'_>, job_store: &Arc<JobStore>, control: mpsc::S
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run_dir.join("service.sock"));
 
+    // The link seat wants the VM's own address: the profile judges the link
+    // as this VM's own flow, and the service names the address for the guest.
+    let own = seats
+        .env
+        .iter()
+        .find_map(|kv| kv.strip_prefix("CAPSEM_PRIVATE_ADDRESS="))
+        .and_then(|address| address.parse::<std::net::Ipv4Addr>().ok())
+        .context("CAPSEM_PRIVATE_ADDRESS missing from the VM environment")?;
+    let link = Arc::new(crate::private_link::PrivateLink::new(job_store.publisher.clone(), own));
+    let _ = job_store.link.set(Arc::clone(&link));
     let (handoff_path, handoff_listener) = bound(
         capsem_foundation::uds::private_handoff_socket_path(&run_dir, seats.id)?,
         "private handoff",
@@ -56,6 +68,7 @@ pub(crate) fn bind(seats: Seats<'_>, job_store: &Arc<JobStore>, control: mpsc::S
         service_socket,
         owner_secret,
         seats.id.to_string(),
+        link,
     ));
     let _ = job_store.private.set(Arc::clone(&handoff));
     tokio::spawn(handoff.serve(handoff_listener));

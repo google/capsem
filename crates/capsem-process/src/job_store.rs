@@ -39,8 +39,9 @@ pub(crate) struct JobStore {
     /// Private connections in and out of this VM; set once the owner has its
     /// handoff socket, absent in fixtures that never take one.
     pub(crate) private: std::sync::OnceLock<Arc<crate::private_handoff::PrivateHandoff>>,
-    /// The guest end of the private link, for the network's switch.
-    pub(crate) link: Arc<crate::private_link::PrivateLink>,
+    /// The guest end of the private link, for the network's switch; set with
+    /// the handoff socket, absent in fixtures that never bind one.
+    pub(crate) link: std::sync::OnceLock<Arc<crate::private_link::PrivateLink>>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -88,7 +89,7 @@ impl JobStore {
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
             private: std::sync::OnceLock::new(),
-            link: Arc::new(crate::private_link::PrivateLink::new()),
+            link: std::sync::OnceLock::new(),
         }
     }
 

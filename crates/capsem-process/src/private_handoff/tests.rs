@@ -13,7 +13,7 @@ fn tokens_are_sixteen_hex_digits_and_frames_carry_them_back() {
         bytes: encode_token(token),
         fds: Vec::new(),
     };
-    assert_eq!(decode_token(&frame).unwrap(), token);
+    assert_eq!(decode_token(&frame).unwrap(), (FRAME_HANDOFF, token));
     let mut wrong = frame.bytes;
     wrong[1] = 1;
     assert!(
@@ -36,6 +36,10 @@ async fn a_token_is_redeemed_once_and_not_after_its_deadline() {
         PathBuf::from("/tmp/service.sock"),
         "secret".into(),
         "vm-b".into(),
+        Arc::new(crate::private_link::PrivateLink::new(
+            Arc::new(Publisher::default()),
+            Ipv4Addr::new(10, 128, 0, 3),
+        )),
     );
     let network = NetworkIdentity::parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "team".into()).unwrap();
     let source = || source_vm("vm-a".into(), "vm-a".into(), 7);
@@ -85,6 +89,10 @@ fn handoff_at(dir: &tempfile::TempDir, service_socket: PathBuf) -> Arc<PrivateHa
         service_socket,
         "secret-a".into(),
         "vm-a".into(),
+        Arc::new(crate::private_link::PrivateLink::new(
+            Arc::new(Publisher::default()),
+            Ipv4Addr::new(10, 128, 0, 2),
+        )),
     ))
 }
 
@@ -241,7 +249,7 @@ async fn a_granted_ask_delivers_the_guest_stream_and_holds_it_until_the_destinat
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(decode_token(&frame).unwrap(), 0xee);
+    assert_eq!(decode_token(&frame).unwrap(), (FRAME_HANDOFF, 0xee));
     assert_eq!(frame.fds.len(), 1);
     // The descriptor is the guest's stream: what the workload writes arrives
     // on it, and the source seat is still holding the connection open.

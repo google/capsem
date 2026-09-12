@@ -31,8 +31,13 @@ pub(super) fn serve(conn: VsockConnection, job_store: &Arc<crate::job_store::Job
 
 /// The guest's private link stream, held for the network's switch.
 fn serve_network(conn: VsockConnection, job_store: &Arc<crate::job_store::JobStore>, vm_id: &str) {
-    info!(vm = %vm_id, "network: guest link stream attached");
-    job_store.link.attach_guest(conn);
+    match job_store.link.get() {
+        Some(link) => {
+            info!(vm = %vm_id, "network: guest link stream attached");
+            link.attach_guest(conn);
+        }
+        None => warn!(vm = %vm_id, "network: guest link stream refused; this owner has no link seat"),
+    }
 }
 
 /// A guest connection to a private address: the header names where it was
