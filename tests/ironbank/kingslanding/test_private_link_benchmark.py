@@ -77,7 +77,11 @@ def container(service, tmp_path):
             # The VM owner's log and the guest's serial console: when every
             # VSOCK link to the guest ends at once, the console is the only
             # witness on the guest side.
-            for name in ("process.log", "serial.log", "workspace/.capsem-agent-stdio.log"):
+            for name in (
+                "process.log",
+                "serial.log",
+                "workspace/.capsem-agent-stdio.log",
+            ):
                 for log in service.tmp_dir.glob(f"persistent/*/{name}"):
                     (tmp_path / Path(name).name).write_bytes(log.read_bytes())
             if process.poll() is None:
@@ -190,7 +194,12 @@ def test_private_link_and_published_port_transport_samples(
     # The agent brought tun0 up at boot with the address the service named;
     # the test never starts the pump itself.
     device = guest(service, vm_id, "ip -o addr show tun0")
-    assert f"inet {container['vm']['private_address']}/9" in device["stdout"], device
+    # A point-to-point link prints `inet A peer G/9`: the address, the
+    # gateway as peer, and the pool prefix that routes 10.128.0.0/9 here.
+    assert (
+        f"inet {container['vm']['private_address']} peer {GATEWAY}/9"
+        in device["stdout"]
+    ), device
     gateway = f"{GATEWAY}:{THROUGHPUT_PORT}"
     tun_probe = shlex.join(
         [
