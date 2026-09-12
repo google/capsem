@@ -72,7 +72,7 @@ fn audit_event(
         &json!({
             "network": {
                 "context": "private",
-                "source": { "vm": { "id": request.source_vm }, "process": request.process_name },
+                "source": { "vm": { "id": request.source_vm }, "port": request.source_port, "process": request.process_name },
                 "destination": { "vm": { "id": peer.vm_id }, "address": peer.address.to_string(), "port": request.port },
             },
             "decision": { "effective": decision, "reason": reason },
@@ -85,6 +85,12 @@ pub(super) async fn handle_private_connect(
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<PrivateConnectRequest>,
 ) -> Result<Json<PrivateConnectResponse>, AppError> {
+    if request.source_port == 0 || request.port == 0 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "a private connection names both ports".into(),
+        ));
+    }
     let expected = state
         .instances
         .lock()
@@ -129,12 +135,35 @@ pub(super) async fn handle_private_connect(
             format!("destination VM {} is not running", peer.vm_id),
         ));
     };
-    let token = uuid::Uuid::new_v4().simple().to_string();
+    // Sixteen hex digits of a random u64: what a handoff frame carries.
+    let token = format!("{:016x}", uuid::Uuid::new_v4().as_u128() as u64);
+    let (source_name, network_name) = {
+        let name = state
+            .instances
+            .lock()
+            .unwrap()
+            .get(&request.source_vm)
+            .map(|instance| instance.name.clone())
+            .unwrap_or_else(|| request.source_vm.clone());
+        let network = state
+            .networks
+            .lock()
+            .await
+            .summary(peer.network)
+            .map(|summary| summary.name)
+            .unwrap_or_default();
+        (name, network)
+    };
     let accept = ServiceToProcess::PrivateAccept {
         id: connection.as_u128() as u64,
         token: token.clone(),
+        network: peer.network.to_string(),
+        network_name,
         source_vm: request.source_vm.clone(),
+        source_name,
+        source_generation: request.source_generation,
         source_address: network_routes::vm_private_address(&state, &request.source_vm)?,
+        source_port: request.source_port,
         port: request.port,
     };
     let reply = vm_files::send_ipc_command(&destination_uds, accept, Some(ACCEPT_TIMEOUT_SECS)).await;

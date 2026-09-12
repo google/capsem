@@ -294,7 +294,7 @@ async fn a_private_connection_is_admitted_through_the_destination_owner_and_audi
     });
     let request = json!({
         "source_vm": "vm-a", "owner_secret": "secret-a",
-        "destination": address_b.to_string(), "port": 6379, "process_name": "redis-cli",
+        "destination": address_b.to_string(), "port": 6379, "source_port": 40001, "process_name": "redis-cli",
     });
 
     let (status, admitted) = private_connect(&state, request.clone()).await;
@@ -348,7 +348,7 @@ async fn a_private_connection_is_refused_before_any_owner_is_asked() {
         let (status, _) = route_request(app(&state), Method::PUT, &path, None).await;
         assert_eq!(status, StatusCode::OK);
     }
-    let request = |secret: &str, destination: &str| json!({ "source_vm": "vm-a", "owner_secret": secret, "destination": destination, "port": 80 });
+    let request = |secret: &str, destination: &str| json!({ "source_vm": "vm-a", "owner_secret": secret, "destination": destination, "port": 80, "source_port": 40001 });
     // No fake owner listens anywhere: every refusal below happens first.
     let (status, _) = private_connect(&state, request("wrong", &address_b)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "a wrong secret is not an owner");
@@ -362,7 +362,7 @@ async fn a_private_connection_is_refused_before_any_owner_is_asked() {
     assert_eq!(status, StatusCode::NOT_FOUND, "nobody's address");
     let (status, _) = private_connect(
         &state,
-        json!({ "source_vm": "ghost", "owner_secret": "x", "destination": address_b, "port": 80 }),
+        json!({ "source_vm": "ghost", "owner_secret": "x", "destination": address_b, "port": 80, "source_port": 40001 }),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "no such running VM");
@@ -411,7 +411,7 @@ async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited
         };
         Box::pin(async move { reply })
     });
-    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80 });
+    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80, "source_port": 40001 });
     let (status, refused) = private_connect(&state, request.clone()).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     owner_b.await.unwrap();
@@ -466,7 +466,7 @@ async fn a_membership_that_changes_while_the_owner_answers_is_never_granted() {
             reply
         })
     });
-    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80 });
+    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80, "source_port": 40001 });
     let (status, refused) = private_connect(&state, request).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     owner_b.await.unwrap();

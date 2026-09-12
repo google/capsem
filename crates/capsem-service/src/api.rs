@@ -142,6 +142,12 @@ pub struct NetworkLogsResponse {
 pub struct PrivateConnectRequest {
     pub source_vm: String,
     pub owner_secret: String,
+    /// The source owner's boot generation, so the destination's audit row
+    /// names the same boot the source's does.
+    #[serde(default)]
+    pub source_generation: u64,
+    /// The workload's own port; the destination's audit row names both ends.
+    pub source_port: u16,
     pub destination: std::net::Ipv4Addr,
     pub port: u16,
     #[serde(default)]
