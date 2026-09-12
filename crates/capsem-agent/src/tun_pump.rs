@@ -1,15 +1,17 @@
 // capsem-tun: the guest end of the private network link.
 //
-// Opens `tun0`, gives it the address the host assigned and the pool's
-// netmask so every private address routes into it, and pumps raw IP packets
-// between the device and one VSOCK connection to the host network endpoint
-// (port 5009), each packet framed with a big-endian u16 length. The kernel
-// routes into tun0; the host relays by destination. Nothing here reads a
-// packet: this is a wire, not a stack, and it has no authority beyond the
+// Opens `tap0`, gives it the address the host assigned, the MAC that
+// address implies and the pool's netmask so every private address routes
+// into it, and pumps ethernet frames between the device and one VSOCK
+// connection to the host network endpoint (port 5009), each frame with a
+// big-endian u16 length. The kernel does ARP, IP and everything above; the
+// network's switch on the host forwards by destination. Nothing here reads
+// a frame: this is a wire, not a stack, and it has no authority beyond the
 // one device and the one connection it opens at start. The agent starts it
 // once the host has named the address (`tun_supervisor` in capsem-agent).
 //
-// The frame format is shared with `crates/capsem-network/src/frames.rs`.
+// The frame format is shared with `crates/capsem-network/src/frames.rs`;
+// the MTU and the MAC rule with `capsem_proto::privatelink`.
 
 #[path = "vsock_io.rs"]
 mod vsock_io;
@@ -23,6 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use capsem_proto::privatelink::{mac_of, ETHERNET_HEADER_BYTES, LINK_MTU};
 use capsem_proto::VSOCK_PORT_NETWORK;
 use nix::libc;
 use vsock_io::VSOCK_HOST_CID;
@@ -61,11 +64,12 @@ impl Default for Counters {
 
 pub static DEVICE_TO_STREAM: Counters = Counters::new();
 pub static STREAM_TO_DEVICE: Counters = Counters::new();
-/// A frame's u16 length bounds the packet, and so the device MTU.
-pub const MAX_PACKET_BYTES: usize = u16::MAX as usize;
-const DEVICE: &str = "tun0";
+/// A frame's u16 length bounds the frame, and so the device MTU plus its
+/// ethernet header.
+pub const MAX_FRAME_BYTES: usize = u16::MAX as usize;
+const DEVICE: &str = "tap0";
 
-/// One packet per read and per write, as a tun device behaves.
+/// One frame per read and per write, as a tap device behaves.
 pub trait PacketDevice {
     fn read_packet(&mut self, packet: &mut [u8]) -> io::Result<usize>;
     fn write_packet(&mut self, packet: &[u8]) -> io::Result<()>;
@@ -77,8 +81,8 @@ impl PacketDevice for std::fs::File {
     }
 
     fn write_packet(&mut self, packet: &[u8]) -> io::Result<()> {
-        // A tun write is one packet; a partial write would be a truncated
-        // packet, which the kernel refuses rather than splits.
+        // A tap write is one frame; a partial write would be a truncated
+        // frame, which the kernel refuses rather than splits.
         match self.write(packet)? {
             written if written == packet.len() => Ok(()),
             written => Err(io::Error::new(
@@ -89,9 +93,11 @@ impl PacketDevice for std::fs::File {
     }
 }
 
-/// Device packets become frames on the stream, until the device ends.
-pub fn device_to_stream(device: &mut impl PacketDevice, stream: &mut impl Write, mtu: usize) -> io::Result<()> {
-    let mut frame = vec![0u8; HEADER_BYTES + mtu];
+/// Device frames become records on the stream, until the device ends.
+/// `largest` is the biggest frame the device can hand over: its MTU plus
+/// the ethernet header.
+pub fn device_to_stream(device: &mut impl PacketDevice, stream: &mut impl Write, largest: usize) -> io::Result<()> {
+    let mut frame = vec![0u8; HEADER_BYTES + largest];
     loop {
         let length = device.read_packet(&mut frame[HEADER_BYTES..])?;
         if length == 0 {
@@ -103,12 +109,12 @@ pub fn device_to_stream(device: &mut impl PacketDevice, stream: &mut impl Write,
     }
 }
 
-/// Frames on the stream become device packets, until the stream ends.
-/// A frame longer than the MTU is a peer that disagrees about the link and
-/// ends the pump, rather than a packet to truncate.
-pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, mtu: usize) -> io::Result<()> {
+/// Records on the stream become device frames, until the stream ends.
+/// A frame longer than `largest` is a peer that disagrees about the link
+/// and ends the pump, rather than a frame to truncate.
+pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, largest: usize) -> io::Result<()> {
     let mut header = [0u8; HEADER_BYTES];
-    let mut packet = vec![0u8; mtu];
+    let mut packet = vec![0u8; largest];
     loop {
         match stream.read_exact(&mut header) {
             Ok(()) => {}
@@ -116,10 +122,10 @@ pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, 
             Err(error) => return Err(error),
         }
         let length = usize::from(u16::from_be_bytes(header));
-        if length == 0 || length > mtu {
+        if length == 0 || length > largest {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("frame of {length} bytes on a link with MTU {mtu}"),
+                format!("frame of {length} bytes on a link whose frames hold {largest}"),
             ));
         }
         stream.read_exact(&mut packet[..length])?;
@@ -130,14 +136,24 @@ pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, 
 
 pub struct Options {
     pub address: Ipv4Addr,
-    pub peer: Ipv4Addr,
     /// The pool's prefix length: with it the kernel routes the whole pool
-    /// into the device, not only the peer.
+    /// into the device.
     pub prefix: u8,
     pub mtu: usize,
 }
 
 impl Options {
+    /// The largest frame the device hands over or accepts.
+    pub fn frame_bytes(&self) -> usize {
+        self.mtu + ETHERNET_HEADER_BYTES
+    }
+
+    /// The device's MAC: the one the network's switch derives for this
+    /// address, so frames from here are recognisably this member's.
+    pub fn mac(&self) -> [u8; 6] {
+        mac_of(self.address)
+    }
+
     pub fn netmask(&self) -> Ipv4Addr {
         Ipv4Addr::from_bits(if self.prefix == 0 {
             0
@@ -149,15 +165,13 @@ impl Options {
 
 pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut address = None;
-    let mut peer = None;
     let mut prefix = 32u8;
-    let mut mtu = MAX_PACKET_BYTES;
+    let mut mtu = LINK_MTU;
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--address" => address = Some(value.parse().map_err(|_| format!("invalid address {value}"))?),
-            "--peer" => peer = Some(value.parse().map_err(|_| format!("invalid peer {value}"))?),
             "--prefix" => {
                 prefix = value.parse().map_err(|_| format!("invalid prefix {value}"))?;
                 if !(1..=32).contains(&prefix) {
@@ -166,8 +180,8 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
             }
             "--mtu" => {
                 mtu = value.parse().map_err(|_| format!("invalid mtu {value}"))?;
-                if !(576..=MAX_PACKET_BYTES).contains(&mtu) {
-                    return Err(format!("mtu must be 576..={MAX_PACKET_BYTES}"));
+                if !(576..=LINK_MTU).contains(&mtu) {
+                    return Err(format!("mtu must be 576..={LINK_MTU}"));
                 }
             }
             other => return Err(format!("unknown flag {other}")),
@@ -175,7 +189,6 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
     }
     Ok(Options {
         address: address.ok_or("--address is required")?,
-        peer: peer.ok_or("--peer is required")?,
         prefix,
         mtu,
     })
@@ -185,7 +198,7 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
 mod tun {
     //! The device: `/dev/net/tun` plus the SIOC ioctls that name, address
     //! and raise it. Written against the kernel's `ifreq` layout directly;
-    //! the musl target has no netlink helper worth a dependency for four
+    //! the musl target has no netlink helper worth a dependency for five
     //! calls made once.
     use super::Options;
     use nix::libc;
@@ -197,10 +210,12 @@ mod tun {
     const SIOCGIFFLAGS: u32 = 0x8913;
     const SIOCSIFFLAGS: u32 = 0x8914;
     const SIOCSIFADDR: u32 = 0x8916;
-    const SIOCSIFDSTADDR: u32 = 0x8918;
     const SIOCSIFNETMASK: u32 = 0x891c;
     const SIOCSIFMTU: u32 = 0x8922;
-    const IFF_TUN: u16 = 0x0001;
+    const SIOCSIFHWADDR: u32 = 0x8924;
+    const IFF_TAP: u16 = 0x0002;
+    /// `ARPHRD_ETHER`: the hardware address family of an ethernet device.
+    const ARPHRD_ETHER: u16 = 1;
     const IFF_NO_PI: u16 = 0x1000;
     const IFF_UP: u16 = 0x0001;
     const IFF_RUNNING: u16 = 0x0040;
@@ -234,7 +249,7 @@ mod tun {
         assert!(name.len() < NAME_BYTES);
         let device = OpenOptions::new().read(true).write(true).open("/dev/net/tun")?;
         let mut request = ifreq(name);
-        request[NAME_BYTES..NAME_BYTES + 2].copy_from_slice(&(IFF_TUN | IFF_NO_PI).to_ne_bytes());
+        request[NAME_BYTES..NAME_BYTES + 2].copy_from_slice(&(IFF_TAP | IFF_NO_PI).to_ne_bytes());
         ioctl(&device, TUNSETIFF, &mut request)?;
         Ok(device)
     }
@@ -251,8 +266,9 @@ mod tun {
         request[NAME_BYTES..NAME_BYTES + 8].copy_from_slice(&sockaddr_in(options.address));
         ioctl(&socket, SIOCSIFADDR, &mut request)?;
         let mut request = ifreq(name);
-        request[NAME_BYTES..NAME_BYTES + 8].copy_from_slice(&sockaddr_in(options.peer));
-        ioctl(&socket, SIOCSIFDSTADDR, &mut request)?;
+        request[NAME_BYTES..NAME_BYTES + 2].copy_from_slice(&ARPHRD_ETHER.to_ne_bytes());
+        request[NAME_BYTES + 2..NAME_BYTES + 8].copy_from_slice(&options.mac());
+        ioctl(&socket, SIOCSIFHWADDR, &mut request)?;
         let mut request = ifreq(name);
         request[NAME_BYTES..NAME_BYTES + 8].copy_from_slice(&sockaddr_in(options.netmask()));
         ioctl(&socket, SIOCSIFNETMASK, &mut request)?;
@@ -276,11 +292,11 @@ mod tun {
     use std::io;
 
     pub fn open(_: &str) -> io::Result<File> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "tun devices are Linux only"))
+        Err(io::Error::new(io::ErrorKind::Unsupported, "tap devices are Linux only"))
     }
 
     pub fn configure(_: &str, _: &Options) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "tun devices are Linux only"))
+        Err(io::Error::new(io::ErrorKind::Unsupported, "tap devices are Linux only"))
     }
 }
 
@@ -298,23 +314,24 @@ fn run(options: Options) -> io::Result<()> {
         stream.as_fd(),
         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
     )?;
+    let mac = options.mac().map(|byte| format!("{byte:02x}")).join(":");
     eprintln!(
-        "[capsem-tun] {DEVICE} {}/{} -> {} mtu {} attached to host port {VSOCK_PORT_NETWORK}",
-        options.address, options.prefix, options.peer, options.mtu
+        "[capsem-tun] {DEVICE} {}/{} {mac} mtu {} attached to host port {VSOCK_PORT_NETWORK}",
+        options.address, options.prefix, options.mtu
     );
     let mut device_reader = device.try_clone()?;
     let mut stream_writer = stream.try_clone()?;
-    let mtu = options.mtu;
-    // Either direction ending ends the link: a tun read cannot be woken
+    let largest = options.frame_bytes();
+    // Either direction ending ends the link: a tap read cannot be woken
     // from another thread, so the process exits rather than joins.
     thread::Builder::new().name("capsem-tun-egress".into()).spawn(move || {
-        let outcome = device_to_stream(&mut device_reader, &mut stream_writer, mtu);
+        let outcome = device_to_stream(&mut device_reader, &mut stream_writer, largest);
         report("device to host", outcome);
     })?;
     let (mut stream_reader, mut device_writer) = (stream, device);
     report(
         "host to device",
-        stream_to_device(&mut stream_reader, &mut device_writer, mtu),
+        stream_to_device(&mut stream_reader, &mut device_writer, largest),
     )
 }
 
@@ -347,7 +364,7 @@ fn main() {
         Ok(options) => options,
         Err(error) => {
             eprintln!("[capsem-tun] {error}");
-            eprintln!("usage: capsem-tun --address A.B.C.D --peer A.B.C.D [--prefix N] [--mtu N]");
+            eprintln!("usage: capsem-tun --address A.B.C.D [--prefix N] [--mtu N]");
             process::exit(2);
         }
     };

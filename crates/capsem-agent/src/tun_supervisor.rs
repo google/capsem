@@ -2,7 +2,7 @@
 //!
 //! The host names the VM's private address and the pool in the boot
 //! environment (`CAPSEM_PRIVATE_ADDRESS`, `CAPSEM_PRIVATE_POOL`); the pump is
-//! a separate binary with no authority beyond `tun0` and one VSOCK stream, so
+//! a separate binary with no authority beyond `tap0` and one VSOCK stream, so
 //! it is a child here rather than a thread. When it exits -- the host end
 //! closed, the VM resumed, a bug -- it is started again after a bounded
 //! pause: a guest without its pump has no private network, and nothing else
@@ -19,7 +19,6 @@ const MAX_RESTART_DELAY: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateLink {
     pub address: Ipv4Addr,
-    pub gateway: Ipv4Addr,
     pub prefix: u8,
 }
 
@@ -51,19 +50,13 @@ impl PrivateLink {
                 "CAPSEM_PRIVATE_ADDRESS {address} is outside CAPSEM_PRIVATE_POOL {pool}"
             ));
         }
-        Ok(Some(Self {
-            address,
-            gateway: Ipv4Addr::from_bits((network.to_bits() & mask) + 1),
-            prefix,
-        }))
+        Ok(Some(Self { address, prefix }))
     }
 
     pub fn arguments(&self) -> Vec<String> {
         vec![
             "--address".into(),
             self.address.to_string(),
-            "--peer".into(),
-            self.gateway.to_string(),
             "--prefix".into(),
             self.prefix.to_string(),
         ]
@@ -76,11 +69,11 @@ impl PrivateLink {
 pub fn start(boot_env: &[(String, String)]) -> String {
     match PrivateLink::from_env(boot_env) {
         Ok(Some(link)) => {
-            let line = format!("private link {}/{} via {}", link.address, link.prefix, link.gateway);
+            let line = format!("private link {}/{} on tap0", link.address, link.prefix);
             supervise(link);
             line
         }
-        Ok(None) => "no private address: no tun0".into(),
+        Ok(None) => "no private address: no tap0".into(),
         Err(error) => format!("private link refused: {error}"),
     }
 }

@@ -105,25 +105,25 @@ fn both_directions_round_trip_through_a_stream_pair() {
 }
 
 #[test]
-fn options_require_both_ends_and_bound_the_mtu() {
-    let parsed = parse_options(["--address", "10.128.0.2", "--peer", "10.128.0.1"].map(String::from)).unwrap();
+fn options_require_an_address_and_bound_the_mtu() {
+    let parsed = parse_options(["--address", "10.128.0.2"].map(String::from)).unwrap();
     assert_eq!(parsed.address, Ipv4Addr::new(10, 128, 0, 2));
-    assert_eq!(parsed.peer, Ipv4Addr::new(10, 128, 0, 1));
-    assert_eq!(parsed.mtu, MAX_PACKET_BYTES);
+    assert_eq!(parsed.mtu, LINK_MTU, "the largest frame less its ethernet header");
+    assert_eq!(parsed.frame_bytes(), MAX_FRAME_BYTES);
+    assert_eq!(parsed.mac(), [0x02, 0xca, 10, 128, 0, 2]);
+    assert_eq!(parsed.mtu, LINK_MTU);
     assert_eq!(parsed.prefix, 32, "a bare link routes only the peer");
     assert_eq!(parsed.netmask(), Ipv4Addr::new(255, 255, 255, 255));
-    let parsed =
-        parse_options(["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "1500"].map(String::from)).unwrap();
+    let parsed = parse_options(["--address", "10.128.0.2", "--mtu", "1500"].map(String::from)).unwrap();
     assert_eq!(parsed.mtu, 1500);
     for bad in [
-        vec!["--address", "10.128.0.2"],
-        vec!["--peer", "10.128.0.1"],
-        vec!["--address", "nope", "--peer", "10.128.0.1"],
-        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "100"],
-        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--mtu", "70000"],
-        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--bogus", "1"],
-        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "0"],
-        vec!["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "33"],
+        vec!["--prefix", "9"],
+        vec!["--address", "nope"],
+        vec!["--address", "10.128.0.2", "--mtu", "100"],
+        vec!["--address", "10.128.0.2", "--mtu", "65522"],
+        vec!["--address", "10.128.0.2", "--bogus", "1"],
+        vec!["--address", "10.128.0.2", "--prefix", "0"],
+        vec!["--address", "10.128.0.2", "--prefix", "33"],
         vec!["--address"],
     ] {
         assert!(parse_options(bad.iter().map(|s| s.to_string())).is_err(), "{bad:?}");
@@ -132,12 +132,25 @@ fn options_require_both_ends_and_bound_the_mtu() {
 
 #[test]
 fn the_pool_prefix_becomes_the_device_netmask() {
-    let parsed =
-        parse_options(["--address", "10.128.0.2", "--peer", "10.128.0.1", "--prefix", "9"].map(String::from)).unwrap();
+    let parsed = parse_options(["--address", "10.128.0.2", "--prefix", "9"].map(String::from)).unwrap();
     assert_eq!(parsed.prefix, 9);
     assert_eq!(
         parsed.netmask(),
         Ipv4Addr::new(255, 128, 0, 0),
-        "10.128.0.0/9 routes into tun0"
+        "10.128.0.0/9 routes into tap0"
     );
+}
+
+#[test]
+fn a_tap_frame_is_the_mtu_plus_its_ethernet_header() {
+    let (mut device, kernel) = fake_tun();
+    let mut wire = Vec::new();
+    kernel.send.send(vec![1; 1514]).unwrap();
+    drop(kernel);
+    device_to_stream(&mut device, &mut wire, 1500 + ETHERNET_HEADER_BYTES).unwrap();
+    assert_eq!(wire.len(), 2 + 1514);
+    let (mut device, kernel) = fake_tun();
+    let mut cursor = io::Cursor::new(wire);
+    stream_to_device(&mut cursor, &mut device, 1500 + ETHERNET_HEADER_BYTES).unwrap();
+    assert_eq!(kernel.receive.recv().unwrap().len(), 1514);
 }

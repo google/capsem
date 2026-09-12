@@ -13,16 +13,9 @@ fn a_host_named_address_and_pool_make_the_pump_arguments() {
     ]))
     .unwrap()
     .unwrap();
-    assert_eq!(
-        link.gateway,
-        Ipv4Addr::new(10, 128, 0, 1),
-        "the gateway is the pool's first host"
-    );
+    assert_eq!(link.address, Ipv4Addr::new(10, 129, 3, 4));
     assert_eq!(link.prefix, 9);
-    assert_eq!(
-        link.arguments(),
-        ["--address", "10.129.3.4", "--peer", "10.128.0.1", "--prefix", "9"]
-    );
+    assert_eq!(link.arguments(), ["--address", "10.129.3.4", "--prefix", "9"]);
 }
 
 #[test]
