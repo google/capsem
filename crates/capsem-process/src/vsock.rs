@@ -404,9 +404,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 pending.pending_acks.lock().unwrap().remove(&id);
                             }
                             Some(Ok(GuestToHost::PortClosed { flow, report })) => {
+                                // One flow's bookkeeping never ends the control link every other flow rides on.
                                 if let Err(error) = js.publisher.report_close(flow, report) {
-                                    error!(%error, "guest close report rejected");
-                                    break;
+                                    error!(%error, flow = flow.id, "guest close report rejected");
                                 }
                                 let frame = proto::encode_host_msg(&HostToGuest::PortCloseAck { flow })
                                     .expect("fixed-size flow acknowledgement");
