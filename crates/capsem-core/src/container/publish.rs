@@ -485,6 +485,7 @@ impl Publisher {
         source: crate::security_engine::network::NetworkVm,
         source_address: std::net::SocketAddr,
         port: u16,
+        protocol: crate::security_engine::network::NetworkProtocol,
     ) -> Result<security::AuditFlow> {
         let authority = self.security.clone().context("publication security context missing")?;
         Ok(security::AuditFlow::private(
@@ -493,6 +494,7 @@ impl Publisher {
             source,
             source_address,
             port,
+            protocol,
         ))
     }
 

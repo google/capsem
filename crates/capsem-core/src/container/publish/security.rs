@@ -89,13 +89,14 @@ impl AuditFlow {
         source: NetworkVm,
         source_address: SocketAddr,
         port: u16,
+        protocol: NetworkProtocol,
     ) -> Self {
         Self {
             facts: NetworkFlow {
                 connection_id: uuid::Uuid::new_v4(),
                 route: NetworkRoute::Private { network },
                 side: NetworkSide::Destination,
-                protocol: NetworkProtocol::Tcp,
+                protocol,
                 source: NetworkEndpoint {
                     vm: Some(source),
                     address: source_address,

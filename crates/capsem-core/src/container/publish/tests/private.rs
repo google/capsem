@@ -22,7 +22,13 @@ fn delivered(owner: &Publisher, port: u16) -> (Incoming, UnixStream) {
     let (stream, far) = StdUnixStream::pair().unwrap();
     far.set_nonblocking(true).unwrap();
     let audit = owner
-        .private_audit(network(), member(), (Ipv4Addr::new(10, 128, 0, 2), 40001).into(), port)
+        .private_audit(
+            network(),
+            member(),
+            (Ipv4Addr::new(10, 128, 0, 2), 40001).into(),
+            port,
+            crate::security_engine::network::NetworkProtocol::Tcp,
+        )
         .unwrap();
     let incoming = Incoming {
         source: Source::Stream(stream.into()),
