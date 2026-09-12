@@ -111,9 +111,8 @@ def functional(
     proven = tuple(profiles.selected(config)) if axis is None else axis
     base, rest = proven[0], proven[1:]
 
-    # That the materialized catalog agrees with the source axis and with the
-    # manifest under test is still required -- it is simply a run-time
-    # question now, asked once, before any profile lane runs against it.
+    # That the materialized catalog agrees with the source axis and the manifest
+    # under test is still required: a run-time question, asked once, before any lane.
     base_content = _profile_content(config, base) if isolated_assets else None
     agreed = phase.add(
         step(
@@ -263,14 +262,11 @@ def _profile_lane(
 
     head = selected(head)
     current = phase.add(head.as_step(config), after=after)
-    current = phase.add(
-        selected(kingslanding.suite(config, profile=profile, benchmark=benchmark)).as_step(config),
-        after=(current,),
-    )
-    current = phase.add(
-        selected(kingslanding.greyjoy_suite(config, profile=profile)).as_step(config),
-        after=(current,),
-    )
+    for owned in (
+        kingslanding.suite(config, profile=profile, benchmark=benchmark),
+        kingslanding.greyjoy_suite(config, profile=profile),
+    ):
+        current = phase.add(selected(owned).as_step(config), after=(current,))
     current = phase.add(
         selected(pytestsuite.host_snapshot(config, profile=profile)).as_step(config),
         after=(current,),
