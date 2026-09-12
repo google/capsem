@@ -22,8 +22,9 @@ GATEWAY = "10.0.1.1"
 CONTAINER_ADDRESS = "10.0.1.2"
 NAT_CHAIN = "CAPSEM_CONTAINER_NAT"
 INPUT_CHAIN = "CAPSEM_CONTAINER_IN"
+# `-m tcp` appears only with a port match; a destination-only rule has none.
 REDIRECT_RULE = re.compile(
-    r"^-A OUTPUT (?:-d (\S+) )?-p (udp|tcp) -m \2 (?:--dport (\d+) )?"
+    r"^-A OUTPUT (?:-d (\S+) )?-p (udp|tcp) (?:-m \2 --dport (\d+) )?"
     r"-j REDIRECT --to-ports (\d+)$"
 )
 

@@ -386,6 +386,8 @@ iptables_add -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
 # TCP to a private address (the host pool, capsem-config PrivatePool::DEFAULT)
 # goes to the proxy's private listener before any port rule can claim it:
 # the VM owner admits it against the member's network and hands it over.
+# The gateway itself is the owner's own endpoint on tun0 and stays direct.
+iptables_add -t nat -A OUTPUT -p tcp -d 10.128.0.1 -j RETURN
 iptables_add -t nat -A OUTPUT -p tcp -d 10.128.0.0/9 -j REDIRECT --to-port 10128
 iptables_add -t nat -A OUTPUT -p tcp --dport 443   -j REDIRECT --to-port 10443
 iptables_add -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080

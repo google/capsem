@@ -92,7 +92,8 @@ VM_OUTPUT_RULES = """\
 -P OUTPUT ACCEPT
 -A OUTPUT -p udp -m udp --dport 53 -j REDIRECT --to-ports 1053
 -A OUTPUT -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 1053
--A OUTPUT -d 10.128.0.0/9 -p tcp -m tcp -j REDIRECT --to-ports 10128
+-A OUTPUT -d 10.128.0.1/32 -p tcp -j RETURN
+-A OUTPUT -d 10.128.0.0/9 -p tcp -j REDIRECT --to-ports 10128
 -A OUTPUT -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 10443
 -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 10080
 -A OUTPUT -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 10080
