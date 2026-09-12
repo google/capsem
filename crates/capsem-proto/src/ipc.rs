@@ -88,8 +88,13 @@ pub enum ServiceToProcess {
     PrivateAccept {
         id: u64,
         token: String,
+        network: String,
+        network_name: String,
         source_vm: String,
+        source_name: String,
+        source_generation: u64,
         source_address: std::net::Ipv4Addr,
+        source_port: u16,
         port: u16,
     },
 }
