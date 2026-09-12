@@ -332,15 +332,13 @@ pub(crate) async fn handle_ipc_connection(
                     let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
                         .map_err(anyhow::Error::msg)?;
                     let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
-                    if protocol == "tcp" {
-                        let handoff = job_store.private.get().context("no private handoff on this owner")?;
-                        handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
-                        return Ok(handoff.socket_path().to_string_lossy().into_owned());
-                    }
-                    let relay = job_store.relay.get().context("no datagram relay on this owner")?;
-                    let protocol = crate::private_relay::parse_protocol(&protocol)?;
-                    relay.expect(&token, network, source, source_address, source_port, port, protocol)?;
-                    Ok::<_, anyhow::Error>(relay.socket_path().to_string_lossy().into_owned())
+                    anyhow::ensure!(
+                        protocol == "tcp",
+                        "only TCP connections are handed over; {protocol} rides the link"
+                    );
+                    let handoff = job_store.private.get().context("no private handoff on this owner")?;
+                    handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
+                    Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
                 })();
                 let response = match accepted {
                     Ok(handoff_socket) => ProcessToService::PrivateAcceptResult {

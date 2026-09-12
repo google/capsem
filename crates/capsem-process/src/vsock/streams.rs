@@ -1,5 +1,5 @@
 //! Guest byte streams handed whole to an async handler: the MITM rail and
-//! the tun0 packet stream. Both duplicate the accepted descriptor and keep
+//! the private link stream. Both duplicate the accepted descriptor and keep
 //! the connection alive for as long as the handler runs.
 use capsem_core::VsockConnection;
 use capsem_proto::privatelink::{ConnectHeader, HEADER_BYTES};
@@ -29,16 +29,10 @@ pub(super) fn serve(conn: VsockConnection, job_store: &Arc<crate::job_store::Job
     }
 }
 
-/// The guest's tun0 packet stream: the owner's datagram relay takes it,
-/// as the source of its guest's flows and the sink for its peers'.
+/// The guest's private link stream, held for the network's switch.
 fn serve_network(conn: VsockConnection, job_store: &Arc<crate::job_store::JobStore>, vm_id: &str) {
-    match job_store.relay.get() {
-        Some(relay) => {
-            info!(vm = %vm_id, "network: guest tun0 packet stream attached");
-            relay.attach_guest(conn);
-        }
-        None => warn!(vm = %vm_id, "network: guest tun0 packet stream refused; no datagram relay on this owner"),
-    }
+    info!(vm = %vm_id, "network: guest link stream attached");
+    job_store.link.attach_guest(conn);
 }
 
 /// A guest connection to a private address: the header names where it was

@@ -4,7 +4,7 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod private_handoff;
-mod private_relay;
+mod private_link;
 mod private_seats;
 mod runtime_config;
 mod terminal;
@@ -441,7 +441,6 @@ async fn run_async_main_loop(
     private_seats::bind(
         private_seats::Seats {
             id: &args.id,
-            env: &args.env,
             service_socket: args.service_socket.as_deref(),
             uds_path: &args.uds_path,
             run_dir: args.run_dir.as_deref(),
