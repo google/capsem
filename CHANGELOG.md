@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Members of a network have names: `<vm>.<network>.capsem.internal` (and
+  `<vm>.capsem.internal` when only one network answers it) resolves to the
+  member's private address, and the address resolves back, for members of a
+  shared network only. The zone is answered on the host with no TTL and never
+  forwarded upstream; a member that leaves loses its name at once.
 - UDP and ICMP between members of a network on their private addresses: every
   guest's `tap0` is one ethernet link to the network's own confined switch
   (`capsem-router --switch`), which forwards frames between members after
