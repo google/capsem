@@ -431,3 +431,98 @@ async fn a_retired_network_keeps_its_history_and_a_new_same_name_network_starts_
         NetworkError::NotFound(unknown)
     );
 }
+
+#[tokio::test]
+async fn paging_while_a_writer_appends_neither_repeats_nor_skips_a_row() {
+    // The cursor is the last row id seen. Appends land above it, so a reader
+    // racing the writer sees every row exactly once even when its pages
+    // straddle a flush. This is also the reader-contention evidence: the
+    // pages complete while the writer is at full tilt, and the read path
+    // never calls `flush` -- it waits on `ready` and issues one SELECT.
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let net = registry.create("busy", 1).await.unwrap();
+    let handle = registry.reader(net.id).unwrap();
+    const TOTAL: usize = 2_000;
+    let writer = tokio::spawn({
+        let handle = std::sync::Arc::clone(&handle);
+        async move {
+            use capsem_logger::{TransportEvent, TransportEventKind, WriteOp};
+            for n in 0..TOTAL {
+                let event = TransportEvent::new(
+                    format!("{:012x}", 0xd00000 + n),
+                    1_000 + n as i64,
+                    TransportEventKind::Connect,
+                    Some(net.id),
+                    Some(Uuid::from_u128(5_000 + n as u128)),
+                    &serde_json::json!({ "n": n }),
+                )
+                .unwrap();
+                handle.write(WriteOp::TransportEvent(event)).await.unwrap();
+                if n % 250 == 0 {
+                    handle.flush().await.unwrap();
+                }
+            }
+            handle.flush().await.unwrap();
+        }
+    });
+    let started = std::time::Instant::now();
+    let mut seen: Vec<i64> = Vec::new();
+    let mut cursor = None;
+    let mut pages = 0usize;
+    while seen.len() < TOTAL {
+        let page = registry
+            .logs(
+                net.id,
+                &LogQuery {
+                    cursor: cursor.clone(),
+                    limit: Some(100),
+                    ..LogQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        pages += 1;
+        seen.extend(page.events.iter().map(|event| event.sequence));
+        cursor = Some(page.cursor);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "paging stalled at {}",
+            seen.len()
+        );
+        if page.events.is_empty() {
+            tokio::task::yield_now().await;
+        }
+    }
+    writer.await.unwrap();
+    assert_eq!(seen, (1..=TOTAL as i64).collect::<Vec<_>>(), "every row once, in order");
+    eprintln!(
+        "paged {TOTAL} rows in {pages} pages while the writer appended: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_network_database_without_its_ledger_table_fails_loudly() {
+    // Missing table means broken schema, not empty history.
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root.clone());
+    let net = registry.create("broken", 1).await.unwrap();
+    registry.retire(net.id, 2).await.unwrap();
+    let path = capsem_foundation::paths::network_db_path_in(&root, &net.id.to_string());
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE transport_events")
+        .unwrap();
+    let history = registry.logs(net.id, &LogQuery::default()).await;
+    assert!(
+        matches!(history, Err(NetworkError::Database { .. })),
+        "a dropped ledger table must not read as empty: {history:?}"
+    );
+    // Nor does the service start over it as if the network never existed.
+    let reloaded = NetworkRegistry::load(root).await;
+    assert!(
+        matches!(reloaded, Err(NetworkError::Database { .. })),
+        "loading over a broken network database must refuse: {reloaded:?}"
+    );
+}
