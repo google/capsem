@@ -1,4 +1,11 @@
-//! The first bytes of a private TCP connection on VSOCK `VSOCK_PORT_PRIVATE`.
+//! What the private link's two ends agree on: the connect header of a
+//! private TCP connection on VSOCK `VSOCK_PORT_PRIVATE`, and the ethernet
+//! facts of the frame link on VSOCK `VSOCK_PORT_NETWORK`.
+//!
+//! The link is a `tap0` in the guest whose frames cross the pump as
+//! `u16`-length records and are switched by the network's confined process.
+//! The MAC is a function of the pool address, so the switch derives every
+//! member's from the registry and pins the source of every frame to it.
 //!
 //! The guest proxy intercepted a connect to a member's private address and
 //! must say where it was going: iptables REDIRECT has rewritten the socket's
@@ -7,6 +14,19 @@
 //! workload's own port travels too: the destination's audit row names the
 //! flow by both endpoints, and the ledger refuses a TCP endpoint without one.
 use std::net::Ipv4Addr;
+
+/// The ethernet header a frame on the link carries: two MACs, an ethertype.
+pub const ETHERNET_HEADER_BYTES: usize = 14;
+/// The largest IP packet the link carries: a `u16` frame less its header,
+/// which is also the largest MTU Linux gives a tap device.
+pub const LINK_MTU: usize = u16::MAX as usize - ETHERNET_HEADER_BYTES;
+
+/// The MAC of the member at `address`: locally administered, unicast, and
+/// nothing but the address, so it never has to be exchanged.
+pub const fn mac_of(address: Ipv4Addr) -> [u8; 6] {
+    let [a, b, c, d] = address.octets();
+    [0x02, 0xca, a, b, c, d]
+}
 
 /// Fixed size on the wire: version, protocol, address, port, source port.
 pub const HEADER_BYTES: usize = 10;

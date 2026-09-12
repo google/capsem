@@ -39,3 +39,17 @@ fn a_wrong_version_protocol_or_port_is_refused() {
         assert!(ConnectHeader::decode(&bad).is_err(), "{what}: {bad:?}");
     }
 }
+
+#[test]
+fn a_member_mac_is_locally_administered_unicast_and_names_its_address() {
+    let mac = mac_of(Ipv4Addr::new(10, 129, 7, 200));
+    assert_eq!(mac, [0x02, 0xca, 10, 129, 7, 200]);
+    assert_eq!(mac[0] & 0x01, 0, "unicast");
+    assert_eq!(mac[0] & 0x02, 0x02, "locally administered");
+    assert_ne!(mac_of(Ipv4Addr::new(10, 129, 7, 201)), mac);
+}
+
+#[test]
+fn the_link_mtu_fills_a_u16_frame_with_its_ethernet_header() {
+    assert_eq!(LINK_MTU + ETHERNET_HEADER_BYTES, usize::from(u16::MAX));
+}
