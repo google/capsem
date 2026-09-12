@@ -668,6 +668,37 @@ if [ -d /mnt/shared/workspace ]; then
     AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log
 fi
 export RUST_BACKTRACE=1
+
+# The guest's side of a link failure. When every VSOCK connection to the
+# host ends at once, exec is dead and the serial console -- which the host
+# keeps -- is the only witness left. Silent while nothing changes; when the
+# agent logs a bridge or pump event, or the kernel says anything, print
+# what changed with the guest's socket table and virtio interrupt counts.
+# One heartbeat a minute proves the guest itself is still running.
+WATCH_EVENTS='bridge exited\|reconnect\|capsem-tun exited\|could not start\|control writer\|poll error\|link closed\|terminal bridge'
+(
+    last_agent=0
+    last_dmesg=$(dmesg 2>/dev/null | wc -l)
+    last_beat=0
+    while sleep 3; do
+        now=$(cut -d. -f1 /proc/uptime)
+        agent=$(grep -c "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null || echo 0)
+        kernel=$(dmesg 2>/dev/null | wc -l)
+        if [ "$agent" != "$last_agent" ] || [ "$kernel" != "$last_dmesg" ]; then
+            echo "[capsem-watch] t=$now agent-events=$agent kernel-lines=$kernel"
+            grep "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null | tail -n 6 | sed 's/^/[capsem-watch] agent: /'
+            dmesg 2>/dev/null | tail -n "$((kernel - last_dmesg))" | sed 's/^/[capsem-watch] kernel: /'
+            chroot /newroot ss -a --vsock 2>/dev/null | sed 's/^/[capsem-watch] vsock: /'
+            grep -i virtio /proc/interrupts | sed 's/^/[capsem-watch] irq: /'
+            last_agent=$agent
+            last_dmesg=$kernel
+        elif [ $((now - last_beat)) -ge 60 ]; then
+            echo "[capsem-watch] t=$now alive agent-events=$agent kernel-lines=$kernel $(grep -i virtio /proc/interrupts | awk '{s+=$2} END {print "virtio-irqs=" s}')"
+            last_beat=$now
+        fi
+    done
+) &
+
 init_log "starting PTY agent (vsock mode): $AGENT_PATH"
 chroot /newroot "$AGENT_PATH" >> "$AGENT_STDIO_LOG" 2>&1
 AGENT_STATUS=$?
