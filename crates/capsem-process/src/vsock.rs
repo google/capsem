@@ -959,7 +959,7 @@ fn dispatch_aux_connection(
 ) {
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
-        Some(service @ (HostVsockService::Network | HostVsockService::Private)) => streams::serve(service, conn, vm_id),
+        Some(HostVsockService::Network | HostVsockService::Private) => streams::serve(conn, job_store, vm_id),
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
         Some(HostVsockService::DnsProxy) => {
             // DNS proxy connections are long-lived framed sessions.

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TCP between members of a network on their private addresses: a guest's
+  connect to a member is intercepted, admitted by the service per connection
+  under the security rules (`network.mode == "private"`), audited in the
+  network's history from both VMs, and carried by the destination owner's
+  confined router under its own private quota.
 - Named networks: `capsem network list|create|inspect|delete|connect|disconnect`
   and `capsem create --network NAME` group VMs that may reach each other on
   their private addresses, over `/networks` routes on the service and gateway.

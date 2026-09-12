@@ -36,6 +36,9 @@ pub(crate) struct JobStore {
     /// `Notify` keeps a permit, so a report that lands before the wait
     /// starts is not lost.
     pub(crate) shutdown_complete: Notify,
+    /// Private connections in and out of this VM; set once the owner has its
+    /// handoff socket, absent in fixtures that never take one.
+    pub(crate) private: std::sync::OnceLock<Arc<crate::private_handoff::PrivateHandoff>>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -82,6 +85,7 @@ impl JobStore {
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
+            private: std::sync::OnceLock::new(),
         }
     }
 

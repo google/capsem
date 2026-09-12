@@ -314,16 +314,44 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => {
                 anyhow::bail!("publication data requests are VM-owner internal")
             }
-            ServiceToProcess::PrivateAccept { id, .. } => {
-                // The handoff socket and the splice arrive with S04-017; until
-                // then an admitted connection is refused here, with the reason.
+            ServiceToProcess::PrivateAccept {
+                id,
+                token,
+                network,
+                network_name,
+                source_vm,
+                source_name,
+                source_generation,
+                source_address,
+                source_port,
+                port,
+            } => {
                 let output = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let response = ProcessToService::PrivateAcceptResult {
+                let accepted = job_store
+                    .private
+                    .get()
+                    .context("no private handoff on this owner")
+                    .and_then(|handoff| {
+                        let network =
+                            capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
+                                .map_err(anyhow::Error::msg)?;
+                        let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
+                        handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
+                        Ok(handoff.socket_path().to_string_lossy().into_owned())
+                    });
+                let response = match accepted {
+                    Ok(handoff_socket) => ProcessToService::PrivateAcceptResult {
+                        id,
+                        handoff_socket,
+                        error: None,
+                    },
+                    Err(error) => ProcessToService::PrivateAcceptResult {
                         id,
                         handoff_socket: String::new(),
-                        error: Some("private handoff not available on this owner".into()),
-                    };
+                        error: Some(format!("{error:#}")),
+                    },
+                };
+                tokio::spawn(async move {
                     capsem_core::try_send!("private_accept_result", output.send(response).await);
                 });
             }
