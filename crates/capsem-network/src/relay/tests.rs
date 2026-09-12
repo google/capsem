@@ -19,8 +19,8 @@ fn ipv4(source: Ipv4Addr, destination: Ipv4Addr, protocol: IpProtocol, payload_l
     packet.set_frag_offset(0);
     packet.set_hop_limit(64);
     packet.set_next_header(protocol);
-    packet.set_src_addr(source.into());
-    packet.set_dst_addr(destination.into());
+    packet.set_src_addr(source);
+    packet.set_dst_addr(destination);
     packet.fill_checksum();
     bytes
 }

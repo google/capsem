@@ -142,8 +142,8 @@ pub fn parse(bytes: &[u8]) -> Result<Datagram, DropReason> {
     if packet.more_frags() || packet.frag_offset() != 0 {
         return Err(DropReason::Fragment);
     }
-    let source: Ipv4Addr = packet.src_addr().into();
-    let destination: Ipv4Addr = packet.dst_addr().into();
+    let source: Ipv4Addr = packet.src_addr();
+    let destination: Ipv4Addr = packet.dst_addr();
     let kind = match packet.next_header() {
         IpProtocol::Udp => {
             let udp = UdpPacket::new_checked(packet.payload()).map_err(|_| DropReason::Malformed)?;
