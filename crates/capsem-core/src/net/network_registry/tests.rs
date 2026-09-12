@@ -639,3 +639,91 @@ async fn a_network_database_without_its_ledger_table_fails_loudly() {
         "loading over a broken network database must refuse: {reloaded:?}"
     );
 }
+
+#[tokio::test]
+async fn a_private_address_resolves_only_through_a_shared_active_network() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let team = registry.create("team", 1).await.unwrap();
+    let other = registry.create("other", 1).await.unwrap();
+    let (a, b, c) = (
+        Ipv4Addr::new(10, 128, 0, 2),
+        Ipv4Addr::new(10, 128, 0, 3),
+        Ipv4Addr::new(10, 128, 0, 4),
+    );
+    for (network, vm, address) in [(team.id, "vm-a", a), (team.id, "vm-b", b), (other.id, "vm-c", c)] {
+        registry
+            .attach(network, vm, address, MembershipState::Declared, 2)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        registry.resolve_private("vm-a", b).unwrap(),
+        PrivatePeer {
+            network: team.id,
+            vm_id: "vm-b".into(),
+            address: b
+        }
+    );
+    let refused = |registry: &NetworkRegistry, source: &str, destination: Ipv4Addr| {
+        matches!(
+            registry.resolve_private(source, destination),
+            Err(NetworkError::NoPrivatePath { .. })
+        )
+    };
+    assert!(
+        refused(&registry, "vm-a", c),
+        "a member of another network is a stranger"
+    );
+    assert!(refused(&registry, "vm-a", a), "a VM's own address is not a peer");
+    assert!(refused(&registry, "vm-c", b), "the other way round is refused too");
+    assert!(refused(&registry, "ghost", b), "a VM in no network reaches nothing");
+    assert!(
+        refused(&registry, "vm-a", Ipv4Addr::new(10, 128, 9, 9)),
+        "an unallocated address is nobody"
+    );
+
+    registry.detach(team.id, "vm-b", 3).await.unwrap();
+    assert!(
+        refused(&registry, "vm-a", b),
+        "a detached member is unreachable at once"
+    );
+    registry.detach(team.id, "vm-a", 4).await.unwrap();
+    registry.retire(team.id, 5).await.unwrap();
+    assert!(refused(&registry, "vm-a", b), "a retired network answers nothing");
+}
+
+#[tokio::test]
+async fn a_recorded_event_is_durable_and_readable_before_the_call_returns() {
+    use capsem_logger::{TransportEvent, TransportEventKind};
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let net = registry.create("audited", 1).await.unwrap();
+    let event = TransportEvent::new(
+        "0000000000ab".into(),
+        1_000,
+        TransportEventKind::Connect,
+        Some(net.id),
+        Some(Uuid::from_u128(7)),
+        &serde_json::json!({ "decision": { "effective": "allow" } }),
+    )
+    .unwrap();
+    registry.record(net.id, event).await.unwrap();
+    let page = registry.logs(net.id, &LogQuery::default()).await.unwrap();
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].event_type, "network.connect");
+    let unknown = Uuid::new_v4();
+    let event = TransportEvent::new(
+        "0000000000ac".into(),
+        1_001,
+        TransportEventKind::Connect,
+        Some(unknown),
+        Some(Uuid::from_u128(8)),
+        &serde_json::json!({}),
+    )
+    .unwrap();
+    assert_eq!(
+        registry.record(unknown, event).await.unwrap_err(),
+        NetworkError::NotFound(unknown)
+    );
+}

@@ -52,6 +52,17 @@ pub enum NetworkError {
     Database { path: PathBuf, error: String },
     #[error("invalid log cursor or limit: {0}")]
     Cursor(String),
+    #[error("no private path from VM {source_vm} to {destination}: not members of one active network")]
+    NoPrivatePath { source_vm: String, destination: Ipv4Addr },
+}
+
+/// The member a private address resolves to, seen from a source VM: the one
+/// active network both belong to, and the VM behind the address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivatePeer {
+    pub network: Uuid,
+    pub vm_id: String,
+    pub address: Ipv4Addr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,6 +239,41 @@ impl NetworkRegistry {
         self.networks
             .get(&id)
             .map(|entry| entry.members.values().cloned().collect())
+    }
+
+    /// Where a private connection from `source_vm` to `destination` may go:
+    /// the member behind that address in an active network the source is
+    /// also in. Addresses are unique host-wide, so at most one network can
+    /// answer; a VM's own address, a stranger's, or a retired network's is
+    /// no path at all -- and that is decided here, before any owner is asked.
+    pub fn resolve_private(&self, source_vm: &str, destination: Ipv4Addr) -> Result<PrivatePeer, NetworkError> {
+        self.networks
+            .iter()
+            .filter(|(_, entry)| entry.members.contains_key(source_vm))
+            .find_map(|(id, entry)| {
+                entry
+                    .members
+                    .values()
+                    .find(|member| member.address == destination && member.vm_id != source_vm)
+                    .map(|member| PrivatePeer {
+                        network: *id,
+                        vm_id: member.vm_id.clone(),
+                        address: member.address,
+                    })
+            })
+            .ok_or_else(|| NetworkError::NoPrivatePath {
+                source_vm: source_vm.to_string(),
+                destination,
+            })
+    }
+
+    /// Record one transport event in a network's ledger and wait for it to
+    /// be durable, so the audit row exists before the connection it describes
+    /// can carry a byte.
+    pub async fn record(&self, id: Uuid, event: capsem_logger::TransportEvent) -> Result<(), NetworkError> {
+        let entry = self.networks.get(&id).ok_or(NetworkError::NotFound(id))?;
+        let path = network_db_path_in(&self.root, &id.to_string());
+        write_durably(&entry.handle, &path, WriteOp::TransportEvent(event)).await
     }
 
     /// Networks a VM belongs to.
