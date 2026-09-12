@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "6bd16456ffd2ce2a3fabb8dd649a645890cef065f866ce51aee0f43ac9cb69df"
-reason = "smoltcp 0.14 for capsem-network and capsem-config for capsem-service (private addresses)"
+sha256 = "5fa4cd5a39e838b864302ad19eba419988c1cdeb38200cfe7b8bcad2db87029f"
+reason = "smoltcp gone with the tun0 stack; capsem-router depends on capsem-network and capsem-proto for the switch, capsem-service on capsem-router for the switch host, capsem-bench on socket2 for udp buffers and raw ICMP"
