@@ -266,7 +266,9 @@ fn idle_flows_end_with_their_counts_and_refusals_fade() {
     relay.outbound(now, &udp(A, 1, STRANGER, 1, b"x"));
     relay.refused(refused, now);
     assert_eq!(relay.flows(), 3);
-    assert!(relay.expire(now + ICMP_IDLE - Duration::from_secs(1)).is_empty());
+    assert!(relay
+        .expire(now + ICMP_IDLE.checked_sub(Duration::from_secs(1)).unwrap())
+        .is_empty());
     let ended = relay.expire(now + ICMP_IDLE);
     assert_eq!(
         ended,
