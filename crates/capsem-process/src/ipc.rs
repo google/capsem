@@ -314,6 +314,19 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => {
                 anyhow::bail!("publication data requests are VM-owner internal")
             }
+            ServiceToProcess::PrivateAccept { id, .. } => {
+                // The handoff socket and the splice arrive with S04-017; until
+                // then an admitted connection is refused here, with the reason.
+                let output = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    let response = ProcessToService::PrivateAcceptResult {
+                        id,
+                        handoff_socket: String::new(),
+                        error: Some("private handoff not available on this owner".into()),
+                    };
+                    capsem_core::try_send!("private_accept_result", output.send(response).await);
+                });
+            }
             ServiceToProcess::WriteFile { id, path, data }
                 if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
                     id,
@@ -910,6 +923,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
         ServiceToProcess::PublishPort { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => IpcAction::Unexpected,
+        ServiceToProcess::PrivateAccept { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,
