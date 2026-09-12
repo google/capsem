@@ -79,9 +79,13 @@ async fn a_close_report_for_a_source_the_peer_already_reset_is_accepted() {
     // connection down by the time the guest's report arrives.
     capsem_foundation::unix::fd::reset_tcp(client.as_fd()).unwrap();
     drop(client);
+    // Wait for the reset to land. The timeout bounds the wait; when the
+    // reset has already landed the option is refused (EINVAL on XNU) and
+    // the read returns at once, so the refusal is not an error either.
     let probe = std::net::TcpStream::from(source.as_fd().try_clone_to_owned().unwrap());
-    probe.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let _ = std::io::Read::read(&mut &probe, &mut [0u8; 1]);
+    if probe.set_read_timeout(Some(Duration::from_secs(2))).is_ok() {
+        let _ = std::io::Read::read(&mut &probe, &mut [0u8; 1]);
+    }
     owner
         .report_close(
             flow,
