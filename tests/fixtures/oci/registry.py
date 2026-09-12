@@ -1,4 +1,4 @@
-"""Hermetic TLS distribution registry backed by the pinned Redis rootfs fixture."""
+"""Hermetic TLS distribution registry backed by a pinned rootfs fixture."""
 
 import contextlib
 import gzip
@@ -17,11 +17,11 @@ IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
 
 
 @contextlib.contextmanager
-def registry(directory, *, image_config=None):
-    pin = native_pin()
-    metadata = json.loads((IMAGE / "redis-image.json").read_text())
+def registry(directory, *, image_config=None, image="redis"):
+    pin = native_pin(image=image)
+    metadata = json.loads((IMAGE / f"{image}-image.json").read_text())
     assert all(metadata[key] == value for key, value in pin.items())
-    archive = (IMAGE / "redis-rootfs.tar.gz").read_bytes()
+    archive = (IMAGE / f"{image}-rootfs.tar.gz").read_bytes()
     assert hashlib.sha256(archive).hexdigest() == metadata["archive_sha256"]
     diff_id = hashlib.sha256(gzip.decompress(archive)).hexdigest()
     blobs = {}
@@ -36,7 +36,7 @@ def registry(directory, *, image_config=None):
             "architecture": pin["platform"].split("/")[1],
             "os": "linux",
             "config": image_config
-            or json.loads((FIXTURES / "redis-config.json").read_text()),
+            or json.loads((FIXTURES / f"{image}-config.json").read_text()),
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + diff_id]},
         },
         sort_keys=True,
@@ -166,7 +166,7 @@ def registry(directory, *, image_config=None):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
-    reference = f"127.0.0.1:{server.server_port}/library/redis@{digest}"
+    reference = f"127.0.0.1:{server.server_port}/library/{image}@{digest}"
     try:
         yield reference, certificate, requests
     finally:
