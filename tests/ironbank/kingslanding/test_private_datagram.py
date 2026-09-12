@@ -51,8 +51,9 @@ def linked(service, network, *vms):
     )
 
 
-def probe(service, vm, *args, timeout=40):
-    """Run one bench probe inside `vm`'s container; its JSON report."""
+def probe(service, vm, *args, timeout=40, recorded=None, lane=None):
+    """Run one bench probe inside `vm`'s container; its JSON report. With
+    `recorded` and `lane`, every metric joins the store under that lane."""
     result = guest(
         service,
         vm["id"],
@@ -63,6 +64,11 @@ def probe(service, vm, *args, timeout=40):
     assert result.get("exit_code") == 0, result
     report = json.loads(result["stdout"])
     metrics = report["metrics"]
+    if recorded is not None:
+        for name, metric in metrics.items():
+            recorded.setdefault(
+                f"{lane}.{name}", {"unit": metric["unit"], "samples": []}
+            )["samples"].extend(metric["samples"])
     return {key: metrics[key]["samples"][0] for key in ("sent", "received", "lost")} | {
         "round_trips": metrics.get("round_trip_ms", {}).get("samples", [])
     }
