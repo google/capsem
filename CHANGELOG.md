@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem run --network NAME` joins the container's VM to a named network at
+  creation, like `capsem create --network`.
 - Members of a network have names: `<vm>.<network>.capsem.internal` (and
   `<vm>.capsem.internal` when only one network answers it) resolves to the
   member's private address, and the address resolves back, for members of a

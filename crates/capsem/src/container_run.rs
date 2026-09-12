@@ -36,6 +36,9 @@ pub(super) struct RunArgs {
     /// Registry user; password/token comes from CAPSEM_REGISTRY_PASSWORD
     #[arg(long)]
     pub registry_user: Option<String>,
+    /// Named networks the container's VM joins at creation (repeatable)
+    #[arg(long = "network")]
+    pub network: Vec<String>,
     /// Replace the image's Cmd, preserving its Entrypoint
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -49,7 +52,8 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
                 && args.args.is_empty()
                 && args.registry_ca.is_none()
                 && args.registry_user.is_none()
-                && args.publish.is_empty(),
+                && args.publish.is_empty()
+                && args.network.is_empty(),
             "container options require an OCI image"
         );
         let request = RunRequest {
@@ -123,7 +127,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
         persistent: true,
         env: None,
         from: None,
-        networks: Vec::new(),
+        networks: args.network.clone(),
     };
     // Keep the create request alive until it returns the authoritative VM id.
     // Signals are already registered and remain queued while boot completes.
