@@ -65,7 +65,17 @@ def probe(service, vm, *args, timeout=40):
     }
 
 
-def udp(service, vm, address, count, size, interval_ms=2, wait_ms=2000):
+def udp(
+    service,
+    vm,
+    address,
+    count,
+    size,
+    interval_ms=2,
+    wait_ms=2000,
+    recorded=None,
+    lane=None,
+):
     return probe(
         service,
         vm,
@@ -80,6 +90,8 @@ def udp(service, vm, address, count, size, interval_ms=2, wait_ms=2000):
         str(interval_ms),
         "--wait-ms",
         str(wait_ms),
+        recorded=recorded,
+        lane=lane,
     )
 
 
@@ -88,10 +100,11 @@ def owner_logs(service):
 
 
 def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
-    members, service
+    members, service, evidence
 ):
     alpha, beta = members["alpha"], members["beta"]
     network = members["network"]
+    recorded = {}
     linked(service, network, alpha, beta)
     start_in_guest(
         service,
