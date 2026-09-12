@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their private addresses, over `/networks` routes on the service and gateway.
 - `capsem network logs NAME [-f]` and `GET /networks/{id}/logs` page a network's
   audit history with a cursor and VM, connection, type, decision and time filters.
+- Deleting a VM retires any network it leaves empty; disconnecting does not. A
+  retired network's audit database is kept 30 days and then removed by the
+  service at startup or on the next retirement.
 - Every VM receives one private IPv4 address for its whole life from the
   host pool `10.128.0.0/9`, kept across stop and resume for named VMs and shown
   as `private_address` by `/vms/list`, `/vms/{id}/info`, `capsem list` and

@@ -564,11 +564,9 @@ pub(super) async fn handle_delete(
     }
 
     // A deleted VM leaves every network it was in; the memberships are
-    // history in each network's own database, never resurrected.
-    let now_unix_ms = unix_time_ms();
-    if let Err(error) = state.networks.lock().await.detach_everywhere(&id, now_unix_ms).await {
-        tracing::warn!(id, error = %error, "deleted VM left a network membership behind");
-    }
+    // history in each network's own database, never resurrected, and a
+    // network it leaves empty retires with it.
+    network_routes::vm_deleted(&state, &id).await;
 
     Ok(Json(json!({ "success": true })))
 }

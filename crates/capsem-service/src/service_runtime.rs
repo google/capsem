@@ -170,10 +170,11 @@ pub(super) async fn run_service() -> Result<()> {
     let mut private_addresses =
         capsem_core::net::address_pool::AddressAllocator::new(capsem_config::PrivatePool::DEFAULT);
     private_address::reserve_registry_addresses(&mut persistent_registry, &mut private_addresses);
-    let networks =
+    let mut networks =
         capsem_core::net::network_registry::NetworkRegistry::load(capsem_foundation::paths::capsem_networks_dir())
             .await
             .map_err(|error| anyhow!("load network registry: {error}"))?;
+    network_routes::sweep_retired(&mut networks, vm_lifecycle::unix_time_ms());
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"

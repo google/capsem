@@ -121,10 +121,81 @@ async fn deleting_a_vm_leaves_every_network_it_was_in() {
         route_request(app(&state), Method::DELETE, &format!("/vms/{stopped_id}/delete"), None).await;
     assert_eq!(status, StatusCode::OK, "{deleted}");
     for network in [&a, &b] {
-        let path = format!("/networks/{}", network["id"].as_str().unwrap());
-        let (_, inspected) = route_request(app(&state), Method::GET, &path, None).await;
-        assert_eq!(inspected["members"], json!([]), "{inspected}");
+        let id = network["id"].as_str().unwrap();
+        let (status, _) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the last member took the network with it"
+        );
+        let (status, history) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+        assert_eq!(status, StatusCode::OK, "its history stays readable: {history}");
+        let (status, _) = route_request(
+            app(&state),
+            Method::PUT,
+            &format!("/networks/{id}/members/{stopped_id}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "nothing resurrects a retired network or a deleted VM"
+        );
     }
+    let (status, list) = route_request(app(&state), Method::GET, "/networks", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["networks"], json!([]));
+}
+
+#[tokio::test]
+async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("sessions/fork-src");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    insert_fake_instance_with_session_dir(&state, "fork-src", std::process::id(), session_dir);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, _) = route_request(
+        app(&state),
+        Method::PUT,
+        &format!("/networks/{id}/members/fork-src"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let fork = handle_fork(
+        State(Arc::clone(&state)),
+        Path("fork-src".into()),
+        Json(ForkRequest {
+            name: "my-fork".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let (_, inspected) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
+    let members: Vec<&str> = inspected["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| member["vm_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        members,
+        vec!["fork-src"],
+        "a fork is a new VM with no membership: {inspected}"
+    );
+    assert_ne!(fork.0.id, "fork-src");
+
+    // Stopping evicts the instance; the membership is the VM's, not the run's.
+    assert!(state.evict_instance("fork-src").is_some());
+    let (_, inspected) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
+    assert_eq!(inspected["members"][0]["vm_id"], "fork-src", "{inspected}");
 }
 
 #[tokio::test]

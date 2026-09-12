@@ -5,8 +5,33 @@
 //! between it and the wire. Attaching records a `declared` membership; the
 //! data plane that makes it `ready` is the network process's concern.
 use super::*;
-use capsem_core::net::network_registry::{LogQuery, NetworkError, NetworkRegistry};
+use capsem_core::net::network_registry::{LogQuery, NetworkError, NetworkRegistry, NETWORK_AUDIT_RETENTION};
 use uuid::Uuid;
+
+/// Retire every network a deleted VM leaves empty and drop retired databases
+/// past retention. Nothing here can fail the deletion: the VM is gone either
+/// way, and what could not be recorded is logged with the reason.
+pub(super) async fn vm_deleted(state: &ServiceState, vm_id: &str) {
+    let now_unix_ms = vm_lifecycle::unix_time_ms();
+    let mut registry = state.networks.lock().await;
+    match registry.vm_deleted(vm_id, now_unix_ms).await {
+        Ok(departures) => {
+            for departure in departures.iter().filter(|departure| departure.retired) {
+                tracing::info!(vm_id, network = %departure.network, "network retired with its last member");
+            }
+        }
+        Err(error) => tracing::warn!(vm_id, %error, "deleted VM left a network membership behind"),
+    }
+    sweep_retired(&mut registry, now_unix_ms);
+    drop(registry);
+}
+
+/// The retention sweep, run wherever a network retires and at startup.
+pub(super) fn sweep_retired(registry: &mut NetworkRegistry, now_unix_ms: i64) {
+    for network in registry.sweep_retired(now_unix_ms, NETWORK_AUDIT_RETENTION) {
+        tracing::info!(%network, "retired network database removed after retention");
+    }
+}
 
 pub(super) fn network_error(error: NetworkError) -> AppError {
     let status = match &error {
@@ -145,13 +170,11 @@ pub(super) async fn handle_network_delete(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let network = parse_network_id(&id)?;
-    let retired = state
-        .networks
-        .lock()
-        .await
-        .retire(network, vm_lifecycle::unix_time_ms())
-        .await;
-    retired.map_err(network_error)?;
+    let now_unix_ms = vm_lifecycle::unix_time_ms();
+    let mut registry = state.networks.lock().await;
+    registry.retire(network, now_unix_ms).await.map_err(network_error)?;
+    sweep_retired(&mut registry, now_unix_ms);
+    drop(registry);
     Ok(Json(json!({ "success": true })))
 }
 
