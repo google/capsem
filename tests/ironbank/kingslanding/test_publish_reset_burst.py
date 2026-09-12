@@ -16,6 +16,7 @@ from tests.ironbank.kingslanding.test_private_link_benchmark import (
     THROUGHPUT_PORT,
     client_args,
     container,
+    evidence,
     guest,
     probe,
     service,
@@ -23,7 +24,7 @@ from tests.ironbank.kingslanding.test_private_link_benchmark import (
 )
 from tests.ironbank.kingslanding.test_run import wait_for
 
-__all__ = ["container", "service"]
+__all__ = ["container", "evidence", "service"]
 pytestmark = pytest.mark.integration
 
 ROUNDS = 3

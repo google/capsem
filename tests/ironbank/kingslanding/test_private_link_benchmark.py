@@ -91,13 +91,9 @@ def container(service, tmp_path, evidence):
             # The VM owner's log and the guest's serial console: when every
             # VSOCK link to the guest ends at once, the console is the only
             # witness on the guest side.
-            for name in (
-                "process.log",
-                "serial.log",
-                "workspace/.capsem-agent-stdio.log",
-            ):
-                for log in service.tmp_dir.glob(f"persistent/*/{name}"):
-                    (evidence / Path(name).name).write_bytes(log.read_bytes())
+            for name in ("process.log", "serial.log", ".capsem-agent-stdio.log"):
+                for log in service.tmp_dir.rglob(name):
+                    (evidence / name).write_bytes(log.read_bytes())
             print(f"PRIVATE LINK EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
