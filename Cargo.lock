@@ -1133,8 +1133,11 @@ dependencies = [
 name = "capsem-router"
 version = "0.6.3"
 dependencies = [
+ "bytes",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-network",
+ "capsem-proto",
  "clap",
  "tokio",
  "tracing",

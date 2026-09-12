@@ -1,4 +1,8 @@
-//! Versioned descriptor-pair grants; policy and destination selection stay in core.
+//! Versioned descriptor grants; policy and destination selection stay in core.
+//!
+//! Two confined companions share this protocol: [`relay`] copies bytes
+//! between granted pairs for one VM owner, and [`switch::run`] forwards
+//! private link frames between the members of one network.
 use capsem_foundation::unix::{
     fd,
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
@@ -15,7 +19,7 @@ use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
 pub const CONNECTIONS_PER_CLASS: usize = 64;
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
@@ -34,6 +38,22 @@ pub enum Grant<Socket = OwnedFd> {
     Abort {
         id: u64,
     },
+    /// One member's private link stream for the switch; `id` is a
+    /// [`link_id`], so it names the member's address as well.
+    Link {
+        id: u64,
+        socket: Socket,
+    },
+}
+
+/// A link's grant id: a sequence the parent chooses, then the member's
+/// address, so one `u64` says which stream and whose it is.
+pub fn link_id(seq: u32, address: std::net::Ipv4Addr) -> u64 {
+    (u64::from(seq) << 32) | u64::from(address.to_bits())
+}
+
+pub fn link_address(id: u64) -> std::net::Ipv4Addr {
+    std::net::Ipv4Addr::from_bits(id as u32)
 }
 
 fn encode(kind: u8, id: u64) -> [u8; FRAME_SIZE] {
@@ -68,6 +88,10 @@ impl Grant {
                 })
             }
             ((2, id), 0) if id != 0 => Ok(Self::Abort { id }),
+            ((5, id), 1) if id >> 32 != 0 => Ok(Self::Link {
+                id,
+                socket: frame.fds.pop().unwrap(),
+            }),
             _ => Err(invalid("invalid router grant or descriptor count")),
         }
     }
@@ -89,6 +113,7 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
                 .await?
         }
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
+        Grant::Link { id, socket } => sender.send(&encode(5, id), &[socket.as_raw_fd()]).await?,
     };
     Ok(())
 }
@@ -156,16 +181,21 @@ struct Stream {
 }
 impl Stream {
     fn new(socket: OwnedFd) -> io::Result<Self> {
-        fd::validate_connected_stream(socket.as_fd())?;
-        fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
         let tcp = fd::tcp_reset_on_close(socket.as_fd())?;
-        fd::set_nonblocking(socket.as_fd(), true)?;
         Ok(Self {
-            socket: UnixStream::from_std(std::os::unix::net::UnixStream::from(socket))?,
+            socket: adopt(socket)?,
             graceful: false,
             tcp,
         })
     }
+}
+
+/// A granted connected stream, checked and sized, as a tokio socket.
+fn adopt(socket: OwnedFd) -> io::Result<UnixStream> {
+    fd::validate_connected_stream(socket.as_fd())?;
+    fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
+    fd::set_nonblocking(socket.as_fd(), true)?;
+    UnixStream::from_std(std::os::unix::net::UnixStream::from(socket))
 }
 impl Drop for Stream {
     fn drop(&mut self) {
@@ -293,6 +323,10 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         if let Some(stop) = active.remove(&id) { let _ = stop.send(()); }
                     }
                     Grant::Hello => return Err(invalid("duplicate router hello")),
+                    Grant::Link { id, .. } => {
+                        tracing::debug!(connection_id = id, "link grant to a pair relay");
+                        Event::Refused(id).write(&mut events).await?;
+                    }
                 },
                 completed = jobs.join_next(), if !jobs.is_empty() => match completed.unwrap() {
                     Ok((id, report)) => {
@@ -308,6 +342,8 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
     jobs.shutdown().await;
     result
 }
+
+pub mod switch;
 
 #[cfg(test)]
 mod tests;

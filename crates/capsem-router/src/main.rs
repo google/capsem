@@ -6,10 +6,16 @@ use std::os::fd::AsFd;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(version, about = "Confined descriptor-pair network companion")]
+#[command(version, about = "Confined descriptor-only network companion")]
 struct Args {
     #[arg(long)]
     parent_pid: u32,
+    /// Switch private link frames between one network's members instead of
+    /// relaying descriptor pairs for one VM.
+    #[arg(long)]
+    switch: bool,
+    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
+    link_limit: u16,
     #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
     expose_limit: u16,
     #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
@@ -49,7 +55,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "router requires versioned hello",
             ));
         }
-        capsem_router::relay(grants, events, limits).await
+        if args.switch {
+            capsem_router::switch::run(grants, events, usize::from(args.link_limit)).await
+        } else {
+            capsem_router::relay(grants, events, limits).await
+        }
     })?;
     Ok(())
 }

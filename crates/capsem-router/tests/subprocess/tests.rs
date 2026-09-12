@@ -163,13 +163,19 @@ impl Router {
         Self::with_limits(CONNECTIONS_PER_CLASS as u16, CONNECTIONS_PER_CLASS as u16).await
     }
     async fn with_limits(expose: u16, private: u16) -> Self {
+        Self::spawn(&[
+            "--expose-limit",
+            &expose.to_string(),
+            "--private-limit",
+            &private.to_string(),
+        ])
+        .await
+    }
+    async fn spawn(args: &[&str]) -> Self {
         let (parent, child) = StdUnixStream::pair().unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_capsem-router"))
             .args(["--parent-pid", &std::process::id().to_string()])
-            .arg("--expose-limit")
-            .arg(expose.to_string())
-            .arg("--private-limit")
-            .arg(private.to_string())
+            .args(args)
             .env_clear()
             .stdin(Stdio::from(std::os::fd::OwnedFd::from(child)))
             .stdout(Stdio::null())
@@ -390,5 +396,59 @@ async fn private_saturation_preserves_expose_reservation_without_borrowing() {
         .unwrap()
         .unwrap();
     assert_eq!(&bytes, b"ingress still works");
+    router.close().await;
+}
+
+/// One IPv4 UDP frame between two members, as the switch's verdict wants it.
+fn member_frame(source: Ipv4Addr, destination: Ipv4Addr, payload: &[u8]) -> Vec<u8> {
+    use capsem_proto::privatelink::mac_of;
+    let mut frame = Vec::new();
+    frame.extend_from_slice(&mac_of(destination));
+    frame.extend_from_slice(&mac_of(source));
+    frame.extend_from_slice(&0x0800u16.to_be_bytes());
+    let mut packet = vec![0u8; 20];
+    packet[0] = 0x45;
+    packet[2..4].copy_from_slice(&((20 + payload.len()) as u16).to_be_bytes());
+    packet[8] = 64;
+    packet[9] = 17;
+    packet[12..16].copy_from_slice(&source.octets());
+    packet[16..20].copy_from_slice(&destination.octets());
+    frame.extend_from_slice(&packet);
+    frame.extend_from_slice(payload);
+    let mut record = (frame.len() as u16).to_be_bytes().to_vec();
+    record.extend_from_slice(&frame);
+    record
+}
+
+#[tokio::test]
+async fn the_confined_switch_forwards_a_frame_between_two_linked_members() {
+    let mut router = Router::spawn(&["--switch"]).await;
+    let alpha = Ipv4Addr::new(10, 128, 0, 2);
+    let beta = Ipv4Addr::new(10, 128, 0, 3);
+    let mut guests = Vec::new();
+    for (seq, address) in [(1, alpha), (2, beta)] {
+        let (switch_end, guest_end) = StdUnixStream::pair().unwrap();
+        guest_end.set_nonblocking(true).unwrap();
+        let id = capsem_router::link_id(seq, address);
+        router
+            .grant(Grant::Link {
+                id,
+                socket: switch_end.as_fd(),
+            })
+            .await;
+        router
+            .retained
+            .insert(id, (switch_end.into(), StdUnixStream::pair().unwrap().0.into()));
+        assert_eq!(router.event().await, Event::Accepted(id));
+        guests.push(UnixStream::from_std(guest_end).unwrap());
+    }
+    let record = member_frame(alpha, beta, b"confined hop");
+    guests[0].write_all(&record).await.unwrap();
+    let mut received = vec![0u8; record.len()];
+    timeout(Duration::from_secs(5), guests[1].read_exact(&mut received))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(received, record);
     router.close().await;
 }
