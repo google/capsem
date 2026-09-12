@@ -17,9 +17,9 @@ use anyhow::{bail, ensure, Context, Result};
 use capsem_core::container::publish::{Incoming, Publisher, Source};
 use capsem_core::security_engine::network::{NetworkIdentity, NetworkVm};
 use capsem_core::VsockConnection;
-use capsem_foundation::unix::router_channel::{Frame, Receiver, Sender, FRAME_SIZE};
+use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_proto::ipc::ServiceToProcess;
-use capsem_proto::privatelink::ConnectHeader;
+use capsem_proto::privatelink::{decode_seat_frame, seat_frame, ConnectHeader, SEAT_HANDOFF, SEAT_LINK};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::num::NonZeroU64;
@@ -36,8 +36,6 @@ const TOKEN_LIFETIME: Duration = Duration::from_secs(8);
 /// Tokens outstanding at once; past this an accept is refused rather than
 /// letting a flood of grants pile up unredeemed.
 const MAX_PENDING: usize = 64;
-const FRAME_VERSION: u8 = 1;
-const FRAME_HANDOFF: u8 = 4;
 
 struct PendingAccept {
     network: NetworkIdentity,
@@ -156,8 +154,8 @@ impl PrivateHandoff {
         let frame = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
             .await
             .context("handoff frame timed out")??;
-        let (kind, token) = decode_token(&frame)?;
-        if kind == crate::private_link::FRAME_LINK {
+        let (kind, token) = decode_seat_frame(&frame.bytes).map_err(anyhow::Error::msg)?;
+        if kind == SEAT_LINK {
             ensure!(frame.fds.is_empty(), "a link request carries no descriptor");
             drop(receiver);
             return self.link.take(token, socket).await;
@@ -245,7 +243,7 @@ impl PrivateHandoff {
         let sender = Sender::new(socket)?;
         let stream = conn.try_clone_fd()?;
         sender
-            .send(&encode_token(token), &[stream.as_raw_fd()])
+            .send(&seat_frame(SEAT_HANDOFF, token), &[stream.as_raw_fd()])
             .await
             .context("deliver the stream to the destination owner")?;
         drop(stream);
@@ -267,29 +265,6 @@ impl PrivateHandoff {
 fn parse_token(text: &str) -> Result<u64> {
     ensure!(text.len() == 16, "private connection token must be sixteen hex digits");
     u64::from_str_radix(text, 16).context("private connection token is not hex")
-}
-
-fn encode_token(token: u64) -> [u8; FRAME_SIZE] {
-    let mut frame = [0u8; FRAME_SIZE];
-    frame[0] = FRAME_VERSION;
-    frame[1] = FRAME_HANDOFF;
-    frame[2..].copy_from_slice(&token.to_be_bytes());
-    frame
-}
-
-/// The frame's kind (a stream handoff or a link request) and its token.
-fn decode_token(frame: &Frame) -> Result<(u8, u64)> {
-    ensure!(
-        frame.bytes[0] == FRAME_VERSION,
-        "handoff frame version {}",
-        frame.bytes[0]
-    );
-    let kind = frame.bytes[1];
-    ensure!(
-        kind == FRAME_HANDOFF || kind == crate::private_link::FRAME_LINK,
-        "handoff frame kind {kind}"
-    );
-    Ok((kind, u64::from_be_bytes(frame.bytes[2..].try_into().unwrap())))
 }
 
 /// What the service told us about the source, as the audit facts want it.

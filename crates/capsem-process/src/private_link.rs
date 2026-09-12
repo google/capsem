@@ -14,7 +14,8 @@ use capsem_core::container::publish::{AuditFlow, Publisher};
 use capsem_core::security_engine::network::{NetworkIdentity, NetworkReason};
 use capsem_core::security_engine::{RuntimeSecurityEventType, SecurityEnforcementAction};
 use capsem_core::VsockConnection;
-use capsem_foundation::unix::router_channel::{Sender, FRAME_SIZE};
+use capsem_foundation::unix::router_channel::Sender;
+use capsem_proto::privatelink::{seat_frame, SEAT_LINK};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
@@ -29,8 +30,6 @@ const TOKEN_LIFETIME: Duration = Duration::from_secs(8);
 /// at creation is still booting.
 const GUEST_DEADLINE: Duration = Duration::from_secs(60);
 const MAX_PENDING: usize = 16;
-const FRAME_VERSION: u8 = 1;
-pub(crate) const FRAME_LINK: u8 = 5;
 
 struct PendingLink {
     audit: AuditFlow,
@@ -147,7 +146,7 @@ impl PrivateLink {
         let (stream, epoch) = self.guest().await?;
         let sender = Sender::new(socket.try_clone()?)?;
         sender
-            .send(&encode_link_token(token), &[stream.as_raw_fd()])
+            .send(&seat_frame(SEAT_LINK, token), &[stream.as_raw_fd()])
             .await
             .context("answer the service with the guest stream")?;
         drop(stream);
@@ -181,14 +180,6 @@ impl PrivateLink {
 pub(crate) fn parse_token(text: &str) -> Result<u64> {
     ensure!(text.len() == 16, "link token must be sixteen hex digits");
     u64::from_str_radix(text, 16).context("link token is not hex")
-}
-
-pub(crate) fn encode_link_token(token: u64) -> [u8; FRAME_SIZE] {
-    let mut frame = [0u8; FRAME_SIZE];
-    frame[0] = FRAME_VERSION;
-    frame[1] = FRAME_LINK;
-    frame[2..].copy_from_slice(&token.to_be_bytes());
-    frame
 }
 
 #[cfg(test)]

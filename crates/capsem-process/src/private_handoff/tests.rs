@@ -9,20 +9,9 @@ fn tokens_are_sixteen_hex_digits_and_frames_carry_them_back() {
     for bad in ["", "ff", "zz00000000000000", "00ff00ff00ff00ff0"] {
         assert!(parse_token(bad).is_err(), "{bad}");
     }
-    let frame = Frame {
-        bytes: encode_token(token),
-        fds: Vec::new(),
-    };
-    assert_eq!(decode_token(&frame).unwrap(), (FRAME_HANDOFF, token));
-    let mut wrong = frame.bytes;
-    wrong[1] = 1;
-    assert!(
-        decode_token(&Frame {
-            bytes: wrong,
-            fds: Vec::new()
-        })
-        .is_err(),
-        "a router grant is not a handoff"
+    assert_eq!(
+        decode_seat_frame(&seat_frame(SEAT_HANDOFF, token)).unwrap(),
+        (SEAT_HANDOFF, token)
     );
 }
 
@@ -103,7 +92,7 @@ async fn deliver(socket: std::os::unix::net::UnixStream, token: u64, with_stream
     far.set_nonblocking(true).unwrap();
     let sender = Sender::new(socket).unwrap();
     let fds: Vec<_> = with_stream.then(|| stream.as_raw_fd()).into_iter().collect();
-    sender.send(&encode_token(token), &fds).await.unwrap();
+    sender.send(&seat_frame(SEAT_HANDOFF, token), &fds).await.unwrap();
     tokio::net::UnixStream::from_std(far).unwrap()
 }
 
@@ -249,7 +238,7 @@ async fn a_granted_ask_delivers_the_guest_stream_and_holds_it_until_the_destinat
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(decode_token(&frame).unwrap(), (FRAME_HANDOFF, 0xee));
+    assert_eq!(decode_seat_frame(&frame.bytes).unwrap(), (SEAT_HANDOFF, 0xee));
     assert_eq!(frame.fds.len(), 1);
     // The descriptor is the guest's stream: what the workload writes arrives
     // on it, and the source seat is still holding the connection open.

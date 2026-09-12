@@ -70,7 +70,7 @@ impl Service {
     }
 
     async fn present(&self, token: u64) {
-        self.sender.send(&encode_link_token(token), &[]).await.unwrap();
+        self.sender.send(&seat_frame(SEAT_LINK, token), &[]).await.unwrap();
     }
 
     async fn stream(&self) -> Option<tokio::net::UnixStream> {
@@ -78,7 +78,7 @@ impl Service {
             .await
             .expect("the owner answers")
             .ok()?;
-        assert_eq!(frame.bytes[1], FRAME_LINK);
+        assert_eq!(frame.bytes[1], SEAT_LINK);
         let fd = frame.fds.into_iter().next().expect("the answer carries the stream");
         let std = std::os::unix::net::UnixStream::from(fd);
         std.set_nonblocking(true).unwrap();
