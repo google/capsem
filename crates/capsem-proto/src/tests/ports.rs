@@ -18,6 +18,15 @@ fn vsock_network_port_constant() {
 }
 
 #[test]
+fn vsock_private_port_constant() {
+    // The guest proxy's private listener and the owner's dispatch both name
+    // this exact port for intercepted private TCP.
+    assert_eq!(VSOCK_PORT_PRIVATE, 5010);
+    assert_eq!(HostVsockService::from_port(5010), Some(HostVsockService::Private));
+    assert_eq!(HostVsockService::Private.as_str(), "private");
+}
+
+#[test]
 fn vsock_port_constants_are_distinct() {
     let ports = [
         VSOCK_PORT_CONTROL,
@@ -29,6 +38,7 @@ fn vsock_port_constants_are_distinct() {
         VSOCK_PORT_DNS_PROXY,
         VSOCK_PORT_PUBLICATION,
         VSOCK_PORT_NETWORK,
+        VSOCK_PORT_PRIVATE,
     ];
     let unique: std::collections::HashSet<_> = ports.iter().collect();
     assert_eq!(unique.len(), ports.len(), "vsock port collision");
@@ -49,6 +59,7 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
             VSOCK_PORT_DNS_PROXY,
             VSOCK_PORT_PUBLICATION,
             VSOCK_PORT_NETWORK,
+            VSOCK_PORT_PRIVATE,
         ],
         "boot must use the typed host VSOCK service registry, not an inline array"
     );

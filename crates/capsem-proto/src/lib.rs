@@ -17,6 +17,7 @@ pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
+pub mod privatelink;
 pub mod router;
 
 pub use handshake::{HandshakeError, Hello};
@@ -130,6 +131,10 @@ pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 /// The guest's tun0 packet stream: `capsem-tun` pumps raw IP frames over one
 /// connection to the host network endpoint that terminates them in smoltcp.
 pub const VSOCK_PORT_NETWORK: u32 = 5009;
+/// Guest TCP connections to a private address, intercepted by the guest
+/// proxy and carried whole to the VM owner with their original destination
+/// (`privatelink::ConnectHeader`) for admission and hand-off to the member.
+pub const VSOCK_PORT_PRIVATE: u32 = 5010;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -149,6 +154,7 @@ pub enum HostVsockService {
     DnsProxy,
     Publication,
     Network,
+    Private,
 }
 
 impl HostVsockService {
@@ -163,6 +169,7 @@ impl HostVsockService {
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
             Self::Publication => VSOCK_PORT_PUBLICATION,
             Self::Network => VSOCK_PORT_NETWORK,
+            Self::Private => VSOCK_PORT_PRIVATE,
         }
     }
 
@@ -177,6 +184,7 @@ impl HostVsockService {
             Self::DnsProxy => "dns_proxy",
             Self::Publication => "publication",
             Self::Network => "network",
+            Self::Private => "private",
         }
     }
 
@@ -191,6 +199,7 @@ impl HostVsockService {
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
             VSOCK_PORT_PUBLICATION => Some(Self::Publication),
             VSOCK_PORT_NETWORK => Some(Self::Network),
+            VSOCK_PORT_PRIVATE => Some(Self::Private),
             _ => None,
         }
     }
@@ -206,6 +215,7 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::DnsProxy,
     HostVsockService::Publication,
     HostVsockService::Network,
+    HostVsockService::Private,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -218,6 +228,7 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_DNS_PROXY,
     VSOCK_PORT_PUBLICATION,
     VSOCK_PORT_NETWORK,
+    VSOCK_PORT_PRIVATE,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {
