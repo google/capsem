@@ -94,13 +94,18 @@ pub enum ServiceToProcess {
         source_name: String,
         source_generation: u64,
         source_address: std::net::Ipv4Addr,
-        /// The source's port, or the echo identifier for ICMP.
         source_port: u16,
-        /// The destination port; 0 for ICMP.
         port: u16,
-        /// "tcp" takes a stream on the handoff socket; "udp" and "icmp" take
-        /// frames on the relay socket.
-        protocol: String,
+    },
+    /// The service is linking this VM to a network's switch and wants the
+    /// guest's private link stream. The owner evaluates its profile once,
+    /// then answers with the handoff socket the service should ask on,
+    /// keyed by `token`; the stream comes back on that connection.
+    LinkAttach {
+        id: u64,
+        token: String,
+        network: String,
+        network_name: String,
     },
 }
 
@@ -185,6 +190,13 @@ pub enum ProcessToService {
     /// Response to PrivateAccept: where the source owner hands the stream
     /// over, or why this owner will not take it.
     PrivateAcceptResult {
+        id: u64,
+        handoff_socket: String,
+        error: Option<String>,
+    },
+    /// Response to LinkAttach: where the service asks for the stream, or
+    /// why this owner will not link.
+    LinkAttachResult {
         id: u64,
         handoff_socket: String,
         error: Option<String>,
