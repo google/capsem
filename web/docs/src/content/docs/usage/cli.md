@@ -259,7 +259,10 @@ never forwarded upstream. TCP between members is admitted per connection
 under the VM's security rules; UDP and ICMP ride each member's link to the
 network's own confined switch, which forwards frames between members and
 nothing else. A member shows `ready` in `network inspect` once its link is up
-and `declared` while its VM is stopped.
+and `declared` while its VM is stopped. A VM has one link: in several networks
+at once, UDP and ICMP reach the members of the network it was linked to first
+(the others show `failed` with that reason), while TCP and names work in all
+of them.
 
 ### network list
 
