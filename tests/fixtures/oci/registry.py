@@ -59,9 +59,9 @@ def registry(directory, *, image_config=None, image="redis"):
             requests.append(self.path)
             if self.path == "/v2/":
                 body, kind = b"{}", "application/json"
-            elif self.path.startswith("/v2/library/redis/manifests/"):
+            elif self.path.startswith(f"/v2/library/{image}/manifests/"):
                 body, kind = manifest, media
-            elif self.path.startswith("/v2/library/redis/blobs/"):
+            elif self.path.startswith(f"/v2/library/{image}/blobs/"):
                 body, kind = (
                     blobs.get(self.path.rsplit("/", 1)[1]),
                     "application/octet-stream",
