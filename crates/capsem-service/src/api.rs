@@ -154,6 +154,29 @@ pub struct PrivateConnectRequest {
     pub process_name: String,
 }
 
+/// A VM owner asking, on its VM's behalf, what a private name or a pool
+/// address is: answered only with members of a network the VM is in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PrivateResolveRequest {
+    pub source_vm: String,
+    pub owner_secret: String,
+    /// The labels before `capsem.internal`: `<vm>.<network>` or `<vm>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// A pool address to name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<std::net::Ipv4Addr>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PrivateResolveResponse {
+    /// The member's full name, `<vm>.<network>.capsem.internal`.
+    pub name: String,
+    pub address: std::net::Ipv4Addr,
+    pub vm: String,
+    pub network: String,
+}
+
 /// Where an admitted private connection goes: the destination owner's
 /// handoff socket and the one-time token it will accept the stream under.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

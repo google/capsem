@@ -673,3 +673,116 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     });
     assert!(blocked, "{logs}");
 }
+
+async fn private_resolve(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    route_request(app(state), Method::POST, "/networks/private/resolve", Some(request)).await
+}
+
+#[tokio::test]
+async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    for (id, name) in [
+        ("vm-a", "alpha"),
+        ("vm-b", "beta"),
+        ("vm-c", "gamma"),
+        ("vm-d", "beta"),
+        ("vm-e", "echo"),
+    ] {
+        insert_fake_instance(&state, id, std::process::id());
+        state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
+    }
+    owner_secret(&state, "vm-a", "secret-a");
+    let addresses: HashMap<&str, String> = ["vm-a", "vm-b", "vm-c", "vm-d", "vm-e"]
+        .into_iter()
+        .map(|vm| (vm, state.instances.lock().unwrap()[vm].private_address.to_string()))
+        .collect();
+    let (_, team) = create_network(&state, "team").await;
+    let (_, other) = create_network(&state, "other").await;
+    let (_, apart) = create_network(&state, "apart").await;
+    let team = team["id"].as_str().unwrap().to_string();
+    let other = other["id"].as_str().unwrap().to_string();
+    let apart = apart["id"].as_str().unwrap().to_string();
+    for (network, vm) in [
+        (&team, "vm-a"),
+        (&team, "vm-b"),
+        (&other, "vm-a"),
+        (&other, "vm-c"),
+        (&other, "vm-d"),
+        (&apart, "vm-e"),
+    ] {
+        let (status, _) = route_request(
+            app(&state),
+            Method::PUT,
+            &format!("/networks/{network}/members/{vm}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let ask = |name: Option<&str>, address: Option<&str>| {
+        let mut request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a" });
+        if let Some(name) = name {
+            request["name"] = json!(name);
+        }
+        if let Some(address) = address {
+            request["address"] = json!(address);
+        }
+        request
+    };
+
+    let (status, answer) = private_resolve(&state, ask(Some("beta.team"), None)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["address"], json!(addresses["vm-b"]));
+    assert_eq!(answer["name"], "beta.team.capsem.internal");
+    assert_eq!(answer["vm"], "vm-b");
+    let (status, answer) = private_resolve(&state, ask(Some("Gamma"), None)).await;
+    assert_eq!(status, StatusCode::OK, "a short unambiguous name, any case: {answer}");
+    assert_eq!(answer["address"], json!(addresses["vm-c"]));
+    let (status, _) = private_resolve(&state, ask(Some("beta"), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "beta is in team and other: ambiguous");
+    let (status, answer) = private_resolve(&state, ask(Some("beta.other"), None)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["address"], json!(addresses["vm-d"]));
+    let (status, _) = private_resolve(&state, ask(Some("echo"), None)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a member of a network the asker is not in"
+    );
+    let (status, _) = private_resolve(&state, ask(Some("echo.apart"), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = private_resolve(&state, ask(Some("nobody.team"), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, answer) = private_resolve(&state, ask(Some("alpha.team"), None)).await;
+    assert_eq!(status, StatusCode::OK, "the asker sees itself: {answer}");
+
+    let (status, answer) = private_resolve(&state, ask(None, Some(&addresses["vm-b"]))).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["name"], "beta.team.capsem.internal");
+    let (status, _) = private_resolve(&state, ask(None, Some(&addresses["vm-e"]))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "an address outside the asker's networks");
+    let (status, _) = private_resolve(&state, ask(None, None)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = private_resolve(&state, ask(Some("beta.team"), Some(&addresses["vm-b"]))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let mut forged = ask(Some("beta.team"), None);
+    forged["owner_secret"] = json!("wrong");
+    assert_eq!(private_resolve(&state, forged).await.0, StatusCode::FORBIDDEN);
+
+    // Leaving takes the name with it at once.
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{team}/members/vm-b"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = private_resolve(&state, ask(Some("beta.team"), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, answer) = private_resolve(&state, ask(Some("beta"), None)).await;
+    assert_eq!(status, StatusCode::OK, "no longer ambiguous: {answer}");
+    assert_eq!(answer["address"], json!(addresses["vm-d"]));
+}
