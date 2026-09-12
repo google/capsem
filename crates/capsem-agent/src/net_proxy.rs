@@ -31,7 +31,8 @@ use std::path::Path;
 use std::process;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::AsyncWriteExt;
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
@@ -55,6 +56,12 @@ const LISTEN_PORT_HTTP: u16 = 10080;
 /// VM owner admits the connection against the member's network and hands
 /// it to that member, so there is nothing to sniff.
 const LISTEN_PORT_PRIVATE: u16 = 10128;
+/// How long a private connection keeps delivering the peer's bytes after the
+/// workload stopped sending. The host side of this transport never sees a
+/// half-close, so a client that closes after its last byte would otherwise
+/// leave the flow open on both owners until the peer gave up, which a peer
+/// waiting for that very close never does.
+pub const PRIVATE_CLOSE_GRACE: Duration = Duration::from_secs(1);
 const RECENT_PID_CAPACITY: usize = 16;
 
 #[derive(Default)]
@@ -241,7 +248,7 @@ fn original_destination(_: &TcpStream) -> io::Result<(std::net::Ipv4Addr, u16)> 
 
 /// A connection to a private address: the original destination goes first,
 /// then the same process meta line the MITM rail sends, then the bytes.
-async fn handle_private_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAttributor>) {
+async fn handle_private_connection(tcp_stream: TcpStream, attributor: Arc<ProcessAttributor>) {
     let (peer_addr, (destination, port)) = match (tcp_stream.peer_addr(), original_destination(&tcp_stream)) {
         (Ok(peer), Ok(destination)) => (peer, destination),
         (_, Err(e)) => {
@@ -278,12 +285,58 @@ async fn handle_private_connection(mut tcp_stream: TcpStream, attributor: Arc<Pr
         eprintln!("[capsem-net-proxy] failed to send private connect header: {e}");
         return;
     }
-    if let Err(e) = tokio::io::copy_bidirectional(&mut tcp_stream, &mut vsock_stream).await {
-        let is_normal = e.kind() == io::ErrorKind::ConnectionReset
-            || e.kind() == io::ErrorKind::UnexpectedEof
-            || e.kind() == io::ErrorKind::BrokenPipe;
-        if !is_normal {
-            eprintln!("[capsem-net-proxy] private bridge error: {e}");
+    bridge_private(tcp_stream, vsock_stream).await;
+}
+
+/// Carry a private connection's bytes both ways until the workload stops
+/// sending, then the peer's remaining bytes for [`PRIVATE_CLOSE_GRACE`] or
+/// until it closes, whichever comes first. Both ends close when this
+/// returns; the host owner ends the flow on its side from that.
+pub async fn bridge_private<T, V>(tcp: T, vsock: V)
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    V: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp);
+    let (mut vsock_read, mut vsock_write) = tokio::io::split(vsock);
+    let outbound = tokio::spawn(async move {
+        let result = tokio::io::copy(&mut tcp_read, &mut vsock_write).await;
+        let _ = vsock_write.shutdown().await;
+        result
+    });
+    let inbound = tokio::spawn(async move {
+        let result = tokio::io::copy(&mut vsock_read, &mut tcp_write).await;
+        let _ = tcp_write.shutdown().await;
+        result
+    });
+    tokio::pin!(inbound);
+    tokio::pin!(outbound);
+    let normal = |error: &io::Error| {
+        matches!(
+            error.kind(),
+            io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+        )
+    };
+    let report = |direction: &str, result: Result<io::Result<u64>, tokio::task::JoinError>| {
+        if let Ok(Err(error)) = result {
+            if !normal(&error) {
+                eprintln!("[capsem-net-proxy] private bridge {direction}: {error}");
+            }
+        }
+    };
+    tokio::select! {
+        finished = &mut inbound => {
+            // The peer closed first: the client's remaining bytes cannot
+            // matter to a peer that is gone.
+            report("peer to workload", finished);
+            outbound.abort();
+        }
+        finished = &mut outbound => {
+            report("workload to peer", finished);
+            match tokio::time::timeout(PRIVATE_CLOSE_GRACE, &mut inbound).await {
+                Ok(finished) => report("peer to workload", finished),
+                Err(_) => inbound.abort(),
+            }
         }
     }
 }

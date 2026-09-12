@@ -247,3 +247,44 @@ fn async_vsock_new_owns_the_fd_on_failure() {
         "the failed constructor must close its socket"
     );
 }
+
+/// The private bridge ends when the workload stops sending: the host cannot
+/// see a half-close on this transport, so the connection is over, after a
+/// short grace for a reply already on its way; a peer that never closes
+/// cannot keep the bridge, the vsock and the flow open for good.
+#[tokio::test]
+async fn a_private_bridge_ends_after_the_client_stops_sending() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (client, tcp_side) = tokio::io::duplex(64 * 1024);
+    let (vsock_side, host) = tokio::io::duplex(64 * 1024);
+    let bridge = tokio::spawn(bridge_private(tcp_side, vsock_side));
+    let (mut client_read, mut client_write) = tokio::io::split(client);
+    let (mut host_read, mut host_write) = tokio::io::split(host);
+    client_write.write_all(b"request bytes").await.unwrap();
+    let mut seen = [0u8; 13];
+    host_read.read_exact(&mut seen).await.unwrap();
+    assert_eq!(&seen, b"request bytes");
+    // The peer answers, and the client stops sending while reading the answer.
+    host_write.write_all(b"early reply").await.unwrap();
+    client_write.shutdown().await.unwrap();
+    drop(client_write);
+    let mut reply = [0u8; 11];
+    tokio::time::timeout(std::time::Duration::from_secs(2), client_read.read_exact(&mut reply))
+        .await
+        .expect("a reply already on its way is delivered")
+        .unwrap();
+    assert_eq!(&reply, b"early reply");
+    // The peer never closes; the bridge still ends within its grace.
+    tokio::time::timeout(PRIVATE_CLOSE_GRACE * 3, bridge)
+        .await
+        .expect("the bridge ends once the client is done")
+        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), host_read.read(&mut [0u8; 1]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0,
+        "the host end sees the connection end"
+    );
+}
