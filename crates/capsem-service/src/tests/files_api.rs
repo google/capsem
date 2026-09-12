@@ -303,9 +303,9 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
         .unwrap()
         .unwrap();
         let (tx, rx): (
-            tokio_unix_ipc::Sender<ProcessToService>,
-            tokio_unix_ipc::Receiver<ServiceToProcess>,
-        ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
+            capsem_foundation::ipc_channel::Sender<ProcessToService>,
+            capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+        ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
         let msg = rx.recv().await.unwrap();
         match &msg {
             ServiceToProcess::LogFileBoundary { id, .. } => {

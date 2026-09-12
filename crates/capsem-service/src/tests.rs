@@ -283,9 +283,9 @@ pub(crate) fn spawn_fake_process(
             .unwrap()
             .unwrap();
             let (tx, rx): (
-                tokio_unix_ipc::Sender<ProcessToService>,
-                tokio_unix_ipc::Receiver<ServiceToProcess>,
-            ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
+                capsem_foundation::ipc_channel::Sender<ProcessToService>,
+                capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+            ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
             let message = rx.recv().await.unwrap();
             if let Some(reply) = handler(&message).await {
                 tx.send(reply).await.unwrap();

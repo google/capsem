@@ -24,6 +24,7 @@ use capsem_core::{
         SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
     },
 };
+use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
 use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_service::errors::AppError;
@@ -36,7 +37,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
 use tokio::process::Command;
-use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod asset_background;
