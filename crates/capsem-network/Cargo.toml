@@ -4,18 +4,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Host end of a guest tun0 packet stream: smoltcp over length-prefixed IP frames."
+description = "The private link between VMs: frame codec and the layer-2 switch verdict."
 homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-smoltcp = { version = "0.14", default-features = false, features = [
-    "std",
-    "medium-ip",
-    "proto-ipv4",
-    "socket-tcp",
-] }
+capsem-proto = { path = "../capsem-proto" }
 tokio.workspace = true
 tracing.workspace = true
 
