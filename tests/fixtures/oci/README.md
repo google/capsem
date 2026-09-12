@@ -71,8 +71,10 @@ python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1800 --
 After changing kernel or profile package inputs, first rebuild that profile with
 `just build-assets arm64 code` (use `x86_64` on that host). The focused gate
 uses the invoking checkout's assembled assets, refreshes its guest/host binaries,
-prepares a digest-pinned native Redis image,
-and runs the suite with public networking blocked. The fixture supports ARM64 and
+prepares the digest-pinned native images (Redis, the container under test, and
+iperf3, the native reference for the private-path matrix), and runs the suite
+with public networking blocked. `just focus-test greyjoy` runs the chaos suite
+in `tests/ironbank/greyjoy/` on the same fixture. The fixture supports ARM64 and
 x86_64; cache reuse requires matching image identity and a verified archive hash.
 Preparation uses Docker only on the development host to export a never-started
 image. No Docker daemon runs inside Capsem. The regular functional gate runs
