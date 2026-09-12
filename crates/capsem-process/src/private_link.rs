@@ -41,6 +41,14 @@ pub(crate) struct PrivateLink {
     /// Counts guest attachments, so a link lets go of the stream it was
     /// given and never a newer one.
     epoch: Mutex<u64>,
+    /// The epoch of the stream a live link holds, if one does: a VM has one
+    /// tap0 and so one link, and a second network asking is refused rather
+    /// than fed frames it would split with the first.
+    held: Mutex<Option<u64>>,
+    /// The epoch of the last stream a link let go of: the next link takes a
+    /// newer one, which the pump provides by reconnecting, never the stream
+    /// the previous switch may still be draining.
+    released: Mutex<u64>,
     arrived: Notify,
     pending: Mutex<HashMap<u64, PendingLink>>,
     publisher: Arc<Publisher>,
@@ -52,6 +60,8 @@ impl PrivateLink {
         Self {
             guest: Mutex::new(None),
             epoch: Mutex::new(0),
+            held: Mutex::new(None),
+            released: Mutex::new(0),
             arrived: Notify::new(),
             pending: Mutex::new(HashMap::new()),
             publisher,
@@ -116,34 +126,50 @@ impl PrivateLink {
         (link.expires > Instant::now()).then_some(link)
     }
 
-    /// The guest stream, once there is one.
-    async fn guest(&self) -> Result<(std::os::fd::OwnedFd, u64)> {
+    /// A guest stream newer than the last one a link let go of, once there
+    /// is one, within `deadline`.
+    async fn guest(&self, deadline: Duration) -> Result<(std::os::fd::OwnedFd, u64)> {
         let wait = async {
             loop {
                 let arrived = self.arrived.notified();
-                let held = {
+                let fresh = {
                     let guest = self.guest.lock().unwrap();
+                    let epoch = *self.epoch.lock().unwrap();
+                    let released = *self.released.lock().unwrap();
                     guest
                         .as_ref()
-                        .map(|conn| conn.try_clone_fd().map(|fd| (fd, *self.epoch.lock().unwrap())))
+                        .filter(|_| epoch > released)
+                        .map(|conn| conn.try_clone_fd().map(|fd| (fd, epoch)))
                 };
-                if let Some(held) = held {
-                    return held;
+                if let Some(fresh) = fresh {
+                    return fresh;
                 }
                 arrived.await;
             }
         };
-        tokio::time::timeout(GUEST_DEADLINE, wait)
+        tokio::time::timeout(deadline, wait)
             .await
-            .context("the guest never connected its link")?
+            .context("the guest never connected a fresh link")?
             .context("duplicate the guest link stream")
     }
 
     /// The service presented `token` on `socket`: answer with the guest
     /// stream and hold both for as long as the service holds the socket.
     pub(crate) async fn take(&self, token: u64, socket: std::os::unix::net::UnixStream) -> Result<()> {
+        self.take_within(token, socket, GUEST_DEADLINE).await
+    }
+
+    async fn take_within(&self, token: u64, socket: std::os::unix::net::UnixStream, deadline: Duration) -> Result<()> {
         let link = self.redeem(token).context("unknown, reused or expired link token")?;
-        let (stream, epoch) = self.guest().await?;
+        ensure!(
+            self.held.lock().unwrap().is_none(),
+            "this VM's link is held by another network; a VM has one link"
+        );
+        let (stream, epoch) = self.guest(deadline).await?;
+        ensure!(
+            self.held.lock().unwrap().replace(epoch).is_none(),
+            "this VM's link was taken by another network meanwhile"
+        );
         let sender = Sender::new(socket.try_clone()?)?;
         sender
             .send(&seat_frame(SEAT_LINK, token), &[stream.as_raw_fd()])
@@ -168,6 +194,8 @@ impl PrivateLink {
             if *self.epoch.lock().unwrap() == epoch {
                 drop(guest.take());
             }
+            *self.released.lock().unwrap() = epoch;
+            *self.held.lock().unwrap() = None;
         }
         link.audit
             .record(RuntimeSecurityEventType::NetworkClose, NetworkReason::Complete, 0, 0)

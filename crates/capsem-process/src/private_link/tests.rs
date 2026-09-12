@@ -171,3 +171,60 @@ async fn an_unknown_token_gets_no_stream() {
     service.present(0xdd).await;
     assert!(service.stream().await.is_none(), "the connection ends without a frame");
 }
+
+#[tokio::test]
+async fn a_second_network_cannot_take_the_link_while_one_holds_it() {
+    let link = Arc::new(PrivateLink::new(authorized_publisher("allow"), OWN));
+    link.expect("00000000000000e1", network()).await.unwrap();
+    link.expect("00000000000000e2", network()).await.unwrap();
+    let (conn, _guest) = guest_stream();
+    link.attach_guest(conn);
+    let first = Service::asks(&link);
+    first.present(0xe1).await;
+    let _stream = first.stream().await.expect("the first network holds the link");
+    let second = Service::asks(&link);
+    second.present(0xe2).await;
+    assert!(second.stream().await.is_none(), "a VM has one link");
+}
+
+#[tokio::test]
+async fn after_a_release_the_next_link_waits_for_a_fresh_stream() {
+    let link = Arc::new(PrivateLink::new(authorized_publisher("allow"), OWN));
+    link.expect("00000000000000e3", network()).await.unwrap();
+    let (conn, mut guest) = guest_stream();
+    link.attach_guest(conn);
+    let service = Service::asks(&link);
+    service.present(0xe3).await;
+    let stream = service.stream().await.expect("linked");
+    drop(service);
+    drop(stream);
+    let read = tokio::time::timeout(Duration::from_secs(2), guest.read(&mut [0u8; 1]))
+        .await
+        .expect("released")
+        .unwrap();
+    assert_eq!(read, 0);
+    // The pump has not reconnected yet: the stream the dead switch may still
+    // be draining is never handed out again.
+    link.expect("00000000000000e4", network()).await.unwrap();
+    let (owner_side, service_side) = std::os::unix::net::UnixStream::pair().unwrap();
+    let stale = tokio::time::timeout(
+        Duration::from_secs(2),
+        link.take_within(0xe4, owner_side, Duration::from_millis(300)),
+    )
+    .await
+    .expect("bounded")
+    .unwrap_err();
+    assert!(format!("{stale:#}").contains("fresh"), "{stale:#}");
+    drop(service_side);
+    // A fresh stream is taken.
+    link.expect("00000000000000e5", network()).await.unwrap();
+    let again = Service::asks(&link);
+    again.present(0xe5).await;
+    let (conn, mut fresh_guest) = guest_stream();
+    link.attach_guest(conn);
+    let mut stream = again.stream().await.expect("the fresh stream is linked");
+    stream.write_all(b"fresh").await.unwrap();
+    let mut heard = [0u8; 5];
+    fresh_guest.read_exact(&mut heard).await.unwrap();
+    assert_eq!(&heard, b"fresh");
+}
