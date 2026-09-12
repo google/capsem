@@ -431,3 +431,48 @@ async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited
         "destination_unreachable"
     );
 }
+
+#[tokio::test]
+async fn a_membership_that_changes_while_the_owner_answers_is_never_granted() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-a", 4242);
+    insert_fake_instance(&state, "vm-b", 4243);
+    owner_secret(&state, "vm-a", "secret-a");
+    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    let (_, team) = create_network(&state, "team").await;
+    let id = team["id"].as_str().unwrap().to_string();
+    for vm in ["vm-a", "vm-b"] {
+        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    // The destination owner says yes, but by then vm-b has left the network.
+    let detaching = Arc::clone(&state);
+    let network = uuid::Uuid::parse_str(&id).unwrap();
+    let owner_b = spawn_fake_process(&uds_b, 1, move |message| {
+        let state = Arc::clone(&detaching);
+        let reply = match message {
+            ServiceToProcess::PrivateAccept { id, .. } => Some(ProcessToService::PrivateAcceptResult {
+                id: *id,
+                handoff_socket: "/run/vm-b/private-handoff.sock".into(),
+                error: None,
+            }),
+            other => panic!("unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move {
+            state.networks.lock().await.detach(network, "vm-b", 9).await.unwrap();
+            reply
+        })
+    });
+    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80 });
+    let (status, refused) = private_connect(&state, request).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    owner_b.await.unwrap();
+    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+    let events = logs["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "{logs}");
+    assert_eq!(events[0]["event"]["decision"]["effective"], "block");
+    assert_eq!(events[0]["event"]["decision"]["reason"], "membership_changed");
+}

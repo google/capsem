@@ -166,14 +166,25 @@ pub(super) async fn handle_private_connect(
             Err(AppError(StatusCode::BAD_GATEWAY, format!("destination owner: {error}"))),
         ),
     };
+    // The owner answered after the setup deadline's worth of time may have
+    // passed; a membership that changed meanwhile (a detach, a retirement)
+    // wins over the grant, so a connection is never handed to a VM that is
+    // no longer a peer. Checked and recorded under the same lock.
+    let registry = state.networks.lock().await;
+    let (decision, reason, outcome) = match registry.resolve_private(&request.source_vm, request.destination) {
+        Ok(current) if current == peer => (decision, reason, outcome),
+        _ => (
+            "block",
+            "membership_changed",
+            Err(AppError(StatusCode::CONFLICT, "membership changed during setup".into())),
+        ),
+    };
     let event = audit_event(&peer, &request, connection, decision, reason)?;
-    state
-        .networks
-        .lock()
-        .await
+    registry
         .record(peer.network, event)
         .await
         .map_err(network_routes::network_error)?;
+    drop(registry);
     let handoff_socket = outcome?;
     Ok(Json(PrivateConnectResponse {
         network: peer.network.to_string(),
