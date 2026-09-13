@@ -359,6 +359,8 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         # The container E2E owner boots real VMs from qualified assets like
         # the functional module it mirrors.
         "test-kingslanding",
+        # The adversarial container owner boots the same qualified assets.
+        "test-greyjoy",
         # The per-lane verbs CI calls, which compose the three modules above.
         "qualify-assets",
         "qualify-binaries",
