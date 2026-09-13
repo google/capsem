@@ -110,7 +110,10 @@ def test_complete_gate_fitness_uses_the_owned_harness() -> None:
         "--bin",
         SETTINGS.bin_name,
     ]
-    assert doctor[0] == [str(CONFIG.path(SETTINGS.binary)), "doctor"]
+    # Standing only: the gate's own compile precedes this step, and its load
+    # refused three candidates on an otherwise quiet machine. `run` judges
+    # load when it measures.
+    assert doctor[0] == [str(CONFIG.path(SETTINGS.binary)), "doctor", "--standing"]
     assert [exclusive.name for exclusive in harness.contends] == ["workspace_binaries"]
     assert [exclusive.name for exclusive in fitness.contends] == ["host_service"]
 

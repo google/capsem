@@ -124,6 +124,10 @@ pub(crate) struct VerifyArgs {
 pub(crate) struct DoctorArgs {
     #[arg(long)]
     pub(crate) json: bool,
+    /// Judge only conditions that would still hold when measuring later
+    /// (stray capsem processes, the clock, the hypervisor), not current load.
+    #[arg(long)]
+    pub(crate) standing: bool,
 }
 
 #[derive(Parser, Debug)]

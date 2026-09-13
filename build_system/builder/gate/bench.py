@@ -57,7 +57,10 @@ def fitness(config: GateConfig) -> tuple[Step, Step]:
         _build(config, label="benchmark-harness"),
         step(
             "benchmark-fitness",
-            Run([str(config.path(settings.binary)), "doctor"]),
+            # Standing conditions only: this runs right after the gate's own
+            # compile, whose load says nothing about the machine when the
+            # benchmarks run; `run` judges load then.
+            Run([str(config.path(settings.binary)), "doctor", "--standing"]),
             contends=(config.exclusive("host_service"),),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),

@@ -102,7 +102,9 @@ async fn main() -> Result<()> {
         #[cfg(feature = "host")]
         Command::List => commands::list_dimensions(),
         #[cfg(feature = "host")]
-        Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()?),
+        Command::Doctor(args) => {
+            return commands::doctor(args.json, args.standing, machine::running_capsem_processes()?)
+        }
         #[cfg(feature = "host")]
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
