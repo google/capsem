@@ -89,35 +89,10 @@ async fn abort_resets_tcp_after_the_parent_releases_its_shutdown_handle() {
     router.close().await;
 }
 
+/// Read with a syscall: under the gate's sandbox, spawning setuid `ps` is
+/// refused whatever the profile allows.
 fn resident_bytes(pid: u32) -> usize {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
-        status
-            .lines()
-            .find_map(|line| line.strip_prefix("VmRSS:"))
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .parse::<usize>()
-            .unwrap()
-            * 1024
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/bin/ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .trim()
-            .parse::<usize>()
-            .unwrap()
-            * 1024
-    }
+    capsem_foundation::proctable::resident_bytes(pid).unwrap() as usize
 }
 
 #[tokio::test]

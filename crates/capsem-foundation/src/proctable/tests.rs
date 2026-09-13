@@ -1,7 +1,7 @@
 //! The shared process enumerator has to find real processes; the cheapest one
 //! to assert about is the one running the test.
 
-use super::{processes, running_processes};
+use super::{processes, resident_bytes, running_processes};
 
 #[test]
 fn running_processes_finds_this_process_and_its_arguments() {
@@ -51,4 +51,20 @@ fn running_processes_does_not_leak_the_environment() {
         !table.contains("must-not-appear"),
         "the enumerator included the environment, which carries secrets"
     );
+}
+
+/// A resident size read with a syscall, so a sandboxed caller gets it: the
+/// router's memory proof shelled out to setuid `ps` and failed under the gate.
+#[test]
+fn resident_bytes_reads_a_live_process_and_refuses_a_gone_one() {
+    let ballast = vec![7u8; 32 * 1024 * 1024];
+    let resident = resident_bytes(std::process::id()).expect("this process is readable");
+    assert!(
+        resident >= ballast.len() as u64,
+        "{resident} bytes resident with 32 MiB touched"
+    );
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let gone = child.id();
+    child.wait().unwrap();
+    assert!(resident_bytes(gone).is_err(), "a reaped pid has no resident size");
 }

@@ -32,6 +32,12 @@ pub fn processes() -> io::Result<Vec<Process>> {
     imp::processes()
 }
 
+/// Resident memory of one process in bytes, read like the table: with a
+/// syscall on macOS, from `/proc` on Linux, never by spawning `ps`.
+pub fn resident_bytes(pid: u32) -> io::Result<u64> {
+    imp::resident_bytes(pid)
+}
+
 /// Every running process, one `"<pid> <argv>"` line each.
 ///
 /// Processes that cannot be read are skipped rather than failing the sweep:
@@ -153,6 +159,19 @@ mod imp {
         Some(unsafe { info.assume_init() }.pbi_ppid)
     }
 
+    pub(super) fn resident_bytes(pid: u32) -> io::Result<u64> {
+        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+        let pid = libc::pid_t::try_from(pid).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: the buffer is exactly one `proc_taskinfo`, as `size` says.
+        let written = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTASKINFO, 0, info.as_mut_ptr().cast(), size) };
+        if written != size {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: proc_pidinfo reported that it initialized the whole struct.
+        Ok(unsafe { info.assume_init() }.pti_resident_size)
+    }
+
     pub(super) fn processes() -> io::Result<Vec<Process>> {
         let mut processes = Vec::new();
         for pid in pids()? {
@@ -174,6 +193,16 @@ mod imp {
 mod imp {
     use super::Process;
     use std::io;
+
+    pub(super) fn resident_bytes(pid: u32) -> io::Result<u64> {
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+        let kilobytes = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))
+            .and_then(|value| value.split_whitespace().next()?.parse::<u64>().ok())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no VmRSS in /proc status"))?;
+        Ok(kilobytes * 1024)
+    }
 
     fn parent_pid(stat: &str) -> Option<u32> {
         let after_name = stat.rsplit_once(") ")?.1;
