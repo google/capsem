@@ -87,7 +87,14 @@ esac
         + """
 import os, sys
 for path in sys.argv[3:]:
-    s = os.stat(path)
+    try:
+        s = os.stat(path)
+    except FileNotFoundError:
+        # Cargo's link lands between the failed stat and the caller's next look.
+        parked = os.environ.get("SOURCE_BINARY", "") + ".next"
+        if os.environ.get("RELINK_AFTER_FAILED_STAT") == "1" and os.path.exists(parked):
+            os.rename(parked, os.environ["SOURCE_BINARY"])
+        sys.exit(1)
     if sys.argv[2] == "%d-%i":
         print(f"{s.st_dev}-{s.st_ino}")
     else:
@@ -196,6 +203,20 @@ for path in sys.argv[3:]:
     missing = subprocess.run(command, env={**env, "MISSING_RECHECK": "1"}, capture_output=True)
     assert missing.returncode == 0, missing.stderr
     assert missing.stdout == b"survived-recheck\n"
+    (state / "recheck").unlink()
+    # The link can be back by the time the runner looks again. A failed stat is
+    # still the observed race, not an unreadable input.
+    binary.write_text("#!/bin/sh\necho survived-relink\n")
+    relinked = subprocess.run(
+        command,
+        env={
+            **env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1",
+            "RELINK_AFTER_FAILED_STAT": "1",
+        },
+        capture_output=True, timeout=5,
+    )
+    assert relinked.returncode == 0, relinked.stderr
+    assert relinked.stdout == b"survived-relink\n"
     (state / "recheck").unlink()
     binary.write_text("#!/bin/sh\necho must-not-retry-forever\n")
     missing = subprocess.run(

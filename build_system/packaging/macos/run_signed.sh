@@ -79,8 +79,10 @@ source_identity() {
 prepare_signed_copy() {
     local source key published captured copied
     for attempt in 1 2 3; do
+        # A failed stat is Cargo's unlink-then-link, even when the new link is
+        # already back by the time anyone looks again. The attempt budget, not
+        # a second racy look, separates that from an input that never appears.
         if ! source=$(source_identity 2>> "$BUILD_LOG"); then
-            [[ -f "$original" ]] && die "cannot stat signing inputs for $original"
             log "Cargo removed $original before capture $attempt; retrying"
             sleep 0.05
             continue
@@ -99,10 +101,7 @@ prepare_signed_copy() {
             staging="$published.tmp.$$"
             copied=0
             cp -c "$original" "$staging" 2>> "$BUILD_LOG" && copied=1
-            if ! captured=$(source_identity 2>> "$BUILD_LOG"); then
-                [[ -f "$original" ]] && die "cannot recheck signing inputs for $original"
-                captured=""
-            fi
+            captured=$(source_identity 2>> "$BUILD_LOG") || captured=""
             if [[ "$captured" != "$source" ]]; then
                 # A concurrent Cargo build changed the source while copying.
                 # Retry only that observed race, before signing or publishing.
