@@ -120,7 +120,7 @@ sequenceDiagram
 | 1. Connect | vsock:5002 (`VSOCK_PORT_SNI_PROXY`) | Guest -> Host |
 | 2. Metadata | `\0CAPSEM_META:<process_name>\n` | Guest -> Host |
 | 3. Relay | Length-prefixed MCP frames containing JSON-RPC payloads | Bidirectional |
-| 4. EOF | stdin closes -> half-close vsock write | Guest -> Host |
+| 4. End | stdin closes -> zero-length frame (`MCP_SESSION_END`); the host answers what it owes, then closes | Guest -> Host |
 
 The `\0` prefix distinguishes connection metadata from framed content. Process names are sanitized: control characters and spaces replaced with underscores, truncated to 128 characters. The frame envelope also carries the authoritative per-request process name.
 

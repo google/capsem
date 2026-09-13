@@ -254,6 +254,10 @@ pub const MCP_FRAME_HEADER_LEN: u8 = 16;
 pub const MCP_FRAME_FLAG_NOTIFICATION: u16 = 0x0001;
 /// Maximum MCP frame body size after the four-byte length prefix.
 pub const MCP_FRAME_MAX_SIZE: usize = 1_052_672;
+/// The guest's end of an MCP session, in band: a length no frame can have.
+/// A vsock shutdown can reach the host ahead of bytes still in flight on
+/// Apple VZ, so the relay never uses one to say it is done.
+pub const MCP_SESSION_END: [u8; 4] = [0; 4];
 /// Maximum per-frame process attribution length.
 pub const MCP_FRAME_MAX_PROCESS_NAME_LEN: usize = 128;
 

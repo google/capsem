@@ -158,7 +158,7 @@ where
     let result: Result<()> = async {
         loop {
             let frame = match read_next_frame(&mut reader).await? {
-                FrameRead::Eof => return Ok(()),
+                FrameRead::Eof | FrameRead::End => return Ok(()),
                 FrameRead::InvalidFrame { stream_id, error } => {
                     warn!(stream_id, error, "invalid framed MCP frame discarded");
                     ::metrics::counter!(
@@ -408,8 +408,13 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FrameRead {
     Eof,
+    /// The guest said it is done; answers already owed still go out.
+    End,
     Frame(capsem_proto::McpFrame),
-    InvalidFrame { stream_id: Option<u32>, error: String },
+    InvalidFrame {
+        stream_id: Option<u32>,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

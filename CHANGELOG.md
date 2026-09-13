@@ -329,6 +329,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP clients inside a VM no longer hang when they send a large final request
+  and close stdin right away: the guest relay ends the session with an in-band
+  frame instead of a vsock shutdown the transport could lose.
+
 - A private connection between members of a network no longer occasionally
   times out after eight seconds: the owner's IPC channel released its socket
   before leaving the event loop, and a new connection reusing the number could

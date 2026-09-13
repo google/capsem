@@ -216,9 +216,22 @@ fn close_broken_connection(conn: FramedConnection) {
     let _ = conn.reader_handle.join();
 }
 
+/// Tell the host this session is over, in band. A vsock shutdown can reach
+/// the host ahead of the last request's bytes on Apple VZ and be lost behind
+/// them, leaving the host waiting and this relay joined on its reader forever.
+/// The host answers what it owes and closes; the reader ends on that close.
+fn end_session(fd: RawFd) -> io::Result<()> {
+    write_all_fd(fd, &capsem_proto::MCP_SESSION_END)
+}
+
 fn finish_connection(conn: FramedConnection) {
-    unsafe {
-        nix::libc::shutdown(conn.fd, nix::libc::SHUT_WR);
+    if let Err(error) = end_session(conn.fd) {
+        // A broken connection cannot carry the end; close it outright so the
+        // reader sees the end instead of waiting on a host that cannot answer.
+        eprintln!("[capsem-mcp-server] could not end the session in band: {error}");
+        unsafe {
+            nix::libc::shutdown(conn.fd, nix::libc::SHUT_RDWR);
+        }
     }
     let _ = conn.reader_handle.join();
     unsafe {

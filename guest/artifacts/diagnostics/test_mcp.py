@@ -225,6 +225,42 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
     )
 
 
+def test_mcp_large_last_request_before_stdin_closes_is_answered():
+    """A client that sends a large final request and closes stdin at once
+    still gets every response.
+
+    The relay ends the session when stdin closes. On Apple VZ a vsock
+    shutdown can reach the host ahead of bytes still in flight, and a frame
+    cut short by that end is a connection error on the host, so the last
+    request would get no answer. Several rounds, because the loss is a race.
+    """
+    initialize = {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "capsem-doctor", "version": "1.0"},
+    }
+    for round_number in range(5):
+        last = f"doctor-last-{round_number}"
+        messages: list[dict[str, object]] = [
+            {"jsonrpc": "2.0", "id": f"doctor-{round_number}-{i}", "method": "tools/list"}
+            for i in range(3)
+        ]
+        messages.append(
+            {
+                "jsonrpc": "2.0",
+                "id": last,
+                "method": "initialize",
+                "params": {**initialize, "padding": "x" * 900_000},
+            }
+        )
+        responses = _mcp_call(messages, timeout=30)
+        answered = {r["id"] for r in responses if "id" in r}
+        expected = {str(m["id"]) for m in messages}
+        assert answered == expected, (
+            f"round {round_number}: unanswered {sorted(expected - answered)}"
+        )
+
+
 def test_mcp_fetch_http_allowed_domain():
     """fetch_http on the local mock server succeeds."""
     url = _require_local_mock_url("/tiny", "local MCP fetch_http smoke")

@@ -480,6 +480,44 @@ async fn wait_for_started(driver: &GatedDriver, expected: usize) {
     .unwrap_or_else(|_| panic!("expected {expected} dispatched notifications"));
 }
 
+/// The guest ends a session with a zero-length frame, not a socket shutdown:
+/// on Apple VZ a vsock shutdown can overtake bytes still in flight, and a
+/// relay whose shutdown was lost waited for a close that never came.
+#[tokio::test]
+async fn a_zero_length_frame_ends_the_session_after_its_inflight_responses() {
+    let (mut peer, mut reader) = tokio::io::duplex(128);
+    peer.write_all(&capsem_proto::MCP_SESSION_END).await.unwrap();
+    assert_eq!(read_next_frame(&mut reader).await.unwrap(), FrameRead::End);
+
+    let (endpoint, driver) = gated_endpoint(4, true);
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let (mut guest, server) = tokio::io::duplex(1 << 16);
+    let serve = tokio::spawn(serve_io(Vec::new(), server, endpoint, db));
+    let request = br#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"local__slow","arguments":{}}}"#;
+    guest
+        .write_all(&capsem_proto::encode_mcp_frame(1, 0, "codex", request).unwrap())
+        .await
+        .unwrap();
+    guest.write_all(&capsem_proto::MCP_SESSION_END).await.unwrap();
+    wait_for_started(&driver, 1).await;
+    assert!(
+        !serve.is_finished(),
+        "the session ended before its in-flight request was answered"
+    );
+    driver.release.send(true).unwrap();
+    // The guest never closes its side: the end frame alone ends the session.
+    tokio::time::timeout(Duration::from_secs(5), serve)
+        .await
+        .expect("the end frame ends the session")
+        .unwrap()
+        .unwrap();
+    let mut length = [0u8; 4];
+    guest.read_exact(&mut length).await.unwrap();
+    let mut body = vec![0u8; u32::from_be_bytes(length) as usize];
+    guest.read_exact(&mut body).await.unwrap();
+    assert_eq!(capsem_proto::decode_mcp_frame_body(&body).unwrap().stream_id, 1);
+}
+
 #[tokio::test]
 async fn notification_dispatch_waits_for_an_inflight_permit() {
     let (endpoint, driver) = gated_endpoint(1, true);
