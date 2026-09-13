@@ -46,18 +46,21 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-sys.path.insert(0, str(PROJECT_ROOT))
+# Only sys.path calls may sit above these first-party imports, or E402 fires;
+# the imports cannot move up, they need the path set first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.service import ServiceInstance
+
+from tests.fixtures.oci.registry import registry
 
 os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
-
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID  # noqa: E402
-from helpers.service import ServiceInstance  # noqa: E402
-from tests.fixtures.oci.registry import registry  # noqa: E402
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 IN_CONTAINER = 'nsenter -t "$(cat /var/tmp/capsem-container/workload.pid)" -n'
 NETWORK = "range"
@@ -306,7 +309,7 @@ def main() -> int:
 
 def _write_evidence(payload: dict) -> Path:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = EVIDENCE_DIR / f"ctf-{payload['model'].replace(':', '_').replace('/', '_')}-{stamp}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return path

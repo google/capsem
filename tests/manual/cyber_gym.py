@@ -38,19 +38,21 @@ import sys
 import time
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # `helpers.*` import as top-level (tests/ on the path); `tests.fixtures.*`
-# import as a package (the repo root on the path).
-sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-sys.path.insert(0, str(PROJECT_ROOT))
+# import as a package (the repo root on the path). Only sys.path calls may sit
+# above these first-party imports, or E402 fires -- and the imports cannot move
+# up, they need the path set first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.service import ServiceInstance
+
+from tests.fixtures.oci.registry import registry
 
 # The ironbank suite sets this in tests/conftest.py; a standalone run must too,
 # or capsem-service starts a tray on the macOS menu bar.
 os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
-
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID  # noqa: E402
-from helpers.service import ServiceInstance  # noqa: E402
-from tests.fixtures.oci.registry import registry  # noqa: E402
 
 # Run a command inside the container's network namespace, the way the
 # kingslanding suite does. The guest writes the workload pid here at startup.

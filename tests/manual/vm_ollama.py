@@ -14,7 +14,7 @@ Point it at whatever model `ollama list` shows on the host (default gemma4).
 Usage (build first, then bound the run so no VM leaks):
     just _sign
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 900 \
-        -- uv run --project build_system --frozen python scripts/vm_ollama.py
+        -- uv run --project build_system --frozen python tests/manual/vm_ollama.py
 
 Env: CAPSEM_GYM_MODEL (default "gemma4"), CAPSEM_GYM_PROMPT.
 """
@@ -22,7 +22,6 @@ Env: CAPSEM_GYM_MODEL (default "gemma4"), CAPSEM_GYM_PROMPT.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import sqlite3
 import subprocess
@@ -30,15 +29,17 @@ import sys
 import time
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-sys.path.insert(0, str(PROJECT_ROOT))
+# Only sys.path calls may sit above these first-party imports, or E402 fires;
+# the imports cannot move up, they need the path set first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.service import ServiceInstance
+
+from tests.fixtures.oci.registry import registry
 
 os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
-
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID  # noqa: E402
-from helpers.service import ServiceInstance  # noqa: E402
-from tests.fixtures.oci.registry import registry  # noqa: E402
 
 MODEL = os.environ.get("CAPSEM_GYM_MODEL", "gemma4")
 PROMPT = os.environ.get(
@@ -121,8 +122,8 @@ def main() -> int:
                 print("  stdout:", out.strip()[:500])
                 print("  stderr:", response.get("stderr", "").strip()[:500])
                 return 1
-            answered_model = next((l[6:] for l in out.splitlines() if l.startswith("MODEL=")), "")
-            answer = next((l[7:] for l in out.splitlines() if l.startswith("ANSWER=")), "")
+            answered_model = next((line[6:] for line in out.splitlines() if line.startswith("MODEL=")), "")
+            answer = next((line[7:] for line in out.splitlines() if line.startswith("ANSWER=")), "")
             print(f"  [PASS] {answered_model} answered from inside the VM")
             print(f"  gemma: {answer}")
 
@@ -153,7 +154,6 @@ def wait_for_ledger(run_dir: Path, vm_id: str, timeout: float = 25.0) -> str:
     """
     db = run_dir / "persistent" / vm_id / "session.db"
     deadline = time.time() + timeout
-    last = ""
     while time.time() < deadline:
         if db.exists():
             with contextlib.suppress(sqlite3.Error), closing_ro(db) as conn:
