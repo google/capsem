@@ -262,6 +262,46 @@ def test_the_build_context_is_bounded() -> None:
     )
 
 
+def _docker_excluded(relative: str, patterns: list[str]) -> bool:
+    """Docker's rule: the last pattern matching the path or a parent decides,
+    and a `!` pattern re-includes."""
+    import re
+
+    def compiled(pattern: str) -> re.Pattern[str]:
+        body = re.escape(pattern.strip("/")).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*")
+        return re.compile(f"^{body}(?:/.*)?$")
+
+    excluded = False
+    for pattern in patterns:
+        negated = pattern.startswith("!")
+        if compiled(pattern.removeprefix("!")).match(relative):
+            excluded = not negated
+    return excluded
+
+
+def test_every_tracked_rust_source_reaches_the_build_context() -> None:
+    """The lane compiles the workspace from the copied context, so no tracked
+    Rust source may be excluded from it. `**/private` keeps signing material
+    out and once took `capsem-core/src/net/dns/private/tests.rs` with it: the
+    lane failed with E0583 on a module every other build found."""
+    import subprocess
+
+    patterns = [
+        line.strip()
+        for line in (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    tracked = subprocess.run(
+        ["git", "ls-files", "crates"], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True
+    ).stdout.split()
+    missing = [
+        path for path in tracked if path.endswith(".rs") and _docker_excluded(path, patterns)
+    ]
+    assert not missing, f"tracked Rust sources the lane cannot compile: {missing}"
+    assert _docker_excluded("private/tauri/key", patterns), "signing material stays out"
+    assert _docker_excluded(".claude/worktrees/x/private/key", patterns)
+
+
 def test_the_lane_image_carries_no_release_credentials() -> None:
     """`COPY . /src` puts the build context into a tagged, retained image.
 

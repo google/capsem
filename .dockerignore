@@ -29,3 +29,6 @@
 # this list: that one is the MITM CA, committed and public by design, and the
 # guest needs it.
 **/private
+# A Rust module named `private` is source, not signing material: the lane
+# compiles it (capsem-core's private DNS zone).
+!crates/*/src/**/private
