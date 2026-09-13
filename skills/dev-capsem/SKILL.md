@@ -7,6 +7,19 @@ description: Capsem project overview and navigation: what it is, how the crates 
 
 Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with KVM for Linux). Runs as a daemon service (like Docker). Built with Rust and Astro.
 
+## Engineering standard
+
+Quality and reliability are P0. See something, say something, do something.
+When you notice a defect or an improvement while working -- a bug, a fragile
+path, a lint or guard failure, a small refactor that clarifies, a way to make
+something faster or more reliable, a vulnerable dependency -- do not walk past
+it as "not my problem." Small: fix it test-first (`/dev-testing`) and commit
+it in its own scoped commit. Too big to fold in: open a GitHub bug with enough
+detail to act on. Stop to ask only for genuine judgment calls (user-visible
+behavior, a security boundary, real scope, or a maintainer's dependency
+choice), and even then lead with a recommendation. The full contract is
+`AGENTS.md` -> "Fix what you find".
+
 ## Crate map
 
 | Crate | What | Key modules |

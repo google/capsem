@@ -169,6 +169,9 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ## Fix what you find
 
+Quality and reliability are P0, not something to trade for a smaller diff. See
+something, say something, do something.
+
 When the work turns up a defect -- a bug, a lint or type violation, a failing
 guard, a stale path, a vulnerable dependency the audit flags -- fix it and
 commit it in the same session, in its own well-scoped commit. Do not stop to
@@ -178,6 +181,22 @@ agent that found the problem is the one to fix it. This holds even when the
 defect predates your change or sits just outside the immediate task; the gate
 runs the whole tree, so the whole tree is your responsibility once you are in
 it.
+
+The same holds for improvements you notice while coding, not just outright
+defects: a fragile path, a small refactor that makes the code clearer, a way
+to make it faster or more reliable. Do not walk past it as not your problem.
+If it is small, fix it test-first (a failing test, then the change -- see
+`/dev-testing`). If it is too big to fold into the current change, say so and
+open a GitHub bug (or ask to) with enough detail to act on, rather than
+dropping it silently.
+
+Stop and ask only when the fix is genuinely a judgment call: it changes
+user-visible behavior, weakens a security boundary, forces a real scope
+expansion, or picks between options a maintainer should choose (for example a
+dependency major-version bump, or suppressing an advisory instead of
+upgrading). State the finding and your recommendation, then act on the answer.
+A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
+what you did.
 
 Stop and ask only when the fix is genuinely a judgment call: it changes
 user-visible behavior, weakens a security boundary, forces a real scope
