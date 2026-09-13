@@ -75,11 +75,12 @@ fn provision_request_with_from() {
     assert_eq!(r.from.as_deref(), Some("my-fork"));
 }
 
+/// `image` names an OCI image on the CLI now, never a session to clone.
 #[test]
-fn provision_request_image_alias_deserializes_to_from() {
-    let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "image": "old-img"});
+fn provision_request_image_is_not_a_clone_source() {
+    let json = json!({"profile_id": "code", "image": "old-img"});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(r.from.as_deref(), Some("old-img"));
+    assert_eq!(r.from, None);
 }
 
 #[test]

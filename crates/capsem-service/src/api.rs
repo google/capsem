@@ -46,7 +46,7 @@ pub struct ProvisionRequest {
     pub env: Option<HashMap<String, String>>,
     /// Sandbox to clone state from. If provided, the new sandbox's session will
     /// be cloned from this existing persistent sandbox.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     /// Named networks the new VM joins at create, by name. Every name must
     /// exist before the VM is provisioned; membership is recorded with the
