@@ -65,13 +65,16 @@ fn resetting_a_connection_the_peer_already_reset_is_not_an_error() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (mut server, _) = listener.accept().unwrap();
+    // Before the reset: XNU refuses setsockopt with EINVAL on a socket whose
+    // connection is already gone, which failed this test whenever the reset
+    // won the race.
+    server
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
     // Unread data at the client when it closes makes the kernel answer with
     // a reset instead of a FIN: the connection is gone before we look.
     server.write_all(b"unread").unwrap();
     drop(client);
-    server
-        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-        .unwrap();
     let observed = server.read(&mut [0]);
     assert!(
         matches!(
