@@ -104,16 +104,17 @@ def _enum_variants(source: str, enum_name: str) -> list[dict[str, Any]]:
             continue
         variant = match.group(1)
         tail = match.group(2).strip()
+        attributes = entry[: match.start()]  # policy is above a variant, never in its fields
         tuple_type = None
         tuple_match = re.match(r"\(\s*([A-Z][A-Za-z0-9_]*)\s*\)", tail)
         if tuple_match:
             tuple_type = tuple_match.group(1)
         variants.append(
             {
-                "name": _command_name(entry, variant),
+                "name": _command_name(attributes, variant),
                 "child": tuple_type,
-                "flatten": bool(re.search(r"#\[command\([^]]*\bflatten\b", entry, re.DOTALL)),
-                "subcommand": bool(re.search(r"#\[command\([^]]*\bsubcommand\b", entry, re.DOTALL)),
+                "flatten": bool(re.search(r"#\[command\([^]]*\bflatten\b", attributes, re.DOTALL)),
+                "subcommand": bool(re.search(r"#\[command\([^]]*\bsubcommand\b", attributes, re.DOTALL)),
             }
         )
     if not variants:
