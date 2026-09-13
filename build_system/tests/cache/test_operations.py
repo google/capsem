@@ -184,6 +184,15 @@ def test_holding_a_cargo_lock_leaves_a_target_directory_cargo_can_clean(tmp_path
     with mutation_locks(cache_paths, ["objects"]):
         pass
     assert not (root / "tool/CACHEDIR.TAG").exists(), "only Cargo target roots are Cargo's to tag"
+    # A cold clean keeps the roots (their lock inodes survive) and must leave
+    # them tagged too, or the next coverage run's clean aborts again.
+    from capsem_builder.cache.inventory import scan_inventory
+    from capsem_builder.cache.planner import plan_clean
+
+    (root / "llvm-cov-target/debug/deps").mkdir(parents=True)
+    (root / "llvm-cov-target/debug/deps/stale").write_bytes(b"old prefix")
+    apply_prune(cache_paths, plan_clean(scan_inventory(cache_paths, cache_paths.policy), "objects"), reason="cold")
+    assert not (root / "llvm-cov-target/debug/deps/stale").exists()
 
     cargo = shutil.which("cargo")
     if cargo is None:

@@ -102,6 +102,11 @@ def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tupl
                     raise ValueError(f"cache stage is busy: {lock}") from error
                 locked.append(lock)
         yield tuple(locked)
+        # A cold clean keeps each root for its lock inode but removes the tag
+        # beside it; the root has to leave the mutation as Cargo would.
+        for lock in locked:
+            if lock.name == CARGO_LOCK_NAME:
+                _tag_cargo_target(lock.parent.parent)
 
 
 def _tag_cargo_target(root: Path) -> None:
