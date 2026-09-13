@@ -163,7 +163,7 @@ def test_private_path_transport_samples(members, service, evidence):
                     raw,
                     "throughput",
                 )
-        for trial in range(TRIALS):
+        for _trial in range(TRIALS):
             udp(
                 service,
                 alpha,

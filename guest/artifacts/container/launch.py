@@ -42,15 +42,7 @@ def configure(unpacked, image, options):
         raise ValueError("image has no command")
     environment = dict(entry.split("=", 1) for entry in process.get("env", []))
     environment.update(
-        {
-            key: CA_BUNDLE
-            for key in (
-                "SSL_CERT_FILE",
-                "REQUESTS_CA_BUNDLE",
-                "CURL_CA_BUNDLE",
-                "NODE_EXTRA_CA_CERTS",
-            )
-        }
+        dict.fromkeys(("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"), CA_BUNDLE)
     )
     environment.update(options["env"])
     process.update(

@@ -406,6 +406,6 @@ def test_network_ready_hook_without_a_private_link_adds_no_link_rules(
     launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
     # The link is probed and found absent; no rule names it.
     assert not any(
-        launcher.IPTABLES == call[0] and "tap0" in call for call in run.calls
+        call[0] == launcher.IPTABLES and "tap0" in call for call in run.calls
     )
     assert not (tmp_path / "net/ipv4/ip_forward").exists()
