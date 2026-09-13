@@ -206,13 +206,13 @@ mod tun {
     use std::io;
     use std::os::fd::AsRawFd;
 
-    const TUNSETIFF: u32 = 0x4004_54ca;
-    const SIOCGIFFLAGS: u32 = 0x8913;
-    const SIOCSIFFLAGS: u32 = 0x8914;
-    const SIOCSIFADDR: u32 = 0x8916;
-    const SIOCSIFNETMASK: u32 = 0x891c;
-    const SIOCSIFMTU: u32 = 0x8922;
-    const SIOCSIFHWADDR: u32 = 0x8924;
+    const TUNSETIFF: libc::Ioctl = 0x4004_54ca;
+    const SIOCGIFFLAGS: libc::Ioctl = 0x8913;
+    const SIOCSIFFLAGS: libc::Ioctl = 0x8914;
+    const SIOCSIFADDR: libc::Ioctl = 0x8916;
+    const SIOCSIFNETMASK: libc::Ioctl = 0x891c;
+    const SIOCSIFMTU: libc::Ioctl = 0x8922;
+    const SIOCSIFHWADDR: libc::Ioctl = 0x8924;
     const IFF_TAP: u16 = 0x0002;
     /// `ARPHRD_ETHER`: the hardware address family of an ethernet device.
     const ARPHRD_ETHER: u16 = 1;
@@ -229,10 +229,12 @@ mod tun {
         request
     }
 
-    fn ioctl(fd: &impl AsRawFd, request: u32, argument: &mut [u8; IFREQ_BYTES]) -> io::Result<()> {
+    /// `libc::Ioctl` is the request type on both libcs: `c_ulong` on glibc and
+    /// `c_int` on musl, so no request needs a cast that is lossless on only one.
+    fn ioctl(fd: &impl AsRawFd, request: libc::Ioctl, argument: &mut [u8; IFREQ_BYTES]) -> io::Result<()> {
         // SAFETY: every request here takes a pointer to an `ifreq` the
         // caller owns for the duration of the call.
-        if unsafe { libc::ioctl(fd.as_raw_fd(), request as _, argument.as_mut_ptr()) } < 0 {
+        if unsafe { libc::ioctl(fd.as_raw_fd(), request, argument.as_mut_ptr()) } < 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
