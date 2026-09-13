@@ -20,7 +20,7 @@ capsem-bench-rs), and the "agent" attacks it:
 Usage (run under the build_system interpreter, and bound it so no VM leaks):
     just _sign                         # build + codesign the host binaries
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1200 \
-        -- uv run --project build_system --frozen python scripts/cyber_gym.py
+        -- uv run --project build_system --frozen python tests/manual/cyber_gym.py
 
 The Redis image fixture must be materialized (the kingslanding suite does this;
 otherwise run `just focus-test kingslanding slow` once). The binaries are read

@@ -44,6 +44,7 @@ import secrets
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from datetime import UTC, datetime
@@ -60,7 +61,6 @@ from helpers.service import ServiceInstance
 from tests.fixtures.oci.registry import registry
 
 os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 IN_CONTAINER = 'nsenter -t "$(cat /var/tmp/capsem-container/workload.pid)" -n'
 NETWORK = "range"
@@ -68,7 +68,9 @@ FLAG_PORT = 8000
 MODEL = os.environ.get("CAPSEM_GYM_MODEL", "gemma4")
 TURNS = int(os.environ.get("CAPSEM_GYM_TURNS", "6"))
 OLLAMA = "http://127.0.0.1:11434/api/generate"
-EVIDENCE_DIR = PROJECT_ROOT / "cache/target/tests/manual-evidence"
+# Kept outside cache/target so it needs no release-lane prefix wiring; override
+# with CAPSEM_GYM_EVIDENCE_DIR.
+EVIDENCE_DIR = Path(os.environ.get("CAPSEM_GYM_EVIDENCE_DIR") or tempfile.gettempdir()) / "capsem-ctf-evidence"
 
 
 def boot(service, tmp_path, reference, certificate, name):

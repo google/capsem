@@ -98,7 +98,7 @@ The run passes only if **both** hold, because either alone proves nothing:
    naming both VMs and the target port.
 
 Every model turn (prompt, command, output) and the full raw ledger events are
-written to `cache/target/tests/manual-evidence/ctf-<model>-<stamp>.json`, so
+written to a temp-dir file (`<tmp>/capsem-ctf-evidence/ctf-<model>-<stamp>.json`; override with `CAPSEM_GYM_EVIDENCE_DIR`), so
 the run is inspectable afterwards. A run you cannot audit proves nothing.
 
 The challenge is deliberately trivial (flag on `GET /`) to demonstrate the
