@@ -103,7 +103,7 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
     let vm = container_image::provision(client, &request).await?;
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        container_image::stage(client, &vm, &pulled, workload)
+        container_image::stage(client, &vm, pulled.blobs(), workload)
             .await?
             .attach()
             .await

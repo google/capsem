@@ -132,3 +132,64 @@ fn ram_is_given_in_gigabytes_and_unset_stays_unset() {
     assert_eq!(ram_mb(None), None);
     assert_eq!(ram_mb(Some(u64::MAX)), Some(u64::MAX));
 }
+
+mod against_the_service {
+    use super::super::*;
+    use crate::client::tests::fake_service::FakeService;
+    use crate::{Cli, Commands, SessionCommands};
+    use clap::Parser;
+    use serde_json::json;
+
+    fn args(argv: &[&str]) -> RunArgs {
+        let argv = ["capsem", "run"].iter().chain(argv).copied();
+        match Cli::parse_from(argv).command.unwrap() {
+            Commands::Session(SessionCommands::Run(args)) => args,
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shell_run_returns_the_guest_exit_code_and_sends_only_what_was_given() {
+        let service = FakeService::start();
+        service.route(
+            "POST",
+            "/run",
+            200,
+            json!({"stdout": "out\n", "stderr": "err\n", "exit_code": 7, "truncated": true}),
+        );
+        let code = run(
+            &service.client,
+            &args(&["false", "--timeout", "5", "--ram", "1", "-e", "K=V"]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 7);
+        assert_eq!(
+            service.find("POST", "/run")[0].json(),
+            json!({"command": "false", "profile_id": "code", "timeout_secs": 5, "ram_mb": 1024, "env": {"K": "V"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_without_work_or_with_image_only_flags_is_refused_locally() {
+        let service = FakeService::start();
+        for (argv, expected) in [
+            (vec![], "run needs a shell command, or --image"),
+            (vec!["true", "--network", "team"], "--network needs --image"),
+            (vec!["true", "-p", "0:80"], "need --image"),
+            (vec!["true", "--profile", "../x"], ""),
+        ] {
+            let error = run(&service.client, &args(&argv)).await.unwrap_err();
+            assert!(format!("{error:#}").contains(expected), "{argv:?}: {error:#}");
+        }
+        assert!(service.calls().is_empty(), "{:?}", service.calls());
+    }
+
+    #[tokio::test]
+    async fn a_service_error_is_the_run_error() {
+        let service = FakeService::start();
+        service.route("POST", "/run", 503, json!({"error": "profile assets missing"}));
+        let error = run(&service.client, &args(&["true"])).await.unwrap_err();
+        assert!(format!("{error:#}").contains("profile assets missing"), "{error:#}");
+    }
+}

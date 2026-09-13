@@ -11,13 +11,13 @@ struct Transfer {
     sha256: String,
 }
 
-pub(super) async fn image(client: &UdsClient, vm: &str, image: &ImageLayout, workload: &Workload<'_>) -> Result<()> {
+pub(super) async fn image(client: &UdsClient, vm: &str, blobs: Blobs<'_>, workload: &Workload<'_>) -> Result<()> {
     let mut transfer = Vec::new();
     // Every upload stays below the existing file API body limit. OCI extraction
     // happens inside the VM; host files here contain only verified image blobs.
     let mut buffer = vec![0; 1024 * 1024];
-    for (key, path) in image.files().iter().enumerate() {
-        let mut input = tokio::fs::File::open(image.path().join(path)).await?;
+    for (key, path) in blobs.files.iter().enumerate() {
+        let mut input = tokio::fs::File::open(blobs.root.join(path)).await?;
         let mut hash = Sha256::new();
         let mut parts = 0;
         loop {

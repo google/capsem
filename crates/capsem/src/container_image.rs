@@ -67,6 +67,22 @@ pub(super) struct Pulled {
     _staging: tempfile::TempDir,
 }
 
+impl Pulled {
+    pub(super) fn blobs(&self) -> Blobs<'_> {
+        Blobs {
+            root: self.layout.path(),
+            files: self.layout.files(),
+        }
+    }
+}
+
+/// The verified files of an image layout, relative to its root.
+#[derive(Clone, Copy)]
+pub(super) struct Blobs<'a> {
+    pub root: &'a std::path::Path,
+    pub files: &'a [std::path::PathBuf],
+}
+
 pub(super) async fn pull(workload: &Workload<'_>) -> Result<Pulled> {
     capsem_assets::oci::image_reference(workload.reference)
         .context("--image expects docker://IMAGE or registry/repository:tag")?;
@@ -107,7 +123,7 @@ pub(super) async fn provision(client: &UdsClient, request: &ProvisionRequest) ->
 pub(super) async fn stage(
     client: &UdsClient,
     vm: &ProvisionResponse,
-    pulled: &Pulled,
+    blobs: Blobs<'_>,
     workload: &Workload<'_>,
 ) -> Result<Channel> {
     // Create may return at the launch signal, before guest boot finishes.
@@ -123,7 +139,7 @@ pub(super) async fn stage(
         .await?;
     let ready = ready.into_result()?;
     ensure!(ready.exit_code == 0, "guest readiness check failed: {}", ready.stderr);
-    upload::image(client, &vm.id, &pulled.layout, workload).await?;
+    upload::image(client, &vm.id, blobs, workload).await?;
     let channel = Channel::open(vm).await?;
     for mapping in &workload.image.publish {
         channel.publish(*mapping).await?;
@@ -243,3 +259,6 @@ impl Channel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

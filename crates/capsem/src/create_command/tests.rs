@@ -52,3 +52,109 @@ fn image_only_flags_and_clone_sources_do_not_mix_with_plain_create() {
         assert!(Workload::of(&args.image, &args.env).is_err(), "accepted {argv:?}");
     }
 }
+
+mod against_the_service {
+    use super::super::*;
+    use crate::client::tests::fake_service::FakeService;
+    use crate::container_image::{Blobs, ImageArgs, Workload};
+    use crate::{Cli, Commands, SessionCommands};
+    use clap::Parser;
+    use serde_json::json;
+
+    fn created(id: &str) -> serde_json::Value {
+        json!({"id": id, "name": id, "profile_id": "code", "status": "Running", "available_actions": []})
+    }
+
+    fn args(argv: &[&str]) -> CreateArgs {
+        let argv = ["capsem", "create"].iter().chain(argv).copied();
+        match Cli::parse_from(argv).command.unwrap() {
+            Commands::Session(SessionCommands::Create(args)) => args,
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_asks_for_what_was_given_and_the_profile_for_the_rest() {
+        let service = FakeService::start();
+        service.route("POST", "/vms/create", 200, created("vm-1"));
+
+        create(&service.client, &args(&["-e", "A=1", "--network", "team"]))
+            .await
+            .unwrap();
+        create(&service.client, &args(&["-n", "keep", "--ram", "2", "--cpu", "3"]))
+            .await
+            .unwrap();
+        create(&service.client, &args(&["--from", "keep"])).await.unwrap();
+
+        let bodies: Vec<_> = service
+            .find("POST", "/vms/create")
+            .iter()
+            .map(|request| request.json())
+            .collect();
+        assert_eq!(
+            bodies[0],
+            json!({"name": null, "profile_id": "code", "persistent": false, "env": {"A": "1"}, "networks": ["team"]})
+        );
+        assert_eq!(
+            bodies[1],
+            json!({"name": "keep", "profile_id": "code", "ram_mb": 2048, "cpus": 3, "persistent": true})
+        );
+        assert_eq!(bodies[2]["persistent"], true, "a clone keeps its source's state");
+        assert!(create(&service.client, &args(&["--profile", "../x"])).await.is_err());
+        assert_eq!(
+            service.find("POST", "/vms/create").len(),
+            3,
+            "an invalid profile never reaches the service"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_image_that_cannot_start_does_not_leave_its_vm_behind() {
+        let service = FakeService::start();
+        service
+            .route("POST", "/vms/create", 200, created("vm-9"))
+            .route(
+                "POST",
+                "/vms/vm-9/exec",
+                200,
+                json!({"stdout": "", "stderr": "no guest", "exit_code": 1}),
+            )
+            .once("DELETE", "/vms/vm-9/delete", 200, json!({"success": true}))
+            .route("DELETE", "/vms/vm-9/delete", 500, json!({"error": "delete stuck"}));
+        let image = ImageArgs {
+            image: vec!["docker://redis:7".into()],
+            ..ImageArgs::default()
+        };
+        let workload = Workload::of(&image, &[]).unwrap().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let blobs = Blobs {
+            root: root.path(),
+            files: &[],
+        };
+        let request = ProvisionRequest {
+            name: None,
+            profile_id: "code".into(),
+            ram_mb: None,
+            cpus: None,
+            persistent: false,
+            env: None,
+            from: None,
+            networks: vec![],
+        };
+
+        let error = start_image(&service.client, &request, blobs, &workload)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("no guest"), "{error:#}");
+        assert_eq!(service.find("DELETE", "/vms/vm-9/delete").len(), 1);
+
+        let error = start_image(&service.client, &request, blobs, &workload)
+            .await
+            .unwrap_err();
+        let reported = format!("{error:#}");
+        assert!(
+            reported.contains("no guest") && reported.contains("delete stuck"),
+            "{reported}"
+        );
+    }
+}

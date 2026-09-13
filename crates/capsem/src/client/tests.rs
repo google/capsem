@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Shared with every command's tests that talk to the service.
+pub(crate) mod fake_service;
+
 #[test]
 fn asset_status_retains_background_start_acknowledgement() {
     let status: AssetStatusResponse = serde_json::from_value(serde_json::json!({

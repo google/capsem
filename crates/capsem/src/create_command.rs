@@ -4,7 +4,7 @@
 use anyhow::Result;
 
 use crate::client::{self, ProvisionRequest, ProvisionResponse, UdsClient};
-use crate::container_image::{self, ImageArgs, Workload};
+use crate::container_image::{self, Blobs, ImageArgs, Workload};
 use crate::container_run::ram_mb;
 
 #[derive(clap::Args)]
@@ -53,7 +53,10 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
     };
     let vm = match Workload::of(&args.image, &args.env)? {
         None => container_image::provision(client, &request).await?,
-        Some(workload) => start_image(client, &request, &workload).await?,
+        Some(workload) => {
+            let pulled = container_image::pull(&workload).await?;
+            start_image(client, &request, pulled.blobs(), &workload).await?
+        }
     };
     if persistent {
         println!("{} (persistent)", vm.id);
@@ -67,12 +70,12 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
 async fn start_image(
     client: &UdsClient,
     request: &ProvisionRequest,
+    blobs: Blobs<'_>,
     workload: &Workload<'_>,
 ) -> Result<ProvisionResponse> {
-    let pulled = container_image::pull(workload).await?;
     let vm = container_image::provision(client, request).await?;
     let started = async {
-        container_image::stage(client, &vm, &pulled, workload).await?;
+        container_image::stage(client, &vm, blobs, workload).await?;
         container_image::launch_detached(client, &vm).await
     };
     if let Err(error) = started.await {

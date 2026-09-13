@@ -982,4 +982,4 @@ mod networks;
 pub use networks::*;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
