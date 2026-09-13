@@ -321,7 +321,8 @@ def test_private_tcp_is_intercepted_and_refused_before_any_byte(container, servi
         )
 
     def refused_in_owner_log():
-        for log in service.tmp_dir.glob("persistent/*/process.log"):
+        # A run's VM is unnamed, so its session is not under persistent/.
+        for log in service.tmp_dir.rglob("process.log"):
             text = log.read_text(errors="replace")
             # The service's answer, not a failure to ask it.
             if (

@@ -131,38 +131,38 @@ def udp(
     )
 
 
-IPIP, UDP, GRE = 4, 17, 47
-# A packet socket on tap0 sees each IPv4 packet the switch delivered before
-# netfilter: UDP on the link is DNAT'ed into the container, so a raw socket
-# in the VM would never hear the control.
+ICMP, IPIP, GRE = 1, 4, 47
+# Raw sockets in beta's own namespace: the guest has no packet sockets, and
+# nothing filters its input on tap0. ICMP is the control -- the switch
+# forwards echo and nothing redirects it -- so a tunnel protocol the switch
+# let through would be heard the same way.
 RAW_LISTENER = """
 import json, select, socket, sys, time
-source, protocols = socket.inet_aton(sys.argv[1]), [int(p) for p in sys.argv[2:]]
-link = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(0x0800))
-link.bind(("tap0", 0))
+source, protocols = sys.argv[1], [int(p) for p in sys.argv[2:]]
+sockets = {socket.socket(socket.AF_INET, socket.SOCK_RAW, p): p for p in protocols}
 heard = {p: 0 for p in protocols}
 open("/var/tmp/raw-listener.ready", "w").close()
 deadline = time.monotonic() + 12
 while time.monotonic() < deadline:
-    if select.select([link], [], [], 0.2)[0]:
-        packet = link.recv(65535)
-        if packet[12:16] == source and packet[9] in heard:
-            heard[packet[9]] += 1
+    for s in select.select(list(sockets), [], [], 0.2)[0]:
+        if s.recvfrom(65535)[1][0] == source:
+            heard[sockets[s]] += 1
 json.dump(heard, open("/var/tmp/raw-listener.json", "w"))
 """
+# An echo request header, so the ICMP control is a type the switch forwards.
 RAW_SENDER = """
 import socket, sys
 destination, protocols = sys.argv[1], [int(p) for p in sys.argv[2:]]
 for p in protocols:
     s = socket.socket(socket.AF_INET, socket.SOCK_RAW, p)
     for _ in range(10):
-        s.sendto(b"\\x13\\x88\\x13\\x89\\x00\\x10\\x00\\x00capsem!!", (destination, 0))
+        s.sendto(b"\\x08\\x00\\x00\\x00\\x00\\x01\\x00\\x01capsem!!", (destination, 0))
 """
 
 
 def tunnel_probe(service, alpha, beta):
-    """What beta's kernel receives from alpha for UDP, GRE and IPIP."""
-    protocols = " ".join(str(p) for p in (UDP, GRE, IPIP))
+    """What beta's kernel receives from alpha for ICMP, GRE and IPIP."""
+    protocols = " ".join(str(p) for p in (ICMP, GRE, IPIP))
     guest(
         service,
         beta["id"],
@@ -181,21 +181,29 @@ def tunnel_probe(service, alpha, beta):
             == 0
         )
 
-    wait_for(
-        lambda: exists("/var/tmp/raw-listener.ready"),
-        "beta listens on raw sockets",
-        timeout=20,
-    )
-    guest(
-        service,
-        alpha["id"],
-        f"python3 -c {shlex.quote(RAW_SENDER)} {beta['private_address']} {protocols}",
-    )
-    wait_for(
-        lambda: exists("/var/tmp/raw-listener.json"),
-        "beta's listener reports",
-        timeout=30,
-    )
+    def listener_log():
+        return guest(
+            service, beta["id"], "cat /var/tmp/raw-listener.log", check=False
+        ).get("stdout", "")
+
+    try:
+        wait_for(
+            lambda: exists("/var/tmp/raw-listener.ready"),
+            "beta listens on raw sockets",
+            timeout=20,
+        )
+        guest(
+            service,
+            alpha["id"],
+            f"python3 -c {shlex.quote(RAW_SENDER)} {beta['private_address']} {protocols}",
+        )
+        wait_for(
+            lambda: exists("/var/tmp/raw-listener.json"),
+            "beta's listener reports",
+            timeout=30,
+        )
+    except AssertionError as error:
+        raise AssertionError(f"{error}; listener log: {listener_log()!r}") from None
     return json.loads(
         guest(service, beta["id"], "cat /var/tmp/raw-listener.json")["stdout"]
     )
@@ -324,9 +332,9 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
 
     # Only UDP and ICMP cross: a tunnel protocol would carry TCP around its
     # admission. Beta's kernel hands raw sockets every packet of a protocol,
-    # so what the switch forwards is what beta hears; UDP is the control.
+    # so what the switch forwards is what beta hears; ICMP is the control.
     tunnels = tunnel_probe(service, alpha, beta)
-    assert tunnels[str(UDP)] >= 9, tunnels
+    assert tunnels[str(ICMP)] >= 9, tunnels
     assert tunnels[str(GRE)] == 0 and tunnels[str(IPIP)] == 0, tunnels
 
     # The history names both links.

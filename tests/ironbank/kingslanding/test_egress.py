@@ -13,7 +13,12 @@ from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance
 
 from tests.fixtures.oci.registry import registry
-from tests.ironbank.kingslanding.test_run import command, environment
+from tests.ironbank.kingslanding.test_run import (
+    console,
+    create_command,
+    environment,
+    wait_for,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -105,31 +110,44 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
             "echo x | nc -w 3 10.0.0.1 1053; echo escape_dns=$?",
         ]
     )
+    # The VM outlives the probes so its audit rows can be read: a created
+    # container, its output on the console, holding on after the last probe.
     with registry(tmp_path) as (reference, certificate, _):
-        run = subprocess.run(
-            [*command(service, reference, certificate), "sh", "-c", script],
+        created = subprocess.run(
+            [
+                *create_command(service, reference, certificate, "-n", "egress"),
+                "sh",
+                "-c",
+                f"{script} ; echo probes=done ; sleep 3600",
+            ],
             env=environment(service),
             capture_output=True,
             text=True,
             timeout=300,
             check=False,
         )
-    (tmp_path / "stdout").write_text(run.stdout)
-    (tmp_path / "stderr").write_text(run.stderr)
+    (tmp_path / "stderr").write_text(created.stderr)
     print(f"EGRESS EVIDENCE: {tmp_path}")
-    results = _results(run.stdout)
+    assert created.returncode == 0, created.stderr
+    rows = client.get("/vms/list")["sandboxes"]
+    assert len(rows) == 1
+    vm_id = rows[0]["id"]
+    wait_for(
+        lambda: "probes=done" in console(service, vm_id),
+        "container probes finished",
+        timeout=240,
+    )
+    output = console(service, vm_id).replace("\r", "")
+    (tmp_path / "console").write_text(output)
+    results = _results(output)
 
-    assert results.get("http") == "0", run.stdout + run.stderr
+    assert results.get("http") == "0", output
     assert results.get("https") == "0", "container must trust the Capsem CA"
-    assert run.stdout.count("Capsem mock server about page") == 2, run.stdout
+    assert output.count("Capsem mock server about page") == 2, output
     assert results.get("secret") != "0", "HTTP policy must apply inside the container"
     assert results.get("dns") != "0", "DNS policy must apply inside the container"
     for probe in ("escape_gateway", "escape_vm", "escape_dns"):
         assert results.get(probe) == "1", f"{probe}: container reached a VM service directly"
-
-    rows = client.get("/vms/list")["sandboxes"]
-    assert len(rows) == 1
-    vm_id = rows[0]["id"]
     # One row per matched rule; the row's rule_id/rule_action are the decision
     # of record (event_json.decision is not applied on HTTP/DNS rows, #203).
     latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
