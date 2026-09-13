@@ -68,11 +68,12 @@ capsem create -e API_KEY=sk-...        # with environment variables
 
 ### shell
 
-Open an interactive shell. With no arguments, creates an unnamed session for
-the shell and cleans it up when the shell exits.
+Open the terminal UI. With no arguments it shows every session; with a name or
+ID it opens focused on that session. It never creates or destroys a VM: use
+`capsem create` or `capsem run` for that.
 
 ```sh
-capsem shell              # unnamed shell session
+capsem shell              # every session
 capsem shell mybox        # attach to existing session
 capsem shell -n mybox     # find by name
 capsem shell abc123       # find by ID

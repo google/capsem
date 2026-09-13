@@ -4,7 +4,7 @@
 pub(crate) const GROUPED_HELP: &str = "\
 \x1b[36;1;4mSession Commands:\x1b[0m
   \x1b[32;1mcreate\x1b[0m       Create and boot a new session
-  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
+  \x1b[32;1mshell\x1b[0m        Open the terminal UI over your sessions
   \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
   \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
   \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)

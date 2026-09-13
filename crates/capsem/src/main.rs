@@ -342,10 +342,11 @@ enum SessionCommands {
         #[arg(long = "network")]
         network: Vec<String>,
     },
-    /// Open an interactive shell in a session
+    /// Open the terminal UI
     ///
-    /// With no arguments, creates a temporary session (destroyed on exit).
-    /// Pass a session name/ID or --name to attach to an existing running session.
+    /// With no arguments, opens the TUI over every session. Pass a session
+    /// name/ID or --name to open it focused on that session. It creates and
+    /// destroys nothing; use `create` or `run` for a VM.
     Shell {
         /// Find by name (for persistent sessions)
         #[arg(short = 'n', long)]

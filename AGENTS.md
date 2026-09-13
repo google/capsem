@@ -210,7 +210,7 @@ what you did.
 
 ### Ephemeral VM model
 
-**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- workspace and rootfs overlay survive stops. `capsem create` is always detached; `capsem shell` is the interactive entry point (`capsem shell` with no args = temp VM + auto-destroy on exit).
+**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- workspace and rootfs overlay survive stops. `capsem create` is always detached; `capsem run` is the one-shot that destroys its VM on exit; `capsem shell` opens the TUI over existing sessions and creates nothing.
 
 **VirtioFS mode** (default): fresh workspace + sparse rootfs.img per session. Persistent VMs store their session in `~/.capsem/run/persistent/`.
 
