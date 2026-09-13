@@ -2314,7 +2314,7 @@ rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent 
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = {}, Darwin = { capsem-agent = 48.0, capsem-bench = 42.0, capsem-core = 81.0, capsem-foundation = 81.0, capsem-process = 43.0, capsem-service = 68.5 } }
+rust_coverage_platform_crate_floors = { Linux = {}, Darwin = { capsem-agent = 49.79, capsem-assets = 89.8, capsem-bench = 50.02, capsem-core = 81.0, capsem-foundation = 81.0, capsem-mock-server = 58.1, capsem-network = 96.12, capsem-process = 44.65, capsem-proto = 91.04, capsem-router = 73.23, capsem-service = 69.02 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
