@@ -491,6 +491,9 @@ struct FakeLinkSeat {
     guest_ends: Mutex<Vec<std::os::unix::net::UnixStream>>,
     /// One signal per handoff connection the service let go of.
     released: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<()>>>,
+    /// The owner answers a LinkAttach only with a permit: a test takes the
+    /// permits away to hold a link mid-handshake.
+    answers: Arc<tokio::sync::Semaphore>,
 }
 
 impl FakeLinkSeat {
@@ -513,7 +516,9 @@ fn fake_link_seat(
     let seat = Arc::new(FakeLinkSeat {
         guest_ends: Mutex::new(Vec::new()),
         released: Mutex::new(Some(released_rx)),
+        answers: Arc::new(tokio::sync::Semaphore::new(links)),
     });
+    let answers = Arc::clone(&seat.answers);
     let ends = Arc::clone(&seat);
     tokio::spawn(async move {
         for _ in 0..links {
@@ -562,7 +567,11 @@ fn fake_link_seat(
             }
             other => panic!("unexpected owner message: {other:?}"),
         };
-        Box::pin(async move { reply })
+        let answers = Arc::clone(&answers);
+        Box::pin(async move {
+            answers.acquire().await.unwrap().forget();
+            reply
+        })
     });
     (seat, owner)
 }
@@ -677,6 +686,67 @@ async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
         .iter()
         .any(|event| event["event_type"] == "network.close" && event["event"]["network"]["protocol"] == "link");
     assert!(closed, "{logs}");
+}
+
+async fn released_within(seat: &FakeLinkSeat, wait: Duration) -> bool {
+    let mut released = seat.released.lock().unwrap().take().unwrap();
+    tokio::time::timeout(wait, released.recv()).await.is_ok()
+}
+
+#[tokio::test]
+async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, owner) = fake_link_seat(&uds_b, false, 2);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    // The pump dies, and the VM is disconnected inside the relink window.
+    drop(seat.guest_end());
+    assert!(released_within(&seat, Duration::from_secs(3)).await, "the service let the link go");
+    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+    assert!(!owner.is_finished(), "a member that left is never asked for its link again");
+}
+
+#[tokio::test]
+async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, _owner) = fake_link_seat(&uds_b, false, 1);
+    seat.answers.forget_permits(1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let joining = {
+        let (router, uri) = (app(&state), format!("/networks/{id}/members/vm-b"));
+        tokio::spawn(async move { route_request(router, Method::PUT, &uri, None).await })
+    };
+    for _ in 0..100 {
+        if member_state(&state, &id, "vm-b").await == "attaching" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(member_state(&state, &id, "vm-b").await, "attaching");
+    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    seat.answers.add_permits(1);
+    let (status, _) = joining.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+    assert!(
+        released_within(&seat, Duration::from_secs(3)).await,
+        "the link granted to a member that already left is let go"
+    );
 }
 
 #[tokio::test]

@@ -12,6 +12,7 @@
 //! transition writes a row in the network's ledger.
 use super::*;
 use anyhow::ensure;
+use capsem_core::net::network_registry::NetworkRegistry;
 use capsem_core::net::switch_host::SwitchHost;
 use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_logger::{MembershipState, TransportEvent, TransportEventKind};
@@ -140,8 +141,14 @@ fn link_event(
     )
 }
 
+fn is_member(registry: &NetworkRegistry, network: Uuid, vm_id: &str) -> bool {
+    registry
+        .members(network)
+        .is_some_and(|members| members.iter().any(|member| member.vm_id == vm_id))
+}
+
 /// Write a membership state and a ledger row under the registry lock; a VM
-/// that left the network meanwhile gets neither.
+/// that left the network meanwhile gets neither, and the answer is false.
 async fn record(
     state: &ServiceState,
     network: Uuid,
@@ -149,13 +156,10 @@ async fn record(
     address: Ipv4Addr,
     membership: MembershipState,
     event: TransportEvent,
-) {
+) -> bool {
     let mut registry = state.networks.lock().await;
-    let still_member = registry
-        .members(network)
-        .is_some_and(|members| members.iter().any(|member| member.vm_id == vm_id));
-    if !still_member {
-        return;
+    if !is_member(&registry, network, vm_id) {
+        return false;
     }
     if let Err(error) = registry
         .attach(network, vm_id, address, membership, vm_lifecycle::unix_time_ms())
@@ -167,6 +171,7 @@ async fn record(
         warn!(%network, vm_id, %error, "link audit row was not recorded");
     }
     drop(registry);
+    true
 }
 
 /// The network's switch, started on first use. Its close reports are
@@ -248,7 +253,7 @@ async fn link_closed(state: &Arc<ServiceState>, network: Uuid, id: u64, report: 
                 MembershipState::Declared,
                 event,
             )
-            .await
+            .await;
         }
         Err(error) => warn!(%network, %error, "link close row was not built"),
     }
@@ -328,7 +333,10 @@ async fn handshake(
 }
 
 /// Link a running member to its network's switch; a VM that is not running
-/// stays `declared` until it is.
+/// stays `declared` until it is. Membership is the authority throughout: a
+/// relink can outlive the membership it was for, so a VM that left before
+/// the link starts gets none, and one that left during the handshake has its
+/// fresh link ended.
 pub(crate) async fn link(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) -> Result<()> {
     let running = state
         .instances
@@ -341,6 +349,9 @@ pub(crate) async fn link(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
     };
     {
         let mut registry = state.networks.lock().await;
+        if !is_member(&registry, network, vm_id) {
+            return Ok(());
+        }
         registry
             .attach(
                 network,
@@ -371,7 +382,11 @@ pub(crate) async fn link(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
             info!(%network, vm_id, %address, link_id = id, "private link ready");
             let event =
                 link_event(network, connection, vm_id, address, Outcome::Linked).map_err(|error| anyhow!("{error}"))?;
-            record(state, network, vm_id, address, MembershipState::Ready, event).await;
+            if !record(state, network, vm_id, address, MembershipState::Ready, event).await {
+                // Detach ran while the owner answered: its unlink found nothing
+                // to end, so this link is ended here.
+                unlink(state, network, vm_id).await;
+            }
             Ok(())
         }
         Err(error) => {
