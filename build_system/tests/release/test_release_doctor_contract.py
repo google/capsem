@@ -5086,7 +5086,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     assert stop_arm is not None
     body = stop_arm.group("body")
 
-    assert "service_install::stop_service().await?" in body
+    assert "service_install::stop_service(&cli_service_socket_path()).await?" in body
     assert 'println!("Service stopped.");' in body
     assert "return Ok(());" in body
 
