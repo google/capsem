@@ -61,10 +61,13 @@ scope = "disk"
 path = "target/cargo"
 warm_size_bytes = 161061273600 # 150 GiB
 max_size_bytes = 193273528320 # 180 GiB
-prune_strategy = "generational"
-# Ordinary retention selects only disposable incremental sessions. Explicit
-# clean still owns the whole Cargo stage; native lock inodes survive both.
-retention_root = "debug/incremental"
+prune_strategy = "lru"
+# Retention takes whole compilation units, least recently used first: each
+# gate prefix salts workspace units with its checkout path and leaves a full
+# set behind, which retention of incremental sessions alone never reclaimed
+# (issue #205). Explicit clean still owns the whole stage; native lock inodes
+# survive both, and a held lock protects every unit.
+cargo_target_roots = ["debug", "release", "llvm-cov-target/debug"]
 mutation_locks = ["debug/.cargo-lock", "release/.cargo-lock", "llvm-cov-target/debug/.cargo-lock"]
 maximum_age_hours = 720
 

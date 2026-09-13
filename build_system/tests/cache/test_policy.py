@@ -109,8 +109,11 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].maximum_count is None
     assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
     assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
-    assert policy.stages["cargo"].prune_strategy is PruneStrategy.GENERATIONAL
-    assert policy.stages["cargo"].retention_root == Path("debug/incremental")
+    assert policy.stages["cargo"].prune_strategy is PruneStrategy.LRU
+    assert policy.stages["cargo"].retention_root is None
+    assert policy.stages["cargo"].cargo_target_roots == (
+        Path("debug"), Path("release"), Path("llvm-cov-target/debug"),
+    )
     assert Path("debug/.cargo-lock") in policy.stages["cargo"].mutation_locks
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)

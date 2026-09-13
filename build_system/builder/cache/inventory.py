@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import fnmatch
-import os
-import stat
 import time
 from pathlib import Path
 
+from .cargounits import unaccounted_size, unit_entries
 from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
 from .leases import active_path
+from .measure import measure
 from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
 from .paths import CachePaths
 
@@ -25,26 +25,8 @@ def _lease_active(stage_path: Path, template: str | None, key: str) -> bool:
 
 
 def _entry_size(path: Path, allocated_seen: set[tuple[int, int]]) -> tuple[int, int]:
-    logical = 0
-    allocated = 0
-    stack = [path]
-    while stack:
-        current = stack.pop()
-        metadata = current.lstat()
-        mode = metadata.st_mode
-        if stat.S_ISLNK(mode):
-            continue
-        inode = (metadata.st_dev, metadata.st_ino)
-        if stat.S_ISDIR(mode):
-            with os.scandir(current) as children:
-                stack.extend(Path(child.path) for child in children)
-            continue
-        if stat.S_ISREG(mode):
-            logical += metadata.st_size
-            if inode not in allocated_seen:
-                allocated_seen.add(inode)
-                allocated += getattr(metadata, "st_blocks", 0) * 512
-    return logical, allocated
+    measured = measure(path, allocated_seen)
+    return measured.logical_bytes, measured.allocated_bytes
 
 
 def _stage_inventory(
@@ -56,6 +38,8 @@ def _stage_inventory(
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
     stage_root = paths.stage(stage_id)
+    if retention and stage_policy.cargo_target_roots:
+        return _cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen)
     entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
                   else stage_policy.entry_root)
     stage_path = stage_root / entry_root
@@ -109,6 +93,27 @@ def _stage_inventory(
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + unmanaged_allocated,
         protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
         entries=tuple(entries),
+    )
+
+
+def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -> StageInventory:
+    """A Cargo stage as its compilation units, everything else accounted beside them."""
+    for target_root in stage_policy.cargo_target_roots:
+        resolved = (stage_root / target_root).resolve()
+        if stage_root.is_dir() and not resolved.is_relative_to(stage_root.resolve()):
+            raise ValueError(f"cache entry root escapes its stage: {stage_root / target_root}")
+    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
+    entries, accounted = unit_entries(
+        stage_root, stage_policy.cargo_target_roots, allocated_seen, protected=busy,
+    )
+    other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
+    return StageInventory(
+        stage_id=stage_id,
+        path=stage_root,
+        logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
+        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
+        protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
+        entries=entries,
     )
 
 
