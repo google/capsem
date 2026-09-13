@@ -81,6 +81,21 @@ PROFILE_LANE = _qualification(
 )
 
 
+def _plan(module: str, qualification=None):
+    """A module's plan, built against a recording runner."""
+    import argparse
+
+    from capsem_builder.gate import cli  # noqa: F401 - imports every command module
+    from capsem_builder.gate.command import GateCommand
+    from helpers.gate import RecordingRunner
+
+    return GateCommand.registry[module](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+        qualification=qualification,
+    ).plan()
+
+
 def _planned(module: str, qualification=None) -> str:
     """What a module's plan would run, rendered.
 
@@ -88,36 +103,28 @@ def _planned(module: str, qualification=None) -> str:
     the stronger question: the text search noticed a line that stopped being
     written, while this notices a step that stopped running.
     """
-    import argparse
-
-    from capsem_builder.gate import cli  # noqa: F401 - imports every command module
-    from capsem_builder.gate.command import GateCommand
-    from helpers.gate import RecordingRunner
-
-    command = GateCommand.registry[module](
-        RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(dry_run=False, graph=False, timing=False),
-        qualification=qualification,
-    )
-    return command.plan().describe()
+    return _plan(module, qualification).describe()
 
 
 def _planned_labels(module: str) -> tuple[str, ...]:
     """Every step a module's plan contains, in an order the graph permits."""
-    import argparse
+    return _plan(module).labels
 
-    from capsem_builder.gate import cli  # noqa: F401 - registers every command
-    from capsem_builder.gate.command import GateCommand
-    from helpers.gate import RecordingRunner
 
-    return (
-        GateCommand.registry[module](
-            RecordingRunner(PROJECT_ROOT),
-            argparse.Namespace(dry_run=False, graph=False, timing=False),
-        )
-        .plan()
-        .labels
-    )
+def _prerequisites(plan, label: str) -> set[str]:
+    """Every step that must finish before `label` starts, transitively.
+
+    Ordering is a graph fact. Offsets in the rendered text only look like one
+    until a second step renders the same command in an earlier wave.
+    """
+    seen: set[str] = set()
+    pending = [label]
+    while pending:
+        for before in plan.after_of(pending.pop()):
+            if before not in seen:
+                seen.add(before)
+                pending.append(before)
+    return seen
 
 
 def _all_modules() -> str:
@@ -618,12 +625,13 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     before static. In shell all three were regions of one file and the order
     was where the lines sat.
     """
-    fast = _planned("test-fast")
+    fast_plan = _plan("test-fast")
+    fast = fast_plan.describe()
     static = _planned("test-static")
 
     assert "build_system/scripts/audit/check-cargo-audit.py" in fast
     assert "check-web-surface.sh frontend" in fast
-    assert fast.index("check-web-surface.sh frontend") < fast.index("cargo clippy")
+    assert "fast.web.frontend-build" in _prerequisites(fast_plan, "fast.clippy")
 
     assert "build the network-denied install qualification image" in static
     assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
