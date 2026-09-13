@@ -241,6 +241,26 @@ impl Router {
     }
 }
 
+fn frame(payload: &[u8]) -> Vec<u8> {
+    [&(payload.len() as u32).to_be_bytes()[..], payload].concat()
+}
+
+/// Everything up to the end-of-stream frame on the guest's framed leg.
+async fn read_frames(peer: &mut UnixStream) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    loop {
+        let length = peer.read_u32().await.unwrap() as usize;
+        if length == 0 {
+            return bytes;
+        }
+        let start = bytes.len();
+        bytes.resize(start + length, 0);
+        peer.read_exact(&mut bytes[start..]).await.unwrap();
+    }
+}
+
+/// The client's half-close crosses to the guest leg as an end-of-stream
+/// frame, and the guest's reply after it comes back with a FIN.
 #[tokio::test]
 async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
     let mut router = Router::start().await;
@@ -248,14 +268,11 @@ async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
     assert_eq!(router.event().await, Event::Accepted(1));
     tcp.write_all(b"\x00\xffhello").await.unwrap();
     tcp.shutdown().await.unwrap();
-    let mut bytes = Vec::new();
-    timeout(Duration::from_secs(5), peer.read_to_end(&mut bytes))
-        .await
-        .unwrap()
-        .unwrap();
+    let mut bytes = timeout(Duration::from_secs(5), read_frames(&mut peer)).await.unwrap();
     assert_eq!(bytes, b"\x00\xffhello");
-    peer.write_all(b"reply after EOF").await.unwrap();
-    peer.shutdown().await.unwrap();
+    peer.write_all(&[frame(b"reply after EOF"), frame(b"")].concat())
+        .await
+        .unwrap();
     bytes.clear();
     timeout(Duration::from_secs(5), tcp.read_to_end(&mut bytes))
         .await
@@ -296,8 +313,10 @@ async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
     );
     let (client, peer) = &mut peers[0];
     client.write_all(b"request").await.unwrap();
-    peer.read_exact(&mut [0; 7]).await.unwrap();
-    peer.write_all(b"reply").await.unwrap();
+    let mut request = [0; 11];
+    peer.read_exact(&mut request).await.unwrap();
+    assert_eq!(request.to_vec(), frame(b"request"));
+    peer.write_all(&frame(b"reply")).await.unwrap();
     client.read_exact(&mut [0; 5]).await.unwrap();
     router.grant(Grant::Abort { id: 1 }).await;
     assert_eq!(
@@ -390,12 +409,12 @@ async fn private_saturation_preserves_expose_reservation_without_borrowing() {
     let (mut tcp, mut peer) = router.class_pair(excess + 1, Class::Expose).await;
     assert_eq!(router.event().await, Event::Accepted(excess + 1));
     tcp.write_all(b"ingress still works").await.unwrap();
-    let mut bytes = [0; 19];
+    let mut bytes = [0; 23];
     timeout(Duration::from_secs(2), peer.read_exact(&mut bytes))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(&bytes, b"ingress still works");
+    assert_eq!(bytes.to_vec(), frame(b"ingress still works"));
     router.close().await;
 }
 

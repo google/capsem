@@ -91,8 +91,10 @@ pieces as everything else:
   container's, TCP keeps the proxy path.
 - **Limits.** A VM has one frame link; in several networks at once, UDP and
   ICMP reach the first network it was linked to, TCP and names work in all.
-  A private connection ends one second after its client stops sending: the
-  transport cannot carry a half-close to the host.
+  A half-closed private or published connection keeps its other direction
+  for up to 60 seconds. Every VSOCK leg carries each direction's end as a
+  length-prefixed end-of-stream frame, because the transport can deliver a
+  socket shutdown ahead of bytes still in flight.
 
 ## MITM proxy overview
 

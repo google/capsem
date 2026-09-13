@@ -132,6 +132,10 @@ impl Bridge {
                     let outcome = capsem_foundation::unix::router_stream::copy_until(
                         &mut tcp,
                         vsock,
+                        capsem_foundation::unix::router_stream::Framings {
+                            source: capsem_foundation::unix::router_stream::Framing::Raw,
+                            destination: capsem_foundation::unix::router_stream::Framing::Framed,
+                        },
                         capsem_foundation::unix::router_stream::Limits::default(),
                         async {
                             tokio::select! {

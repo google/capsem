@@ -28,6 +28,22 @@ fn stream_pair() -> (StdUnixStream, UnixStream) {
     (owned, UnixStream::from_std(peer).unwrap())
 }
 
+/// The guest's end of a framed VSOCK leg: everything up to the end-of-stream frame.
+async fn read_frames(stream: &mut UnixStream) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    loop {
+        let length = stream.read_u32().await.unwrap() as usize;
+        if length == 0 {
+            return bytes;
+        }
+        let start = bytes.len();
+        bytes.resize(start + length, 0);
+        stream.read_exact(&mut bytes[start..]).await.unwrap();
+    }
+}
+
+/// A client's binary payload and half-close reach the guest leg framed, and
+/// the guest's framed reply and end-of-stream come back as bytes and a FIN.
 #[tokio::test]
 async fn connected_pair_preserves_binary_half_close_and_concurrency() {
     let (parent, child) = StdUnixStream::pair().unwrap();
@@ -62,10 +78,10 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
         peers.spawn(async move {
             let payload = vec![id as u8; 32 * 1024];
             let echo = tokio::spawn(async move {
-                let mut bytes = Vec::new();
-                server.read_to_end(&mut bytes).await.unwrap();
+                let bytes = read_frames(&mut server).await;
+                server.write_all(&(bytes.len() as u32).to_be_bytes()).await.unwrap();
                 server.write_all(&bytes).await.unwrap();
-                server.shutdown().await.unwrap();
+                server.write_all(&[0; 4]).await.unwrap();
             });
             client.write_all(&payload).await.unwrap();
             client.shutdown().await.unwrap();

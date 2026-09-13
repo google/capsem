@@ -302,9 +302,15 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         // Acknowledgement precedes forwarding and is bounded.
                         Event::Accepted(id).write(&mut events).await?;
                         let (stop, stopped) = tokio::sync::oneshot::channel();
+                        // The destination is always a guest's VSOCK leg; a private
+                        // source is the other guest's, an exposed one a host client.
+                        let framings = router_stream::Framings {
+                            source: if class == Class::Private { router_stream::Framing::Framed } else { router_stream::Framing::Raw },
+                            destination: router_stream::Framing::Framed,
+                        };
                         jobs.spawn(async move {
                             let _permit = permit;
-                            let result = router_stream::copy_until(&mut source.socket, &mut destination.socket, router_stream::Limits::default(), async {
+                            let result = router_stream::copy_until(&mut source.socket, &mut destination.socket, framings, router_stream::Limits::default(), async {
                                 let _ = stopped.await;
                             }).await;
                             if result.reason == CloseReason::Complete {

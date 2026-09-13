@@ -248,43 +248,85 @@ fn async_vsock_new_owns_the_fd_on_failure() {
     );
 }
 
-/// The private bridge ends when the workload stops sending: the host cannot
-/// see a half-close on this transport, so the connection is over, after a
-/// short grace for a reply already on its way; a peer that never closes
-/// cannot keep the bridge, the vsock and the flow open for good.
-#[tokio::test]
-async fn a_private_bridge_ends_after_the_client_stops_sending() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+/// A private bridge between a workload and the host, each end split so a
+/// test can close one direction and keep using the other.
+type Halves = (
+    tokio::io::ReadHalf<tokio::io::DuplexStream>,
+    tokio::io::WriteHalf<tokio::io::DuplexStream>,
+);
+
+fn private_bridge() -> (tokio::task::JoinHandle<()>, Halves, Halves) {
     let (client, tcp_side) = tokio::io::duplex(64 * 1024);
     let (vsock_side, host) = tokio::io::duplex(64 * 1024);
-    let bridge = tokio::spawn(bridge_private(tcp_side, vsock_side));
-    let (mut client_read, mut client_write) = tokio::io::split(client);
-    let (mut host_read, mut host_write) = tokio::io::split(host);
+    (
+        tokio::spawn(bridge_private(tcp_side, vsock_side)),
+        tokio::io::split(client),
+        tokio::io::split(host),
+    )
+}
+
+/// The host's side of a framed VSOCK leg: each payload as one frame, then
+/// the end-of-stream frame.
+async fn send_frames(host: &mut (impl tokio::io::AsyncWrite + Unpin), payloads: &[&[u8]]) {
+    use tokio::io::AsyncWriteExt;
+    for payload in payloads.iter().chain([&&b""[..]]) {
+        host.write_all(&(payload.len() as u32).to_be_bytes()).await.unwrap();
+        host.write_all(payload).await.unwrap();
+    }
+}
+
+/// Everything the guest sent on a framed leg, up to its end-of-stream frame.
+async fn receive_frames(host: &mut (impl tokio::io::AsyncRead + Unpin)) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut received = Vec::new();
+    loop {
+        let length = host.read_u32().await.unwrap() as usize;
+        if length == 0 {
+            return received;
+        }
+        let start = received.len();
+        received.resize(start + length, 0);
+        host.read_exact(&mut received[start..]).await.unwrap();
+    }
+}
+
+/// A request/response client shuts its write side and waits: the host gets
+/// the half-close as an end-of-stream frame, and an answer slower than any
+/// grace period still reaches the client.
+#[tokio::test]
+async fn a_slow_reply_after_the_clients_half_close_is_delivered() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (bridge, (mut client_read, mut client_write), (mut host_read, mut host_write)) = private_bridge();
     client_write.write_all(b"request bytes").await.unwrap();
-    let mut seen = [0u8; 13];
-    host_read.read_exact(&mut seen).await.unwrap();
-    assert_eq!(&seen, b"request bytes");
-    // The peer answers, and the client stops sending while reading the answer.
-    host_write.write_all(b"early reply").await.unwrap();
     client_write.shutdown().await.unwrap();
-    drop(client_write);
-    let mut reply = [0u8; 11];
-    tokio::time::timeout(std::time::Duration::from_secs(2), client_read.read_exact(&mut reply))
-        .await
-        .expect("a reply already on its way is delivered")
-        .unwrap();
-    assert_eq!(&reply, b"early reply");
-    // The peer never closes; the bridge still ends within its grace.
-    tokio::time::timeout(PRIVATE_CLOSE_GRACE * 3, bridge)
-        .await
-        .expect("the bridge ends once the client is done")
-        .unwrap();
-    assert_eq!(
-        tokio::time::timeout(std::time::Duration::from_secs(1), host_read.read(&mut [0u8; 1]))
-            .await
-            .unwrap()
-            .unwrap(),
-        0,
-        "the host end sees the connection end"
+    assert_eq!(receive_frames(&mut host_read).await, b"request bytes");
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    send_frames(&mut host_write, &[b"slow ", b"reply"]).await;
+    let mut reply = Vec::new();
+    client_read.read_to_end(&mut reply).await.unwrap();
+    assert_eq!(reply, b"slow reply");
+    bridge.await.unwrap();
+}
+
+/// The peer says everything and ends its direction first: the client's
+/// upload after that is carried in full, not cut off.
+#[tokio::test]
+async fn a_peer_that_finished_speaking_still_gets_the_whole_upload() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (bridge, (mut client_read, mut client_write), (mut host_read, mut host_write)) = private_bridge();
+    send_frames(&mut host_write, &[b"hello"]).await;
+    let mut greeting = Vec::new();
+    client_read.read_to_end(&mut greeting).await.unwrap();
+    assert_eq!(greeting, b"hello");
+    let upload = vec![7u8; 1 << 20];
+    let (sent, received) = tokio::join!(
+        async {
+            client_write.write_all(&upload).await?;
+            client_write.shutdown().await
+        },
+        receive_frames(&mut host_read),
     );
+    sent.unwrap();
+    assert_eq!(received, upload);
+    bridge.await.unwrap();
 }

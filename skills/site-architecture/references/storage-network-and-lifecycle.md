@@ -58,8 +58,10 @@ database with the audit history).
   owner's handoff socket with the stream, and that owner's confined router
   carries the bytes under the private class budget. The destination VM's
   profile rules see `network.mode == "private"`, `network.protocol == "tcp"`.
-  The host never sees the guest's half-close on this transport, so the guest
-  proxy ends the connection one second after the workload stops sending.
+  Every VSOCK leg of a private or published flow is framed (`router_stream`
+  `Framing::Framed`: `u32` length, zero = end of that direction) and never
+  shut down: Apple VZ delivers a vsock shutdown ahead of queued bytes, which
+  truncated uploads (16 KiB arrived) or left flows open. TCP legs stay raw.
 - UDP and ICMP: every guest brings up `tap0` (MAC = `mac_of(address)`) and
   `capsem-tun` pumps its ethernet frames over vsock 5009. The service runs one
   confined `capsem-router --switch` per network and, on attach or resume,

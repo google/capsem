@@ -8,6 +8,19 @@ fn key(id: u64) -> FlowKey {
     FlowKey { generation: 1, id }
 }
 
+/// One payload as the host frames it on the VSOCK leg.
+fn framed(payload: &[u8]) -> Vec<u8> {
+    [&(payload.len() as u32).to_be_bytes()[..], payload].concat()
+}
+
+/// The next frame the guest sent on the VSOCK leg.
+fn read_frame(host: &mut UnixStream, length: usize) -> Vec<u8> {
+    let mut frame = vec![0; 4 + length];
+    host.read_exact(&mut frame).unwrap();
+    assert_eq!(frame[..4], (length as u32).to_be_bytes(), "frame header");
+    frame.split_off(4)
+}
+
 #[test]
 fn destination_reset_reports_reason_and_bytes_before_releasing_admission() {
     use capsem_proto::router::CloseReason;
@@ -20,10 +33,10 @@ fn destination_reset_reports_reason_and_bytes_before_releasing_admission() {
     let (vsock, mut host) = UnixStream::pair().unwrap();
     host.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     bridge.connect_with(key(1), move || Ok((tcp, vsock))).unwrap();
-    host.write_all(b"request").unwrap();
+    host.write_all(&framed(b"request")).unwrap();
     client.read_exact(&mut [0; 7]).unwrap();
     client.write_all(b"reply").unwrap();
-    host.read_exact(&mut [0; 5]).unwrap();
+    assert_eq!(read_frame(&mut host, 5), b"reply");
     capsem_foundation::unix::fd::reset_tcp(client.as_fd()).unwrap();
     let queued = reports.lock().unwrap().recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(matches!(queued.message, capsem_proto::GuestToHost::PortClosed {
@@ -59,14 +72,14 @@ fn abort_closes_only_the_matching_generation_and_connection() {
         let (vsock, mut host) = UnixStream::pair().unwrap();
         client.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         bridge.connect_with(key(id), move || Ok((tcp, vsock))).unwrap();
-        host.write_all(b"ready").unwrap();
+        host.write_all(&framed(b"ready")).unwrap();
         client.read_exact(&mut [0; 5]).unwrap();
         peers.push((client, host));
     }
     bridge
         .abort(&[capsem_proto::router::FlowKey { generation: 2, id: 1 }])
         .unwrap();
-    peers[0].1.write_all(b"live").unwrap();
+    peers[0].1.write_all(&framed(b"live")).unwrap();
     peers[0].0.read_exact(&mut [0; 4]).unwrap();
     bridge
         .abort(&[capsem_proto::router::FlowKey { generation: 1, id: 1 }])
@@ -76,7 +89,7 @@ fn abort_closes_only_the_matching_generation_and_connection() {
         io::ErrorKind::ConnectionReset,
         "matching flow did not reset"
     );
-    peers[1].1.write_all(b"still live").unwrap();
+    peers[1].1.write_all(&framed(b"still live")).unwrap();
     peers[1].0.read_exact(&mut [0; 10]).unwrap();
     bridge.shutdown();
     assert_eq!(bridge.connections.available_permits(), 64);
@@ -130,7 +143,7 @@ fn shutdown_closes_live_flows_and_joins_them_before_returning() {
     let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
     let mut bridge = Bridge::new(control).unwrap();
     bridge.connect_with(key(1), move || Ok((tcp, vsock))).unwrap();
-    host.write_all(b"ready").unwrap();
+    host.write_all(&framed(b"ready")).unwrap();
     client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let mut ready = [0; 5];
     client.read_exact(&mut ready).unwrap();

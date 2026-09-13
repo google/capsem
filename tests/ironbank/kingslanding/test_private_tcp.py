@@ -273,3 +273,110 @@ def test_killing_one_owner_drops_only_its_own_flows(members, service):
         "the private transfer reported the lost peer",
         timeout=30,
     )
+
+
+HALF_CLOSE_PORT = 5301
+HALF_CLOSE_SERVER = """
+import socket, sys, time
+mode, port = sys.argv[1], int(sys.argv[2])
+listener = socket.socket()
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind(("0.0.0.0", port))
+listener.listen()
+open(f"/var/tmp/half-close-{mode}.ready", "w").close()
+while True:
+    peer, _ = listener.accept()
+    if mode == "late":
+        # Reads the whole request, thinks, then answers.
+        size = 0
+        while chunk := peer.recv(65536):
+            size += len(chunk)
+        time.sleep(3)
+        peer.sendall(f"late reply to {size}".encode())
+    else:
+        # Says everything first, then reads the whole upload.
+        peer.sendall(b"hello")
+        peer.shutdown(socket.SHUT_WR)
+        size = 0
+        while chunk := peer.recv(65536):
+            size += len(chunk)
+        open("/var/tmp/half-close-upload.size", "w").write(str(size))
+    peer.close()
+"""
+HALF_CLOSE_CLIENT = """
+import socket, sys, time
+mode, address, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+stream = socket.create_connection((address, port), timeout=30)
+if mode == "late":
+    stream.sendall(b"q" * 1000)
+    stream.shutdown(socket.SHUT_WR)
+else:
+    assert stream.recv(5) == b"hello"
+    assert stream.recv(1) == b""
+    time.sleep(2)
+    stream.sendall(b"u" * 200_000)
+    stream.shutdown(socket.SHUT_WR)
+reply = b""
+while chunk := stream.recv(65536):
+    reply += chunk
+print(reply.decode())
+"""
+
+
+def test_a_half_closed_private_connection_carries_the_other_direction_to_its_end(
+    members, service
+):
+    """Half-close is a signal, not an end: a request/response client that
+    shuts its write side still gets a slow answer, and a peer that finished
+    speaking still gets the client's whole upload."""
+    alpha, beta = members["alpha"], members["beta"]
+    for offset, mode in enumerate(("late", "upload")):
+        start_in_guest(
+            service,
+            beta["id"],
+            f"half-close-{mode}",
+            f"{IN_CONTAINER} python3 -c {shlex.quote(HALF_CLOSE_SERVER)} "
+            f"{mode} {HALF_CLOSE_PORT + offset}",
+        )
+        wait_for(
+            lambda mode=mode: (
+                guest(
+                    service,
+                    beta["id"],
+                    f"test -e /var/tmp/half-close-{mode}.ready",
+                    check=False,
+                ).get("exit_code")
+                == 0
+            ),
+            f"beta's {mode} server listens",
+            timeout=20,
+        )
+
+    def client(mode, port):
+        return guest(
+            service,
+            alpha["id"],
+            f"{IN_CONTAINER} python3 -c {shlex.quote(HALF_CLOSE_CLIENT)} "
+            f"{mode} {beta['private_address']} {port}",
+            timeout=40,
+            check=False,
+        )
+
+    late = client("late", HALF_CLOSE_PORT)
+    assert late.get("exit_code") == 0, late
+    assert late["stdout"].strip() == "late reply to 1000", late
+
+    upload = client("upload", HALF_CLOSE_PORT + 1)
+    assert upload.get("exit_code") == 0, upload
+    wait_for(
+        lambda: (
+            guest(
+                service, beta["id"], "cat /var/tmp/half-close-upload.size", check=False
+            )
+            .get("stdout", "")
+            .strip()
+            == "200000"
+        ),
+        "beta read alpha's whole upload after it stopped speaking",
+        timeout=20,
+    )

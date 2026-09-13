@@ -31,11 +31,11 @@ use std::path::Path;
 use std::process;
 use std::sync::{Arc, Mutex};
 
-use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
+use capsem_foundation::unix::router_stream;
 use capsem_proto::privatelink::ConnectHeader;
 use capsem_proto::{VSOCK_PORT_PRIVATE, VSOCK_PORT_SNI_PROXY};
 use process_attribution::encode_meta_line;
@@ -56,12 +56,6 @@ const LISTEN_PORT_HTTP: u16 = 10080;
 /// VM owner admits the connection against the member's network and hands
 /// it to that member, so there is nothing to sniff.
 const LISTEN_PORT_PRIVATE: u16 = 10128;
-/// How long a private connection keeps delivering the peer's bytes after the
-/// workload stopped sending. The host side of this transport never sees a
-/// half-close, so a client that closes after its last byte would otherwise
-/// leave the flow open on both owners until the peer gave up, which a peer
-/// waiting for that very close never does.
-pub const PRIVATE_CLOSE_GRACE: Duration = Duration::from_secs(1);
 const RECENT_PID_CAPACITY: usize = 16;
 
 #[derive(Default)]
@@ -288,56 +282,32 @@ async fn handle_private_connection(tcp_stream: TcpStream, attributor: Arc<Proces
     bridge_private(tcp_stream, vsock_stream).await;
 }
 
-/// Carry a private connection's bytes both ways until the workload stops
-/// sending, then the peer's remaining bytes for [`PRIVATE_CLOSE_GRACE`] or
-/// until it closes, whichever comes first. Both ends close when this
-/// returns; the host owner ends the flow on its side from that.
-pub async fn bridge_private<T, V>(tcp: T, vsock: V)
+/// Carry a private connection's bytes both ways with the router's own
+/// duplex copy: the workload's half-close crosses the VSOCK leg as an
+/// end-of-stream frame while the other direction keeps flowing, and a peer
+/// that never finishes after a half-close is cut at the shared deadline, so
+/// it cannot hold the flow's permits. Both ends close when this returns.
+pub async fn bridge_private<T, V>(mut tcp: T, mut vsock: V)
 where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    V: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin,
+    V: AsyncRead + AsyncWrite + Unpin,
 {
-    let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp);
-    let (mut vsock_read, mut vsock_write) = tokio::io::split(vsock);
-    let outbound = tokio::spawn(async move {
-        let result = tokio::io::copy(&mut tcp_read, &mut vsock_write).await;
-        let _ = vsock_write.shutdown().await;
-        result
-    });
-    let inbound = tokio::spawn(async move {
-        let result = tokio::io::copy(&mut vsock_read, &mut tcp_write).await;
-        let _ = tcp_write.shutdown().await;
-        result
-    });
-    tokio::pin!(inbound);
-    tokio::pin!(outbound);
+    let framings = router_stream::Framings {
+        source: router_stream::Framing::Raw,
+        destination: router_stream::Framing::Framed,
+    };
+    let outcome = router_stream::copy(&mut tcp, &mut vsock, framings, router_stream::Limits::default()).await;
     let normal = |error: &io::Error| {
         matches!(
             error.kind(),
             io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
         )
     };
-    let report = |direction: &str, result: Result<io::Result<u64>, tokio::task::JoinError>| {
-        if let Ok(Err(error)) = result {
-            if !normal(&error) {
-                eprintln!("[capsem-net-proxy] private bridge {direction}: {error}");
-            }
-        }
-    };
-    tokio::select! {
-        finished = &mut inbound => {
-            // The peer closed first: the client's remaining bytes cannot
-            // matter to a peer that is gone.
-            report("peer to workload", finished);
-            outbound.abort();
-        }
-        finished = &mut outbound => {
-            report("workload to peer", finished);
-            match tokio::time::timeout(PRIVATE_CLOSE_GRACE, &mut inbound).await {
-                Ok(finished) => report("peer to workload", finished),
-                Err(_) => inbound.abort(),
-            }
-        }
+    if let Some(error) = outcome.error.filter(|error| !normal(error)) {
+        eprintln!(
+            "[capsem-net-proxy] private bridge ended ({:?}): {error}",
+            outcome.reason
+        );
     }
 }
 
