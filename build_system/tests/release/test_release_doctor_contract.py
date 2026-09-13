@@ -5591,7 +5591,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     app = _source_text("web/app/src/lib/components/shell/App.svelte")
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
-    cli = _source_text("crates/capsem/src/main.rs")
+    cli = _source_text("crates/capsem/src/create_command.rs")
     mcp = _source_text("crates/capsem-mcp/src/main.rs")
 
     assert "vmStore.openCreateModal()" in app
@@ -5603,7 +5603,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     assert "provision_temp" not in new_session
     assert "provision_temp" not in tray_gateway
     assert 'profile_id":"code' not in tray_gateway
-    assert "profile_id: profile.clone()" in cli
+    assert "profile_id: args.profile.clone()" in cli
     assert "params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)" in mcp
 
 
@@ -6487,7 +6487,7 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
 
 def test_capsem_agent_repairs_missing_default_venv() -> None:
     """The guest agent must not leave VIRTUAL_ENV unset if init venv races."""
-    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "main.rs").read_text()
+    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "venv.rs").read_text()
 
     assert 'const VENV_TARGET: &str = "/run/capsem-venv"' in source
     assert "std::thread::spawn(move ||" in source
