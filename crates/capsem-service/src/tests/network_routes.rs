@@ -707,12 +707,24 @@ async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
     assert_eq!(status, StatusCode::OK);
     // The pump dies, and the VM is disconnected inside the relink window.
     drop(seat.guest_end());
-    assert!(released_within(&seat, Duration::from_secs(3)).await, "the service let the link go");
-    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert!(
+        released_within(&seat, Duration::from_secs(3)).await,
+        "the service let the link go"
+    );
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{id}/members/vm-b"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     tokio::time::sleep(Duration::from_millis(2500)).await;
     assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
-    assert!(!owner.is_finished(), "a member that left is never asked for its link again");
+    assert!(
+        !owner.is_finished(),
+        "a member that left is never asked for its link again"
+    );
 }
 
 #[tokio::test]
@@ -737,7 +749,13 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(member_state(&state, &id, "vm-b").await, "attaching");
-    let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}/members/vm-b"), None).await;
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{id}/members/vm-b"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     seat.answers.add_permits(1);
     let (status, _) = joining.await.unwrap();

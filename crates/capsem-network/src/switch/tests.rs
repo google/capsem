@@ -59,7 +59,11 @@ fn a_members_datagram_to_another_member_is_forwarded() {
     // Echo, and the errors path MTU discovery and traceroute depend on.
     for icmp_type in [0u8, 3, 8, 11] {
         let frame = from_a_to_b(ICMP, &[icmp_type, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(classify(A, member, &frame), Verdict::Forward(B), "icmp type {icmp_type}");
+        assert_eq!(
+            classify(A, member, &frame),
+            Verdict::Forward(B),
+            "icmp type {icmp_type}"
+        );
     }
 }
 
