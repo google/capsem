@@ -16,45 +16,19 @@ fn publications_are_explicit_loopback_port_pairs() {
 }
 
 #[test]
-fn image_names_skip_existing_sessions_without_reusing_them() {
-    assert_eq!(available_name("redis", &[]).unwrap(), "redis");
-    assert_eq!(
-        available_name("redis", &["Redis".into(), "redis-2".into()]).unwrap(),
-        "redis-3"
-    );
-}
-
-#[test]
-fn qualified_images_derive_names_without_registry_tags_or_digest() {
-    for reference in [
-        "docker://redis:7-alpine",
-        "ghcr.io/team/redis:latest",
-        "registry.example:5443/team/redis",
-    ] {
-        assert_eq!(image_name(reference).unwrap().as_deref(), Some("redis"));
-    }
-}
-
-#[test]
-fn shell_commands_remain_commands_and_bad_image_urls_fail_closed() {
-    for command in [
-        "echo hello",
-        "true",
-        "/usr/bin/id",
-        "python -c 'print(1)'",
-        "./script.sh",
-    ] {
-        assert!(image_name(command).unwrap().is_none());
-    }
-    for image in [
-        "docker://",
-        "docker://redis;echo",
-        "ghcr.io/team/redis@sha256:bad",
-        "https://example.com/image",
-    ] {
-        assert!(
-            image_name(image).is_err(),
-            "invalid image became a shell command: {image}"
-        );
-    }
+fn the_detached_launch_is_the_launch_command_backgrounded_to_the_console() {
+    let command = detached_launch_command();
+    assert!(command.starts_with("setsid /bin/sh -c '"), "{command}");
+    assert!(command.ends_with("' </dev/null >/dev/console 2>&1 &"), "{command}");
+    // The quoting survives a real shell: the inner command comes back exact.
+    let echoed = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(
+            command
+                .replacen("setsid /bin/sh -c", "printf %s", 1)
+                .replace(" </dev/null >/dev/console 2>&1 &", ""),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(echoed.stdout).unwrap(), LAUNCH_COMMAND);
 }

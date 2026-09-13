@@ -29,41 +29,14 @@ pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/l
 pub const STAGE: &str = ".capsem-image";
 pub const LAUNCH_COMMAND: &str = "chmod 555 /root/.capsem-image/launch.py && chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image'";
 
-/// Qualified references opt into images; ordinary existing shell commands stay commands.
-pub fn image_name(input: &str) -> Result<Option<String>> {
-    let first = input.split('/').next().unwrap_or_default();
-    let qualified = input.contains('/')
-        && !matches!(first, "" | "." | "..")
-        && !first.chars().any(char::is_whitespace)
-        && (first.contains('.') || first.contains(':') || first == "localhost");
-    if !qualified && !input.contains("://") {
-        return Ok(None);
-    }
-    let reference = capsem_assets::oci::image_reference(input)?;
-    let name = reference
-        .repository()
-        .rsplit('/')
-        .next()
-        .unwrap_or("container")
-        .chars()
-        .take(48)
-        .map(|c| if c == '.' { '-' } else { c })
-        .collect();
-    Ok(Some(name))
-}
-
-pub fn available_name(base: &str, existing: &[String]) -> Result<String> {
-    for index in 1..10_000 {
-        let candidate = if index == 1 {
-            base.to_owned()
-        } else {
-            format!("{base}-{index}")
-        };
-        if !existing.iter().any(|name| name.eq_ignore_ascii_case(&candidate)) {
-            return Ok(candidate);
-        }
-    }
-    anyhow::bail!("no available VM name for image {base}")
+/// The launcher in the background, the way a boot of a configured VM starts
+/// it: detached from the exec that asked, with its output on the console that
+/// `capsem logs` reads.
+pub fn detached_launch_command() -> String {
+    format!(
+        "setsid /bin/sh -c '{}' </dev/null >/dev/console 2>&1 &",
+        LAUNCH_COMMAND.replace('\'', r"'\''")
+    )
 }
 
 #[cfg(test)]

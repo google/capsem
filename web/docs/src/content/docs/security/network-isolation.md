@@ -60,7 +60,7 @@ connection to the host over vsock port 5002.
 ## Private networks between VMs
 
 A VM has no way to reach another VM by default. Named networks
-(`capsem network create`, `capsem create --network`, `capsem run --network`)
+(`capsem network create`, `capsem create --network`, `capsem run --image ... --network`)
 are the one exception, and they are built from the same admitted, audited
 pieces as everything else:
 

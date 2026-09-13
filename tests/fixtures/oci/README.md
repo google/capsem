@@ -1,16 +1,17 @@
 # OCI containers in Capsem
 
-This worktree implements `capsem run docker://IMAGE` and loopback TCP publishing:
+Capsem runs an OCI image as a VM's workload, with loopback TCP publishing:
 
 ```sh
-capsem run -p 6379:6379 docker://redis:7.4.11-alpine
+capsem create -n cache --image docker://redis:7.4.11-alpine -p 6379:6379
+capsem run --image docker://redis:7.4.11-alpine redis-cli --version
 ```
 
-The worktree build pulls the native Linux image, creates an image-named VM,
-uses the image's entrypoint and default command, streams logs, and retains a
-named VM controlled by the existing lifecycle commands. A command after
-the image overrides its default command. Registry-qualified references also
-work; `docker://` disambiguates short images from the existing shell-run command.
+The build pulls the native Linux image, provisions a VM from the profile and
+uses the image's entrypoint and default command; a command after the image
+overrides its default command. `create --image` starts it detached (output in
+`capsem logs`, VM kept only when named); `run --image` streams it and destroys
+the VM when it ends. Registry-qualified references also work.
 Installed binaries, services, and profiles are not changed by this spike.
 
 ## Ownership and confinement

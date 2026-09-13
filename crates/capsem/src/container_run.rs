@@ -1,155 +1,115 @@
+//! `capsem run`: one command in a VM that exists only for it -- a shell
+//! command in a profile's VM, or with `--image` an OCI image's workload.
+
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
-use capsem_assets::oci::{ImageLayout, Puller, RegistryAuth};
-use capsem_core::container;
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use anyhow::{Context, Result};
 use tokio::io::AsyncWriteExt;
 
-use crate::client::{
-    self, ApiResponse, ExecResponse, ListResponse, ProvisionRequest, ProvisionResponse, RunRequest, UdsClient,
-};
-
-mod upload;
+use crate::client::{self, ApiResponse, ExecResponse, ProvisionRequest, RunRequest, UdsClient};
+use crate::container_image::{self, ImageArgs, Workload};
 
 #[derive(clap::Args)]
 pub(super) struct RunArgs {
-    /// Shell command, docker://IMAGE, or qualified registry/repository:tag
-    pub command: String,
+    /// Shell command; with --image, the command replacing the image's Cmd
+    pub command: Option<String>,
     #[arg(long, default_value = crate::DEFAULT_PROFILE_ID)]
     pub profile: String,
     /// Maximum workload duration in seconds
     #[arg(long)]
     pub timeout: Option<u64>,
-    /// Environment variables (container-only when running an image)
+    /// Environment variables (the container's, with --image)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
-    /// Container VM name; otherwise derived from the image
-    #[arg(short = 'n', long)]
-    pub name: Option<String>,
-    /// Publish loopback HOST_PORT:GUEST_PORT over VSOCK (host 0 picks a port)
-    #[arg(short = 'p', long = "publish")]
-    pub publish: Vec<container::PortMapping>,
-    /// Additional PEM certificate trusted only for this registry pull
+    /// RAM in GB (default: the profile's)
     #[arg(long)]
-    pub registry_ca: Option<std::path::PathBuf>,
-    /// Registry user; password/token comes from CAPSEM_REGISTRY_PASSWORD
+    pub ram: Option<u64>,
+    /// CPU cores (default: the profile's)
     #[arg(long)]
-    pub registry_user: Option<String>,
-    /// Named networks the container's VM joins at creation (repeatable)
-    #[arg(long = "network")]
+    pub cpu: Option<u32>,
+    /// Named networks the VM joins at creation (repeatable)
+    #[arg(long = "network", requires = "image")]
     pub network: Vec<String>,
-    /// Replace the image's Cmd, preserving its Entrypoint
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[command(flatten)]
+    pub image: ImageArgs,
+    /// Further arguments of the image command
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, requires = "image")]
     pub args: Vec<String>,
+}
+
+pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
+    ram_gb.map(|gb| gb.saturating_mul(1024))
 }
 
 pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     client::validate_id(&args.profile)?;
-    let Some(base) = container::image_name(&args.command)? else {
-        ensure!(
-            args.name.is_none()
-                && args.args.is_empty()
-                && args.registry_ca.is_none()
-                && args.registry_user.is_none()
-                && args.publish.is_empty()
-                && args.network.is_empty(),
-            "container options require an OCI image"
-        );
-        let request = RunRequest {
-            command: args.command.clone(),
-            profile_id: args.profile.clone(),
-            timeout_secs: args.timeout,
-            env: client::parse_env_vars(&args.env)?,
-        };
-        let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
-        let response = response.into_result()?;
-        let mut stdout = tokio::io::stdout();
-        stdout.write_all(response.stdout.as_bytes()).await?;
-        stdout.flush().await?;
-        let mut stderr = tokio::io::stderr();
-        stderr.write_all(response.stderr.as_bytes()).await?;
-        stderr.flush().await?;
-        if let Some(notice) = response.truncation_notice() {
-            eprintln!("{notice}");
-        }
-        return Ok(response.exit_code);
+    match &args.image.image {
+        Some(reference) => run_image(client, args, reference).await,
+        None => run_command(client, args).await,
+    }
+}
+
+async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
+    let request = RunRequest {
+        command: args.command.clone().context("run needs a shell command, or --image")?,
+        profile_id: args.profile.clone(),
+        timeout_secs: args.timeout,
+        ram_mb: ram_mb(args.ram),
+        cpus: args.cpu,
+        env: client::parse_env_vars(&args.env)?,
     };
+    let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
+    let response = response.into_result()?;
+    let mut stdout = tokio::io::stdout();
+    stdout.write_all(response.stdout.as_bytes()).await?;
+    stdout.flush().await?;
+    let mut stderr = tokio::io::stderr();
+    stderr.write_all(response.stderr.as_bytes()).await?;
+    stderr.flush().await?;
+    if let Some(notice) = response.truncation_notice() {
+        eprintln!("{notice}");
+    }
+    Ok(response.exit_code)
+}
+
+/// The image's workload attached, in a VM destroyed however the run ends:
+/// its exit, a timeout, a signal, or a failure.
+async fn run_image(client: &UdsClient, args: &RunArgs, reference: &str) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let cancel = async {
         tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 }
     };
     tokio::pin!(cancel);
-    let architecture = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "amd64",
-        other => anyhow::bail!("unsupported container architecture: {other}"),
+    let command: Vec<String> = args.command.iter().chain(&args.args).cloned().collect();
+    let workload = Workload {
+        reference,
+        image: &args.image,
+        env: &args.env,
+        args: &command,
     };
-    let staging = tempfile::tempdir()?;
-    let authentication = match &args.registry_user {
-        Some(user) => RegistryAuth::Basic(
-            user.clone(),
-            std::env::var("CAPSEM_REGISTRY_PASSWORD").context("--registry-user requires CAPSEM_REGISTRY_PASSWORD")?,
-        ),
-        None => RegistryAuth::Anonymous,
-    };
-    let certificate = match &args.registry_ca {
-        Some(path) => Some(tokio::fs::read(path).await.context("read registry CA")?),
-        None => None,
-    };
-    let puller = Puller::new_with_root_certificate(architecture, authentication, certificate.as_deref())?;
-    eprintln!("Pulling {}", args.command);
-    let image = tokio::select! {
-        result = puller.pull(&args.command, staging.path()) => result?,
+    let pulled = tokio::select! {
+        pulled = container_image::pull(&workload) => pulled?,
         code = &mut cancel => return Ok(code),
     };
-    eprintln!("Image {}", image.source_digest);
-    let response: ApiResponse<ListResponse> = client.get("/vms/list").await?;
-    let existing: Vec<_> = response
-        .into_result()?
-        .sessions
-        .into_iter()
-        .filter_map(|vm| vm.name)
-        .collect();
-    let name = match &args.name {
-        Some(name) => {
-            client::validate_id(name)?;
-            name.clone()
-        }
-        None => container::available_name(&base, &existing)?,
-    };
     let request = ProvisionRequest {
-        name: Some(name.clone()),
+        name: None,
         profile_id: args.profile.clone(),
-        ram_mb: 4096,
-        cpus: 4,
-        persistent: true,
+        ram_mb: ram_mb(args.ram),
+        cpus: args.cpu,
+        persistent: false,
         env: None,
         from: None,
         networks: args.network.clone(),
     };
-    // Keep the create request alive until it returns the authoritative VM id.
-    // Signals are already registered and remain queued while boot completes.
-    let response: ApiResponse<ProvisionResponse> = client.post("/vms/create", request).await?;
-    let vm = response.into_result()?;
-    eprintln!("Running {name} ({})", vm.id);
+    // Signals stay queued while the create request returns the VM to destroy.
+    let vm = container_image::provision(client, &request).await?;
+    eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        // Create may return at the launch signal, before guest boot finishes.
-        // The existing exec route owns readiness and its transport deadline.
-        let ready: ApiResponse<ExecResponse> = client
-            .post(
-                &format!("/vms/{}/exec", vm.id),
-                client::ExecRequest {
-                    command: "true".into(),
-                    timeout_secs: Some(30),
-                },
-            )
-            .await?;
-        let ready = ready.into_result()?;
-        ensure!(ready.exit_code == 0, "guest readiness check failed: {}", ready.stderr);
-        upload::image(client, &vm.id, &image, args).await?;
-        stream(&vm, &args.publish).await
+        container_image::stage(client, &vm, &pulled, &workload)
+            .await?
+            .attach()
+            .await
     };
     let deadline = async {
         match args.timeout {
@@ -159,100 +119,14 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     };
     let result = tokio::select! {
         result = work => result,
-        code = &mut cancel => { eprintln!("Detached from {name}; use the existing VM lifecycle commands to stop or delete it"); return Ok(code); },
+        code = &mut cancel => Ok(code),
         _ = deadline => { eprintln!("Container timed out"); Ok(124) },
     };
-    if result
-        .as_ref()
-        .err()
-        .and_then(|error| error.downcast_ref::<std::io::Error>())
-        .is_some_and(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
-    {
-        return result; // Closing the output attachment must not stop the workload.
-    }
-    let cleanup: Result<ApiResponse<serde_json::Value>> = client
-        .post(&format!("/vms/{}/stop", vm.id), serde_json::json!({}))
-        .await;
-    match (result, cleanup.and_then(ApiResponse::into_result)) {
-        (Ok(code), Ok(_)) => Ok(code),
-        (Err(error), Ok(_)) => Err(error),
-        (Ok(_), Err(error)) => Err(error.context("container VM stop failed")),
-        (Err(error), Err(cleanup)) => Err(error.context(format!("container VM stop also failed: {cleanup:#}"))),
-    }
-}
-
-async fn stream(vm: &ProvisionResponse, ports: &[container::PortMapping]) -> Result<i32> {
-    let path = vm
-        .uds_path
-        .as_ref()
-        .context("service did not return the VM IPC socket")?;
-    let socket = tokio::net::UnixStream::connect(path).await?.into_std()?;
-    let (socket, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        socket,
-        "capsem-cli",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await?;
-    let (sender, receiver) =
-        capsem_foundation::ipc_channel::channel_from_std::<ServiceToProcess, ProcessToService>(socket)?;
-    for mapping in ports {
-        sender
-            .send(ServiceToProcess::PublishPort {
-                id: 0,
-                host_port: mapping.host,
-                guest_port: mapping.guest,
-            })
-            .await?;
-        loop {
-            if let ProcessToService::PortPublished {
-                id: 0,
-                host_port,
-                router_pid,
-                error,
-            } = receiver.recv().await?
-            {
-                if let Some(error) = error {
-                    anyhow::bail!("publish port: {error}");
-                }
-                eprintln!(
-                    "Published 127.0.0.1:{host_port} -> {}/tcp (router {router_pid})",
-                    mapping.guest
-                );
-                break;
-            }
-        }
-    }
-    // Service job ids count upward; this private attached command has its own
-    // connection and uses the reserved high end, with duplicate refusal in process.
-    let id = i64::MAX as u64;
-    sender
-        .send(ServiceToProcess::ExecStream {
-            id,
-            command: container::LAUNCH_COMMAND.into(),
-        })
-        .await?;
-    let mut stdout = tokio::io::stdout();
-    loop {
-        match receiver.recv().await? {
-            ProcessToService::ExecOutput { id: job, data } if job == id => {
-                stdout.write_all(&data).await?;
-                stdout.flush().await?;
-            }
-            ProcessToService::ExecResult {
-                id: job,
-                exit_code,
-                stderr,
-                truncated,
-                ..
-            } if job == id => {
-                let mut output = tokio::io::stderr();
-                output.write_all(&stderr).await?;
-                output.flush().await?;
-                ensure!(!truncated && exit_code >= 0, "container exec transport failed");
-                return Ok(exit_code);
-            }
-            _ => {}
-        }
+    let destroyed = container_image::destroy(client, &vm.id).await;
+    match (result, destroyed) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(error.context("container VM delete failed")),
+        (Err(error), Err(cleanup)) => Err(error.context(format!("container VM delete also failed: {cleanup:#}"))),
     }
 }
 

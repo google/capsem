@@ -1,6 +1,8 @@
 mod client;
 mod completions;
+mod container_image;
 mod container_run;
+mod create_command;
 mod grouped_help;
 use grouped_help::GROUPED_HELP;
 mod network_commands;
@@ -319,29 +321,7 @@ enum SessionCommands {
     ///
     /// Sessions are ephemeral by default and destroyed on delete. Use -n <name> to
     /// create a persistent session that survives suspend/resume cycles.
-    Create {
-        /// Name for the session (makes it persistent -- "if you name it, you keep it")
-        #[arg(short = 'n', long)]
-        name: Option<String>,
-        /// Profile to use for this session
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-        /// RAM in GB
-        #[arg(long, default_value_t = 4)]
-        ram: u64,
-        /// CPU cores
-        #[arg(long, default_value_t = 4)]
-        cpu: u32,
-        /// Set environment variables (repeatable: -e KEY=VALUE)
-        #[arg(short = 'e', long = "env")]
-        env: Vec<String>,
-        /// Clone state from an existing persistent session
-        #[arg(long, alias = "image")]
-        from: Option<String>,
-        /// Named networks to join (repeatable: --network NAME)
-        #[arg(long = "network")]
-        network: Vec<String>,
-    },
+    Create(create_command::CreateArgs),
     /// Open the terminal UI
     ///
     /// With no arguments, opens the TUI over every session. Pass a session
@@ -1518,37 +1498,7 @@ async fn main() -> Result<()> {
                 print_asset_status(&status);
             }
         }
-        Commands::Session(SessionCommands::Create {
-            name,
-            profile,
-            ram,
-            cpu,
-            env,
-            from,
-            network,
-        }) => {
-            client::validate_id(profile)?;
-            let persistent = name.is_some() || from.is_some();
-            let req = ProvisionRequest {
-                name: name.clone(),
-                profile_id: profile.clone(),
-                ram_mb: ram * 1024,
-                cpus: *cpu,
-                persistent,
-                env: client::parse_env_vars(env)?,
-                from: from.clone(),
-                networks: network.clone(),
-            };
-
-            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", &req).await?;
-            let info = resp.into_result()?;
-
-            if persistent {
-                println!("{} (persistent)", info.id);
-            } else {
-                println!("{}", info.id);
-            }
-        }
+        Commands::Session(SessionCommands::Create(args)) => create_command::create(&client, args).await?,
         Commands::Session(SessionCommands::Fork {
             session,
             name,
@@ -2017,8 +1967,8 @@ async fn main() -> Result<()> {
             let req = ProvisionRequest {
                 name: None,
                 profile_id: DEFAULT_PROFILE_ID.to_string(),
-                ram_mb: 2048,
-                cpus: 2,
+                ram_mb: Some(2048),
+                cpus: Some(2),
                 persistent: false,
                 env: Some(doctor_env),
                 from: None,

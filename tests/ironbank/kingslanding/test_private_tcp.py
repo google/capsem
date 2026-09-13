@@ -29,12 +29,7 @@ from tests.ironbank.kingslanding.test_private_link_benchmark import (
     guest,
     start_in_guest,
 )
-from tests.ironbank.kingslanding.test_run import (
-    command,
-    environment,
-    service,
-    wait_for,
-)
+from tests.ironbank.kingslanding.test_run import created, service, wait_for
 
 __all__ = ["evidence", "service"]
 pytestmark = pytest.mark.integration
@@ -43,48 +38,12 @@ STRANGER = "10.128.0.9"
 KEPT_LOGS = ("process.log", "serial.log", ".capsem-agent-stdio.log")
 
 
-@contextlib.contextmanager
-def member(service, tmp_path, reference, certificate, name, *publish):
-    """One container VM under `name`, up once its Redis accepts connections."""
-    stdout = tmp_path / f"{name}.stdout"
-    stderr = tmp_path / f"{name}.stderr"
-    with stdout.open("wb") as out, stderr.open("wb") as err:
-        process = subprocess.Popen(
-            command(service, reference, certificate, "-n", name, *publish),
-            env=environment(service),
-            stdout=out,
-            stderr=err,
-        )
-        try:
-
-            def ready():
-                assert process.poll() is None, stderr.read_text()
-                return b"Ready to accept connections tcp" in stdout.read_bytes()
-
-            wait_for(ready, f"{name} container startup", timeout=180)
-            rows = [
-                row
-                for row in service.client().get("/vms/list")["sandboxes"]
-                if row.get("name") == name
-            ]
-            assert len(rows) == 1, rows
-            yield {**rows[0], "stderr": stderr}
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-
-
 @pytest.fixture
 def members(service, tmp_path, evidence):
     """Two members of one network, `alpha` with a published throughput port."""
     with (
         registry(tmp_path) as (reference, certificate, _),
-        member(
+        created(
             service,
             tmp_path,
             reference,
@@ -93,7 +52,7 @@ def members(service, tmp_path, evidence):
             "-p",
             f"0:{THROUGHPUT_PORT}",
         ) as alpha,
-        member(service, tmp_path, reference, certificate, "beta") as beta,
+        created(service, tmp_path, reference, certificate, "beta") as beta,
     ):
         client = service.client()
         network = client.post("/networks", {"name": "team"})

@@ -6,7 +6,7 @@ use clap::Parser;
 fn parse_create_with_repeated_networks() {
     let cli = Cli::parse_from(["capsem", "create", "--network", "team", "--network", "ci"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { network, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { network, .. })) => {
             assert_eq!(network, vec!["team", "ci"]);
         }
         _ => panic!("expected Create"),

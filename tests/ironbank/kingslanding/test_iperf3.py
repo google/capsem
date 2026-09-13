@@ -26,6 +26,7 @@ from tests.ironbank.kingslanding.test_private_link_benchmark import (
 )
 from tests.ironbank.kingslanding.test_run import (
     command,
+    create_command,
     environment,
     service,
     wait_for,
@@ -41,66 +42,50 @@ NETWORK = "iperf"
 @contextlib.contextmanager
 def server(service, tmp_path, reference, certificate):
     """The iperf3 server container, a member of the network, up once listening."""
-    stdout = tmp_path / "iperf-server.stdout"
-    stderr = tmp_path / "iperf-server.stderr"
-    with stdout.open("wb") as out, stderr.open("wb") as err:
-        process = subprocess.Popen(
-            command(
-                service, reference, certificate, "-n", SERVER, "--network", NETWORK
-            ),
-            env=environment(service),
-            stdout=out,
-            stderr=err,
-        )
-        try:
-            rows = []
+    result = subprocess.run(
+        create_command(
+            service, reference, certificate, "-n", SERVER, "--network", NETWORK
+        ),
+        env=environment(service),
+        capture_output=True,
+        timeout=240,
+        check=False,
+    )
+    (tmp_path / "iperf-server.stderr").write_bytes(result.stderr)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    rows = [
+        row
+        for row in service.client().get("/vms/list")["sandboxes"]
+        if row.get("name") == SERVER
+    ]
+    assert len(rows) == 1, rows
+    try:
+        # iperf3 buffers its "Server listening" line; the listening socket in
+        # the container's namespace is the signal.
+        def listening():
+            sockets = guest(
+                service,
+                rows[0]["id"],
+                f"{IN_CONTAINER} cat /proc/net/tcp",
+                check=False,
+            )
+            return any(
+                ":1451 " in line and " 0A " in line
+                for line in sockets.get("stdout", "").splitlines()
+            )
 
-            def created():
-                assert process.poll() is None, stderr.read_text()
-                rows[:] = [
-                    row
-                    for row in service.client().get("/vms/list")["sandboxes"]
-                    if row.get("name") == SERVER
-                ]
-                return len(rows) == 1
-
-            wait_for(created, "iperf3 server VM", timeout=120)
-
-            # iperf3 buffers its "Server listening" line behind a pipe; the
-            # listening socket in the container's namespace is the signal.
-            def listening():
-                assert process.poll() is None, stderr.read_text()
-                sockets = guest(
-                    service,
-                    rows[0]["id"],
-                    f"{IN_CONTAINER} cat /proc/net/tcp",
-                    check=False,
-                )
-                return any(
-                    ":1451 " in line and " 0A " in line
-                    for line in sockets.get("stdout", "").splitlines()
-                )
-
-            wait_for(listening, "iperf3 server listening on 5201", timeout=180)
-            yield rows[0]
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-            for row in service.client().get("/vms/list")["sandboxes"]:
-                with contextlib.suppress(Exception):
-                    service.client().delete(f"/vms/{row['id']}/delete")
+        wait_for(listening, "iperf3 server listening on 5201", timeout=180)
+        yield rows[0]
+    finally:
+        for row in service.client().get("/vms/list")["sandboxes"]:
+            with contextlib.suppress(Exception):
+                service.client().delete(f"/vms/{row['id']}/delete")
 
 
 def transfer(service, keep, reference, certificate, label, *iperf_args):
     """One iperf3 client container, a member from creation, run to its end;
     the JSON report it printed, kept under `keep`."""
-    name = f"iperf-client-{label}"
-    argv = command(service, reference, certificate, "-n", name, "--network", NETWORK)
+    argv = command(service, reference, certificate, "--network", NETWORK)
     argv += ["-c", f"{SERVER}.{NETWORK}.capsem.internal", "-t", "2", "-J", *iperf_args]
     result = subprocess.run(
         argv, env=environment(service), capture_output=True, timeout=240, check=False

@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `capsem run --network NAME` joins the container's VM to a named network at
-  creation, like `capsem create --network`.
+- `capsem run --image IMAGE --network NAME` joins the container's VM to a named
+  network at creation, like `capsem create --network`.
 - Members of a network have names: `<vm>.<network>.capsem.internal` (and
   `<vm>.capsem.internal` when only one network answers it) resolves to the
   member's private address, and the address resolves back, for members of a
@@ -55,14 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   security ledgers accept their new event types through a checked migration.
 - `capsem-bench-rs redis` collects validated Redis PING samples with configurable
   concurrency and pipelining on both the host and guest.
-- `capsem run -p HOST:GUEST IMAGE` publishes loopback TCP ports through VSOCK
+- `capsem run|create --image IMAGE -p HOST:GUEST` publishes loopback TCP ports through VSOCK
   using a confined Rust companion, with bounded concurrent connections and
   listener cleanup when the workload or VM exits.
-- `capsem run docker://IMAGE` (or a qualified registry reference) pulls and caches
-  verified OCI images, runs the image command in an image-named VM with live logs,
-  and retains a named VM controlled by the existing lifecycle commands. Registry-specific
-  CA trust and username/token authentication are supported.
-- Containers started with `capsem run docker://IMAGE` reach the internet through
+- `--image docker://IMAGE` (or a qualified registry reference) pulls and caches
+  verified OCI images and runs the image's command as the VM's workload.
+  `capsem create --image` starts it detached, with its output in `capsem logs`,
+  and keeps the VM only when it is named with `-n`; `capsem run --image` streams
+  it, exits with its status and destroys the VM however the run ends. A command
+  after the image replaces its default command. Registry-specific CA trust and
+  username/token authentication are supported.
+- Containers started with `--image` reach the internet through
   the VM's existing DNS and HTTP(S) interception: the same rules, plugins, and
   ledger apply, the container trusts the Capsem CA read-only, and it can reach
   nothing else inside the VM.

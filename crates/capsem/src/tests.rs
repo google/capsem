@@ -138,10 +138,10 @@ fn parse_no_subcommand() {
 fn parse_create_with_name() {
     let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { name, ram, cpu, .. })) => {
             assert_eq!(name, Some("my-vm".into()));
-            assert_eq!(ram, 4);
-            assert_eq!(cpu, 4);
+            assert_eq!(ram, None, "unset RAM is the profile's");
+            assert_eq!(cpu, None, "unset CPUs are the profile's");
         }
         _ => panic!("expected Create"),
     }
@@ -151,7 +151,7 @@ fn parse_create_with_name() {
 fn cli_create_accepts_profile() {
     let cli = Cli::parse_from(["capsem", "create", "--profile", "co-work"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { profile, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { profile, .. })) => {
             assert_eq!(profile, "co-work");
         }
         _ => panic!("expected Create"),
@@ -184,7 +184,7 @@ fn cli_mcp_commands_accept_profile() {
 fn parse_create_ephemeral() {
     let cli = Cli::parse_from(["capsem", "create"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { name, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { name, .. })) => {
             assert_eq!(name, None);
         }
         _ => panic!("expected Create"),
@@ -217,9 +217,9 @@ fn ordinary_session_commands_keep_a_persistent_direct_service() {
 fn parse_create_with_resources() {
     let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { ram, cpu, .. }) => {
-            assert_eq!(ram, 8);
-            assert_eq!(cpu, 2);
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { ram, cpu, .. })) => {
+            assert_eq!(ram, Some(8));
+            assert_eq!(cpu, Some(2));
         }
         _ => panic!("expected Create"),
     }
@@ -642,7 +642,7 @@ fn parse_version() {
 fn parse_create_with_env() {
     let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { env, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { env, .. })) => {
             assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
         }
         _ => panic!("expected Create"),
@@ -653,7 +653,7 @@ fn parse_create_with_env() {
 fn parse_create_with_env_long() {
     let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { env, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { env, .. })) => {
             assert_eq!(env, vec!["API_KEY=secret123"]);
         }
         _ => panic!("expected Create"),
@@ -664,7 +664,7 @@ fn parse_create_with_env_long() {
 fn parse_create_no_env() {
     let cli = Cli::parse_from(["capsem", "create"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { env, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { env, .. })) => {
             assert!(env.is_empty());
         }
         _ => panic!("expected Create"),
@@ -1263,7 +1263,7 @@ fn parse_fork_with_description() {
 fn parse_create_with_from() {
     let cli = Cli::parse_from(["capsem", "create", "--from", "base-session"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { from, name, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { from, name, .. })) => {
             assert_eq!(from, Some("base-session".into()));
             assert_eq!(name, None);
         }
@@ -1272,22 +1272,10 @@ fn parse_create_with_from() {
 }
 
 #[test]
-fn parse_create_with_from_image_alias() {
-    // --image is a backward-compat alias for --from
-    let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { from, .. }) => {
-            assert_eq!(from, Some("old-img".into()));
-        }
-        _ => panic!("expected Create with --image alias"),
-    }
-}
-
-#[test]
 fn parse_create_with_name_and_from() {
     let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create { name, from, .. }) => {
+        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { name, from, .. })) => {
             assert_eq!(name, Some("my-session".into()));
             assert_eq!(from, Some("my-src".into()));
         }

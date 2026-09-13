@@ -11,7 +11,7 @@ struct Transfer {
     sha256: String,
 }
 
-pub(super) async fn image(client: &UdsClient, vm: &str, image: &ImageLayout, args: &RunArgs) -> Result<()> {
+pub(super) async fn image(client: &UdsClient, vm: &str, image: &ImageLayout, workload: &Workload<'_>) -> Result<()> {
     let mut transfer = Vec::new();
     // Every upload stays below the existing file API body limit. OCI extraction
     // happens inside the VM; host files here contain only verified image blobs.
@@ -37,7 +37,8 @@ pub(super) async fn image(client: &UdsClient, vm: &str, image: &ImageLayout, arg
         });
     }
     file(client, vm, "transfer.json", serde_json::to_vec(&transfer)?).await?;
-    let options = serde_json::json!({"args": args.args, "env": client::parse_env_vars(&args.env)?.unwrap_or_default()});
+    let options =
+        serde_json::json!({"args": workload.args, "env": client::parse_env_vars(workload.env)?.unwrap_or_default()});
     file(client, vm, "options.json", serde_json::to_vec(&options)?).await?;
     file(client, vm, "launch.py", container::LAUNCHER.to_vec()).await
 }

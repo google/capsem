@@ -238,9 +238,7 @@ def test_port_collision_does_not_replace_a_listener(service, tmp_path):
         assert (
             result.returncode != 0 and b"bind publication listener" in result.stderr
         ), result.stderr
-        rows = service.client().get("/vms/list")["sandboxes"]
-        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
-        service.client().delete(f"/vms/{rows[0]['id']}/delete")
+        assert service.client().get("/vms/list")["sandboxes"] == []
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             accepted, _ = listener.accept()
             accepted.close()

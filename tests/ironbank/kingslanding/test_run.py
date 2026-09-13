@@ -54,18 +54,66 @@ def service(tmp_path):
         instance.stop()
 
 
-def command(service, reference, certificate=None, *args):
-    result = [
-        str(BIN_DIR / "capsem"),
-        "--uds-path",
-        str(service.uds_path),
-        "run",
-        "--profile",
-        CODE_PROFILE_ID,
-    ]
+def cli(service, *args):
+    return [str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path), *args]
+
+
+def image_command(verb, service, reference, certificate=None, *args):
+    result = cli(service, verb, "--profile", CODE_PROFILE_ID)
     if certificate is not None:
         result += ["--registry-ca", str(certificate)]
-    return [*result, *args, reference]
+    return [*result, *args, "--image", reference]
+
+
+def command(service, reference, certificate=None, *args):
+    """`capsem run --image`: the workload attached, its VM destroyed after."""
+    return image_command("run", service, reference, certificate, *args)
+
+
+def create_command(service, reference, certificate=None, *args):
+    """`capsem create --image`: the workload started detached."""
+    return image_command("create", service, reference, certificate, *args)
+
+
+def console(service, vm_id):
+    """The guest console, where a detached container's output lands."""
+    logs = service.client().get(f"/vms/{vm_id}/logs")
+    return logs.get("serial_logs") or ""
+
+
+@contextlib.contextmanager
+def created(service, tmp_path, reference, certificate, name, *options):
+    """A named container VM from `create --image`, up once its Redis is
+    ready; its create stderr (the published ports) is kept at `stderr`."""
+    result = subprocess.run(
+        create_command(service, reference, certificate, "-n", name, *options),
+        env=environment(service),
+        capture_output=True,
+        timeout=240,
+        check=False,
+    )
+    stderr = tmp_path / f"{name}.stderr"
+    stderr.write_bytes(result.stderr)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    rows = [
+        row
+        for row in service.client().get("/vms/list")["sandboxes"]
+        if row.get("name") == name
+    ]
+    assert len(rows) == 1, rows
+    assert rows[0]["id"] in result.stdout.decode(), result.stdout
+    try:
+        wait_for(
+            lambda: (
+                "Ready to accept connections tcp" in console(service, rows[0]["id"])
+            ),
+            f"{name} container startup",
+            timeout=180,
+        )
+        yield {**rows[0], "stderr": stderr}
+    finally:
+        with contextlib.suppress(Exception):
+            service.client().delete(f"/vms/{rows[0]['id']}/delete")
 
 
 def environment(service):
@@ -77,7 +125,7 @@ def environment(service):
     }
 
 
-def test_cli_default_redis_stream_and_detach(service, tmp_path):
+def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_path):
     client = service.client()
     with registry(tmp_path) as (reference, certificate, requests):
         rejected = subprocess.run(
@@ -105,7 +153,7 @@ def test_cli_default_redis_stream_and_detach(service, tmp_path):
             try:
 
                 def ready():
-                    for log in service.tmp_dir.glob("persistent/*/process.log"):
+                    for log in service.tmp_dir.rglob("process.log"):
                         if log not in process_logs:
                             process_logs[log] = retained_logs.enter_context(
                                 log.open("rb")
@@ -120,7 +168,7 @@ def test_cli_default_redis_stream_and_detach(service, tmp_path):
 
                 wait_for(ready, "attached Redis logs")
                 rows = client.get("/vms/list")["sandboxes"]
-                assert len(rows) == 1 and rows[0]["name"] == "redis"
+                assert len(rows) == 1 and not rows[0]["persistent"], rows
                 session = vm_session_dir(service.tmp_dir, client, rows[0]["id"])
                 proof = client.post(
                     f"/vms/{rows[0]['id']}/exec",
@@ -138,11 +186,12 @@ def test_cli_default_redis_stream_and_detach(service, tmp_path):
                 )
                 process.send_signal(signal.SIGINT)
                 assert process.wait(timeout=30) == 130
-                assert client.get("/vms/list")["sandboxes"][0]["id"] == rows[0]["id"]
-                assert session.exists(), "detaching must retain the VM workspace"
-                client.post(f"/vms/{rows[0]['id']}/stop", {})
-                client.delete(f"/vms/{rows[0]['id']}/delete")
-                assert not session.exists(), "explicit delete must remove session state"
+                assert client.get("/vms/list")["sandboxes"] == [], (
+                    "a run's VM ends with it"
+                )
+                assert not session.exists(), (
+                    "an interrupted run leaves no session state"
+                )
                 assert len([path for path in requests if "/blobs/" in path]) == 2
             finally:
                 if process.poll() is None:
@@ -187,14 +236,11 @@ def test_cli_exit_timeout_and_failed_launch(
             assert result.returncode == code, result.stderr + result.stdout
             if output is not None:
                 assert result.stdout == output, result.stdout
-            rows = client.get("/vms/list")["sandboxes"]
-            assert len(rows) == 1 and rows[0]["status"] == "Stopped"
-            client.delete(f"/vms/{rows[0]['id']}/delete")
-            assert not list(service.tmp_dir.glob("persistent/*/guest"))
+            assert client.get("/vms/list")["sandboxes"] == []
         assert len([path for path in requests if "/blobs/" in path]) == 2, requests
 
 
-def test_cli_runtime_failure_retains_stopped_vm(service, tmp_path):
+def test_cli_runtime_failure_destroys_the_vm(service, tmp_path):
     metadata = {"Entrypoint": ["/missing-entrypoint"], "Cmd": []}
     with registry(tmp_path, image_config=metadata) as (reference, certificate, _):
         result = subprocess.run(
@@ -206,10 +252,7 @@ def test_cli_runtime_failure_retains_stopped_vm(service, tmp_path):
         )
         assert result.returncode == 1, result.stderr + result.stdout
         assert b"no such file" in result.stdout + result.stderr
-        rows = service.client().get("/vms/list")["sandboxes"]
-        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
-        service.client().delete(f"/vms/{rows[0]['id']}/delete")
-        assert not list(service.tmp_dir.glob("persistent/*/guest"))
+        assert service.client().get("/vms/list")["sandboxes"] == []
 
 
 def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
@@ -229,14 +272,18 @@ def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
         assert result.returncode == 9, result.stderr
         assert len(result.stdout) == 12 * 1024**2
         assert not any(result.stdout)
-        rows = service.client().get("/vms/list")["sandboxes"]
-        assert len(rows) == 1 and rows[0]["status"] == "Stopped"
-        service.client().delete(f"/vms/{rows[0]['id']}/delete")
+        assert service.client().get("/vms/list")["sandboxes"] == []
 
 
 def test_shell_run_still_uses_existing_command_path(service):
     result = subprocess.run(
-        command(service, "printf shell-proof; printf shell-error >&2; exit 3"),
+        cli(
+            service,
+            "run",
+            "--profile",
+            CODE_PROFILE_ID,
+            "printf shell-proof; printf shell-error >&2; exit 3",
+        ),
         env=environment(service),
         capture_output=True,
         timeout=45,
@@ -249,3 +296,39 @@ def test_shell_run_still_uses_existing_command_path(service):
     assert result.stdout in (b"shell-proofshell-error", b"shell-errorshell-proof")
     assert result.stderr == b""
     assert service.client().get("/vms/list")["sandboxes"] == []
+
+
+def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp_path):
+    client = service.client()
+    with registry(tmp_path) as (reference, certificate, _):
+        with created(service, tmp_path, reference, certificate, "cache") as vm:
+            assert vm["persistent"], vm
+            proof = client.post(
+                f"/vms/{vm['id']}/exec",
+                {
+                    "command": "set -eu; pid=$(cat /var/tmp/capsem-container/workload.pid); "
+                    "nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
+                    "timeout_secs": 10,
+                },
+            )
+            assert proof["exit_code"] == 0 and proof["stdout"] == "+PONG\r\n", proof
+        assert client.get("/vms/list")["sandboxes"] == []
+
+        unnamed = subprocess.run(
+            create_command(service, reference, certificate),
+            env=environment(service),
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        assert unnamed.returncode == 0, unnamed.stderr
+        rows = client.get("/vms/list")["sandboxes"]
+        assert len(rows) == 1 and not rows[0]["persistent"], rows
+        wait_for(
+            lambda: (
+                "Ready to accept connections tcp" in console(service, rows[0]["id"])
+            ),
+            "unnamed container startup",
+            timeout=180,
+        )
+        client.delete(f"/vms/{rows[0]['id']}/delete")

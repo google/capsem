@@ -56,15 +56,26 @@ capsem create -n mybox                 # named retained session
 capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
+capsem create -n cache --image docker://redis:7-alpine -p 0:6379
+                                       # an OCI image's workload, detached
 ```
+
+With `--image`, the VM's workload is the image's command (or the command given
+after the image), started detached; its output is in `capsem logs`. Like any
+session, the VM is kept only when it is named.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-n, --name <NAME>` | -- | Name for the session |
-| `--ram <GB>` | 4 | RAM in GB |
-| `--cpu <CORES>` | 4 | CPU cores |
-| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
-| `--from <NAME>` | -- | Clone state from an existing retained session/template (alias: `--image`) |
+| `--ram <GB>` | profile's | RAM in GB |
+| `--cpu <CORES>` | profile's | CPU cores |
+| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
+| `--from <NAME>` | -- | Clone state from an existing retained session/template |
+| `--network <NAME>` | -- | Join a named network (repeatable) |
+| `--image <IMAGE>` | -- | OCI image to run: `docker://IMAGE` or `registry/repository:tag` |
+| `-p, --publish <HOST:GUEST>` | -- | With `--image`: publish a loopback TCP port (host `0` picks one) |
+| `--registry-ca <PEM>` | -- | With `--image`: extra CA trusted for this pull |
+| `--registry-user <USER>` | -- | With `--image`: registry user; token from `CAPSEM_REGISTRY_PASSWORD` |
 
 ### shell
 
@@ -139,19 +150,25 @@ capsem exec mybox "pip install numpy" --timeout 120
 ### run
 
 Run a command in a fresh one-shot session. The session is provisioned and
-destroyed after the command completes.
+destroyed after the command completes. With `--image`, the command is an OCI
+image's workload: its output streams, `capsem run` exits with its status, and
+the VM is destroyed however the run ends (exit, timeout, or Ctrl-C).
 
 ```sh
 capsem run "python3 -c 'print(1+1)'"
 capsem run "npm test" --timeout 120
 capsem run "pytest" -e API_KEY=sk-...
+capsem run --image docker://alpine:3 sh -c 'uname -a'
 ```
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
-| `<command>` | -- | Command to execute |
-| `--timeout <SECS>` | 60 | Timeout in seconds |
-| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
+| `<command>` | -- | Command to execute; with `--image`, replaces the image's command |
+| `--timeout <SECS>` | -- | Timeout in seconds |
+| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
+| `--ram <GB>` / `--cpu <CORES>` | profile's | VM resources |
+| `--image <IMAGE>` | -- | OCI image to run (see `create`) |
+| `-p`, `--network`, `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 
 ### list
 
