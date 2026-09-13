@@ -16,27 +16,49 @@ mod upload;
 /// The flags that make a VM an image's: shared by `create` and `run`.
 #[derive(clap::Args, Debug, Default)]
 pub(super) struct ImageArgs {
-    /// OCI image to run as the VM's workload: docker://IMAGE or registry/repository:tag
-    #[arg(long)]
-    pub image: Option<String>,
+    /// OCI image (docker://IMAGE or registry/repository:tag) and the command
+    /// replacing its Cmd. Everything after the image is that command, as with
+    /// `docker run`, so options go before --image.
+    #[arg(long, num_args = 1.., allow_hyphen_values = true, value_names = ["IMAGE", "CMD"])]
+    pub image: Vec<String>,
     /// Publish loopback HOST_PORT:GUEST_PORT over VSOCK (host 0 picks a port)
-    #[arg(short = 'p', long = "publish", requires = "image")]
+    #[arg(short = 'p', long = "publish")]
     pub publish: Vec<container::PortMapping>,
     /// Additional PEM certificate trusted only for this registry pull
-    #[arg(long, requires = "image")]
+    #[arg(long)]
     pub registry_ca: Option<std::path::PathBuf>,
     /// Registry user; password/token comes from CAPSEM_REGISTRY_PASSWORD
-    #[arg(long, requires = "image")]
+    #[arg(long)]
     pub registry_user: Option<String>,
 }
 
-/// What the image's workload runs with: container environment and the
-/// arguments replacing the image's Cmd.
+/// An image's workload: the reference, the command replacing its Cmd, and
+/// the container's environment.
 pub(super) struct Workload<'a> {
     pub reference: &'a str,
     pub image: &'a ImageArgs,
     pub env: &'a [String],
     pub args: &'a [String],
+}
+
+impl<'a> Workload<'a> {
+    /// The workload `--image` names, if it names one. Image-only flags
+    /// without an image are refused rather than ignored.
+    pub(super) fn of(image: &'a ImageArgs, env: &'a [String]) -> Result<Option<Self>> {
+        let Some((reference, args)) = image.image.split_first() else {
+            ensure!(
+                image.publish.is_empty() && image.registry_ca.is_none() && image.registry_user.is_none(),
+                "--publish, --registry-ca and --registry-user need --image"
+            );
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            reference,
+            image,
+            env,
+            args,
+        }))
+    }
 }
 
 /// A pulled image, its staging directory held for as long as it is uploaded.

@@ -1,19 +1,39 @@
-"""Existing VM lifecycle owns containers; closing the CLI only detaches.
+"""Existing VM lifecycle owns a created container: restart and fork keep it.
 
 Uses the native Redis fixture prepared by the Kingslanding gate.
 """
 
-import signal
+import re
 import socket
 import subprocess
 
 import pytest
 from helpers.constants import BIN_DIR
 
-from tests.ironbank.kingslanding.test_publish import redis, service
-from tests.ironbank.kingslanding.test_run import environment, wait_for
+from tests.fixtures.oci.registry import registry
+from tests.ironbank.kingslanding.test_run import (
+    created,
+    environment,
+    service,
+    wait_for,
+)
 
-__all__ = ["redis", "service"]
+__all__ = ["service"]
+
+
+@pytest.fixture
+def redis(service, tmp_path):
+    """A named Redis container VM from `create --image`, one published port."""
+    with (
+        registry(tmp_path) as (reference, certificate, _),
+        created(
+            service, tmp_path, reference, certificate, "redis", "-p", "0:6379"
+        ) as vm,
+    ):
+        (port,) = re.findall(
+            r"Published 127.0.0.1:(\d+) -> 6379/tcp", vm["stderr"].read_text()
+        )
+        yield {"vm": vm, "port": int(port)}
 
 
 def ping(port):
@@ -22,47 +42,38 @@ def ping(port):
         assert connection.recv(7) == b"+PONG\r\n"
 
 
-@pytest.mark.parametrize("signal_number", [signal.SIGINT, signal.SIGKILL])
-def test_cli_detaches_and_existing_restart_restores_redis(
-    redis, service, signal_number
-):
-    process = redis["process"]
+def test_existing_restart_restores_a_created_container_and_its_port(redis, service):
     vm = redis["vm"]
     client = service.client()
-    try:
-        process.send_signal(signal_number)
-        process.wait(timeout=5)
-        ping(redis["port"])
-        assert client.get(f"/vms/{vm['id']}/info")["persistent"]
-        result = subprocess.run(
-            [
-                str(BIN_DIR / "capsem"),
-                "--uds-path",
-                str(service.uds_path),
-                "restart",
-                vm["name"],
-            ],
-            env=environment(service),
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
+    ping(redis["port"])
+    assert client.get(f"/vms/{vm['id']}/info")["persistent"]
+    result = subprocess.run(
+        [
+            str(BIN_DIR / "capsem"),
+            "--uds-path",
+            str(service.uds_path),
+            "restart",
+            vm["name"],
+        ],
+        env=environment(service),
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
-        def restarted():
-            try:
-                ping(redis["port"])
-                return True
-            except (OSError, AssertionError):
-                return False
+    def restarted():
+        try:
+            ping(redis["port"])
+            return True
+        except (OSError, AssertionError):
+            return False
 
-        wait_for(restarted, "Redis restarted through existing VM command", timeout=30)
-        client.post(f"/vms/{vm['id']}/stop", {})
-        with pytest.raises(OSError):
-            socket.create_connection(("127.0.0.1", redis["port"]), timeout=1)
-        assert client.get(f"/vms/{vm['id']}/info")["status"] == "Stopped"
-    finally:
-        client.delete(f"/vms/{vm['id']}/delete")
+    wait_for(restarted, "Redis restarted through existing VM command", timeout=30)
+    client.post(f"/vms/{vm['id']}/stop", {})
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", redis["port"]), timeout=1)
+    assert client.get(f"/vms/{vm['id']}/info")["status"] == "Stopped"
 
 
 def test_existing_fork_starts_saved_container_without_stealing_ports(redis, service):

@@ -54,7 +54,7 @@ fn parse_run_with_timeout() {
 }
 
 #[test]
-fn run_image_takes_its_command_resources_and_no_name() {
+fn run_image_takes_a_shell_style_command_after_the_image() {
     let cli = Cli::parse_from([
         "capsem",
         "run",
@@ -65,24 +65,24 @@ fn run_image_takes_its_command_resources_and_no_name() {
         "--network",
         "team",
         "--image",
-        "docker://redis:7-alpine",
-        "redis-server",
-        "--save",
-        "",
+        "docker://alpine:3",
+        "sh",
+        "-c",
+        "echo hi",
     ]);
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Run(RunArgs {
             command,
-            args,
             image,
             ram,
             cpu,
             network,
             ..
         })) => {
-            assert_eq!(image.image.as_deref(), Some("docker://redis:7-alpine"));
-            assert_eq!(command.as_deref(), Some("redis-server"));
-            assert_eq!(args, ["--save", ""]);
+            assert_eq!(command, None);
+            let workload = crate::container_image::Workload::of(&image, &[]).unwrap().unwrap();
+            assert_eq!(workload.reference, "docker://alpine:3");
+            assert_eq!(workload.args, ["sh", "-c", "echo hi"]);
             assert_eq!((ram, cpu), (Some(2), Some(1)));
             assert_eq!(network, ["team"]);
         }
@@ -96,21 +96,34 @@ fn run_image_takes_its_command_resources_and_no_name() {
 
 #[test]
 fn a_positional_image_is_a_shell_command_and_container_flags_need_an_image() {
-    let cli = Cli::parse_from(["capsem", "run", "docker://redis"]);
+    let cli = Cli::parse_from(["capsem", "run", "docker://redis", "--timeout", "5"]);
     match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Run(RunArgs { command, image, .. })) => {
+        Commands::Session(SessionCommands::Run(RunArgs {
+            command,
+            image,
+            timeout,
+            ..
+        })) => {
             assert_eq!(command.as_deref(), Some("docker://redis"));
-            assert!(image.image.is_none());
+            assert!(image.image.is_empty());
+            assert_eq!(timeout, Some(5), "flags after a plain command still parse");
         }
         _ => panic!("expected Run"),
     }
     for argv in [
-        vec!["capsem", "run", "-p", "0:80", "true"],
-        vec!["capsem", "run", "--network", "team", "true"],
         vec!["capsem", "run", "true", "extra"],
+        vec!["capsem", "run", "true", "--image", "docker://redis"],
     ] {
         assert!(Cli::try_parse_from(&argv).is_err(), "accepted {argv:?}");
     }
+    let cli = Cli::parse_from(["capsem", "run", "-p", "0:80", "true"]);
+    let Commands::Session(SessionCommands::Run(args)) = cli.command.unwrap() else {
+        panic!("expected Run")
+    };
+    let refused = crate::container_image::Workload::of(&args.image, &args.env)
+        .err()
+        .unwrap();
+    assert!(format!("{refused}").contains("need --image"), "{refused}");
 }
 
 #[test]

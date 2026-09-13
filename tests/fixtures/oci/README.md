@@ -3,7 +3,7 @@
 Capsem runs an OCI image as a VM's workload, with loopback TCP publishing:
 
 ```sh
-capsem create -n cache --image docker://redis:7.4.11-alpine -p 6379:6379
+capsem create -n cache -p 6379:6379 --image docker://redis:7.4.11-alpine
 capsem run --image docker://redis:7.4.11-alpine redis-cli --version
 ```
 

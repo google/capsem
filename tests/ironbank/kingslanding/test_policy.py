@@ -119,7 +119,8 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
             assert facts["source"]["vm"] is None
             assert facts["destination"]["address"] == "127.0.0.1:6379"
             assert facts["destination"]["vm"]["id"] == vm_id
-            assert facts["destination"]["vm"]["name"] == redis["vm"]["name"]
+            # An unnamed VM is known by its route id; its list label is the UI's.
+            assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
             assert int(facts["destination"]["vm"]["generation"]) > 0
             assert facts["route"]["listener"] == f"127.0.0.1:{port}"
             assert facts["route"]["publication_id"] and facts["connection_id"]

@@ -32,9 +32,6 @@ pub(super) struct CreateArgs {
     pub network: Vec<String>,
     #[command(flatten)]
     pub image: ImageArgs,
-    /// With --image, the command replacing the image's Cmd
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, requires = "image")]
-    pub args: Vec<String>,
 }
 
 pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
@@ -47,24 +44,16 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
         cpus: args.cpu,
         persistent,
         // With an image, the environment is the container's.
-        env: match args.image.image {
-            Some(_) => None,
-            None => client::parse_env_vars(&args.env)?,
+        env: match args.image.image.is_empty() {
+            true => client::parse_env_vars(&args.env)?,
+            false => None,
         },
         from: args.from.clone(),
         networks: args.network.clone(),
     };
-    let vm = match &args.image.image {
+    let vm = match Workload::of(&args.image, &args.env)? {
         None => container_image::provision(client, &request).await?,
-        Some(reference) => {
-            let workload = Workload {
-                reference,
-                image: &args.image,
-                env: &args.env,
-                args: &args.args,
-            };
-            start_image(client, &request, &workload).await?
-        }
+        Some(workload) => start_image(client, &request, &workload).await?,
     };
     if persistent {
         println!("{} (persistent)", vm.id);

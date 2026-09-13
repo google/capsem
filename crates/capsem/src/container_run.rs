@@ -11,7 +11,8 @@ use crate::container_image::{self, ImageArgs, Workload};
 
 #[derive(clap::Args)]
 pub(super) struct RunArgs {
-    /// Shell command; with --image, the command replacing the image's Cmd
+    /// Shell command (with --image, the command follows the image instead)
+    #[arg(conflicts_with = "image")]
     pub command: Option<String>,
     #[arg(long, default_value = crate::DEFAULT_PROFILE_ID)]
     pub profile: String,
@@ -27,14 +28,11 @@ pub(super) struct RunArgs {
     /// CPU cores (default: the profile's)
     #[arg(long)]
     pub cpu: Option<u32>,
-    /// Named networks the VM joins at creation (repeatable)
-    #[arg(long = "network", requires = "image")]
+    /// Named networks the VM joins at creation (repeatable; with --image)
+    #[arg(long = "network")]
     pub network: Vec<String>,
     #[command(flatten)]
     pub image: ImageArgs,
-    /// Further arguments of the image command
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, requires = "image")]
-    pub args: Vec<String>,
 }
 
 pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
@@ -43,9 +41,15 @@ pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
 
 pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     client::validate_id(&args.profile)?;
-    match &args.image.image {
-        Some(reference) => run_image(client, args, reference).await,
-        None => run_command(client, args).await,
+    match Workload::of(&args.image, &args.env)? {
+        Some(workload) => run_image(client, args, &workload).await,
+        None => {
+            anyhow::ensure!(
+                args.network.is_empty(),
+                "--network needs --image: a shell run joins no network"
+            );
+            run_command(client, args).await
+        }
     }
 }
 
@@ -74,22 +78,15 @@ async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
 
 /// The image's workload attached, in a VM destroyed however the run ends:
 /// its exit, a timeout, a signal, or a failure.
-async fn run_image(client: &UdsClient, args: &RunArgs, reference: &str) -> Result<i32> {
+async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let cancel = async {
         tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 }
     };
     tokio::pin!(cancel);
-    let command: Vec<String> = args.command.iter().chain(&args.args).cloned().collect();
-    let workload = Workload {
-        reference,
-        image: &args.image,
-        env: &args.env,
-        args: &command,
-    };
     let pulled = tokio::select! {
-        pulled = container_image::pull(&workload) => pulled?,
+        pulled = container_image::pull(workload) => pulled?,
         code = &mut cancel => return Ok(code),
     };
     let request = ProvisionRequest {
@@ -106,7 +103,7 @@ async fn run_image(client: &UdsClient, args: &RunArgs, reference: &str) -> Resul
     let vm = container_image::provision(client, &request).await?;
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        container_image::stage(client, &vm, &pulled, &workload)
+        container_image::stage(client, &vm, &pulled, workload)
             .await?
             .attach()
             .await

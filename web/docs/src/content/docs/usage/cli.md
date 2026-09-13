@@ -56,12 +56,12 @@ capsem create -n mybox                 # named retained session
 capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
-capsem create -n cache --image docker://redis:7-alpine -p 0:6379
+capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
                                        # an OCI image's workload, detached
 ```
 
-With `--image`, the VM's workload is the image's command (or the command given
-after the image), started detached; its output is in `capsem logs`. Like any
+With `--image`, the VM's workload is the image's command, or everything given
+after the image (so options go before `--image`), started detached; its output is in `capsem logs`. Like any
 session, the VM is kept only when it is named.
 
 | Flag | Default | Description |
