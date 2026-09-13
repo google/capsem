@@ -256,6 +256,8 @@ fn compiles_checked_in_enforcement_file() {
             "profiles.rules.default_unknown_mcp_server",
             "profiles.rules.default_file",
             "profiles.rules.default_process",
+            "profiles.rules.default_expose",
+            "profiles.rules.default_private",
         ])
     );
     assert_eq!(report.compiled_rules, rule_ids.len());
