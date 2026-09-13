@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -239,6 +240,37 @@ for path in sys.argv[3:]:
     for invocation in (command, alias_command):
         subprocess.run(invocation, env=env, check=True, capture_output=True)
     assert verifies.read_text() == verified, "hardlinked names must retain independent receipts"
+
+    # The codesign lock belongs to a living runner. One killed while holding
+    # it -- or before it could say who it is -- must not wedge every later
+    # launch, and a live holder is waited for rather than timed out on.
+    lock = tmp_path / "cache/target/.run_signed_codesign.lock"
+    reaped = subprocess.Popen(["true"])
+    reaped.wait()
+    for label, owner, age in (("dead-holder", str(reaped.pid), 0), ("ownerless", None, 60)):
+        binary.write_text(f"#!/bin/sh\necho {label}\n")
+        lock.mkdir()
+        if owner is not None:
+            (lock / "owner").write_text(owner)
+        if age:
+            past = time.time() - age
+            os.utime(lock, (past, past))
+        reclaimed = subprocess.run(command, env=env, capture_output=True, timeout=10, check=False)
+        assert reclaimed.returncode == 0, (label, reclaimed.stderr)
+        assert reclaimed.stdout == f"{label}\n".encode()
+        assert not lock.exists(), label
+    binary.write_text("#!/bin/sh\necho after-live-holder\n")
+    lock.mkdir()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", f"import shutil, time; time.sleep(1.5); shutil.rmtree({str(lock)!r})"]
+    )
+    (lock / "owner").write_text(str(holder.pid))
+    started = time.monotonic()
+    waited = subprocess.run(command, env=env, capture_output=True, timeout=20, check=False)
+    holder.wait()
+    assert waited.returncode == 0, waited.stderr
+    assert waited.stdout == b"after-live-holder\n"
+    assert time.monotonic() - started >= 1.0, "a live holder's lock was taken from it"
 
     binary.write_text(
         '#!/bin/sh\nif [ -e "/dev/fd/$PROBE_FD" ]; then echo inherited; else echo closed; fi\n'
