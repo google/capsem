@@ -6,11 +6,13 @@
 //! member), or dropped for a reason that is counted. The checks are the
 //! whole security of the data plane past membership: the source is pinned
 //! to the member the stream belongs to, the destination must be a linked
-//! member, and TCP never crosses because it has its own admitted path.
+//! member, and only UDP and ICMP echo or delivery errors cross. TCP has its
+//! own admitted path, and an allowlist is what keeps it there: any other
+//! protocol crossing would let a tunnel carry TCP around that admission.
 //!
 //! Only the bytes the verdict needs are read: two MACs, an ethertype, the
-//! IPv4 fixed header's version, length, protocol and addresses. Fragments
-//! carry all of those and pass like any packet; nothing is reassembled.
+//! IPv4 header's version, length, fragment offset, protocol and addresses,
+//! and an ICMP type. Fragments pass like any packet; nothing is reassembled.
 use capsem_proto::privatelink::{mac_of, ETHERNET_HEADER_BYTES};
 use std::net::Ipv4Addr;
 
@@ -18,7 +20,12 @@ pub const ETHERTYPE_IPV4: u16 = 0x0800;
 pub const ETHERTYPE_ARP: u16 = 0x0806;
 const IPV4_HEADER_BYTES: usize = 20;
 const ARP_BYTES: usize = 28;
-const PROTOCOL_TCP: u8 = 6;
+const PROTOCOL_ICMP: u8 = 1;
+const PROTOCOL_UDP: u8 = 17;
+const FRAGMENT_OFFSET: u16 = 0x1fff;
+/// Echo reply, destination unreachable (path MTU discovery), echo request,
+/// time exceeded (traceroute).
+const ICMP_TYPES: [u8; 4] = [0, 3, 8, 11];
 const ARP_REQUEST: u16 = 1;
 const ARP_REPLY: u16 = 2;
 const BROADCAST: [u8; 6] = [0xff; 6];
@@ -45,8 +52,11 @@ pub enum DropReason {
     SourceAddress,
     /// An IPv4 header the verdict cannot trust.
     Header,
-    /// TCP has its own admitted path and never crosses the link.
-    Tcp,
+    /// Neither UDP nor ICMP: TCP has its own admitted path, and anything
+    /// else -- a tunnel above all -- would carry TCP around that admission.
+    Protocol,
+    /// ICMP that is neither echo nor a delivery error.
+    IcmpType,
     /// The destination MAC does not name the destination address.
     DestinationMac,
     /// The destination is not a linked member, or is the sender itself.
@@ -56,13 +66,14 @@ pub enum DropReason {
 }
 
 impl DropReason {
-    pub const ALL: [DropReason; 9] = [
+    pub const ALL: [DropReason; 10] = [
         Self::Short,
         Self::EtherType,
         Self::SourceMac,
         Self::SourceAddress,
         Self::Header,
-        Self::Tcp,
+        Self::Protocol,
+        Self::IcmpType,
         Self::DestinationMac,
         Self::Unknown,
         Self::Arp,
@@ -75,7 +86,8 @@ impl DropReason {
             Self::SourceMac => "source_mac",
             Self::SourceAddress => "source_address",
             Self::Header => "header",
-            Self::Tcp => "tcp",
+            Self::Protocol => "protocol",
+            Self::IcmpType => "icmp_type",
             Self::DestinationMac => "destination_mac",
             Self::Unknown => "unknown",
             Self::Arp => "arp",
@@ -115,8 +127,23 @@ fn ipv4(own: Ipv4Addr, member: impl Fn(Ipv4Addr) -> bool, header: &[u8], packet:
     if address(&packet[12..16]) != own {
         return Verdict::Drop(DropReason::SourceAddress);
     }
-    if packet[9] == PROTOCOL_TCP {
-        return Verdict::Drop(DropReason::Tcp);
+    match packet[9] {
+        PROTOCOL_UDP => {}
+        PROTOCOL_ICMP => {
+            // Only the first fragment carries the type, and a later one cannot
+            // rewrite it: its offset is at least eight bytes past it.
+            let first_fragment = u16::from_be_bytes([packet[6], packet[7]]) & FRAGMENT_OFFSET == 0;
+            let header_bytes = usize::from(packet[0] & 0x0f) * 4;
+            if first_fragment {
+                if header_bytes >= total_length {
+                    return Verdict::Drop(DropReason::Short);
+                }
+                if !ICMP_TYPES.contains(&packet[header_bytes]) {
+                    return Verdict::Drop(DropReason::IcmpType);
+                }
+            }
+        }
+        _ => return Verdict::Drop(DropReason::Protocol),
     }
     let destination = address(&packet[16..20]);
     if destination == own || !member(destination) {

@@ -66,8 +66,9 @@ database with the audit history).
   asks the owner for a duplicate of that stream (`LinkAttach` over IPC, the
   token on the handoff socket); the profile decides once with
   `network.protocol == "link"`. The switch pins each frame's source to its
-  member, answers ARP itself, drops TCP and strangers, and forwards unicast
-  IPv4 to exactly one member. A VM has one link. Containers reach the link
+  member, answers ARP itself, and forwards only unicast IPv4 UDP and ICMP
+  (echo, unreachable, time exceeded) to exactly one member: an allowlist, so
+  no tunnel protocol can carry TCP around its admission. A VM has one link. Containers reach the link
   through the guest's NAT (`launch.py`: SNAT out `tap0`, UDP DNAT in).
 - Names: `<vm>.<network>.capsem.internal` and the pool's reverse zone are
   answered on the host by the owner's DNS handler through

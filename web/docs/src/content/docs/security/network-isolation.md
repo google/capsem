@@ -78,8 +78,10 @@ pieces as everything else:
 - **UDP and ICMP.** Each guest has a `tap0` whose ethernet frames reach one
   confined switch process per network. The switch holds only members'
   streams, pins every frame's source to its member, answers ARP itself,
-  drops TCP, strangers and everything that is not IPv4, and forwards each
-  frame to exactly one member. No host process parses past a frame's
+  forwards only UDP and ICMP (echo, destination unreachable and time
+  exceeded) to exactly one member, and drops TCP, every other protocol,
+  strangers and everything that is not IPv4. The allowlist keeps TCP on its
+  admitted path: a tunnel protocol crossing the link would carry it around. No host process parses past a frame's
   addresses. A VM's profile decides once per attach whether the VM may be on
   a link at all (`network.protocol == "link"`); the link, its end and its
   frame counts are rows in the network's history, and `network inspect` shows

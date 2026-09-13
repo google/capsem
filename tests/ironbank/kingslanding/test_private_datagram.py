@@ -131,6 +131,73 @@ def udp(
     )
 
 
+IPIP, UDP, GRE = 4, 17, 47
+RAW_LISTENER = """
+import json, select, socket, sys, time
+source, protocols = sys.argv[1], [int(p) for p in sys.argv[2:]]
+sockets = {socket.socket(socket.AF_INET, socket.SOCK_RAW, p): p for p in protocols}
+heard = {p: 0 for p in protocols}
+open("/var/tmp/raw-listener.ready", "w").close()
+deadline = time.monotonic() + 12
+while time.monotonic() < deadline:
+    ready, _, _ = select.select(list(sockets), [], [], 0.2)
+    for s in ready:
+        packet, (sender, _) = s.recvfrom(65535)
+        if sender == source:
+            heard[sockets[s]] += 1
+json.dump(heard, open("/var/tmp/raw-listener.json", "w"))
+"""
+RAW_SENDER = """
+import socket, sys
+destination, protocols = sys.argv[1], [int(p) for p in sys.argv[2:]]
+for p in protocols:
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, p)
+    for _ in range(10):
+        s.sendto(b"\\x13\\x88\\x13\\x89\\x00\\x10\\x00\\x00capsem!!", (destination, 0))
+"""
+
+
+def tunnel_probe(service, alpha, beta):
+    """What beta's kernel receives from alpha for UDP, GRE and IPIP."""
+    protocols = " ".join(str(p) for p in (UDP, GRE, IPIP))
+    guest(
+        service,
+        beta["id"],
+        "rm -f /var/tmp/raw-listener.ready /var/tmp/raw-listener.json",
+    )
+    start_in_guest(
+        service,
+        beta["id"],
+        "raw-listener",
+        f"python3 -c {shlex.quote(RAW_LISTENER)} {alpha['private_address']} {protocols}",
+    )
+
+    def exists(path):
+        return (
+            guest(service, beta["id"], f"test -e {path}", check=False).get("exit_code")
+            == 0
+        )
+
+    wait_for(
+        lambda: exists("/var/tmp/raw-listener.ready"),
+        "beta listens on raw sockets",
+        timeout=20,
+    )
+    guest(
+        service,
+        alpha["id"],
+        f"python3 -c {shlex.quote(RAW_SENDER)} {beta['private_address']} {protocols}",
+    )
+    wait_for(
+        lambda: exists("/var/tmp/raw-listener.json"),
+        "beta's listener reports",
+        timeout=30,
+    )
+    return json.loads(
+        guest(service, beta["id"], "cat /var/tmp/raw-listener.json")["stdout"]
+    )
+
+
 def owner_logs(service):
     return "\n".join(log.read_text() for log in service.tmp_dir.rglob("process.log"))
 
@@ -251,6 +318,13 @@ def test_members_exchange_udp_and_icmp_over_the_link_and_strangers_get_nothing(
         "500",
     )
     assert none["received"] == 0, none
+
+    # Only UDP and ICMP cross: a tunnel protocol would carry TCP around its
+    # admission. Beta's kernel hands raw sockets every packet of a protocol,
+    # so what the switch forwards is what beta hears; UDP is the control.
+    tunnels = tunnel_probe(service, alpha, beta)
+    assert tunnels[str(UDP)] >= 9, tunnels
+    assert tunnels[str(GRE)] == 0 and tunnels[str(IPIP)] == 0, tunnels
 
     # The history names both links.
     def audited():

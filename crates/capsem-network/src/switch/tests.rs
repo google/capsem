@@ -54,10 +54,51 @@ fn arp(operation: u16, sender: ([u8; 6], Ipv4Addr), target: ([u8; 6], Ipv4Addr))
 
 #[test]
 fn a_members_datagram_to_another_member_is_forwarded() {
-    for protocol in [UDP, ICMP] {
-        let frame = from_a_to_b(protocol, &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        assert_eq!(classify(A, member, &frame), Verdict::Forward(B), "protocol {protocol}");
+    let frame = from_a_to_b(UDP, &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(classify(A, member, &frame), Verdict::Forward(B));
+    // Echo, and the errors path MTU discovery and traceroute depend on.
+    for icmp_type in [0u8, 3, 8, 11] {
+        let frame = from_a_to_b(ICMP, &[icmp_type, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(classify(A, member, &frame), Verdict::Forward(B), "icmp type {icmp_type}");
     }
+}
+
+#[test]
+fn only_udp_and_icmp_cross_the_link() {
+    // TCP has its own admitted path; a tunnel (IPIP, 6in4, GRE, ESP) would
+    // carry TCP past that admission; SCTP and the rest are unaudited streams.
+    for protocol in [0u8, 2, 4, TCP, 33, 41, 47, 50, 51, 132, 255] {
+        assert_eq!(
+            classify(A, member, &from_a_to_b(protocol, &[8, 0, 0, 0, 0, 0, 0, 0])),
+            Verdict::Drop(DropReason::Protocol),
+            "protocol {protocol}"
+        );
+    }
+}
+
+#[test]
+fn icmp_crosses_only_as_echo_or_a_delivery_error() {
+    // Redirect, router advertisement, timestamp, address mask and the rest.
+    for icmp_type in [1u8, 4, 5, 9, 10, 13, 17, 255] {
+        assert_eq!(
+            classify(A, member, &from_a_to_b(ICMP, &[icmp_type, 0, 0, 0, 0, 0, 0, 0])),
+            Verdict::Drop(DropReason::IcmpType),
+            "icmp type {icmp_type}"
+        );
+    }
+    let typeless = from_a_to_b(ICMP, &[]);
+    assert_eq!(classify(A, member, &typeless), Verdict::Drop(DropReason::Short));
+    // A later fragment carries no type and cannot rewrite the first one's:
+    // its offset is at least eight bytes past the type.
+    let mut later = ipv4(A, B, ICMP, &[5; 64]);
+    later[6..8].copy_from_slice(&1u16.to_be_bytes());
+    let frame = ethernet(mac_of(B), mac_of(A), ETHERTYPE_IPV4, &later);
+    assert_eq!(classify(A, member, &frame), Verdict::Forward(B));
+    // The type is read past the options, not at byte twenty.
+    let mut options = ipv4(A, B, ICMP, &[0, 0, 0, 0, 5, 0, 0, 0]);
+    options[0] = 0x46;
+    let frame = ethernet(mac_of(B), mac_of(A), ETHERTYPE_IPV4, &options);
+    assert_eq!(classify(A, member, &frame), Verdict::Drop(DropReason::IcmpType));
 }
 
 #[test]
@@ -66,14 +107,6 @@ fn fragments_are_forwarded_untouched() {
     packet[6..8].copy_from_slice(&(0x2000u16 | 100).to_be_bytes()); // MF, offset 800
     let frame = ethernet(mac_of(B), mac_of(A), ETHERTYPE_IPV4, &packet);
     assert_eq!(classify(A, member, &frame), Verdict::Forward(B));
-}
-
-#[test]
-fn tcp_never_crosses_the_link() {
-    assert_eq!(
-        classify(A, member, &from_a_to_b(TCP, &[0; 20])),
-        Verdict::Drop(DropReason::Tcp)
-    );
 }
 
 #[test]
