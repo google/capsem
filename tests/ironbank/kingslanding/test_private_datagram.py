@@ -132,19 +132,22 @@ def udp(
 
 
 IPIP, UDP, GRE = 4, 17, 47
+# A packet socket on tap0 sees each IPv4 packet the switch delivered before
+# netfilter: UDP on the link is DNAT'ed into the container, so a raw socket
+# in the VM would never hear the control.
 RAW_LISTENER = """
 import json, select, socket, sys, time
-source, protocols = sys.argv[1], [int(p) for p in sys.argv[2:]]
-sockets = {socket.socket(socket.AF_INET, socket.SOCK_RAW, p): p for p in protocols}
+source, protocols = socket.inet_aton(sys.argv[1]), [int(p) for p in sys.argv[2:]]
+link = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(0x0800))
+link.bind(("tap0", 0))
 heard = {p: 0 for p in protocols}
 open("/var/tmp/raw-listener.ready", "w").close()
 deadline = time.monotonic() + 12
 while time.monotonic() < deadline:
-    ready, _, _ = select.select(list(sockets), [], [], 0.2)
-    for s in ready:
-        packet, (sender, _) = s.recvfrom(65535)
-        if sender == source:
-            heard[sockets[s]] += 1
+    if select.select([link], [], [], 0.2)[0]:
+        packet = link.recv(65535)
+        if packet[12:16] == source and packet[9] in heard:
+            heard[packet[9]] += 1
 json.dump(heard, open("/var/tmp/raw-listener.json", "w"))
 """
 RAW_SENDER = """
