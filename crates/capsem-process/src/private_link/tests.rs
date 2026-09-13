@@ -187,6 +187,59 @@ async fn a_second_network_cannot_take_the_link_while_one_holds_it() {
     assert!(second.stream().await.is_none(), "a VM has one link");
 }
 
+/// A link that fails after taking the stream lets go of it exactly as a
+/// released one does: the VM can link again once the pump reconnects.
+async fn assert_let_go_and_linkable_again(link: &Arc<PrivateLink>, guest: &mut tokio::net::UnixStream, token: u64) {
+    assert!(link.held.lock().unwrap().is_none(), "the hold ends with the link");
+    let read = tokio::time::timeout(Duration::from_secs(2), guest.read(&mut [0u8; 1]))
+        .await
+        .expect("the stream the failed link took ends, so the pump reconnects")
+        .unwrap();
+    assert_eq!(read, 0);
+    link.expect(&format!("{token:016x}"), network()).await.unwrap();
+    let again = Service::asks(link);
+    again.present(token).await;
+    let (conn, _fresh_guest) = guest_stream();
+    link.attach_guest(conn);
+    assert!(again.stream().await.is_some(), "the VM links again");
+}
+
+#[tokio::test]
+async fn a_link_whose_answer_cannot_be_sent_does_not_keep_the_vm_held() {
+    let link = Arc::new(PrivateLink::new(authorized_publisher("allow"), OWN));
+    link.expect("00000000000000f1", network()).await.unwrap();
+    let (conn, mut guest) = guest_stream();
+    link.attach_guest(conn);
+    let (owner_side, service_side) = std::os::unix::net::UnixStream::pair().unwrap();
+    drop(service_side);
+    let failed = link
+        .take_within(0xf1, owner_side, Duration::from_secs(1))
+        .await
+        .unwrap_err();
+    assert!(format!("{failed:#}").contains("answer the service"), "{failed:#}");
+    assert_let_go_and_linkable_again(&link, &mut guest, 0xf2).await;
+}
+
+#[tokio::test]
+async fn a_link_abandoned_while_held_does_not_keep_the_vm_held() {
+    let link = Arc::new(PrivateLink::new(authorized_publisher("allow"), OWN));
+    link.expect("00000000000000f3", network()).await.unwrap();
+    let (conn, mut guest) = guest_stream();
+    link.attach_guest(conn);
+    let (owner_side, service_side) = std::os::unix::net::UnixStream::pair().unwrap();
+    owner_side.set_nonblocking(true).unwrap();
+    let abandoned = tokio::time::timeout(
+        Duration::from_millis(300),
+        link.take_within(0xf3, owner_side, Duration::from_secs(1)),
+    )
+    .await;
+    assert!(abandoned.is_err(), "the link was still held when it was dropped");
+    // The answer already carried a duplicate of the stream; the service's
+    // copy is the service's to close.
+    drop(service_side);
+    assert_let_go_and_linkable_again(&link, &mut guest, 0xf4).await;
+}
+
 #[tokio::test]
 async fn after_a_release_the_next_link_waits_for_a_fresh_stream() {
     let link = Arc::new(PrivateLink::new(authorized_publisher("allow"), OWN));

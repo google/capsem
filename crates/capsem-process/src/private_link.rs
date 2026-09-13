@@ -170,6 +170,9 @@ impl PrivateLink {
             self.held.lock().unwrap().replace(epoch).is_none(),
             "this VM's link was taken by another network meanwhile"
         );
+        // From here every way out -- release, error or a dropped future -- lets
+        // go of the stream, or the VM could never link again.
+        let held = Held { link: self, epoch };
         let sender = Sender::new(socket.try_clone()?)?;
         sender
             .send(&seat_frame(SEAT_LINK, token), &[stream.as_raw_fd()])
@@ -185,24 +188,36 @@ impl PrivateLink {
             )
             .await?;
         tracing::info!(own = %self.own, "private link granted to the network switch");
-        // The service's close is the signal that the link is over.
+        // The service's close is the signal that the link is over; a socket
+        // that fails is as closed as one that ends.
         let mut watch = tokio::net::UnixStream::from_std(socket)?;
         let mut sink = [0u8; 64];
-        while watch.read(&mut sink).await? != 0 {}
-        let current = *self.epoch.lock().unwrap() == epoch;
-        let stream = if current {
-            self.guest.lock().unwrap().take()
-        } else {
-            None
-        };
-        drop(stream);
-        *self.released.lock().unwrap() = epoch;
-        *self.held.lock().unwrap() = None;
+        while matches!(watch.read(&mut sink).await, Ok(read) if read != 0) {}
+        drop(held);
         link.audit
             .record(RuntimeSecurityEventType::NetworkClose, NetworkReason::Complete, 0, 0)
             .await?;
         tracing::info!(own = %self.own, "private link released; the guest stream ends");
         Ok(())
+    }
+}
+
+/// The link holding the guest stream of `epoch`. Dropping it lets go: the
+/// stream ends so the pump reconnects, and the next link waits for that.
+struct Held<'a> {
+    link: &'a PrivateLink,
+    epoch: u64,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let link = self.link;
+        let stream = (*link.epoch.lock().unwrap() == self.epoch)
+            .then(|| link.guest.lock().unwrap().take())
+            .flatten();
+        drop(stream);
+        *link.released.lock().unwrap() = self.epoch;
+        *link.held.lock().unwrap() = None;
     }
 }
 
