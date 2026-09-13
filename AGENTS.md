@@ -167,6 +167,26 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 - **One way to do things.** Don't introduce a second pattern when one exists.
 - **Rust tests live in a sibling `tests.rs`.** In the parent module declare `#[cfg(test)] mod tests;` and put all `#[test]` functions in `tests.rs` next to it. Never append an inline `mod tests { ... }` block at the bottom of a production file -- it buries prod code under scroll-past test fixtures and doubles the file size for every Read and grep. See `/dev-testing`.
 
+## Fix what you find
+
+When the work turns up a defect -- a bug, a lint or type violation, a failing
+guard, a stale path, a vulnerable dependency the audit flags -- fix it and
+commit it in the same session, in its own well-scoped commit. Do not stop to
+ask permission for a routine, low-risk, behavior-preserving fix, and do not
+route it to a follow-up ticket by default: a green gate is the bar, and the
+agent that found the problem is the one to fix it. This holds even when the
+defect predates your change or sits just outside the immediate task; the gate
+runs the whole tree, so the whole tree is your responsibility once you are in
+it.
+
+Stop and ask only when the fix is genuinely a judgment call: it changes
+user-visible behavior, weakens a security boundary, forces a real scope
+expansion, or picks between options a maintainer should choose (for example a
+dependency major-version bump, or suppressing an advisory instead of
+upgrading). State the finding and your recommendation, then act on the answer.
+A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
+what you did.
+
 ## Invariants (do not break)
 
 ### Ephemeral VM model
