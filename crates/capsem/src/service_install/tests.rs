@@ -319,3 +319,26 @@ fn reject_test_isolation_env_lists_all_set_vars() {
     assert!(err.contains("CAPSEM_RUN_DIR"));
     assert!(err.contains("CAPSEM_ASSETS_DIR"));
 }
+
+/// Stopping the managed unit is not the end of the story: a directly started
+/// service on the same socket kept answering while `capsem stop` said it had
+/// stopped.
+#[test]
+fn a_service_still_answering_on_its_socket_is_not_reported_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("service.sock");
+    assert!(
+        ensure_service_stopped(&socket).is_ok(),
+        "no socket is a stopped service"
+    );
+
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let still = ensure_service_stopped(&socket).unwrap_err().to_string();
+    assert!(still.contains(&socket.display().to_string()), "{still}");
+
+    drop(listener);
+    assert!(
+        ensure_service_stopped(&socket).is_ok(),
+        "a socket file nothing listens on is a stopped service"
+    );
+}

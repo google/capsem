@@ -329,6 +329,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem stop` no longer reports "Service stopped." while another capsem
+  service still answers on the socket: it names the socket and fails instead.
+
 - MCP clients inside a VM no longer hang when they send a large final request
   and close stdin right away: the guest relay ends the session with an in-band
   frame instead of a vsock shutdown the transport could lose.

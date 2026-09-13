@@ -299,7 +299,29 @@ pub async fn start_service() -> Result<()> {
 }
 
 /// Stop the capsem service via the platform service manager.
-pub async fn stop_service() -> Result<()> {
+/// A stopped managed unit is not a stopped service: one started directly --
+/// the development daemon, a service run by hand -- can still answer on the
+/// same socket, and `capsem stop` must not report success over it.
+pub(crate) fn ensure_service_stopped(socket: &std::path::Path) -> Result<()> {
+    match std::os::unix::net::UnixStream::connect(socket) {
+        Ok(_) => anyhow::bail!(
+            "the installed service is stopped, but another capsem service still answers on {}; \
+             stop it where it was started",
+            socket.display()
+        ),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| format!("check whether {} still answers", socket.display())),
+    }
+}
+
+pub async fn stop_service(socket: &std::path::Path) -> Result<()> {
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
@@ -346,7 +368,7 @@ pub async fn stop_service() -> Result<()> {
         anyhow::bail!("service stop not supported on this platform");
     }
 
-    Ok(())
+    ensure_service_stopped(socket)
 }
 
 // --- macOS LaunchAgent ---

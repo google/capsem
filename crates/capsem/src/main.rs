@@ -1429,7 +1429,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Misc(MiscCommands::Stop) => {
-            service_install::stop_service().await?;
+            service_install::stop_service(&cli_service_socket_path()).await?;
             println!("Service stopped.");
             return Ok(());
         }
