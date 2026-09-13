@@ -18,7 +18,7 @@
 "crates/capsem-agent/src/shutdown.rs" = "c59308ad70e3e026ca82edd165eba2a776fc247b8d11c7b5fc816966560005da"
 "crates/capsem-agent/src/terminal_bridge.rs" = "a998fbd07bf14d4d1f7d01fc2756142c9fffd037a8840fe28fcf9723df4db656"
 "crates/capsem-agent/src/vsock_io.rs" = "1962827294e0a3fd23a4aafd6f1cdda660a718615871ed9dc7db324ddd116535"
-"crates/capsem-agent/src/tun_pump.rs" = "b832b78bab6d912637ffdd6b518a48fb4ad57449361f28ea812d5e8a1bf888b4"
+"crates/capsem-agent/src/tun_pump.rs" = "c525087c2c7430e1b35697156de47169aebb38c487ee4343bd5fbf3b0f73d9f8"
 "crates/capsem-agent/src/net_proxy.rs" = "d386ddf0b8ce91fa7e34e33395cc198c59f1d38b28b4976c69f6ef01981f84c8"
 "crates/capsem-core/src/auto_snapshot.rs" = "8c74a509534e2ab852cbd8a486536065090ea2064fbe111752f5637b2e3abc6e"
 "crates/capsem-core/src/auto_snapshot/sparse_copy.rs" = "2ae415613b699b3ee820ff965560126503f0e6a2bd5063323dd1dc778079d603"
