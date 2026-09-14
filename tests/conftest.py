@@ -117,7 +117,7 @@ def pytest_configure(config):
     # Before the tmp_path factory reads the option. pytest makes basetemp with
     # a plain mkdir, so the shared directory it now sits in must exist.
     namespaced = _namespaced_basetemp(config.option.basetemp)
-    if namespaced != config.option.basetemp:
+    if namespaced is not None and namespaced != config.option.basetemp:
         Path(namespaced).parent.mkdir(parents=True, exist_ok=True)
     config.option.basetemp = namespaced
 
