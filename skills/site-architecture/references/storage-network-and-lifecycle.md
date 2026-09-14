@@ -71,7 +71,11 @@ from logic inside it.
   route for that network's subnet only, and a declared link of 10 Gb/s full
   duplex with carrier up (`ETHTOOL_SLINKSETTINGS` on the tun driver; the tap
   default is 10 Mb/s, which makes Linux tooling and schedulers treat the link
-  as slow). `/sys/class/net/<tap>/speed` reads `10000`. `capsem-tun` pumps each
+  as slow). `/sys/class/net/<tap>/speed` reads `10000`. The guest kernel is
+  tuned to match: the defconfig carries the options a 10 Gb/s stack needs,
+  `capsem-init` writes socket buffer and backlog limits sized for 10 Gb/s
+  with 64 KiB frames through `/proc/sys`, and each tap gets a transmit queue
+  long enough not to drop under a burst. `capsem-tun` pumps each
   tap's ethernet frames as `[u16 len][frame]` records over its own vsock 5009
   connection, opening with the cable id the owner assigned. The guest never
   names a network and does not forward between taps.
@@ -93,8 +97,7 @@ neither Apple VZ nor KVM gives the VM a NIC; vsock is the only wire.
   and counted (the table is complete, so nothing floods). Broadcast
   (`ff:ff:ff:ff:ff:ff`) and multicast flood to every other port, exactly like a
   normal switch: that is how guests resolve each other with ordinary ARP
-  requests (and IPv6 neighbour discovery). The switch never answers ARP
-  itself. A per-port broadcast cap exists only against storms, sized so normal
+  requests. The switch never answers ARP itself. A per-port broadcast cap exists only against storms, sized so normal
   ARP never hits it; drops above it are counted. A frame whose source MAC is
   not its port's MAC is dropped: one comparison that keeps counters
   attributable.
