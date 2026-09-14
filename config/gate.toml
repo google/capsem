@@ -2264,7 +2264,6 @@ suite_path = "tests/ironbank/kingslanding"
 benchmark_paths = [
     "tests/ironbank/kingslanding/test_redis_benchmark.py",
     "tests/ironbank/kingslanding/test_publish_benchmark.py",
-    "tests/ironbank/kingslanding/test_network_benchmark.py",
 ]
 
 [modules]

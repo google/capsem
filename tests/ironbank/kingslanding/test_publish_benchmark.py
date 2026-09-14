@@ -2,8 +2,8 @@
 
 A host client, a published port, the confined router copying bytes into the
 container: `capsem-bench-rs throughput` records every direction and stream
-count through the benchmark store, beside the member-to-member lanes of
-`test_network_benchmark.py`. The shared helpers here (a guest exec, a
+count through the benchmark store; member-to-member traffic over a network's
+switch is the `network` bench dimension. The shared helpers here (a guest exec, a
 detached helper, the store) serve every kingslanding network test.
 Kingslanding uses a pinned native image prepared before hermetic execution;
 the image only provides the container.
