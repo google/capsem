@@ -410,6 +410,10 @@ net_tune net/ipv4/tcp_rmem "4096 131072 67108864"
 net_tune net/ipv4/tcp_wmem "4096 65536 67108864"
 net_tune net/core/netdev_max_backlog 30000
 net_tune net/ipv4/tcp_slow_start_after_idle 0
+# A switch drops ARP naming an address its port did not lease; on several
+# networks, announce and answer on each cable only as that cable's address.
+net_tune net/ipv4/conf/all/arp_announce 2
+net_tune net/ipv4/conf/all/arp_ignore 1
 init_log "network ready"
 boot_mark "network"
 

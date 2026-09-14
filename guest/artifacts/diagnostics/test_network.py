@@ -60,6 +60,9 @@ def test_network_stack_is_sized_for_ten_gigabit_cables():
         "net/ipv4/tcp_wmem": "4096 65536 67108864",
         "net/core/netdev_max_backlog": "30000",
         "net/ipv4/tcp_slow_start_after_idle": "0",
+        # Each cable announces and answers ARP only as its own address.
+        "net/ipv4/conf/all/arp_announce": "2",
+        "net/ipv4/conf/all/arp_ignore": "1",
     }
     for key, value in expected.items():
         with open(f"/proc/sys/{key}") as setting:
@@ -89,7 +92,8 @@ def test_private_pool_is_never_redirected_to_a_proxy():
     assert pool_return in rules, result.stdout
     redirects = [index for index, rule in enumerate(rules) if "REDIRECT" in rule and "--dport 53 " not in rule]
     assert all(rules.index(pool_return) < index for index in redirects), result.stdout
-    assert "10128" not in result.stdout, result.stdout
+    targets = {rule.split("--to-ports ")[-1] for rule in rules if "REDIRECT" in rule}
+    assert targets == {"1053", "10443", "10080"}, result.stdout
 
 
 def test_dns_proxy_listening_udp():

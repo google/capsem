@@ -2321,12 +2321,27 @@ class TestKernelConfig:
             assert setting in content, setting
         assert "FATAL: sysctl" in content
 
+    def test_init_makes_a_vm_on_several_networks_speak_on_each_as_itself(self):
+        """A switch drops an ARP message whose sender address is not its
+        port's. By default Linux may name any local address in an ARP request
+        and answer for any address on any cable, so a VM on two networks would
+        lose resolution on one: announce and answer only for the cable's own."""
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        for setting in [
+            "net_tune net/ipv4/conf/all/arp_announce 2",
+            "net_tune net/ipv4/conf/all/arp_ignore 1",
+        ]:
+            assert setting in content, setting
+
     def test_init_sends_private_subnets_out_their_cables_never_to_a_proxy(self):
         """TCP to a network member rides its cable like everything else; a
         port REDIRECT that ran first would hand member traffic on 443 or 80 to
         the MITM path, so the private pool returns before any of them."""
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
-        assert "10128" not in content, "the private TCP proxy path is gone"
+        # Only the DNS, TLS and HTTP proxies are redirect targets: no private
+        # TCP listener remains for member traffic to be handed to.
+        targets = set(re.findall(r"REDIRECT --to-port (\d+)", content))
+        assert targets == {"1053", "10443", "10080"}, targets
         pool_return = "iptables_add -t nat -A OUTPUT -d 10.128.0.0/9 -j RETURN"
         assert pool_return in content
         first_port_redirect = content.index("--dport 443")

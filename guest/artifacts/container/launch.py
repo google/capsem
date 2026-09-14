@@ -215,9 +215,9 @@ def open_cables(run, sysctl_root):
     leaves through the cable that routes it, as that cable's address, and
     what arrives on a cable is the container's. MASQUERADE takes the address
     when a packet leaves, so a cable plugged after the container started
-    carries it as well.
+    carries it as well. Forwarding is for the container alone: a VM on two
+    networks never carries one network's packets onto the other.
     """
-    (sysctl_root / "net/ipv4/ip_forward").write_text("1\n")
     run(
         IPTABLES,
         "-t",
@@ -247,6 +247,9 @@ def open_cables(run, sysctl_root):
     # Inserted after the container's FORWARD drop, so they sit above it.
     run(IPTABLES, "-I", "FORWARD", "-i", CABLES, "-o", HOST_LINK, "-j", "ACCEPT")
     run(IPTABLES, "-I", "FORWARD", "-i", HOST_LINK, "-o", CABLES, "-j", "ACCEPT")
+    # Inserted last, so it sits first: no accept can ever join two networks.
+    run(IPTABLES, "-I", "FORWARD", "-i", CABLES, "-o", CABLES, "-j", "DROP")
+    (sysctl_root / "net/ipv4/ip_forward").write_text("1\n")
 
 
 def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):

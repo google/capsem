@@ -361,3 +361,24 @@ def test_network_ready_hook_routes_the_container_through_every_cable(launcher, t
     assert proxy_dnats and all(calls.index(pool_return) < index for index in proxy_dnats)
     assert not any(call[:3] == ["ip", "-o", "addr"] for call in calls), "no cable is probed"
     assert not any("tap0" in call for call in calls)
+
+
+def test_network_ready_hook_never_makes_the_vm_a_router_between_its_networks(
+    launcher, tmp_path
+):
+    """The container needs forwarding on, which would also let a VM plugged
+    into two networks carry one member's packets to the other. Being on two
+    networks never joins them: cable to cable is dropped outright."""
+    run = FakeRun(VM_OUTPUT_RULES)
+    root = hook_environment(tmp_path)
+    (root / "net/ipv4").mkdir(parents=True, exist_ok=True)
+    launcher.network_ready(4242, run=run, sysctl_root=root)
+    iptables = launcher.IPTABLES
+    no_transit = [iptables, "-I", "FORWARD", "-i", "cable+", "-o", "cable+", "-j", "DROP"]
+    assert no_transit in run.calls
+    accepts = [
+        index for index, call in enumerate(run.calls)
+        if call[:3] == [iptables, "-I", "FORWARD"] and call[-1] == "ACCEPT"
+    ]
+    # Inserted last, so it sits first in the chain.
+    assert accepts and all(index < run.calls.index(no_transit) for index in accepts)
