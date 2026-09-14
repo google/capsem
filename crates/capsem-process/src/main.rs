@@ -134,7 +134,7 @@ struct Args {
     #[arg(long)]
     run_dir: Option<PathBuf>,
     /// The service's own socket, where this owner asks on a guest's behalf
-    /// (private connections). Given by the service: it is not always
+    /// (private names). Given by the service: it is not always
     /// `{run_dir}/service.sock`.
     #[arg(long)]
     service_socket: Option<PathBuf>,
