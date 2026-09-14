@@ -209,12 +209,11 @@ async fn record_locked(
     registry: &mut NetworkRegistry,
     network: Uuid,
     vm_id: &str,
-    address: Ipv4Addr,
     membership: MembershipState,
     event: Result<TransportEvent, String>,
 ) {
     if let Err(error) = registry
-        .attach(network, vm_id, address, membership, vm_lifecycle::unix_time_ms())
+        .set_state(network, vm_id, membership, vm_lifecycle::unix_time_ms())
         .await
     {
         warn!(%network, vm_id, %error, "membership state was not recorded");
@@ -323,15 +322,7 @@ async fn port_closed(state: &Arc<ServiceState>, network: Uuid, port: u64, report
             plugged.address,
             Outcome::Ended("closed", Some(report)),
         );
-        record_locked(
-            &mut registry,
-            network,
-            &plugged.vm_id,
-            plugged.address,
-            MembershipState::Declared,
-            event,
-        )
-        .await;
+        record_locked(&mut registry, network, &plugged.vm_id, MembershipState::Declared, event).await;
     }
     tokio::spawn(replug_later(Arc::clone(state), network, plugged.vm_id));
 }
@@ -420,28 +411,22 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
         .lock()
         .unwrap()
         .get(vm_id)
-        .map(|instance| (instance.uds_path.clone(), instance.private_address));
-    let Some((uds_path, address)) = running else {
+        .map(|instance| instance.uds_path.clone());
+    let Some(uds_path) = running else {
         return Ok(());
     };
-    let generation = {
+    let (generation, address) = {
         let mut registry = state.networks.lock().await;
-        if !is_member(&registry, network, vm_id) {
+        let Some(address) = registry.address_of(network, vm_id) else {
             return Ok(());
-        }
+        };
         registry
-            .attach(
-                network,
-                vm_id,
-                address,
-                MembershipState::Attaching,
-                vm_lifecycle::unix_time_ms(),
-            )
+            .set_state(network, vm_id, MembershipState::Attaching, vm_lifecycle::unix_time_ms())
             .await
             .map_err(|error| anyhow!("{error}"))?;
         let generation = state.switches.next_generation(network, vm_id);
         drop(registry);
-        generation
+        (generation, address)
     };
     let connection = Uuid::new_v4();
     match handshake(state, network, &uds_path, address, generation).await {
@@ -477,7 +462,7 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
                 );
             info!(%network, vm_id, %address, port, "network cable plugged");
             let event = link_event(network, connection, vm_id, address, Outcome::Linked);
-            record_locked(&mut registry, network, vm_id, address, MembershipState::Ready, event).await;
+            record_locked(&mut registry, network, vm_id, MembershipState::Ready, event).await;
             drop(registry);
             Ok(())
         }
@@ -492,7 +477,7 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
                     address,
                     Outcome::Refused(&format!("{error:#}")),
                 );
-                record_locked(&mut registry, network, vm_id, address, MembershipState::Failed, event).await;
+                record_locked(&mut registry, network, vm_id, MembershipState::Failed, event).await;
             }
             drop(registry);
             Err(error)

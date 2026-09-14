@@ -1,5 +1,5 @@
-//! Named networks over the service API: created, listed, joined by VMs with
-//! their lifetime addresses, and retired only once empty.
+//! Named networks over the service API: created with a subnet, listed, joined
+//! by VMs that lease an address in it, and retired only once empty.
 use super::*;
 use axum::http::Method;
 use std::time::Duration;
@@ -47,56 +47,76 @@ async fn networks_are_created_listed_inspected_and_retired() {
 }
 
 #[tokio::test]
-async fn members_join_with_their_lifetime_address_and_block_deletion() {
+async fn members_lease_an_address_in_the_networks_subnet_and_block_deletion() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     insert_fake_instance(&state, "running-vm", 4242);
-    let running_address = state.instances.lock().unwrap()["running-vm"].private_address;
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
-    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
-    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped = test_persistent_entry("stopped-vm", stopped_dir);
     let stopped_id = stopped.id.clone();
     state.persistent_registry.lock().unwrap().register(stopped).unwrap();
-    let legacy_dir = state.run_dir.join("persistent/legacy-vm");
-    capsem_core::create_virtiofs_session(&legacy_dir, 64).unwrap();
-    let legacy = test_persistent_entry("legacy-vm", legacy_dir);
-    let legacy_id = legacy.id.clone();
-    state.persistent_registry.lock().unwrap().register(legacy).unwrap();
 
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
-    let member = |vm: &str| format!("/networks/{id}/members/{vm}");
+    let subnet = capsem_config::PrivatePool::parse(created["subnet"].as_str().unwrap()).unwrap();
+    let member = |network: &str, vm: &str| format!("/networks/{network}/members/{vm}");
 
-    let (status, joined) = route_request(app(&state), Method::PUT, &member("running-vm"), None).await;
+    let (status, joined) = route_request(app(&state), Method::PUT, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(joined["members"][0]["vm_id"], "running-vm");
-    assert_eq!(joined["members"][0]["address"], json!(running_address.to_string()));
-    // A running VM is linked at once; this fake owner has no seat, so the
-    // link fails and the membership says so.
+    let running_address: std::net::Ipv4Addr = joined["members"][0]["address"].as_str().unwrap().parse().unwrap();
+    assert!(
+        subnet.contains(running_address),
+        "{running_address} is outside {subnet}"
+    );
+    // A running VM is plugged at once; this fake owner has no seat, so the
+    // plug fails and the membership says so.
     assert_eq!(joined["members"][0]["state"], "failed");
-    let (status, joined) = route_request(app(&state), Method::PUT, &member(&stopped_id), None).await;
+    let (status, joined) = route_request(app(&state), Method::PUT, &member(&id, &stopped_id), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(
         joined["members"].as_array().unwrap().len(),
         2,
-        "a stopped VM joins with its recorded address"
+        "a stopped VM joins too, and is plugged when it runs"
     );
-
-    let (status, refused) = route_request(app(&state), Method::PUT, &member(&legacy_id), None).await;
-    assert_eq!(status, StatusCode::CONFLICT, "no address yet: {refused}");
-    let (status, _) = route_request(app(&state), Method::PUT, &member("ghost-vm"), None).await;
+    let (status, again) = route_request(app(&state), Method::PUT, &member(&id, "running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let running = again["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["vm_id"] == "running-vm")
+        .unwrap();
+    assert_eq!(
+        running["address"],
+        json!(running_address.to_string()),
+        "joining again keeps the lease"
+    );
+    let (status, _) = route_request(app(&state), Method::PUT, &member(&id, "ghost-vm"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, other) = create_network(&state, "other").await;
+    let other_id = other["id"].as_str().unwrap().to_string();
+    let other_subnet = capsem_config::PrivatePool::parse(other["subnet"].as_str().unwrap()).unwrap();
+    assert!(!subnet.overlaps(other_subnet), "{subnet} and {other_subnet}");
+    let (status, joined_other) = route_request(app(&state), Method::PUT, &member(&other_id, "running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined_other}");
+    let other_address: std::net::Ipv4Addr = joined_other["members"][0]["address"].as_str().unwrap().parse().unwrap();
+    assert!(
+        other_subnet.contains(other_address),
+        "a VM on two networks has an address in each"
+    );
 
     let (status, refused) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
 
-    let (status, left) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    let (status, left) = route_request(app(&state), Method::DELETE, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::OK, "{left}");
     assert_eq!(left["members"].as_array().unwrap().len(), 1);
-    let (status, _) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    let (status, _) = route_request(app(&state), Method::DELETE, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "leaving twice is not a member");
-    let (status, _) = route_request(app(&state), Method::DELETE, &member(&stopped_id), None).await;
+    let (status, _) = route_request(app(&state), Method::DELETE, &member(&id, &stopped_id), None).await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
     assert_eq!(status, StatusCode::OK, "empty networks retire");
@@ -108,8 +128,7 @@ async fn deleting_a_vm_leaves_every_network_it_was_in() {
     install_test_profile_assets(&state);
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
-    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
-    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped = test_persistent_entry("stopped-vm", stopped_dir);
     let stopped_id = stopped.id.clone();
     state.persistent_registry.lock().unwrap().register(stopped).unwrap();
     let (_, a) = create_network(&state, "alpha").await;
@@ -647,16 +666,13 @@ async fn a_member_links_at_start_even_when_its_owner_binds_late() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
-    let (uds_b, address) = {
-        let instances = state.instances.lock().unwrap();
-        (instances["vm-b"].uds_path.clone(), instances["vm-b"].private_address)
-    };
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
 
     // As provisioning does: record the membership, then link it.
-    crate::network_routes::attach_provisioned(&state, "vm-b", address, &[id.parse().unwrap()])
+    crate::network_routes::attach_provisioned(&state, "vm-b", &[id.parse().unwrap()])
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -914,10 +930,8 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
     }
     owner_secret(&state, "vm-a", "secret-a");
-    let addresses: HashMap<&str, String> = ["vm-a", "vm-b", "vm-c", "vm-d", "vm-e"]
-        .into_iter()
-        .map(|vm| (vm, state.instances.lock().unwrap()[vm].private_address.to_string()))
-        .collect();
+    // Each VM but vm-a is in one network, so its lease there is its address.
+    let mut addresses: HashMap<&str, String> = HashMap::new();
     let (_, team) = create_network(&state, "team").await;
     let (_, other) = create_network(&state, "other").await;
     let (_, apart) = create_network(&state, "apart").await;
@@ -932,7 +946,7 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         (&other, "vm-d"),
         (&apart, "vm-e"),
     ] {
-        let (status, _) = route_request(
+        let (status, joined) = route_request(
             app(&state),
             Method::PUT,
             &format!("/networks/{network}/members/{vm}"),
@@ -940,6 +954,16 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let lease = joined["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|member| member["vm_id"] == vm)
+            .unwrap()["address"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        addresses.insert(vm, lease);
     }
     let ask = |name: Option<&str>, address: Option<&str>| {
         let mut request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a" });

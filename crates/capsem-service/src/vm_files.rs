@@ -985,8 +985,7 @@ pub(super) async fn handle_provision(
     match result {
         Ok(Ok(uds_path)) => {
             let response = provision_response_for_running(&state, id.clone(), uds_path)?;
-            let address = response.private_address.expect("a provisioned VM carries its address");
-            network_routes::attach_provisioned(&state, &id, address, &networks).await?;
+            network_routes::attach_provisioned(&state, &id, &networks).await?;
             Ok(Json(response))
         }
         Ok(Err(app_err)) => Err(app_err),

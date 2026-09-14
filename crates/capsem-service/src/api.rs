@@ -62,7 +62,8 @@ pub struct CreateNetworkRequest {
     pub name: String,
 }
 
-/// One member of a network: the VM and the lifetime address it brought.
+/// One member of a network: the VM and the address it leased in the
+/// network's subnet.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct NetworkMemberInfo {
     pub vm_id: String,
@@ -79,6 +80,8 @@ pub struct NetworkInfo {
     /// Immutable; a new network under a reused name has a new id.
     pub id: String,
     pub name: String,
+    /// `a.b.c.d/prefix`: every member's address is inside it.
+    pub subnet: String,
     pub created_unix_ms: i64,
     pub members: Vec<NetworkMemberInfo>,
 }

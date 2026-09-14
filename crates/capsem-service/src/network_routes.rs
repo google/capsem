@@ -1,4 +1,4 @@
-//! Named networks: groups of VMs, each bringing its lifetime address.
+//! Named networks: a subnet each, and VMs that lease an address in it.
 //!
 //! The registry behind `ServiceState::networks` is the authority and makes
 //! every change durable before answering; these handlers only translate
@@ -46,7 +46,10 @@ pub(super) fn sweep_retired(registry: &mut NetworkRegistry, now_unix_ms: i64) {
 pub(super) fn network_error(error: NetworkError) -> AppError {
     let status = match &error {
         NetworkError::InvalidName(_) | NetworkError::Cursor(_) => StatusCode::BAD_REQUEST,
-        NetworkError::NameTaken { .. } | NetworkError::HasMembers { .. } => StatusCode::CONFLICT,
+        NetworkError::NameTaken { .. }
+        | NetworkError::HasMembers { .. }
+        | NetworkError::SubnetsExhausted { .. }
+        | NetworkError::AddressesExhausted { .. } => StatusCode::CONFLICT,
         NetworkError::NotFound(_) | NetworkError::NotAMember { .. } | NetworkError::NoPrivatePath { .. } => {
             StatusCode::NOT_FOUND
         }
@@ -74,6 +77,7 @@ fn network_info(registry: &NetworkRegistry, id: Uuid) -> Option<NetworkInfo> {
     Some(NetworkInfo {
         id: id.to_string(),
         name: summary.name,
+        subnet: summary.subnet.to_string(),
         created_unix_ms: summary.created_unix_ms,
         members,
     })
@@ -113,7 +117,6 @@ pub(super) fn resolve_network_names(registry: &NetworkRegistry, names: &[String]
 pub(super) async fn attach_provisioned(
     state: &Arc<ServiceState>,
     vm_id: &str,
-    address: std::net::Ipv4Addr,
     networks: &[Uuid],
 ) -> Result<(), AppError> {
     if networks.is_empty() {
@@ -122,13 +125,7 @@ pub(super) async fn attach_provisioned(
     let mut registry = state.networks.lock().await;
     for network in networks {
         registry
-            .attach(
-                *network,
-                vm_id,
-                address,
-                capsem_logger::MembershipState::Declared,
-                vm_lifecycle::unix_time_ms(),
-            )
+            .attach(*network, vm_id, vm_lifecycle::unix_time_ms())
             .await
             .map_err(network_error)?;
     }
@@ -199,21 +196,18 @@ pub(super) async fn handle_network_attach(
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {
     let network = parse_network_id(&id)?;
-    let address = vm_private_address(&state, &vm_id)?;
-    {
-        let mut registry = state.networks.lock().await;
-        registry
-            .attach(
-                network,
-                &vm_id,
-                address,
-                capsem_logger::MembershipState::Declared,
-                vm_lifecycle::unix_time_ms(),
-            )
-            .await
-            .map_err(network_error)?;
-        drop(registry);
+    let known = state.instances.lock().unwrap().contains_key(&vm_id)
+        || vm_lifecycle::find_persistent_entry_by_route_id(&state, &vm_id).is_some();
+    if !known {
+        return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}")));
     }
+    state
+        .networks
+        .lock()
+        .await
+        .attach(network, &vm_id, vm_lifecycle::unix_time_ms())
+        .await
+        .map_err(network_error)?;
     // A running member is plugged before the answer, so the caller sees
     // `ready`, or `failed` with the reason in the network's history. The
     // membership stands either way: the VM joined, its cable is plugged again
