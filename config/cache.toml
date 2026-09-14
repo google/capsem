@@ -342,6 +342,15 @@ maximum_count = 20
 managed_globs = ["cpython-*"]
 lease_template = ".{key}.lock"
 
+[stages.node-compile-cache]
+description = "Node's V8 compile cache, shared so tool processes start warm instead of rewriting thousands of cache files into each run's TMPDIR."
+scope = "disk"
+path = "tools/node/compile-cache"
+warm_size_bytes = 268435456 # 256 MiB
+max_size_bytes = 536870912 # 512 MiB
+prune_strategy = "lru"
+maximum_age_hours = 720
+
 [stages.node-pnpm]
 description = "pnpm package store shared by frontend workspaces and release builds."
 scope = "disk"

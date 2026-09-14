@@ -116,3 +116,36 @@ def test_bounded_ruff_leaves_no_cache_beside_source(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / ".ruff_cache").exists()
+
+
+def test_node_compile_cache_is_shared_not_rewritten_per_run(tmp_path: Path) -> None:
+    """Node's compile cache defaulted to TMPDIR, and TMPDIR is a fresh
+    directory per gate process: every Node process rewrote ~7,000 cache files
+    it would never reuse. Millions of those writes left fseventsd hours behind
+    at 100% CPU and 38 GB."""
+    import os
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+
+        pytest.skip("node is not installed")
+    source = tmp_path / "checkout"
+    (source / "config").mkdir(parents=True)
+    for name in ("cache.toml", "gate.toml"):
+        (source / "config" / name).write_bytes((ROOT / "config" / name).read_bytes())
+    environment = gatelaunch.contained_environment(source)
+    module = tmp_path / "probe.js"
+    module.write_text("module.exports = 1;\n")
+    for _ in range(2):
+        subprocess.run(
+            [node, "-e", f"require('node:module').enableCompileCache(); require({str(module)!r})"],
+            env={**os.environ, **environment},
+            check=True,
+        )
+    run_temp = Path(environment["TMPDIR"])
+    assert not (run_temp / "node-compile-cache").exists(), "the cache followed the per-run TMPDIR"
+    shared = Path(environment["NODE_COMPILE_CACHE"])
+    assert shared.is_relative_to(Path(environment[CACHE_POLICY.authority_environment]) / "cache")
+    assert any(shared.rglob("*")), "Node wrote no compile cache where it was pointed"
