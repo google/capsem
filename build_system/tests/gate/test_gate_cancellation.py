@@ -90,9 +90,11 @@ class _Foreground(Action, name="foreground-cancellation-fixture"):
         return "run a foreground process tree"
 
     def perform(self, context: Context) -> None:
-        child = "import signal; signal.alarm(5); signal.pause()"
+        # Long alarms: a loaded host can take seconds to start the helper, and
+        # a tree that ends on its own proves nothing about cancellation.
+        child = "import signal; signal.alarm(60); signal.pause()"
         helper = (
-            "import os,signal,subprocess,sys; signal.alarm(5); "
+            "import os,signal,subprocess,sys; signal.alarm(60); "
             f"child=subprocess.Popen([sys.executable,'-c',{child!r}]); "
             "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); signal.pause()"
         )
@@ -131,11 +133,14 @@ def _interrupt_when(flag: threading.Event) -> threading.Thread:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Still running. A zombie is not: a reparented grandchild waits for
+    launchd to reap it, which lags on a loaded host after it has stopped."""
+    import psutil
+
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
         return False
-    return True
 
 
 def test_an_interrupt_stops_a_long_action_at_its_next_boundary() -> None:
@@ -204,7 +209,7 @@ def test_ctrl_c_reaps_foreground_descendants_before_return(tmp_path: Path) -> No
     started = threading.Event()
 
     def notice_child() -> None:
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + 30
         while not pids.is_file() and time.monotonic() < deadline:
             time.sleep(0.01)
         started.set()
@@ -214,7 +219,10 @@ def test_ctrl_c_reaps_foreground_descendants_before_return(tmp_path: Path) -> No
     _interrupt_when(started)
     config = CONFIG.model_copy(
         update={
-            "execution": CONFIG.execution.model_copy(update={"cancellation_grace_seconds": 0.5})
+            # Enough for SIGTERM, a process-table scan and SIGKILL on a loaded
+            # host; a grace that expires first returns before the reap by
+            # design (see test_a_worker_that_refuses_to_stop_is_named).
+            "execution": CONFIG.execution.model_copy(update={"cancellation_grace_seconds": 5.0})
         }
     )
     context = Context(Runner(PROJECT_ROOT), config)
