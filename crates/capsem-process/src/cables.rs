@@ -13,6 +13,11 @@
 //! cable's stream so its pump reconnects. Leaving a network (`LinkDetach`)
 //! takes the cable down in the guest.
 //!
+//! Every plug and leave carries the attachment's generation, and the cable
+//! keeps the newest plug's. The service's requests run as separate jobs here,
+//! so a rejoin's plug can land before the leave that preceded it: a leave
+//! older than the cable's plug leaves the cable alone.
+//!
 //! The guest names only a cable id: which network a cable belongs to is this
 //! owner's table, so a guest can at most send its own frames down another of
 //! its own cables.
@@ -47,6 +52,8 @@ struct PendingPlug {
 
 struct Cable {
     network: String,
+    /// The newest attachment generation that plugged this cable.
+    generation: u32,
     guest: Option<VsockConnection>,
     /// Counts pump connections, so a port lets go of the stream it was given
     /// and never a newer one.
@@ -80,11 +87,12 @@ impl Table {
         Ok(entry.guest.replace(conn))
     }
 
-    fn remove_network(&mut self, network: &str) -> Option<(u32, Cable)> {
+    /// Forget `network`'s cable, unless a plug newer than `generation` holds it.
+    fn remove_network(&mut self, network: &str, generation: u32) -> Option<(u32, Cable)> {
         let cable = self
             .cables
             .iter()
-            .find(|(_, entry)| entry.network == network)
+            .find(|(_, entry)| entry.network == network && entry.generation <= generation)
             .map(|(cable, _)| *cable)?;
         self.cables.remove(&cable).map(|entry| (cable, entry))
     }
@@ -148,6 +156,7 @@ impl Cables {
         network: NetworkIdentity,
         address: Ipv4Addr,
         prefix: u8,
+        generation: u32,
     ) -> Result<()> {
         let token = parse_token(token)?;
         let network_id = network.id.to_string();
@@ -170,7 +179,7 @@ impl Cables {
                 }
             );
         }
-        let cable = self.cable_for(&network_id);
+        let cable = self.cable_for(&network_id, generation);
         self.control
             .send(ServiceToProcess::PlugCable { cable, address, prefix })
             .await
@@ -194,10 +203,12 @@ impl Cables {
         Ok(())
     }
 
-    /// The network's cable, given an id the first time it is plugged.
-    fn cable_for(&self, network: &str) -> u32 {
+    /// The network's cable, given an id the first time it is plugged; a plug
+    /// raises it to its generation.
+    fn cable_for(&self, network: &str, generation: u32) -> u32 {
         let mut table = self.table.lock().unwrap();
-        if let Some((cable, _)) = table.cables.iter().find(|(_, entry)| entry.network == network) {
+        if let Some((cable, entry)) = table.cables.iter_mut().find(|(_, entry)| entry.network == network) {
+            entry.generation = entry.generation.max(generation);
             return *cable;
         }
         table.next += 1;
@@ -206,6 +217,7 @@ impl Cables {
             cable,
             Cable {
                 network: network.to_string(),
+                generation,
                 guest: None,
                 epoch: 0,
                 held: None,
@@ -215,10 +227,11 @@ impl Cables {
         cable
     }
 
-    /// The VM left `network`: its cable is forgotten and taken down in the
-    /// guest. Leaving a network the VM has no cable for is already done.
-    pub(crate) async fn detach(&self, network: &str) -> Result<()> {
-        let removed = self.table.lock().unwrap().remove_network(network);
+    /// The VM left `network` as of `generation`: its cable is forgotten and
+    /// taken down in the guest. Leaving a network the VM has no cable for, or
+    /// whose cable a newer plug holds, is already done.
+    pub(crate) async fn detach(&self, network: &str, generation: u32) -> Result<()> {
+        let removed = self.table.lock().unwrap().remove_network(network, generation);
         let Some((cable, entry)) = removed else {
             return Ok(());
         };

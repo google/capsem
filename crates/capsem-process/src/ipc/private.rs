@@ -14,12 +14,13 @@ pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output
                 network_name,
                 address,
                 prefix,
+                generation,
             } => {
                 let linked = async {
                     let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
                         .map_err(anyhow::Error::msg)?;
                     let cables = job_store.cables.get().context("no cables on this owner")?;
-                    cables.expect(&token, network, address, prefix).await?;
+                    cables.expect(&token, network, address, prefix, generation).await?;
                     let seat = job_store.cable_seat.get().context("no cable seat on this owner")?;
                     Ok::<_, anyhow::Error>(seat.to_string_lossy().into_owned())
                 }
@@ -31,13 +32,17 @@ pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output
                     error,
                 }
             }
-            ServiceToProcess::LinkDetach { id, network } => {
+            ServiceToProcess::LinkDetach {
+                id,
+                network,
+                generation,
+            } => {
                 let detached = async {
                     let network =
                         capsem_core::security_engine::network::NetworkIdentity::parse(&network, String::new())
                             .map_err(anyhow::Error::msg)?;
                     let cables = job_store.cables.get().context("no cables on this owner")?;
-                    cables.detach(&network.id.to_string()).await
+                    cables.detach(&network.id.to_string(), generation).await
                 }
                 .await;
                 ProcessToService::LinkDetachResult {

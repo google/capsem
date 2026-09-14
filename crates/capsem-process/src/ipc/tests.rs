@@ -772,6 +772,7 @@ async fn concurrent_cable_requests_are_all_answered() {
                     tx.send(ServiceToProcess::LinkDetach {
                         id,
                         network: "11111111-2222-3333-4444-555555555555".into(),
+                        generation: 1,
                     })
                     .await
                     .unwrap();

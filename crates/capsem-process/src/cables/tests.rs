@@ -62,7 +62,8 @@ async fn instruction(instructions: &mut mpsc::Receiver<ServiceToProcess>) -> Ser
 }
 
 /// Expect a plug for `network` and return the cable the guest was told to
-/// bring up for it.
+/// bring up for it. The token doubles as the attachment generation, which
+/// grows with it in every test.
 async fn plugged(
     cables: &Cables,
     instructions: &mut mpsc::Receiver<ServiceToProcess>,
@@ -71,7 +72,7 @@ async fn plugged(
     address: Ipv4Addr,
 ) -> u32 {
     cables
-        .expect(&format!("{token:016x}"), network(id), address, 24)
+        .expect(&format!("{token:016x}"), network(id), address, 24, token as u32)
         .await
         .unwrap();
     match instruction(instructions).await {
@@ -153,7 +154,7 @@ async fn plugging_a_network_brings_its_cable_up_in_the_guest_once() {
 async fn a_blocked_profile_refuses_the_plug_and_a_token_is_expected_once() {
     let (blocked, mut told) = cables("block");
     let refused = blocked
-        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24)
+        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
         .await
         .unwrap_err();
     assert!(format!("{refused:#}").contains("block"), "{refused:#}");
@@ -161,17 +162,17 @@ async fn a_blocked_profile_refuses_the_plug_and_a_token_is_expected_once() {
     let (control, _) = mpsc::channel(1);
     let unconfigured = Cables::new(Arc::new(Publisher::default()), control);
     assert!(unconfigured
-        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24)
+        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
         .await
         .is_err());
     let (allowed, _told) = cables("allow");
     allowed
-        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24)
+        .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
         .await
         .unwrap();
     assert!(
         allowed
-            .expect("00000000000000aa", network(TEAM), IN_TEAM, 24)
+            .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
             .await
             .is_err(),
         "the same token cannot be expected twice"
@@ -389,7 +390,7 @@ async fn detaching_takes_the_cable_down_and_leaves_the_other_one() {
     cables.attach_guest(team, conn);
     let (conn, mut other_guest) = guest_stream();
     cables.attach_guest(other, conn);
-    cables.detach(TEAM).await.unwrap();
+    cables.detach(TEAM, 0x92).await.unwrap();
     assert!(matches!(
         instruction(&mut instructions).await,
         ServiceToProcess::UnplugCable { cable } if cable == team
@@ -407,7 +408,7 @@ async fn detaching_takes_the_cable_down_and_leaves_the_other_one() {
         ended(&mut late_guest).await,
         "a pump still dialing a detached cable is closed"
     );
-    assert!(cables.detach(TEAM).await.is_ok(), "detaching twice is harmless");
+    assert!(cables.detach(TEAM, 0x92).await.is_ok(), "detaching twice is harmless");
     let again = plugged(&cables, &mut instructions, 0x93, TEAM, IN_TEAM).await;
     assert_ne!(again, team, "a network plugged after detaching gets a new cable");
 }
@@ -445,4 +446,40 @@ async fn the_seat_answers_a_plug_request_and_closes_anything_else() {
             "a frame that is not a plug request is closed without an answer"
         );
     }
+}
+
+/// The service leaves and rejoins a network faster than this owner's IPC
+/// jobs run: the next join's plug can arrive before the leave's detach.
+/// Detaching by network alone then took down the cable the join had just
+/// brought up, and the member never linked again. A detach names the
+/// attachment generation it ends, and a newer plug keeps its cable.
+#[tokio::test]
+async fn a_detach_older_than_the_latest_plug_leaves_the_cable_up() {
+    let (cables, mut instructions) = cables("allow");
+    let first = plugged(&cables, &mut instructions, 0x10, TEAM, IN_TEAM).await;
+    let rejoined = plugged(&cables, &mut instructions, 0x12, TEAM, IN_OTHER).await;
+    assert_eq!(rejoined, first, "the rejoin takes the network's cable over");
+    let (conn, mut guest) = guest_stream();
+    cables.attach_guest(rejoined, conn);
+
+    cables.detach(TEAM, 0x11).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), instructions.recv())
+            .await
+            .is_err(),
+        "the late detach tells the guest nothing"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), guest.read(&mut [0u8; 1]))
+            .await
+            .is_err(),
+        "the rejoined cable keeps its stream"
+    );
+
+    cables.detach(TEAM, 0x12).await.unwrap();
+    assert!(matches!(
+        instruction(&mut instructions).await,
+        ServiceToProcess::UnplugCable { cable } if cable == rejoined
+    ));
+    assert!(ended(&mut guest).await, "a current detach takes the cable down");
 }
