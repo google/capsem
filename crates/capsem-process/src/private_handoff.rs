@@ -1,7 +1,7 @@
 //! Private connections between members, from this owner's two seats.
 //!
 //! The service asks the guest's link stream on this socket too, under a
-//! token of its own kind (`private_link`).
+//! token of its own kind (`cables`).
 //!
 //! As the **destination**, the service tells this owner (`PrivateAccept`)
 //! that a connection from a member is admitted under a one-time token; the
@@ -58,7 +58,7 @@ pub(crate) struct PrivateHandoff {
     owner_secret: String,
     vm_id: String,
     /// The link seat, asked on this same socket by the service.
-    link: Arc<crate::private_link::PrivateLink>,
+    cables: Arc<crate::cables::Cables>,
 }
 
 impl PrivateHandoff {
@@ -69,7 +69,7 @@ impl PrivateHandoff {
         service_socket: PathBuf,
         owner_secret: String,
         vm_id: String,
-        link: Arc<crate::private_link::PrivateLink>,
+        cables: Arc<crate::cables::Cables>,
     ) -> Self {
         let (feed, broker_input) = mpsc::channel(MAX_PENDING);
         Self {
@@ -83,7 +83,7 @@ impl PrivateHandoff {
             service_socket,
             owner_secret,
             vm_id,
-            link,
+            cables,
         }
     }
 
@@ -158,7 +158,7 @@ impl PrivateHandoff {
         if kind == SEAT_LINK {
             ensure!(frame.fds.is_empty(), "a link request carries no descriptor");
             drop(receiver);
-            return self.link.take(token, socket).await;
+            return self.cables.take(token, socket).await;
         }
         // The token is spent by the first frame naming it, whatever its
         // shape: one-time means one delivery attempt.

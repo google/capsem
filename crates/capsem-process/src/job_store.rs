@@ -41,7 +41,7 @@ pub(crate) struct JobStore {
     pub(crate) private: std::sync::OnceLock<Arc<crate::private_handoff::PrivateHandoff>>,
     /// The guest end of the private link, for the network's switch; set with
     /// the handoff socket, absent in fixtures that never bind one.
-    pub(crate) link: std::sync::OnceLock<Arc<crate::private_link::PrivateLink>>,
+    pub(crate) cables: std::sync::OnceLock<Arc<crate::cables::Cables>>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -89,7 +89,7 @@ impl JobStore {
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
             private: std::sync::OnceLock::new(),
-            link: std::sync::OnceLock::new(),
+            cables: std::sync::OnceLock::new(),
         }
     }
 

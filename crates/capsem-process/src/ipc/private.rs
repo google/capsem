@@ -1,7 +1,8 @@
-//! The service's two private network requests: a TCP connection admitted
-//! to this VM (`PrivateAccept`) and this VM's link to a network's switch
-//! (`LinkAttach`). Both answer with the handoff socket the asker presents
-//! its token on; both refusals name their reason.
+//! The service's private network requests: a TCP connection admitted to
+//! this VM (`PrivateAccept`), plugging this VM's cable into a network's
+//! switch (`LinkAttach`), and taking the cable down when it leaves
+//! (`LinkDetach`). The first two answer with the handoff socket the asker
+//! presents its token on; every refusal names its reason.
 use super::*;
 
 pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output: mpsc::Sender<ProcessToService>) {
@@ -39,12 +40,14 @@ pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output
                 token,
                 network,
                 network_name,
+                address,
+                prefix,
             } => {
                 let linked = async {
                     let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
                         .map_err(anyhow::Error::msg)?;
-                    let link = job_store.link.get().context("no link seat on this owner")?;
-                    link.expect(&token, network).await?;
+                    let cables = job_store.cables.get().context("no cables on this owner")?;
+                    cables.expect(&token, network, address, prefix).await?;
                     let handoff = job_store.private.get().context("no private handoff on this owner")?;
                     Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
                 }
@@ -54,6 +57,20 @@ pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output
                     id,
                     handoff_socket,
                     error,
+                }
+            }
+            ServiceToProcess::LinkDetach { id, network } => {
+                let detached = async {
+                    let network =
+                        capsem_core::security_engine::network::NetworkIdentity::parse(&network, String::new())
+                            .map_err(anyhow::Error::msg)?;
+                    let cables = job_store.cables.get().context("no cables on this owner")?;
+                    cables.detach(&network.id.to_string()).await
+                }
+                .await;
+                ProcessToService::LinkDetachResult {
+                    id,
+                    error: detached.err().map(|error| format!("{error:#}")),
                 }
             }
             other => {

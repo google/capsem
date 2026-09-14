@@ -25,9 +25,9 @@ async fn a_token_is_redeemed_once_and_not_after_its_deadline() {
         PathBuf::from("/tmp/service.sock"),
         "secret".into(),
         "vm-b".into(),
-        Arc::new(crate::private_link::PrivateLink::new(
+        Arc::new(crate::cables::Cables::new(
             Arc::new(Publisher::default()),
-            Ipv4Addr::new(10, 128, 0, 3),
+            mpsc::channel(1).0,
         )),
     );
     let network = NetworkIdentity::parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "team".into()).unwrap();
@@ -78,9 +78,9 @@ fn handoff_at(dir: &tempfile::TempDir, service_socket: PathBuf) -> Arc<PrivateHa
         service_socket,
         "secret-a".into(),
         "vm-a".into(),
-        Arc::new(crate::private_link::PrivateLink::new(
+        Arc::new(crate::cables::Cables::new(
             Arc::new(Publisher::default()),
-            Ipv4Addr::new(10, 128, 0, 2),
+            mpsc::channel(1).0,
         )),
     ))
 }

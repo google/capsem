@@ -506,6 +506,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         hub_tx.send(HostToGuest::AbortPorts { flows }).await
                     );
                 }
+                ServiceToProcess::PlugCable { cable, address, prefix } => {
+                    capsem_core::try_send!(
+                        "hub_plug_cable",
+                        hub_tx.send(HostToGuest::PlugCable { cable, address, prefix }).await
+                    );
+                }
+                ServiceToProcess::UnplugCable { cable } => {
+                    capsem_core::try_send!(
+                        "hub_unplug_cable",
+                        hub_tx.send(HostToGuest::UnplugCable { cable }).await
+                    );
+                }
                 ServiceToProcess::Exec { id, command } => {
                     // active_execs is owned by ipc.rs's Exec handler -- it
                     // creates the capture slot *before* sending here. The
