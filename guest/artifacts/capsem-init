@@ -383,11 +383,10 @@ iptables_add() {
 }
 iptables_add -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
-# TCP to a private address (the host pool, capsem-config PrivatePool::DEFAULT)
-# goes to the proxy's private listener before any port rule can claim it:
-# the VM owner admits it against the member's network and hands it over.
-# UDP and ICMP to members ride tap0, the frame link to the network's switch.
-iptables_add -t nat -A OUTPUT -p tcp -d 10.128.0.0/9 -j REDIRECT --to-port 10128
+# Everything to a private network member (the host pool, capsem-config
+# PrivatePool::DEFAULT) leaves through that network's cable, TCP included:
+# it returns before any port rule below could hand it to a proxy.
+iptables_add -t nat -A OUTPUT -d 10.128.0.0/9 -j RETURN
 iptables_add -t nat -A OUTPUT -p tcp --dport 443   -j REDIRECT --to-port 10443
 iptables_add -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 3128  -j REDIRECT --to-port 10080
@@ -395,6 +394,22 @@ iptables_add -t nat -A OUTPUT -p tcp --dport 3713  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 8080  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 iptables_add -t nat -S OUTPUT
+
+# Network cables declare 10 Gb/s with 64 KiB frames (capsem-tun); size the
+# stack to match, or TCP windows and the receive backlog cap throughput far
+# below the link. Buffers grow to 64 MiB only as a flow needs them.
+net_tune() {
+    if ! echo "$2" > "/proc/sys/$1"; then
+        echo "[capsem-init] FATAL: sysctl $1 = $2 failed"
+        exit 1
+    fi
+}
+net_tune net/core/rmem_max 67108864
+net_tune net/core/wmem_max 67108864
+net_tune net/ipv4/tcp_rmem "4096 131072 67108864"
+net_tune net/ipv4/tcp_wmem "4096 65536 67108864"
+net_tune net/core/netdev_max_backlog 30000
+net_tune net/ipv4/tcp_slow_start_after_idle 0
 init_log "network ready"
 boot_mark "network"
 

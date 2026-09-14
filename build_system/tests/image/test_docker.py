@@ -2271,6 +2271,24 @@ class TestKernelConfig:
         for symbol in forbidden:
             assert symbol not in content
 
+    @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
+    def test_network_cables_have_what_a_switched_link_needs(self, name):
+        """Every cable is a tap; a container behind the VM reaches whichever
+        cables exist when it sends, so its source NAT follows the outgoing
+        cable's address (MASQUERADE) instead of one fixed at container start."""
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
+        for symbol in [
+            "CONFIG_TUN=y",
+            "CONFIG_VETH=y",
+            "CONFIG_NF_CONNTRACK=y",
+            "CONFIG_NF_NAT=y",
+            "CONFIG_NETFILTER_XT_NAT=y",
+            "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y",
+            "CONFIG_NF_NAT_MASQUERADE=y",
+        ]:
+            assert symbol in content, symbol
+        assert "smoltcp" not in content, "the private network has no host TCP stack"
+
     def test_init_mounts_erofs_by_default(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
         assert "ROOTFS_TYPE=erofs" in content
@@ -2289,6 +2307,31 @@ class TestKernelConfig:
         assert "iptables_add()" in content
         assert "FATAL: iptables-nft failed" in content
         assert 'chroot /newroot "$IPTABLES" -t nat -A' not in content
+
+    def test_init_sizes_the_network_stack_for_ten_gigabit_cables(self):
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        for setting in [
+            "net_tune net/core/rmem_max 67108864",
+            "net_tune net/core/wmem_max 67108864",
+            'net_tune net/ipv4/tcp_rmem "4096 131072 67108864"',
+            'net_tune net/ipv4/tcp_wmem "4096 65536 67108864"',
+            "net_tune net/core/netdev_max_backlog 30000",
+            "net_tune net/ipv4/tcp_slow_start_after_idle 0",
+        ]:
+            assert setting in content, setting
+        assert "FATAL: sysctl" in content
+
+    def test_init_sends_private_subnets_out_their_cables_never_to_a_proxy(self):
+        """TCP to a network member rides its cable like everything else; a
+        port REDIRECT that ran first would hand member traffic on 443 or 80 to
+        the MITM path, so the private pool returns before any of them."""
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        assert "10128" not in content, "the private TCP proxy path is gone"
+        pool_return = "iptables_add -t nat -A OUTPUT -d 10.128.0.0/9 -j RETURN"
+        assert pool_return in content
+        first_port_redirect = content.index("--dport 443")
+        assert content.index(pool_return) < first_port_redirect
+        assert content.index(pool_return) > content.index("--dport 53 ")
 
 
 # ---------------------------------------------------------------------------

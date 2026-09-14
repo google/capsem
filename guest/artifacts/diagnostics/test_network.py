@@ -50,6 +50,48 @@ def test_dummy0_has_ip():
         f"10.0.0.1 not on dummy0:\n{result.stdout}"
 
 
+def test_network_stack_is_sized_for_ten_gigabit_cables():
+    """capsem-init sizes socket buffers and the receive backlog for cables
+    that declare 10 Gb/s with 64 KiB frames."""
+    expected = {
+        "net/core/rmem_max": "67108864",
+        "net/core/wmem_max": "67108864",
+        "net/ipv4/tcp_rmem": "4096 131072 67108864",
+        "net/ipv4/tcp_wmem": "4096 65536 67108864",
+        "net/core/netdev_max_backlog": "30000",
+        "net/ipv4/tcp_slow_start_after_idle": "0",
+    }
+    for key, value in expected.items():
+        with open(f"/proc/sys/{key}") as setting:
+            assert setting.read().split() == value.split(), key
+
+
+def test_every_network_cable_declares_ten_gigabits():
+    """A cable's tap reports 10 Gb/s full duplex and a long transmit queue,
+    not the tap defaults (10 Mb/s, 500 frames)."""
+    for device in sorted(os.listdir("/sys/class/net")):
+        if not device.startswith("cable"):
+            continue
+        root = f"/sys/class/net/{device}"
+        with open(f"{root}/speed") as speed, open(f"{root}/duplex") as duplex, \
+                open(f"{root}/tx_queue_len") as queue:
+            assert speed.read().strip() == "10000", device
+            assert duplex.read().strip() == "full", device
+            assert queue.read().strip() == "10000", device
+
+
+def test_private_pool_is_never_redirected_to_a_proxy():
+    """Member traffic, TCP included, leaves through its cable: the pool
+    returns before any port REDIRECT, and no rule sends it to a proxy."""
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
+    rules = result.stdout.splitlines()
+    pool_return = "-A OUTPUT -d 10.128.0.0/9 -j RETURN"
+    assert pool_return in rules, result.stdout
+    redirects = [index for index, rule in enumerate(rules) if "REDIRECT" in rule and "--dport 53 " not in rule]
+    assert all(rules.index(pool_return) < index for index in redirects), result.stdout
+    assert "10128" not in result.stdout, result.stdout
+
+
 def test_dns_proxy_listening_udp():
     """T3.4: capsem-dns-proxy must listen on UDP :1053."""
     result = run("ss -lun 2>&1", timeout=5)
