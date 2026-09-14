@@ -121,26 +121,26 @@ neither Apple VZ nor KVM gives the VM a NIC; vsock is the only wire.
 **Lifecycle** (service owns it; `plug()`/`unplug()` in the service's switch
 registry drive owner and switch).
 
-- State per attachment in `NetworkRegistry`: `(network, vm, generation,
-  address, state)`, state `plugging | plugged | unplugged`. Every plug and
-  reconnect bumps the generation.
-- `plug`: record `plugging` with a new generation, start the switch if needed,
-  owner `plug()` returns the cable descriptor, `Switch::plug`. On ack, if the
-  record is no longer that generation and `plugging`, unplug at once;
-  otherwise mark `plugged`.
-- `unplug`: under the registry lock mark `unplugged` and bump the generation
-  first; after releasing it, `Switch::unplug` and owner `unplug()`. A plug
-  that completes late fails the generation check, so a successful disconnect
-  never leaves a live port.
+- Membership (and its durable state `declared | attaching | ready | failed`)
+  lives in `NetworkRegistry`; each attachment's generation lives in the
+  service's switch registry, because it only orders plugs within one switch
+  process's life. Every plug and unplug bumps it.
+- `plug`: mark `attaching` with a new generation, start the switch if needed,
+  get the cable from the owner, `Switch::plug`. Once the switch has it, check
+  under the registry lock that the VM is still a member on that generation:
+  if not, unplug at once; otherwise mark `ready`.
+- `detach`: revoke the membership first, then `unplug` (which bumps the
+  generation and closes the port). A plug that completes in between fails
+  its check, so a successful disconnect never leaves a live port.
 - Retiring a network cancels the switch host's token, which closes the grant
   channel, ends the event loop, kills and waits the child, and joins every
   task before `retire` returns.
-- A dead switch: its `plugging`/`plugged` records get new generations, the
-  switch restarts, and only those records re-plug; removed members never
-  return. A dead guest pump: the owner reports the cable lost and the service
-  re-plugs that cable alone.
-- Bounded: ports per switch, fixed per-port queues, at most one pending plug
-  per `(network, vm)`, backoff on re-plug.
+- A dead switch is retired and its ports' members are plugged again into a
+  fresh one; each re-plug checks membership, so removed members never return.
+  A dead guest pump closes its port: the service marks the member `declared`
+  and re-plugs that cable alone once the pump has had time to reconnect.
+- Bounded: ports per switch, fixed per-port queues and a broadcast cap; a
+  newer plug or unplug makes any older plug under way unplug itself.
 - Logging: plug/unplug transitions and the switch's per-port counters (frames
   and bytes each way, drops per reason) go to the network's ledger through
   `NetworkRegistry` and the logger DB boundary. The switch never touches a
