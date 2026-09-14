@@ -36,7 +36,7 @@ choice), and even then lead with a recommendation. The full contract is
 | `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
 | `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
-| `capsem-network` | The private link between VMs: the u16-framed ethernet frame codec and the per-network switch verdict (source pinned to the member, ARP answered, TCP and strangers dropped). Pure code; the I/O lives in `capsem-router --switch`. | `frames.rs`, `switch.rs` |
+| `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
 | `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
 | `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and file/snapshot (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator. | `main.rs` (rmcp handler) |
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |

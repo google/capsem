@@ -44,38 +44,110 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 6. Runtime materialization forwards allowed bytes to upstream
 7. Logging plugins produce ledger-safe event output for the logger DB
 
-### Private networks between VMs
+### Private networks between VMs: cables and switches
 
-Every VM has one lifetime address from the host pool `10.128.0.0/9`; a named
-network is the set of VMs allowed to reach each other on those addresses
-(`capsem network ...`, `NetworkRegistry` in core, durable per-network
-database with the audit history).
+The model is physical. Every VM starts **unplugged**: it cannot reach any
+other VM. A named network is **one switch**: one confined
+`capsem-router --network` process behaving like an ordinary layer-2 switch
+with no uplink. `capsem network connect <network> <vm>` **plugs** a cable from
+the VM into that switch; `disconnect` **unplugs** it. Everything plugged into
+the same switch can talk, over any protocol. That is the user's choice: the
+switch is a network system, not a security boundary, and it has no route to
+the internet, the host, or another switch.
 
-- TCP to a member: the guest REDIRECTs it to `capsem-net-proxy` (10128), which
-  sends the original destination over vsock 5010; the source owner asks the
-  service (`/networks/private/connect`), the service admits by membership and
-  writes both members' audit rows, a one-time token travels to the destination
-  owner's handoff socket with the stream, and that owner's confined router
-  carries the bytes under the private class budget. The destination VM's
-  profile rules see `network.mode == "private"`, `network.protocol == "tcp"`.
-  Every VSOCK leg of a private or published flow is framed (`router_stream`
-  `Framing::Framed`: `u32` length, zero = end of that direction) and never
-  shut down: Apple VZ delivers a vsock shutdown ahead of queued bytes, which
-  truncated uploads (16 KiB arrived) or left flows open. TCP legs stay raw.
-- UDP and ICMP: every guest brings up `tap0` (MAC = `mac_of(address)`) and
-  `capsem-tun` pumps its ethernet frames over vsock 5009. The service runs one
-  confined `capsem-router --switch` per network and, on attach or resume,
-  asks the owner for a duplicate of that stream (`LinkAttach` over IPC, the
-  token on the handoff socket); the profile decides once with
-  `network.protocol == "link"`. The switch pins each frame's source to its
-  member, answers ARP itself, and forwards only unicast IPv4 UDP and ICMP
-  (echo, unreachable, time exceeded) to exactly one member: an allowlist, so
-  no tunnel protocol can carry TCP around its admission. A VM has one link. Containers reach the link
-  through the guest's NAT (`launch.py`: SNAT out `tap0`, UDP DNAT in).
-- Names: `<vm>.<network>.capsem.internal` and the pool's reverse zone are
-  answered on the host by the owner's DNS handler through
-  `/networks/private/resolve`, for shared-network members only, with a zero
-  TTL, never upstream.
+Do not reintroduce per-flow machinery. There is no private TCP relay, no
+per-connection admission, no tokens per flow, no IP/TCP/UDP parsing, and no
+per-flow policy in the data plane. Those were built once (guest REDIRECT to
+10128, vsock 5010, `/networks/private/connect`, `PrivateAccept`, the router's
+private class) and removed: they added privileged attack surface and a second
+lifecycle while doing nothing a plugged cable does not already do. Traffic
+inspection, when wanted, comes from a future mirror port on the switch, not
+from logic inside it.
+
+**Cable.** One cable per attachment; a VM on ten networks has ten cables.
+
+- Guest end: one tap device per cable, created and removed by the agent on the
+  owner's instruction, with MAC `mac_of(address)`, MTU `LINK_MTU`, and a
+  connected route for that network's subnet only. `capsem-tun` pumps each
+  tap's ethernet frames as `[u16 len][frame]` records over its own vsock 5009
+  connection, opening with the cable id the owner assigned. The guest never
+  names a network and does not forward between taps.
+- Owner (`capsem-process`) keeps the VM's cable list, `cable id -> (network,
+  generation, stream)`. It never reads frames. `plug()` has the agent create
+  the tap, waits for that cable's stream, and hands the service a duplicate
+  descriptor; `unplug()` drops the stream and removes the tap.
+
+**Addressing.** The service allocates each network a subnet from
+`10.128.0.0/9` when the network is created (stored in its `network.db`), and
+each attachment an address inside it. Subnets never overlap, so addresses and
+their derived MACs are unique host-wide. The hypervisor has no part in it:
+neither Apple VZ nor KVM gives the VM a NIC; vsock is the only wire.
+
+**Switch** (`capsem-router --network`, one per network, started on first plug).
+
+- Forwards on MAC only. A service-programmed table `MAC -> port`; no learning,
+  no aging. Unicast goes to the owning port; an unknown destination is dropped
+  and counted (the table is complete, so nothing floods). Broadcast and
+  multicast flood to every other port under a per-port cap, which is what
+  carries the guests' own ARP. A frame whose source MAC is not its port's MAC
+  is dropped: one comparison that keeps counters attributable.
+- `Switch::plug(port, mac)` and `Switch::unplug(port)` are the only control
+  operations. A port id carries its attachment generation; a stale one is
+  refused.
+- Built for throughput: one read fills a `BytesMut` with many records,
+  `split_to().freeze()` hands each frame on as `Bytes` (flood = refcount, not
+  copy), writers drain their queue into `write_vectored`, the table is an
+  atomically swapped snapshot read without locks, and a full per-port queue
+  drops with `try_send` so a slow member never stalls the others.
+- A port is one owned job: reader and writer under one cancellation token.
+  `unplug` cancels and joins both halves, closes the descriptor, then reports
+  `Closed{counters}` and frees the quota slot.
+- Confined before it accepts a grant: cleared environment, inherited
+  descriptors closed, parent watch, Seatbelt `(deny default)` on macOS,
+  seccomp allowlist without open/connect/accept/clone on Linux, no
+  virtualization entitlement. Startup fails closed. It holds only its own
+  ports' descriptors and opens nothing.
+
+**Lifecycle** (service owns it; `plug()`/`unplug()` in the service's switch
+registry drive owner and switch).
+
+- State per attachment in `NetworkRegistry`: `(network, vm, generation,
+  address, state)`, state `plugging | plugged | unplugged`. Every plug and
+  reconnect bumps the generation.
+- `plug`: record `plugging` with a new generation, start the switch if needed,
+  owner `plug()` returns the cable descriptor, `Switch::plug`. On ack, if the
+  record is no longer that generation and `plugging`, unplug at once;
+  otherwise mark `plugged`.
+- `unplug`: under the registry lock mark `unplugged` and bump the generation
+  first; after releasing it, `Switch::unplug` and owner `unplug()`. A plug
+  that completes late fails the generation check, so a successful disconnect
+  never leaves a live port.
+- Retiring a network cancels the switch host's token, which closes the grant
+  channel, ends the event loop, kills and waits the child, and joins every
+  task before `retire` returns.
+- A dead switch: its `plugging`/`plugged` records get new generations, the
+  switch restarts, and only those records re-plug; removed members never
+  return. A dead guest pump: the owner reports the cable lost and the service
+  re-plugs that cable alone.
+- Bounded: ports per switch, fixed per-port queues, at most one pending plug
+  per `(network, vm)`, backoff on re-plug.
+- Logging: plug/unplug transitions and the switch's per-port counters (frames
+  and bytes each way, drops per reason) go to the network's ledger through
+  `NetworkRegistry` and the logger DB boundary. The switch never touches a
+  database.
+
+**Containers** run inside the VM. `launch.py` forwards and NATs every protocol
+between the container veth and each attached tap (SNAT out the tap, DNAT in).
+Private subnets RETURN before the egress port REDIRECTs so member traffic on
+443 or 80 never enters the MITM path.
+
+**Names.** `<vm>.<network>.capsem.internal` resolves to that attachment's
+address, answered on the host for members of that network only, zero TTL,
+never upstream. There is no network-less `<vm>.capsem.internal`: a VM has one
+address per network, not one lifetime address.
+
+**Published host ports** are a separate responsibility (the per-VM router's
+expose class) and never a path between VMs.
 
 ### Network/security policy
 
