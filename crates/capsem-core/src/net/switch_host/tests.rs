@@ -70,6 +70,8 @@ fn framed_tcp(source: Ipv4Addr, destination: Ipv4Addr, payload: &[u8]) -> Vec<u8
     let mut packet = vec![0u8; 40];
     packet[0] = 0x45;
     packet[9] = 6;
+    packet[12..16].copy_from_slice(&source.octets());
+    packet[16..20].copy_from_slice(&destination.octets());
     frame.extend_from_slice(&packet);
     frame.extend_from_slice(payload);
     let mut record = (frame.len() as u16).to_be_bytes().to_vec();
