@@ -29,6 +29,9 @@ const ATTACH_TIMEOUT_SECS: u64 = 8;
 /// How long the owner may take to hand the stream over: a VM linked at
 /// creation is still booting its guest.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(70);
+/// How long a VM linked as it starts may take to boot before its owner can
+/// be asked for the stream.
+const OWNER_READY_TIMEOUT_SECS: u64 = 70;
 
 type Reports = mpsc::Sender<(u64, CloseReport)>;
 type Starting = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Arc<SwitchHost>>> + Send>>;
@@ -442,6 +445,26 @@ pub(crate) async fn unlink(state: &Arc<ServiceState>, network: Uuid, vm_id: &str
 pub(crate) fn link_memberships(state: Arc<ServiceState>, vm_id: String) {
     tokio::spawn(async move {
         let networks = state.networks.lock().await.memberships_of(&vm_id);
+        if networks.is_empty() {
+            return;
+        }
+        // This runs as the VM starts, before its owner binds the socket the
+        // link asks through; asking then failed every link for good. The
+        // ready sentinel is the owner's word that it answers, and the wait
+        // ends early if the VM goes away.
+        let uds_path = state
+            .instances
+            .lock()
+            .unwrap()
+            .get(&vm_id)
+            .map(|instance| instance.uds_path.clone());
+        let Some(uds_path) = uds_path else { return };
+        if let Err(error) =
+            crate::vm_files::wait_for_vm_ready(&uds_path, OWNER_READY_TIMEOUT_SECS, Some(&state), Some(&vm_id)).await
+        {
+            warn!(vm_id, %error, "members were not linked: the VM's owner never became ready");
+            return;
+        }
         for network in networks {
             if let Err(error) = link(&state, network, &vm_id).await {
                 warn!(%network, vm_id, %error, "member was not linked at start");

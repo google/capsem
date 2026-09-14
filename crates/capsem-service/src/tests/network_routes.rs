@@ -639,6 +639,41 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
 }
 
+/// A freshly spawned owner binds its socket some time after the service
+/// registers it. Linking at start tried once, found no socket, and left the
+/// member unlinked for good: its admitted TCP worked and its UDP never did.
+#[tokio::test]
+async fn a_member_links_at_start_even_when_its_owner_binds_late() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let (uds_b, address) = {
+        let instances = state.instances.lock().unwrap();
+        (instances["vm-b"].uds_path.clone(), instances["vm-b"].private_address)
+    };
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+
+    // As provisioning does: record the membership, then link it.
+    crate::network_routes::attach_provisioned(&state, "vm-b", address, &[id.parse().unwrap()])
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (_seat, owner) = fake_link_seat(&uds_b, false, 1);
+
+    let mut observed = String::new();
+    for _ in 0..100 {
+        observed = member_state(&state, &id, "vm-b").await;
+        if observed == "ready" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(observed, "ready", "the member was never linked");
+    assert!(matches!(owner.await.unwrap()[0], ServiceToProcess::LinkAttach { .. }));
+}
+
 #[tokio::test]
 async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
     let (state, _dir) = make_test_state_with_tempdir();

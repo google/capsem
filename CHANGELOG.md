@@ -332,6 +332,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.
 
+- A VM created or resumed with `--network` is linked to the network's switch
+  even when its process is slow to start. The link was attempted once, before
+  the process listened, and never retried: TCP between members still worked,
+  but UDP and ICMP to or from that VM never did.
+
 - A VM joining a private network can receive UDP and ICMP from the first frame
   sent after it is linked; the switch reported the link before it could
   forward to it, so a peer that sent immediately lost those frames.
