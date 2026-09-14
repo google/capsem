@@ -84,6 +84,20 @@ def validate_function_scoped_advisories(
     ]
 
 
+def _named_vulnerability(entry: object) -> str:
+    """`ID crate version (patched ...): title`, so a red log says what to move."""
+    if not isinstance(entry, dict):
+        return "unreadable vulnerability entry"
+    advisory = entry.get("advisory") or {}
+    package = entry.get("package") or {}
+    patched = (entry.get("versions") or {}).get("patched") or []
+    fix = f" (patched {', '.join(patched)})" if patched else " (no patched version)"
+    return (
+        f"{advisory.get('id', '?')} {package.get('name', '?')} {package.get('version', '?')}"
+        f"{fix}: {advisory.get('title', '')}"
+    )
+
+
 def validate_report(report: dict[str, Any]) -> dict[str, int]:
     vulnerabilities = report.get("vulnerabilities")
     if not isinstance(vulnerabilities, dict):
@@ -92,7 +106,12 @@ def validate_report(report: dict[str, Any]) -> dict[str, int]:
     if not isinstance(count, int):
         raise ValueError("cargo audit vulnerability count is invalid")
     if count:
-        raise ValueError(f"cargo audit reported {count} vulnerabilities")
+        found = vulnerabilities.get("list")
+        named = [_named_vulnerability(entry) for entry in found] if isinstance(found, list) else []
+        raise ValueError(
+            f"cargo audit reported {count} vulnerabilities"
+            + (": " + "; ".join(named) if named else "")
+        )
 
     warnings = report.get("warnings")
     if not isinstance(warnings, dict):
