@@ -43,8 +43,12 @@ fn sample(schema: &Value, full: bool) -> Value {
                     .collect(),
             )
         }
+        "array" if full && schema["items"]["type"] == "string" => {
+            json!([sample(&schema["items"], full)])
+        }
         "array" => json!([]), // Recursive file children remain bounded.
         "string" if schema["enum"].is_array() => schema["enum"][0].clone(),
+        "string" if schema["format"] == "ipv4" => json!("10.128.0.2"),
         "string" => json!("sample /?&é"),
         "integer" => json!(3),
         "number" => json!(3.5),

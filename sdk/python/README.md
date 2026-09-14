@@ -10,7 +10,9 @@ from capsem.models import HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
-    vm = await hv.create("code", name="workspace", vcpu=4, memory="8G")
+    network = await hv.networks.create("private")
+    vm = await hv.create("code", name="workspace", vcpu=4, memory="8G", networks=["private"])
+    await hv.networks.logs(network.id, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
     print(result.stdout, result.exit_code)
     await vm.copy.to_vm("/hello.txt", b"hello\n")
@@ -60,5 +62,6 @@ an unmanaged service returns 503. The gateway rotates its token on restart.
 Obtain fresh credentials and create a new client explicitly; never replay the
 restart call. The acknowledgement does not claim reconnection has completed.
 
-This initial SDK does not yet expose snapshot
-creation/restoration, mounts, port exposure, or subnet management.
+Private networks are available through `hv.networks`; resource mutations use
+immutable IDs, while VM creation accepts existing network names. Snapshot
+creation/restoration, mounts and port exposure remain pending.

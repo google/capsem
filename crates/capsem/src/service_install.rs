@@ -253,7 +253,13 @@ pub async fn service_status() -> Result<ServiceStatus> {
 }
 
 /// Start the capsem service via the platform service manager.
-pub async fn start_service() -> Result<()> {
+pub async fn start_service(socket: &std::path::Path) -> Result<()> {
+    if crate::client::isolation_mode_active() {
+        clear_explicit_stop_marker()?;
+        return crate::client::UdsClient::new(socket.to_path_buf(), true)
+            .ensure_service()
+            .await;
+    }
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
@@ -299,7 +305,85 @@ pub async fn start_service() -> Result<()> {
 }
 
 /// Stop the capsem service via the platform service manager.
-pub async fn stop_service() -> Result<()> {
+/// A stopped managed unit is not a stopped service: one started directly --
+/// the development daemon, a service run by hand -- can still answer on the
+/// same socket, and `capsem stop` must not report success over it.
+pub(crate) fn ensure_service_stopped(socket: &std::path::Path) -> Result<()> {
+    match std::os::unix::net::UnixStream::connect(socket) {
+        Ok(_) => anyhow::bail!(
+            "the installed service is stopped, but another capsem service still answers on {}; \
+             stop it where it was started",
+            socket.display()
+        ),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| format!("check whether {} still answers", socket.display())),
+    }
+}
+
+/// How long a directly started service gets to shut down after SIGTERM.
+const DIRECT_SERVICE_STOP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A service the CLI started itself has no unit to unload, so it is stopped
+/// through the pid its socket owner recorded. That pid is trusted only while
+/// the socket answers: the service claims the pidfile once it owns the socket
+/// and removes it on the way out, so a pid beside a dead socket may be anyone's.
+pub(crate) async fn stop_direct_service(
+    pidfile: &std::path::Path,
+    socket: &std::path::Path,
+    deadline: std::time::Duration,
+) -> Result<()> {
+    use capsem_foundation::unix::process::{self, ProcessId, ProcessState, Signal};
+
+    if ensure_service_stopped(socket).is_ok() {
+        return Ok(());
+    }
+    let recorded = std::fs::read_to_string(pidfile)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .and_then(|pid| ProcessId::try_from(pid).ok());
+    let Some(pid) = recorded else {
+        return ensure_service_stopped(socket)
+            .with_context(|| format!("no service pid is recorded in {}", pidfile.display()));
+    };
+    process::send_signal(pid, Signal::Terminate).with_context(|| format!("signal capsem service {}", pid.get()))?;
+    let started = std::time::Instant::now();
+    loop {
+        let exited = process::probe(pid)? == ProcessState::Gone;
+        if exited && ensure_service_stopped(socket).is_ok() {
+            return Ok(());
+        }
+        if started.elapsed() >= deadline {
+            anyhow::bail!(
+                "capsem service {} did not stop within {}s of SIGTERM (socket {})",
+                pid.get(),
+                deadline.as_secs_f32(),
+                socket.display()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+pub async fn stop_service(socket: &std::path::Path) -> Result<()> {
+    // Under CAPSEM_HOME the CLI starts its own service instead of the
+    // installed unit, which serves the real home; stop that service, and never
+    // the machine's.
+    if crate::client::isolation_mode_active() {
+        write_explicit_stop_marker()?;
+        return stop_direct_service(
+            &capsem_foundation::paths::service_pidfile_path(),
+            socket,
+            DIRECT_SERVICE_STOP_DEADLINE,
+        )
+        .await;
+    }
     if !is_service_installed() {
         anyhow::bail!("Service not installed. Run `capsem install` first.");
     }
@@ -346,7 +430,7 @@ pub async fn stop_service() -> Result<()> {
         anyhow::bail!("service stop not supported on this platform");
     }
 
-    Ok(())
+    ensure_service_stopped(socket)
 }
 
 // --- macOS LaunchAgent ---

@@ -18,6 +18,31 @@ fn http_listen_port_is_10080() {
 }
 
 #[test]
+fn private_listen_port_is_10128_and_targets_the_private_vsock_service() {
+    assert_eq!(LISTEN_PORT_PRIVATE, 10128);
+    assert_eq!(VSOCK_PORT_PRIVATE, 5010);
+    assert_ne!(LISTEN_PORT_PRIVATE, LISTEN_PORT_HTTP);
+    assert_ne!(LISTEN_PORT_PRIVATE, LISTEN_PORT_HTTPS);
+}
+
+#[test]
+fn a_private_preamble_is_the_header_then_the_meta_line() {
+    let mut preamble = ConnectHeader {
+        destination: std::net::Ipv4Addr::new(10, 128, 0, 9),
+        port: 6379,
+        source_port: 40001,
+    }
+    .encode()
+    .to_vec();
+    preamble.extend_from_slice(&encode_meta_line("redis-cli"));
+    let header: [u8; capsem_proto::privatelink::HEADER_BYTES] =
+        preamble[..capsem_proto::privatelink::HEADER_BYTES].try_into().unwrap();
+    let decoded = ConnectHeader::decode(&header).unwrap();
+    assert_eq!((decoded.port, decoded.source_port), (6379, 40001));
+    assert!(preamble[capsem_proto::privatelink::HEADER_BYTES..].starts_with(b"\0CAPSEM_META:"));
+}
+
+#[test]
 fn http_and_https_listen_ports_are_distinct() {
     // Same vsock target on the host, but distinct guest-side
     // listen ports so iptables can route 80/443 to the right
@@ -221,4 +246,87 @@ fn async_vsock_new_owns_the_fd_on_failure() {
         0,
         "the failed constructor must close its socket"
     );
+}
+
+/// A private bridge between a workload and the host, each end split so a
+/// test can close one direction and keep using the other.
+type Halves = (
+    tokio::io::ReadHalf<tokio::io::DuplexStream>,
+    tokio::io::WriteHalf<tokio::io::DuplexStream>,
+);
+
+fn private_bridge() -> (tokio::task::JoinHandle<()>, Halves, Halves) {
+    let (client, tcp_side) = tokio::io::duplex(64 * 1024);
+    let (vsock_side, host) = tokio::io::duplex(64 * 1024);
+    (
+        tokio::spawn(bridge_private(tcp_side, vsock_side)),
+        tokio::io::split(client),
+        tokio::io::split(host),
+    )
+}
+
+/// The host's side of a framed VSOCK leg: each payload as one frame, then
+/// the end-of-stream frame.
+async fn send_frames(host: &mut (impl tokio::io::AsyncWrite + Unpin), payloads: &[&[u8]]) {
+    use tokio::io::AsyncWriteExt;
+    for payload in payloads.iter().chain([&&b""[..]]) {
+        host.write_all(&(payload.len() as u32).to_be_bytes()).await.unwrap();
+        host.write_all(payload).await.unwrap();
+    }
+}
+
+/// Everything the guest sent on a framed leg, up to its end-of-stream frame.
+async fn receive_frames(host: &mut (impl tokio::io::AsyncRead + Unpin)) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut received = Vec::new();
+    loop {
+        let length = host.read_u32().await.unwrap() as usize;
+        if length == 0 {
+            return received;
+        }
+        let start = received.len();
+        received.resize(start + length, 0);
+        host.read_exact(&mut received[start..]).await.unwrap();
+    }
+}
+
+/// A request/response client shuts its write side and waits: the host gets
+/// the half-close as an end-of-stream frame, and an answer slower than any
+/// grace period still reaches the client.
+#[tokio::test]
+async fn a_slow_reply_after_the_clients_half_close_is_delivered() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (bridge, (mut client_read, mut client_write), (mut host_read, mut host_write)) = private_bridge();
+    client_write.write_all(b"request bytes").await.unwrap();
+    client_write.shutdown().await.unwrap();
+    assert_eq!(receive_frames(&mut host_read).await, b"request bytes");
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    send_frames(&mut host_write, &[b"slow ", b"reply"]).await;
+    let mut reply = Vec::new();
+    client_read.read_to_end(&mut reply).await.unwrap();
+    assert_eq!(reply, b"slow reply");
+    bridge.await.unwrap();
+}
+
+/// The peer says everything and ends its direction first: the client's
+/// upload after that is carried in full, not cut off.
+#[tokio::test]
+async fn a_peer_that_finished_speaking_still_gets_the_whole_upload() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (bridge, (mut client_read, mut client_write), (mut host_read, mut host_write)) = private_bridge();
+    send_frames(&mut host_write, &[b"hello"]).await;
+    let mut greeting = Vec::new();
+    client_read.read_to_end(&mut greeting).await.unwrap();
+    assert_eq!(greeting, b"hello");
+    let upload = vec![7u8; 1 << 20];
+    let (sent, received) = tokio::join!(
+        async {
+            client_write.write_all(&upload).await?;
+            client_write.shutdown().await
+        },
+        receive_frames(&mut host_read),
+    );
+    sent.unwrap();
+    assert_eq!(received, upload);
+    bridge.await.unwrap();
 }

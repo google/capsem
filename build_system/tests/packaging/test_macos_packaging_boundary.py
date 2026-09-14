@@ -33,12 +33,12 @@ exit "$PROOF_EXIT_STATUS"
     result = subprocess.run(
         ["bash", "-c", 'uname() { echo Darwin; }; pkill() { :; }; source "$@"',
          "proof", str(script), "--package", str(package), "--version", "0.0.0",
-         "--assets-dir", str(tmp_path)],
+         "--assets-dir", str(tmp_path), "--work-root", str(tmp_path / "proof")],
         env={"PATH": "/usr/bin:/bin", "PROOF_EXIT_STATUS": str(status)},
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == status, result.stderr
-    work = tmp_path / "cache/target/macos-package-boot"
+    work = tmp_path / "proof"
     assert not Path((work / "runtime-path").read_text()).exists()
     logs = work / "diagnostics"
     assert (logs / "persistent/vm/serial.log").read_text() == "checkpoint failed\n"
@@ -154,7 +154,7 @@ def test_local_package_consumes_the_binaries_cargo_produced(tmp_path: Path) -> N
                     exit 0
                 fi
             }
-            source "$1" --assets-dir "$2" --config-root "$2"
+            source "$1" --assets-dir "$2" --config-root "$2" --sbom "$2/sbom.spdx.json"
             ''',
             "package-handoff", str(script), str(content),
         ],

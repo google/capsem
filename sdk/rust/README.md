@@ -11,10 +11,13 @@ use std::time::Duration;
 async fn example(url: &str, token: &str) -> Result<()> {
     let hv = Hypervisor::new(url, token)?.with_timeout(Duration::from_secs(120))?;
     println!("{:?}", hv.info().await?); // health, version, profiles, updates
+    let network = hv.networks().create("private").await?;
     let vm = hv.create("code", CreateOptions {
         name: Some("work".into()), vcpu: Some(4), memory: Some("8G".parse()?),
+        networks: vec!["private".into()],
         ..Default::default()
     }).await?;
+    hv.networks().logs(&network.id, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout, result.exit_code);
     vm.copy().to_vm("/hello.txt", b"hello\n".to_vec()).await?;
@@ -67,5 +70,6 @@ an unmanaged service returns 503. The gateway rotates its token on restart.
 Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
-Explicit snapshot creation/restoration, mounts,
-port exposure and subnet configuration remain outside the implemented facade.
+`hv.networks()` provides typed create/list/inspect/delete, member attach/detach
+and cursor-based audit logs. Explicit snapshot creation/restoration, mounts and
+port exposure remain outside the implemented facade.

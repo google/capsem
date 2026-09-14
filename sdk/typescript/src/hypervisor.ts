@@ -3,6 +3,7 @@ import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {CreateOptions, HostLogOptions} from './options.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
+import {Networks} from './resources.js';
 import {VM} from './vm.js';
 
 function memoryMb(memory: string | number | undefined): number | null {
@@ -17,8 +18,11 @@ function memoryMb(memory: string | number | undefined): number | null {
 }
 
 export class Hypervisor extends Client {
+  readonly networks: Networks;
   constructor(url: string, token: string, options: TransportOptions = {}) {
-    super(new Transport(url, token, options));
+    const transport = new Transport(url, token, options);
+    super(transport);
+    this.networks = new Networks(transport);
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);

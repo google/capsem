@@ -28,6 +28,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
+def test_manifest_finalization_carries_only_requested_arches(tmp_path):
+    plan = Plan("scoped-manifest")
+    initrd.finalize(plan, CONFIG, assets=tmp_path, arches=("arm64",), after=())
+    runner = RecordingRunner(PROJECT_ROOT)
+    context = Context(runner, CONFIG, observing=True, journal=RecordingJournal())
+    for action in plan.step_named("manifest").actions:
+        action.perform(context)
+    assert runner.rendered == [
+        " ".join((
+            *CONFIG.initrd.manifest, str(tmp_path), "--version",
+            initrd.workspace_version(CONFIG.root), "--arch", "arm64",
+        ))
+    ]
+
+
 def _archive(path: Path) -> bytes:
     source = path.with_suffix(".source")
     source.mkdir(parents=True)

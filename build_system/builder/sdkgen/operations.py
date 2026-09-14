@@ -83,6 +83,7 @@ class Operation(Strict):
 class Method(StrEnum):
     GET = "GET"
     POST = "POST"
+    PUT = "PUT"
     DELETE = "DELETE"
 
 

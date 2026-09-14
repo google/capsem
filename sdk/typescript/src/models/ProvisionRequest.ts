@@ -7,6 +7,7 @@ export interface ProvisionRequest {
   "env"?: Record<string, string> | null;
   "from"?: string | null;
   "name"?: string | null;
+  "networks"?: Array<string>;
   "persistent"?: boolean;
   "profile_id": string;
   "ram_mb"?: number | null;

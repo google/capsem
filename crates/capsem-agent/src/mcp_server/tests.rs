@@ -264,3 +264,26 @@ fn jsonrpc_and_snapshot_helpers_fail_closed_on_malformed_shapes() {
         assert!(!response_reports_snapshot_delete(payload));
     }
 }
+
+/// The relay says it is done with a zero-length frame and keeps the socket
+/// open for the answers still owed: a vsock shutdown can reach the host ahead
+/// of the last request's bytes on Apple VZ and was lost behind them.
+#[test]
+fn ending_a_session_sends_the_end_frame_without_shutting_the_socket() {
+    use std::io::Read;
+    let (relay, mut host) = UnixStream::pair().unwrap();
+    let relay_fd = relay.into_raw_fd();
+    end_session(relay_fd).expect("end the session");
+    let mut end = [0xffu8; 4];
+    host.read_exact(&mut end).unwrap();
+    assert_eq!(end, capsem_proto::MCP_SESSION_END);
+    host.set_nonblocking(true).unwrap();
+    assert_eq!(
+        host.read(&mut [0u8; 1]).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock,
+        "the relay must not half-close; the host ends the session"
+    );
+    unsafe {
+        nix::libc::close(relay_fd);
+    }
+}

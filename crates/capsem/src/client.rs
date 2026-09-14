@@ -26,14 +26,21 @@ use crate::{paths, service_install};
 pub struct ProvisionRequest {
     pub name: Option<String>,
     pub profile_id: String,
-    pub ram_mb: u64,
-    pub cpus: u32,
+    /// Absent: the profile's RAM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ram_mb: Option<u64>,
+    /// Absent: the profile's CPU count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
     #[serde(default)]
     pub persistent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "image")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Named networks to join at create.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -120,6 +127,9 @@ pub struct SessionInfo {
     pub forked_from: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The VM's address on the private link, for its whole life.
+    #[serde(default)]
+    pub private_address: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
@@ -170,6 +180,10 @@ pub struct RunRequest {
     pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ram_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
@@ -465,7 +479,7 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
 /// overridden layout. The auto-launch path direct-spawns instead so the
 /// child service inherits `CAPSEM_HOME` and binds the socket the client
 /// is actually watching.
-fn isolation_mode_active() -> bool {
+pub(crate) fn isolation_mode_active() -> bool {
     std::env::var("CAPSEM_HOME").map(|v| !v.is_empty()).unwrap_or(false)
 }
 
@@ -871,6 +885,14 @@ impl UdsClient {
         })
     }
 
+    /// Start the service this client would auto-launch, unless it already answers.
+    pub(crate) async fn ensure_service(&self) -> Result<()> {
+        if self.connect_with_timeout(ConnectMode::FailFast).await.is_ok() {
+            return Ok(());
+        }
+        self.try_ensure_service().await.map(drop)
+    }
+
     pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
         self.request("POST", path, Some(body)).await
     }
@@ -964,5 +986,8 @@ impl UdsClient {
 // Tests
 // ---------------------------------------------------------------------------
 
+mod networks;
+pub use networks::*;
+
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

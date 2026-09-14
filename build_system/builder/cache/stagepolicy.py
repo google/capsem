@@ -23,6 +23,8 @@ class StagePolicy(CacheContract):
     external: StrictBool = False
     entry_root: Path = Path(".")
     retention_root: Path | None = None
+    #: Cargo target directories retained one compilation unit at a time.
+    cargo_target_roots: tuple[Path, ...] = ()
     selector_globs: tuple[str, ...] = ()
     maximum_age_hours: PositiveInt
     maximum_count: PositiveInt | None = None
@@ -51,6 +53,11 @@ class StagePolicy(CacheContract):
             object.__setattr__(self, "retention_root", _relative_descendant(
                 self.retention_root, field="retention root",
             ))
+        object.__setattr__(self, "cargo_target_roots", tuple(
+            _relative_descendant(path, field="cargo target root") for path in self.cargo_target_roots
+        ))
+        if self.cargo_target_roots and self.retention_root is not None:
+            raise ValueError("cargo_target_roots already retain incremental sessions; drop retention_root")
         object.__setattr__(self, "mutation_locks", tuple(
             _relative_descendant(path, field="mutation lock") for path in self.mutation_locks
         ))

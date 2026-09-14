@@ -74,6 +74,39 @@ pub enum ServiceToProcess {
         namespaced_name: String,
         arguments_json: String,
     },
+    /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
+    ExecStream { id: u64, command: String },
+    /// Publish one loopback host TCP port into this VM's container namespace.
+    PublishPort { id: u64, host_port: u16, guest_port: u16 },
+    /// Internal VM-owner request for one declared publication data stream.
+    ConnectPort { flow: crate::router::FlowKey, port: u16 },
+    /// Internal VM-owner cancellation for bounded generation-bound flows.
+    AbortPorts { flows: Vec<crate::router::FlowKey> },
+    /// The service admitted a private TCP connection from `source_vm` to
+    /// `port` on this VM. The owner answers with the handoff socket the
+    /// source owner should deliver the stream to, keyed by `token`.
+    PrivateAccept {
+        id: u64,
+        token: String,
+        network: String,
+        network_name: String,
+        source_vm: String,
+        source_name: String,
+        source_generation: u64,
+        source_address: std::net::Ipv4Addr,
+        source_port: u16,
+        port: u16,
+    },
+    /// The service is linking this VM to a network's switch and wants the
+    /// guest's private link stream. The owner evaluates its profile once,
+    /// then answers with the handoff socket the service should ask on,
+    /// keyed by `token`; the stream comes back on that connection.
+    LinkAttach {
+        id: u64,
+        token: String,
+        network: String,
+        network_name: String,
+    },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -146,6 +179,28 @@ pub enum ProcessToService {
     /// Warm suspend failed before the durable checkpoint marker was written.
     /// Kept at the end so existing bincode variant indexes remain stable.
     SuspendFailed { id: String, error: String },
+    /// Live merged stdout/stderr for an ExecStream job. Each chunk is at most 8 KiB.
+    ExecOutput { id: u64, data: Vec<u8> },
+    PortPublished {
+        id: u64,
+        host_port: u16,
+        router_pid: u32,
+        error: Option<String>,
+    },
+    /// Response to PrivateAccept: where the source owner hands the stream
+    /// over, or why this owner will not take it.
+    PrivateAcceptResult {
+        id: u64,
+        handoff_socket: String,
+        error: Option<String>,
+    },
+    /// Response to LinkAttach: where the service asks for the stream, or
+    /// why this owner will not link.
+    LinkAttachResult {
+        id: u64,
+        handoff_socket: String,
+        error: Option<String>,
+    },
 }
 
 /// Status of an MCP server as reported through IPC.

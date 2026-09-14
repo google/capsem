@@ -56,23 +56,35 @@ capsem create -n mybox                 # named retained session
 capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
+capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
+                                       # an OCI image's workload, detached
 ```
+
+With `--image`, the VM's workload is the image's command, or everything given
+after the image (so options go before `--image`), started detached; its output is in `capsem logs`. Like any
+session, the VM is kept only when it is named.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-n, --name <NAME>` | -- | Name for the session |
-| `--ram <GB>` | 4 | RAM in GB |
-| `--cpu <CORES>` | 4 | CPU cores |
-| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
-| `--from <NAME>` | -- | Clone state from an existing retained session/template (alias: `--image`) |
+| `--ram <GB>` | profile's | RAM in GB |
+| `--cpu <CORES>` | profile's | CPU cores |
+| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
+| `--from <NAME>` | -- | Clone state from an existing retained session/template |
+| `--network <NAME>` | -- | Join a named network (repeatable) |
+| `--image <IMAGE>` | -- | OCI image to run: `docker://IMAGE` or `registry/repository:tag` |
+| `-p, --publish <HOST:GUEST>` | -- | With `--image`: publish a loopback TCP port (host `0` picks one) |
+| `--registry-ca <PEM>` | -- | With `--image`: extra CA trusted for this pull |
+| `--registry-user <USER>` | -- | With `--image`: registry user; token from `CAPSEM_REGISTRY_PASSWORD` |
 
 ### shell
 
-Open an interactive shell. With no arguments, creates an unnamed session for
-the shell and cleans it up when the shell exits.
+Open the terminal UI. With no arguments it shows every session; with a name or
+ID it opens focused on that session. It never creates or destroys a VM: use
+`capsem create` or `capsem run` for that.
 
 ```sh
-capsem shell              # unnamed shell session
+capsem shell              # every session
 capsem shell mybox        # attach to existing session
 capsem shell -n mybox     # find by name
 capsem shell abc123       # find by ID
@@ -138,19 +150,25 @@ capsem exec mybox "pip install numpy" --timeout 120
 ### run
 
 Run a command in a fresh one-shot session. The session is provisioned and
-destroyed after the command completes.
+destroyed after the command completes. With `--image`, the command is an OCI
+image's workload: its output streams, `capsem run` exits with its status, and
+the VM is destroyed however the run ends (exit, timeout, or Ctrl-C).
 
 ```sh
 capsem run "python3 -c 'print(1+1)'"
 capsem run "npm test" --timeout 120
 capsem run "pytest" -e API_KEY=sk-...
+capsem run --image docker://alpine:3 sh -c 'uname -a'
 ```
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
-| `<command>` | -- | Command to execute |
-| `--timeout <SECS>` | 60 | Timeout in seconds |
-| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
+| `<command>` | -- | Command to execute; with `--image`, replaces the image's command |
+| `--timeout <SECS>` | -- | Timeout in seconds |
+| `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
+| `--ram <GB>` / `--cpu <CORES>` | profile's | VM resources |
+| `--image <IMAGE>` | -- | OCI image to run (see `create`) |
+| `-p`, `--network`, `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 
 ### list
 
@@ -242,6 +260,84 @@ capsem purge --all        # everything (requires confirmation)
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--all` | false | Also destroy retained sessions |
+
+## Network commands
+
+Named networks are groups of VMs. Every VM has one private address for its
+whole life (`capsem info` shows it as `Address`), and a network is the set of
+VMs allowed to reach each other on those addresses. A network name is a DNS
+label; deleting a network frees the name, and a new network under that name
+is a different network with its own history.
+
+Members reach each other by address or by name: `<vm>.<network>.capsem.internal`
+(and `<vm>.capsem.internal` when only one of the VM's networks answers it)
+resolves to the member's address, and the address resolves back. Names are
+answered on the host, only for members of a shared network, with no TTL, and
+never forwarded upstream. TCP between members is admitted per connection
+under the VM's security rules; UDP and ICMP ride each member's link to the
+network's own confined switch, which forwards frames between members and
+nothing else. A member shows `ready` in `network inspect` once its link is up
+and `declared` while its VM is stopped. A VM has one link: in several networks
+at once, UDP and ICMP reach the members of the network it was linked to first
+(the others show `failed` with that reason), while TCP and names work in all
+of them.
+
+### network list
+
+```bash
+capsem network list
+```
+
+### network create
+
+```bash
+capsem network create team
+```
+
+### network inspect
+
+```bash
+capsem network inspect team
+```
+
+Shows the network's id and every member with its address and membership state
+(`declared`, `attaching`, `ready`, `failed`, `detached`).
+
+### network delete
+
+```bash
+capsem network delete team
+```
+
+Refuses while the network still has members: disconnect them first.
+
+### network connect
+
+```bash
+capsem network connect my-vm team
+```
+
+The VM may be running or stopped; it keeps its membership across stop and
+resume. `capsem create --network team` joins a network at create time.
+
+### network disconnect
+
+```bash
+capsem network disconnect my-vm team
+```
+
+### network logs
+
+```bash
+capsem network logs team
+capsem network logs team -f --type network.connect --decision block
+```
+
+The network's audit history, oldest first, as recorded in the network's own
+database: connections, their results, closes and lifecycle events, each with
+the decision that applied. `-f` keeps printing new events until Ctrl-C. The
+history is kept by network id, so it survives disconnecting every member and
+deleting the network; a new network under the same name starts empty.
 
 ## Service commands
 

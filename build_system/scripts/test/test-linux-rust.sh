@@ -25,6 +25,7 @@ packages=(
     capsem-mcp-aggregator
     capsem-mcp-builtin
     capsem-process
+    capsem-router
     capsem-bench
     capsem-mock-server
 )
@@ -47,6 +48,9 @@ fi
 cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)
 cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings
 cargo clippy --workspace --all-targets -- -D warnings
+
+# The OS confinement boundary is exercised by an actual executable child.
+cargo nextest run --locked -p capsem-router --test subprocess --profile ci
 
 cargo llvm-cov nextest \
     --no-cfg-coverage \

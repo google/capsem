@@ -9,6 +9,7 @@ export interface ProvisionResponse {
   "id": string;
   "name": string;
   "persistent"?: boolean;
+  "private_address"?: string | null;
   "profile_id": string;
   "status": VmLifecycleState;
   "uds_path"?: string | null;

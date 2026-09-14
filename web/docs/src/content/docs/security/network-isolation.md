@@ -57,6 +57,45 @@ handler. When an application connects to `github.com:443`, `iptables-nft`
 redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP
 connection to the host over vsock port 5002.
 
+## Private networks between VMs
+
+A VM has no way to reach another VM by default. Named networks
+(`capsem network create`, `capsem create --network`, `capsem run --image ... --network`)
+are the one exception, and they are built from the same admitted, audited
+pieces as everything else:
+
+- **Addresses and names.** Every VM keeps one address from `10.128.0.0/9` for
+  its life. Members of a shared network resolve each other as
+  `<vm>.<network>.capsem.internal`; the zone is answered on the host, only for
+  members, with no TTL, and is never forwarded upstream.
+- **TCP.** A connection to a member's address is intercepted in the guest like
+  any other TCP connection. The VM owner asks the service, the service admits
+  it by membership and writes a row in the network's history for both VMs,
+  and the destination VM's security rules see it as
+  `network.mode == "private"`, `network.protocol == "tcp"`. The bytes are
+  carried by the destination owner's confined router under a private budget
+  that a flood of member traffic cannot use to starve published ports.
+- **UDP and ICMP.** Each guest has a `tap0` whose ethernet frames reach one
+  confined switch process per network. The switch holds only members'
+  streams, pins every frame's source to its member, answers ARP itself,
+  forwards only UDP and ICMP (echo, destination unreachable and time
+  exceeded) to exactly one member, and drops TCP, every other protocol,
+  strangers and everything that is not IPv4. The allowlist keeps TCP on its
+  admitted path: a tunnel protocol crossing the link would carry it around. No host process parses past a frame's
+  addresses. A VM's profile decides once per attach whether the VM may be on
+  a link at all (`network.protocol == "link"`); the link, its end and its
+  frame counts are rows in the network's history, and `network inspect` shows
+  a member `ready`, `declared` (VM stopped), or `failed` with the reason.
+- **Containers.** A container reaches members through its VM's NAT: its UDP
+  and ICMP leave as the VM's own address, UDP arriving on the link is the
+  container's, TCP keeps the proxy path.
+- **Limits.** A VM has one frame link; in several networks at once, UDP and
+  ICMP reach the first network it was linked to, TCP and names work in all.
+  A half-closed private or published connection keeps its other direction
+  for up to 60 seconds. Every VSOCK leg carries each direction's end as a
+  length-prefixed end-of-stream frame, because the transport can deliver a
+  socket shutdown ahead of bytes still in flight.
+
 ## MITM proxy overview
 
 The host MITM proxy receives each connection on vsock:5002 and runs a full inspection pipeline:

@@ -249,6 +249,42 @@ async fn invalid_create_or_selector_is_rejected_before_http() {
 }
 
 #[tokio::test]
+async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
+    let mut server = gateway().await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let created = hv.networks().create("team").await.unwrap();
+    request(&mut server, "/networks").await;
+    hv.networks().list().await.unwrap();
+    request(&mut server, "/networks").await;
+    hv.networks().inspect(&created.id).await.unwrap();
+    request(&mut server, &format!("/networks/{}", created.id)).await;
+    hv.networks().attach(&created.id, "vm-1").await.unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.method, "PUT");
+    assert_eq!(parts.uri.path(), format!("/networks/{}/members/vm-1", created.id));
+    hv.networks().detach(&created.id, "vm-1").await.unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.method, "DELETE");
+    hv.networks()
+        .logs(
+            &created.id,
+            NetworkLogOptions {
+                cursor: Some("next".into()),
+                limit: Some(4),
+                event_type: Some("network.connect".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.uri.query(), Some("cursor=next&limit=4&type=network.connect"));
+    hv.networks().delete(&created.id).await.unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.method, "DELETE");
+}
+
+#[tokio::test]
 async fn facade_deadlines_are_forwarded_and_http_errors_stay_typed() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());

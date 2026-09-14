@@ -47,3 +47,15 @@ pub struct PageOptions {
     pub limit: Option<u64>,
     pub offset: Option<u64>,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct NetworkLogOptions {
+    pub cursor: Option<String>,
+    pub limit: Option<u64>,
+    pub vm: Option<String>,
+    pub connection: Option<String>,
+    pub event_type: Option<String>,
+    pub decision: Option<String>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+}

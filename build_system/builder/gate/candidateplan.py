@@ -36,6 +36,7 @@ from .content import ProfileContent
 from .execution import Kind, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
+from .rebuildpermission import DEFAULT_PERMISSION, RebuildPermission
 from .sourcestate import record_step, verify_step
 from .timingratchet import EnforceTimingRegression, TimingBoundary
 
@@ -74,6 +75,7 @@ def compose(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    permission: RebuildPermission = DEFAULT_PERMISSION,
 ) -> Step:
     """Every phase of the gate, in the order each depends on the last.
 
@@ -109,6 +111,7 @@ def compose(
         config,
         qualification=qualification,
         after=(contracts,),
+        permission=permission,
         source_contracts_proved=True,
     )
 
@@ -124,6 +127,7 @@ def compose_modules(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    permission: RebuildPermission = DEFAULT_PERMISSION,
     source_contracts_proved: bool = False,
 ) -> Step:
     """Everything after the fast phase: the artifacts, the VMs, the install.
@@ -132,7 +136,7 @@ def compose_modules(
     `test-candidate`, which is what a developer reaches for when the fast
     checks already passed and they do not want to repeat them.
     """
-    prepared = candidateprepare.prepare(plan, config, after=after)
+    prepared = candidateprepare.prepare(plan, config, after=after, permission=permission)
     # `generated` is the fast phase's settings step when there was a fast phase.
     # `test-candidate` runs this composition alone, where there was not, so each
     # module still makes its own.

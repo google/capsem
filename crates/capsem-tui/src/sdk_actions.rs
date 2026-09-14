@@ -24,6 +24,7 @@ pub async fn invoke(base_url: &str, token: &str, action: &ControlAction) -> Resu
                     cpus: None,
                     env: None,
                     from: None,
+                    networks: Vec::new(),
                 },
             };
             let transport = Transport::new(base_url, token, Duration::from_secs(30))?;

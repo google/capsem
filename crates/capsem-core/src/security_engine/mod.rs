@@ -13,7 +13,6 @@ use capsem_logger::{
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use serde_json::json;
-use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation};
@@ -25,10 +24,12 @@ use crate::net::policy_config::{
 
 mod builtin_actions;
 mod forensics;
+pub mod network;
 use forensics::{
-    compiled_rule_forensic_json, logged_detection_level, logged_rule_action, logger_write_credential_ref,
-    logger_write_trace_id, security_event_forensic_json, trace_runtime_security_event, trace_security_rule_match,
+    compiled_rule_forensic_json, logged_detection_level, logged_rule_action, security_event_forensic_json,
+    trace_security_rule_match,
 };
+pub use network::NetworkSecurityEvent;
 mod plugins;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 
@@ -39,199 +40,10 @@ pub const SECURITY_PLUGIN_EXECUTION_TOTAL: &str = "security_plugin.execution_tot
 pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.execution_duration_ms";
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RuntimeSecurityEventFamily {
-    Http,
-    Model,
-    Mcp,
-    Dns,
-    File,
-    Process,
-    Credential,
-    Security,
-}
-
-impl RuntimeSecurityEventFamily {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            RuntimeSecurityEventFamily::Http => "http",
-            RuntimeSecurityEventFamily::Model => "model",
-            RuntimeSecurityEventFamily::Mcp => "mcp",
-            RuntimeSecurityEventFamily::Dns => "dns",
-            RuntimeSecurityEventFamily::File => "file",
-            RuntimeSecurityEventFamily::Process => "process",
-            RuntimeSecurityEventFamily::Credential => "credential",
-            RuntimeSecurityEventFamily::Security => "security",
-        }
-    }
-
-    pub const fn is_first_party_cel_root(self) -> bool {
-        matches!(
-            self,
-            RuntimeSecurityEventFamily::Http
-                | RuntimeSecurityEventFamily::Model
-                | RuntimeSecurityEventFamily::Mcp
-                | RuntimeSecurityEventFamily::Dns
-                | RuntimeSecurityEventFamily::File
-                | RuntimeSecurityEventFamily::Process
-        )
-    }
-
-    pub const fn is_ledger_only(self) -> bool {
-        matches!(self, RuntimeSecurityEventFamily::Credential)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RuntimeSecurityEventType {
-    HttpRequest,
-    ModelCall,
-    McpToolCall,
-    McpToolList,
-    /// Intentionally supported for MCP methods that are neither tool calls nor
-    /// tool listing, including resource and future MCP control messages.
-    McpEvent,
-    DnsQuery,
-    FileEvent,
-    FileImport,
-    FileExport,
-    ProcessExec,
-    ProcessExecComplete,
-    ProcessAudit,
-    CredentialSubstitution,
-    SecurityRule,
-    SecurityAsk,
-}
-
-impl RuntimeSecurityEventType {
-    pub const ALL: &'static [Self] = &[
-        Self::HttpRequest,
-        Self::ModelCall,
-        Self::McpToolCall,
-        Self::McpToolList,
-        Self::McpEvent,
-        Self::DnsQuery,
-        Self::FileEvent,
-        Self::FileImport,
-        Self::FileExport,
-        Self::ProcessExec,
-        Self::ProcessExecComplete,
-        Self::ProcessAudit,
-        Self::CredentialSubstitution,
-        Self::SecurityRule,
-        Self::SecurityAsk,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            RuntimeSecurityEventType::HttpRequest => "http.request",
-            RuntimeSecurityEventType::ModelCall => "model.call",
-            RuntimeSecurityEventType::McpToolCall => "mcp.tool_call",
-            RuntimeSecurityEventType::McpToolList => "mcp.tool_list",
-            RuntimeSecurityEventType::McpEvent => "mcp.event",
-            RuntimeSecurityEventType::DnsQuery => "dns.query",
-            RuntimeSecurityEventType::FileEvent => "file.event",
-            RuntimeSecurityEventType::FileImport => "file.import",
-            RuntimeSecurityEventType::FileExport => "file.export",
-            RuntimeSecurityEventType::ProcessExec => "process.exec",
-            RuntimeSecurityEventType::ProcessExecComplete => "process.exec_complete",
-            RuntimeSecurityEventType::ProcessAudit => "process.audit",
-            RuntimeSecurityEventType::CredentialSubstitution => "credential.substitution",
-            RuntimeSecurityEventType::SecurityRule => "security.rule",
-            RuntimeSecurityEventType::SecurityAsk => "security.ask",
-        }
-    }
-
-    pub const fn family(self) -> RuntimeSecurityEventFamily {
-        match self {
-            RuntimeSecurityEventType::HttpRequest => RuntimeSecurityEventFamily::Http,
-            RuntimeSecurityEventType::ModelCall => RuntimeSecurityEventFamily::Model,
-            RuntimeSecurityEventType::McpToolCall
-            | RuntimeSecurityEventType::McpToolList
-            | RuntimeSecurityEventType::McpEvent => RuntimeSecurityEventFamily::Mcp,
-            RuntimeSecurityEventType::DnsQuery => RuntimeSecurityEventFamily::Dns,
-            RuntimeSecurityEventType::FileEvent
-            | RuntimeSecurityEventType::FileImport
-            | RuntimeSecurityEventType::FileExport => RuntimeSecurityEventFamily::File,
-            RuntimeSecurityEventType::ProcessExec
-            | RuntimeSecurityEventType::ProcessExecComplete
-            | RuntimeSecurityEventType::ProcessAudit => RuntimeSecurityEventFamily::Process,
-            RuntimeSecurityEventType::CredentialSubstitution => RuntimeSecurityEventFamily::Credential,
-            RuntimeSecurityEventType::SecurityRule => RuntimeSecurityEventFamily::Security,
-            RuntimeSecurityEventType::SecurityAsk => RuntimeSecurityEventFamily::Security,
-        }
-    }
-
-    pub const fn uses_ledger_only_family(self) -> bool {
-        self.family().is_ledger_only()
-    }
-
-    pub fn parse_str(value: &str) -> Result<Self, SecurityEventTypeParseError> {
-        match value {
-            "http.request" => Ok(Self::HttpRequest),
-            "model.call" => Ok(Self::ModelCall),
-            "mcp.tool_call" => Ok(Self::McpToolCall),
-            "mcp.tool_list" => Ok(Self::McpToolList),
-            "mcp.event" => Ok(Self::McpEvent),
-            "dns.query" => Ok(Self::DnsQuery),
-            "file.event" => Ok(Self::FileEvent),
-            "file.import" => Ok(Self::FileImport),
-            "file.export" => Ok(Self::FileExport),
-            "process.exec" => Ok(Self::ProcessExec),
-            "process.exec_complete" => Ok(Self::ProcessExecComplete),
-            "process.audit" => Ok(Self::ProcessAudit),
-            "credential.substitution" => Ok(Self::CredentialSubstitution),
-            "security.rule" => Ok(Self::SecurityRule),
-            "security.ask" => Ok(Self::SecurityAsk),
-            other => Err(SecurityEventTypeParseError {
-                value: other.to_string(),
-            }),
-        }
-    }
-
-    fn for_write_op(op: &WriteOp) -> Self {
-        match op {
-            WriteOp::NetEvent(_) => Self::HttpRequest,
-            WriteOp::ModelCall(_) => Self::ModelCall,
-            WriteOp::McpCall(call) => match call.method.as_str() {
-                "tools/call" => Self::McpToolCall,
-                "tools/list" => Self::McpToolList,
-                _ => Self::McpEvent,
-            },
-            WriteOp::FileEvent(event) => runtime_file_event_type(event.action),
-            WriteOp::ExecEvent(_) => Self::ProcessExec,
-            WriteOp::ExecEventComplete(_) => Self::ProcessExecComplete,
-            WriteOp::AuditEvent(_) => Self::ProcessAudit,
-            WriteOp::DnsEvent(_) => Self::DnsQuery,
-            WriteOp::SubstitutionEvent(_) => Self::CredentialSubstitution,
-            WriteOp::SecurityRuleEvent(_) => Self::SecurityRule,
-            WriteOp::SecurityAskEvent(_) => Self::SecurityAsk,
-            WriteOp::SecurityDecisionEvent(_) => Self::SecurityRule,
-            WriteOp::ProfileMutationEvent(_) => Self::SecurityRule,
-        }
-    }
-}
-
-impl TryFrom<&str> for RuntimeSecurityEventType {
-    type Error = SecurityEventTypeParseError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::parse_str(value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecurityEventTypeParseError {
-    value: String,
-}
-
-impl fmt::Display for SecurityEventTypeParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown runtime security event type '{}'", self.value)
-    }
-}
-
-impl std::error::Error for SecurityEventTypeParseError {}
+mod emission;
+pub use emission::{emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent};
+mod event_type;
+pub use event_type::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventTypeParseError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SecurityEventId(String);
@@ -254,104 +66,6 @@ impl SecurityEventId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct RuntimeSecurityEvent {
-    pub event_id: Option<SecurityEventId>,
-    pub event_type: RuntimeSecurityEventType,
-    pub event_family: RuntimeSecurityEventFamily,
-    pub credential_ref: Option<String>,
-    pub trace_id: Option<String>,
-    logger_write: WriteOp,
-}
-
-impl RuntimeSecurityEvent {
-    pub fn from_logger_write(mut logger_write: WriteOp) -> Self {
-        let event_id = logger_write
-            .ensure_event_id()
-            .and_then(|value| SecurityEventId::parse(value).ok());
-        let event_type = RuntimeSecurityEventType::for_write_op(&logger_write);
-        let event_family = event_type.family();
-        let credential_ref = logger_write_credential_ref(&logger_write);
-        let trace_id = logger_write_trace_id(&logger_write);
-        Self {
-            event_id,
-            event_type,
-            event_family,
-            credential_ref,
-            trace_id,
-            logger_write,
-        }
-    }
-
-    pub fn into_logger_write(self) -> WriteOp {
-        self.logger_write
-    }
-}
-
-pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
-    let event_type = event.event_type.as_str();
-    let event_family = event.event_family.as_str();
-    let span = tracing::debug_span!(
-        target: "capsem.security_event",
-        SECURITY_EVENT_EMIT_SPAN,
-        event_type,
-        event_family,
-        status = tracing::field::Empty,
-        queue_result = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    span.in_scope(|| trace_runtime_security_event(&event));
-    let event_id = event.event_id.clone();
-    db.write(event.into_logger_write()).instrument(span.clone()).await;
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
-        "event_type" => event_type,
-        "event_family" => event_family,
-        "status" => "ok",
-        "queue_result" => "queued")
-    .increment(1);
-    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
-        "event_type" => event_type,
-        "event_family" => event_family)
-    .record(elapsed_ms);
-    span.record("status", "ok");
-    span.record("queue_result", "queued");
-    event_id
-}
-
-pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
-    let event_type = event.event_type.as_str();
-    let event_family = event.event_family.as_str();
-    let span = tracing::debug_span!(
-        target: "capsem.security_event",
-        SECURITY_EVENT_EMIT_SPAN,
-        event_type,
-        event_family,
-        status = tracing::field::Empty,
-        queue_result = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    span.in_scope(|| trace_runtime_security_event(&event));
-    let event_id = event.event_id.clone();
-    span.in_scope(|| db.write_blocking(event.into_logger_write()));
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
-        "event_type" => event_type,
-        "event_family" => event_family,
-        "status" => "ok",
-        "queue_result" => "queued")
-    .increment(1);
-    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
-        "event_type" => event_type,
-        "event_family" => event_family)
-    .record(elapsed_ms);
-    span.record("status", "ok");
-    span.record("queue_result", "queued");
-    event_id
 }
 
 pub async fn emit_file_security_write_and_rules(
@@ -1062,11 +776,12 @@ pub async fn emit_matching_security_rules_with_decision(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<SecurityRuleEmission, String> {
+    event.validate_network(event_type).map_err(|error| error.to_string())?;
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut enforcement = security_enforcement_decision(selected_rule);
     let mut emitted = 0;
-    let enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     if let Some(rule) = selected_rule {
@@ -1132,11 +847,12 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<SecurityRuleEmission, String> {
+    event.validate_network(event_type).map_err(|error| error.to_string())?;
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut enforcement = security_enforcement_decision(selected_rule);
     let mut emitted = 0;
-    let enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     if let Some(rule) = selected_rule {
@@ -1310,9 +1026,35 @@ fn apply_event_decision_to_enforcement(event: &SecurityEvent, enforcement: &mut 
     }
 }
 
-fn security_enforcement_decision(rule: Option<&CompiledSecurityRule>) -> SecurityEnforcementDecision {
+fn requested_boundary_decision(
+    rule: Option<&CompiledSecurityRule>,
+    kind: RuntimeSecurityEventType,
+) -> SecurityDecisionKind {
+    match rule {
+        Some(rule) => requested_decision_for_rule(rule.action),
+        None if matches!(
+            kind,
+            RuntimeSecurityEventType::NetworkConnect | RuntimeSecurityEventType::NetworkProbe
+        ) =>
+        {
+            SecurityDecisionKind::Block
+        }
+        None => SecurityDecisionKind::Allow,
+    }
+}
+
+fn security_enforcement_decision(
+    rule: Option<&CompiledSecurityRule>,
+    event: &mut SecurityEvent,
+) -> SecurityEnforcementDecision {
     let Some(rule) = rule else {
-        return SecurityEnforcementDecision::allow();
+        let mut decision = SecurityEnforcementDecision::allow();
+        if requested_boundary_decision(None, event.event_type) == SecurityDecisionKind::Block {
+            event.request_decision(SecurityDecisionKind::Block);
+            decision.action = SecurityEnforcementAction::Block;
+            decision.reason = Some("network operation requires an explicit allow rule".into());
+        }
+        return decision;
     };
     SecurityEnforcementDecision {
         action: match rule.action {
@@ -1335,6 +1077,7 @@ pub fn evaluate_security_boundary(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    event.validate_network(event.event_type)?;
     let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
@@ -1345,10 +1088,8 @@ pub fn evaluate_security_boundary(
     }
 
     let selected_rule = selected_enforcement_rule(&evaluation);
-    if let Some(rule) = selected_rule {
-        event.request_decision(requested_decision_for_rule(rule.action));
-    }
-    let mut enforcement = security_enforcement_decision(selected_rule);
+    event.request_decision(requested_boundary_decision(selected_rule, event.event_type));
+    let mut enforcement = security_enforcement_decision(selected_rule, &mut event);
     apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
@@ -1608,6 +1349,7 @@ pub struct SecurityPluginExecution {
 /// transport should hang off `SecurityEventEmitter`, not protocol-owned writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
+    pub network: Option<NetworkSecurityEvent>,
     pub event_type: RuntimeSecurityEventType,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
@@ -1631,6 +1373,7 @@ pub struct SecurityEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SerializableSecurityEvent {
+    pub network: Option<NetworkSecurityEvent>,
     pub event_type: String,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
@@ -1652,6 +1395,7 @@ pub struct SerializableSecurityEvent {
 impl From<&SecurityEvent> for SerializableSecurityEvent {
     fn from(event: &SecurityEvent) -> Self {
         Self {
+            network: event.network.clone(),
             event_type: event.event_type.as_str().to_string(),
             trace_id: event.trace_id.clone(),
             credential_ref: event.credential_ref.clone(),
@@ -1679,6 +1423,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
 impl SecurityEvent {
     pub fn new(event_type: RuntimeSecurityEventType) -> Self {
         Self {
+            network: None,
             event_type,
             trace_id: None,
             credential_ref: None,
@@ -1815,100 +1560,13 @@ impl SecurityEvent {
 /// into a rule that silently never matches. Every arm of the `get` methods below
 /// needs an entry here; `security_event_cel_fields_all_resolve` guards the
 /// pairing.
-pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
-    "dns.qname",
-    "dns.qtype",
-    "dns.valid",
-    "file.content",
-    "file.create.content",
-    "file.create.ext",
-    "file.create.mime_type",
-    "file.create.name",
-    "file.create.path",
-    "file.create.valid",
-    "file.delete.content",
-    "file.delete.ext",
-    "file.delete.mime_type",
-    "file.delete.name",
-    "file.delete.path",
-    "file.delete.valid",
-    "file.export.content",
-    "file.export.ext",
-    "file.export.mime_type",
-    "file.export.name",
-    "file.export.path",
-    "file.export.valid",
-    "file.import.content",
-    "file.import.ext",
-    "file.import.mime_type",
-    "file.import.name",
-    "file.import.path",
-    "file.import.valid",
-    "file.read.content",
-    "file.read.ext",
-    "file.read.mime_type",
-    "file.read.name",
-    "file.read.path",
-    "file.read.valid",
-    "file.valid",
-    "file.write.content",
-    "file.write.ext",
-    "file.write.mime_type",
-    "file.write.name",
-    "file.write.path",
-    "file.write.valid",
-    "http.body",
-    "http.host",
-    "http.method",
-    "http.path",
-    "http.query",
-    "http.status",
-    "http.valid",
-    "ip.valid",
-    "ip.value",
-    "ip.version",
-    "mcp.event.valid",
-    "mcp.method",
-    "mcp.request.arguments",
-    "mcp.request.id",
-    "mcp.request.method",
-    "mcp.request.valid",
-    "mcp.response.content",
-    "mcp.response.valid",
-    "mcp.server.name",
-    "mcp.server.valid",
-    "mcp.tool_call.name",
-    "mcp.tool_call.valid",
-    "mcp.tool_list",
-    "mcp.tool_list.valid",
-    "mcp.valid",
-    "model.name",
-    "model.provider",
-    "model.request.body",
-    "model.request.tool_calls",
-    "model.request.valid",
-    "model.response.body",
-    "model.response.valid",
-    "model.tool_call.valid",
-    "model.valid",
-    "process.audit.valid",
-    "process.command",
-    "process.exec.exit_code",
-    "process.exec.id",
-    "process.exec.path",
-    "process.exec.stderr",
-    "process.exec.stdout",
-    "process.exec.valid",
-    "process.name",
-    "process.valid",
-    "tcp.port",
-    "tcp.valid",
-    "udp.port",
-    "udp.valid",
-];
+pub use capsem_config::SECURITY_EVENT_CEL_FIELDS;
 
 impl PolicySubject for SecurityEvent {
     fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        if let Some(rest) = field.strip_prefix("network.") {
+            return self.network.as_ref().and_then(|event| event.get(rest));
+        }
         if let Some(rest) = field.strip_prefix("http.") {
             return self.http.as_ref().and_then(|event| event.get(rest));
         }
@@ -2747,6 +2405,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         rules: &SecurityRuleSet,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
+        event.validate_network(event.event_type)?;
         event = self
             .action_registry
             .apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
@@ -2755,9 +2414,10 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         for rule in evaluation.matched_rules() {
             record_rule_detection(&mut event, rule);
         }
-        if let Some(rule) = selected_enforcement_rule(&evaluation) {
-            event.request_decision(requested_decision_for_rule(rule.action));
-        }
+        event.request_decision(requested_boundary_decision(
+            selected_enforcement_rule(&evaluation),
+            event.event_type,
+        ));
         event = self
             .action_registry
             .apply_security_plugins(SecurityPluginStage::Postprocess, event)?;

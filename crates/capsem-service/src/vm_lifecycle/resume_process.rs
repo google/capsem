@@ -53,6 +53,25 @@ impl ServiceState {
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
 
+        // Entries written before addresses existed get one now, saved before
+        // the process that will advertise it starts.
+        let private_address = match entry.private_address {
+            Some(address) => address,
+            None => {
+                let lease = self.lease_private_address()?;
+                {
+                    let mut registry = self.persistent_registry.lock().unwrap();
+                    let Some(stored) = registry.get_mut(&name) else {
+                        return Err(anyhow!("persistent VM \"{}\" vanished during resume", name));
+                    };
+                    stored.private_address = Some(lease.address);
+                    registry.save()?;
+                }
+                lease.commit()
+            }
+        };
+        entry.private_address = Some(private_address);
+
         info!(name, version, "resume_sandbox: re-spawning process");
 
         let uds_path = self.instance_socket_path(&vm_id)?;
@@ -71,6 +90,7 @@ impl ServiceState {
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
         let process_log_path = entry.session_dir.join("process.log");
+        let owner_secret = private_routes::mint_owner_secret(&entry.session_dir)?;
         let process_log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -85,6 +105,13 @@ impl ServiceState {
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+        child_cmd.arg("--vm-name").arg(&name);
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_PRIVATE_ADDRESS={private_address}"));
+        child_cmd
+            .arg("--env")
+            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
@@ -170,6 +197,8 @@ impl ServiceState {
                 // of the run tree and cannot be walked back up.
                 .arg("--run-dir")
                 .arg(&self.run_dir)
+                .arg("--service-socket")
+                .arg(&self.service_socket)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -222,11 +251,15 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from,
+                private_address,
+                owner_secret,
             },
         );
         drop(instances);
         let _reaper =
             instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
+        // A resumed member's networks get their links back.
+        switches::link_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)
     }
 }

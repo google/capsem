@@ -31,7 +31,7 @@ fn create_tables_idempotent() {
 fn db_mem_tables_match_schema() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn);
+    migrate(&conn).unwrap();
     create_memory_tables(&conn, &memory_uri_for_name("db_mem_tables_match_schema")).unwrap();
 
     for (table, _) in READY_SCHEMA_COLUMNS {
@@ -61,7 +61,7 @@ fn fresh_create_schema_has_no_migration_only_columns() {
         .map(|(table, _)| (*table, columns_for_schema(&conn, "main", table)))
         .collect::<BTreeMap<_, _>>();
 
-    migrate(&conn);
+    migrate(&conn).unwrap();
 
     for (table, columns_before_migrate) in before {
         assert_eq!(
@@ -84,7 +84,7 @@ fn fresh_schema_is_final_before_external_memory_rehydrate() {
 
     // Reproduce the production ordering window: an external reader mirrors
     // the freshly published schema before the writer runs legacy migrations.
-    migrate(&conn);
+    migrate(&conn).unwrap();
     sync_memory_tables_from_disk(&conn, ["security_ask_events"])
         .expect("fresh canonical DDL must already match its post-migration shape");
 
@@ -99,7 +99,7 @@ fn fresh_schema_is_final_before_external_memory_rehydrate() {
 fn db_mem_disk_ready_rejects_missing_memory_schema() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn);
+    migrate(&conn).unwrap();
 
     let error = validate_ready_schema(&conn).expect_err("ready() must fail if DB-owned memory tables were not created");
     assert!(
@@ -112,7 +112,7 @@ fn db_mem_disk_ready_rejects_missing_memory_schema() {
 fn db_mem_flush_uses_per_table_id_watermark() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn);
+    migrate(&conn).unwrap();
     create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark")).unwrap();
     let mut watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
 
@@ -172,7 +172,7 @@ fn db_mem_disk_memory_tables_work_before_query_only_guard() {
         let conn = Connection::open(&path).unwrap();
         apply_pragmas(&conn).unwrap();
         create_tables(&conn).unwrap();
-        migrate(&conn);
+        migrate(&conn).unwrap();
     }
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -221,8 +221,8 @@ fn migrate_trace_columns_idempotent() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
     // Run twice -- second call must not error.
-    migrate(&conn);
-    migrate(&conn);
+    migrate(&conn).unwrap();
+    migrate(&conn).unwrap();
     // Verify trace_id column exists by inserting a row with it.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path, trace_id)
@@ -264,8 +264,8 @@ fn create_tables_includes_fs_events() {
 fn migrate_fs_events_idempotent() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn);
-    migrate(&conn);
+    migrate(&conn).unwrap();
+    migrate(&conn).unwrap();
     conn.execute(
         "INSERT INTO fs_events (timestamp, action, path)
              VALUES ('2026-01-01T00:00:00Z', 'deleted', 'project/old.txt')",
@@ -284,8 +284,8 @@ fn migrate_fs_events_idempotent() {
 fn migrate_tool_calls_origin_idempotent() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn);
-    migrate(&conn);
+    migrate(&conn).unwrap();
+    migrate(&conn).unwrap();
     // Verify origin/server/method columns exist by inserting one unified MCP-origin row.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path)
@@ -324,8 +324,8 @@ fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
     )
     .unwrap();
 
-    migrate(&conn);
-    migrate(&conn);
+    migrate(&conn).unwrap();
+    migrate(&conn).unwrap();
 
     conn.execute(
         "INSERT INTO tool_calls (
@@ -376,8 +376,8 @@ fn migrate_event_body_blobs_accepts_tool_calls_source() {
     )
     .unwrap();
 
-    migrate(&conn);
-    migrate(&conn);
+    migrate(&conn).unwrap();
+    migrate(&conn).unwrap();
 
     conn.execute(
         "INSERT INTO event_body_blobs (
@@ -1027,73 +1027,6 @@ fn security_event_type_check_rejects_snapshot_event() {
     assert!(result.is_err(), "snapshot.event must not be a security-event type");
 }
 
-#[test]
-fn create_tables_includes_dns_events() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    conn.execute(
-        "INSERT INTO dns_events (
-                timestamp, qname, qtype, qclass, rcode, decision,
-                policy_mode, policy_action, policy_rule, policy_reason
-             )
-             VALUES (
-                '2026-01-01T00:00:00Z', 'anthropic.com', 1, 1, 0, 'allowed',
-                'enforce', 'allow', 'policy.dns.allow_example', 'allowed by dns policy'
-             )",
-        [],
-    )
-    .unwrap();
-    let (qname, policy_rule): (String, String) = conn
-        .query_row(
-            "SELECT qname, policy_rule FROM dns_events WHERE decision = 'allowed'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(qname, "anthropic.com");
-    assert_eq!(policy_rule, "policy.dns.allow_example");
-}
+mod dns;
 
-#[test]
-fn migrate_dns_events_idempotent() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    // Run migrate twice -- second call must not error.
-    migrate(&conn);
-    migrate(&conn);
-    // Verify dns_events table exists and accepts a row.
-    conn.execute(
-        "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision, trace_id)
-             VALUES ('2026-01-01T00:00:00Z', 'pypi.org', 1, 1, 0, 'allowed', 'tr_abc')",
-        [],
-    )
-    .unwrap();
-    let trace: String = conn
-        .query_row("SELECT trace_id FROM dns_events WHERE qname = 'pypi.org'", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(trace, "tr_abc");
-}
-
-#[test]
-fn dns_events_has_indexes() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    for idx in [
-        "idx_dns_events_timestamp",
-        "idx_dns_events_qname",
-        "idx_dns_events_trace_id",
-        "idx_dns_events_decision",
-        "idx_dns_events_policy_rule",
-    ] {
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
-                [idx],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1, "missing index {idx}");
-    }
-}
+mod transport;

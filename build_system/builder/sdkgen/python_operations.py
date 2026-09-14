@@ -6,7 +6,7 @@ import keyword
 import re
 
 from .operations import Route
-from .python import HEADER, module_name, type_name
+from .python import HEADER, module_name, nullable, type_name
 
 
 def render_operations(routes: list[Route]) -> dict[str, str]:
@@ -29,8 +29,9 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 raise ValueError(f"unsupported operation parameter: {attr}")
             annotation = type_name(parameter.schema_)
             default = ""
-            if not parameter.required:
+            if not parameter.required and not nullable(parameter.schema_):
                 annotation += " | None"
+            if not parameter.required:
                 default = " = None"
             arguments.append(f"    {attr}: {annotation}{default},")
             validation.append(f"    {attr} = TypeAdapter({annotation}).validate_python({attr})")

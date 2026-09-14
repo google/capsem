@@ -108,6 +108,11 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
         # `tests/citadel/test_db_boundary.py` asserts nothing else in the
         # crate ever opens it.
         "crates/capsem-bench/src/store.rs",
+        # One database per named network: the registry and membership tables
+        # live beside the session schema in `network.db`, and `network_db.rs`
+        # is that file's single owning module. It opens the file once to
+        # ensure its own tables before the shared handle takes over.
+        "crates/capsem-logger/src/network_db.rs",
     }
     allowed_event_inserts = {
         "crates/capsem-logger/src/schema.rs",

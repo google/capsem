@@ -37,6 +37,9 @@ pub struct ProvisionRequest {
     /// be cloned from this existing persistent sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    /// Existing named networks joined atomically during provisioning.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -71,6 +74,10 @@ pub struct ProvisionResponse {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
     pub uds_path: Option<std::path::PathBuf>,
+    /// The VM's lifetime address on the private link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = "ipv4")]
+    pub private_address: Option<std::net::Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
@@ -198,6 +205,10 @@ pub struct SandboxInfo {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    /// The VM's lifetime address on the private link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = "ipv4")]
+    pub private_address: Option<std::net::Ipv4Addr>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == VmLifecycleState::Defunct`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
@@ -249,6 +260,7 @@ impl SandboxInfo {
             denied_requests: None,
             total_file_events: None,
             model_call_count: None,
+            private_address: None,
             last_error: None,
             can_resume: false,
             resume_blocked_reason: None,

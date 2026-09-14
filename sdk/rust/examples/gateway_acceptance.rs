@@ -13,7 +13,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!hv.info().await?.gateway_version.is_empty());
     assert!(hv.list().await?.sandboxes.iter().any(|vm| vm.id == id));
     let vm = hv.vm(VmSelector::Name("route-workspace".into()))?;
-    assert!(vm.list("/", None).await?.entries.iter().any(|entry| entry.name == "created.txt"));
+    assert!(vm
+        .list("/", None)
+        .await?
+        .entries
+        .iter()
+        .any(|entry| entry.name == "created.txt"));
     assert_eq!(vm.id(), Some(id.as_str()));
     let snapshots = vm.snapshots().list().await?;
     assert_eq!(snapshots.total, 1);
@@ -25,13 +30,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("modified.txt", FileChangeKind::Modified),
         ("deleted.txt", FileChangeKind::Deleted),
     ] {
-        assert!(changes.changes.iter().any(|entry| entry.path == path && entry.kind == kind));
+        assert!(changes
+            .changes
+            .iter()
+            .any(|entry| entry.path == path && entry.kind == kind));
     }
-    assert!(matches!(vm.copy().from_vm("/created.txt").await, Err(Error::Http { status: 409, body })
-        if String::from_utf8_lossy(&body).contains("running sandbox security ledger")));
-    assert!(matches!(vm.copy().to_vm("/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
-        if String::from_utf8_lossy(&body).contains("running sandbox security ledger")));
-    assert!(!vm.list("/", None).await?.entries.iter().any(|entry| entry.name == "refused.txt"));
+    assert!(
+        matches!(vm.copy().from_vm("/created.txt").await, Err(Error::Http { status: 409, body })
+        if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
+    );
+    assert!(
+        matches!(vm.copy().to_vm("/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
+        if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
+    );
+    assert!(!vm
+        .list("/", None)
+        .await?
+        .entries
+        .iter()
+        .any(|entry| entry.name == "refused.txt"));
     assert_eq!(hv.vm(VmSelector::Id(id))?.snapshots().status().await?.total, 1);
     println!("SDK_GATEWAY_ACCEPTANCE_OK");
     Ok(())

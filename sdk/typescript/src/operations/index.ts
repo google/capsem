@@ -1,12 +1,18 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {attachNetworkMember} from "./attachNetworkMember.js";
+export {createNetwork} from "./createNetwork.js";
 export {createVm} from "./createVm.js";
+export {deleteNetwork} from "./deleteNetwork.js";
 export {deleteVm} from "./deleteVm.js";
+export {detachNetworkMember} from "./detachNetworkMember.js";
 export {downloadVmFile} from "./downloadVmFile.js";
 export {execVm} from "./execVm.js";
 export {forkVm} from "./forkVm.js";
 export {getHypervisorInfo} from "./getHypervisorInfo.js";
 export {getHypervisorLogs} from "./getHypervisorLogs.js";
+export {getNetwork} from "./getNetwork.js";
+export {getNetworkLogs} from "./getNetworkLogs.js";
 export {getUpdateStatus} from "./getUpdateStatus.js";
 export {getVmChanges} from "./getVmChanges.js";
 export {getVmHistory} from "./getVmHistory.js";
@@ -17,6 +23,7 @@ export {getVmStatsDetail} from "./getVmStatsDetail.js";
 export {getVmStatsSummary} from "./getVmStatsSummary.js";
 export {getVmStatus} from "./getVmStatus.js";
 export {getVmTimeline} from "./getVmTimeline.js";
+export {listNetworks} from "./listNetworks.js";
 export {listProfiles} from "./listProfiles.js";
 export {listVmFiles} from "./listVmFiles.js";
 export {listVmSnapshots} from "./listVmSnapshots.js";

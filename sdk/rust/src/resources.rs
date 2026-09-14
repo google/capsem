@@ -1,8 +1,10 @@
-use crate::{models, operations as api, Result, VM};
+use crate::client::Client;
+use crate::{models, operations as api, NetworkLogOptions, Result, VM};
 
 pub struct Copy<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
+pub struct Networks<'a>(pub(crate) &'a Client);
 
 impl Copy<'_> {
     pub async fn from_vm(&self, path: &str) -> Result<Vec<u8>> {
@@ -66,6 +68,84 @@ impl Stats<'_> {
                 id: self.0.resolve().await?,
             },
             self.0.client.options,
+        )
+        .await
+    }
+}
+
+impl Networks<'_> {
+    pub async fn create(&self, name: &str) -> Result<models::NetworkInfo> {
+        api::create_network(
+            &self.0.transport,
+            &api::CreateNetworkParams {
+                body: models::CreateNetworkRequest { name: name.into() },
+            },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn list(&self) -> Result<models::NetworkListResponse> {
+        api::list_networks(&self.0.transport, self.0.options).await
+    }
+
+    pub async fn inspect(&self, network_id: &str) -> Result<models::NetworkInfo> {
+        api::get_network(
+            &self.0.transport,
+            &api::GetNetworkParams { id: network_id.into() },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn delete(&self, network_id: &str) -> Result<models::VmActionResponse> {
+        api::delete_network(
+            &self.0.transport,
+            &api::DeleteNetworkParams { id: network_id.into() },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn attach(&self, network_id: &str, vm_id: &str) -> Result<models::NetworkInfo> {
+        api::attach_network_member(
+            &self.0.transport,
+            &api::AttachNetworkMemberParams {
+                id: network_id.into(),
+                vm_id: vm_id.into(),
+            },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn detach(&self, network_id: &str, vm_id: &str) -> Result<models::NetworkInfo> {
+        api::detach_network_member(
+            &self.0.transport,
+            &api::DetachNetworkMemberParams {
+                id: network_id.into(),
+                vm_id: vm_id.into(),
+            },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn logs(&self, network_id: &str, options: NetworkLogOptions) -> Result<models::NetworkLogsResponse> {
+        api::get_network_logs(
+            &self.0.transport,
+            &api::GetNetworkLogsParams {
+                id: network_id.into(),
+                cursor: options.cursor,
+                limit: options.limit,
+                vm: options.vm,
+                connection: options.connection,
+                r#type: options.event_type,
+                decision: options.decision,
+                since: options.since,
+                until: options.until,
+            },
+            self.0.options,
         )
         .await
     }

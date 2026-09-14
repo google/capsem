@@ -86,6 +86,8 @@ def type_name(schema: Schema) -> str:
                  "boolean": "StrictBool", "null": "None"}[schema.type]
     if schema.format == "binary":
         primitive = "bytes"
+    elif schema.format == "ipv4":
+        primitive = "IPv4Address"
     if schema.minimum is not None:
         primitive = f"Annotated[{primitive}, Field(ge={schema.minimum!r})]"
     return primitive
@@ -135,6 +137,8 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         imports = []
         if "(StrEnum)" in body:
             imports.append("from enum import StrEnum")
+        if "IPv4Address" in body:
+            imports.append("from ipaddress import IPv4Address")
         typing = [symbol for symbol in ("Annotated", "TypeAlias") if symbol in body]
         if typing:
             imports.append(f"from typing import {', '.join(typing)}")

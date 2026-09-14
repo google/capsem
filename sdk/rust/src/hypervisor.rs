@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::client::Client;
-use crate::{models, operations as api, CreateOptions, Error, LogOptions, Result, VmSelector, VM};
+use crate::{models, operations as api, resources::Networks, CreateOptions, Error, LogOptions, Result, VmSelector, VM};
 
 /// A gateway connection. Clones and VM handles share the HTTP connection pool.
 #[derive(Debug, Clone)]
@@ -39,6 +39,10 @@ impl Hypervisor {
         VM::bind(self.client.clone(), selector)
     }
 
+    pub fn networks(&self) -> Networks<'_> {
+        Networks(&self.client)
+    }
+
     pub async fn create(&self, profile: &str, options: CreateOptions) -> Result<VM> {
         if options.vcpu == Some(0) {
             return Err(Error::InvalidInput("vcpu must be positive"));
@@ -52,6 +56,7 @@ impl Hypervisor {
             ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
             env: options.env,
             from: None,
+            networks: Vec::new(),
         };
         let result = api::create_vm(
             &self.client.transport,

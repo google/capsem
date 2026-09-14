@@ -141,6 +141,28 @@ pub fn build_redirect_response(query_bytes: &[u8], answers: &[IpAddr], ttl: u32)
         .context("failed to encode synthetic DNS redirect response")
 }
 
+/// A PTR answer naming `owner` for the reversed address in the question;
+/// a question of another type gets the name's existence and no record.
+pub fn build_ptr_response(query_bytes: &[u8], owner: &str, ttl: u32) -> Result<Vec<u8>> {
+    let request = Message::from_vec(query_bytes).context("failed to decode DNS message")?;
+    let question = request
+        .queries
+        .first()
+        .ok_or_else(|| anyhow!("DNS message has no questions"))?;
+    let mut response = Message::new(request.metadata.id, MessageType::Response, OpCode::Query);
+    response.metadata.recursion_desired = request.metadata.recursion_desired;
+    response.metadata.recursion_available = true;
+    response.metadata.response_code = ResponseCode::NoError;
+    response.add_queries(request.queries.iter().cloned());
+    if question.query_type() == RecordType::PTR {
+        let owner = hickory_proto::rr::Name::from_ascii(format!("{}.", owner.trim_end_matches('.')))
+            .context("PTR owner name")?;
+        let qname = response.queries[0].name().clone();
+        response.add_answer(Record::from_rdata(qname, ttl, RData::PTR(rdata::PTR(owner))));
+    }
+    response.to_vec().context("failed to encode synthetic DNS PTR response")
+}
+
 fn build_synthetic_response(query_bytes: &[u8], rcode: ResponseCode) -> Result<Vec<u8>> {
     let request = Message::from_vec(query_bytes).context("failed to decode DNS message")?;
     let mut response = Message::new(request.metadata.id, MessageType::Response, OpCode::Query);

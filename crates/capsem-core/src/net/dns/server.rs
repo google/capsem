@@ -29,7 +29,9 @@ use tracing::{debug, instrument, warn};
 use crate::net::dns::cache::DnsAnswerCache;
 use crate::net::dns::resolver::DnsResolver;
 use crate::net::mitm_proxy::metrics as m;
-use crate::net::parsers::dns_parser::{build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery};
+use crate::net::parsers::dns_parser::{
+    build_nxdomain, build_ptr_response, build_redirect_response, build_servfail, parse_query, DnsQuery,
+};
 use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
@@ -38,6 +40,8 @@ use crate::security_engine::{
 
 const CAPSEM_LOCAL_NXDOMAIN_SUFFIX: &str = ".capsem-bogus";
 const CAPSEM_LOCAL_NXDOMAIN_RULE: &str = "resolver.local_nxdomain.capsem_bogus";
+const PRIVATE_ZONE_RULE: &str = "private:capsem.internal";
+const PRIVATE_MISS_RULE: &str = "private.miss";
 
 /// Result of handling one DNS query. The answer bytes are always
 /// populated -- on every path we have something to send back to the
@@ -194,6 +198,8 @@ pub struct DnsHandler {
     /// Identical lookups on their way upstream, shared by every clone so
     /// concurrent queries for one name cost one upstream round trip.
     in_flight: Arc<super::coalesce::InFlightLookups>,
+    /// Who answers `capsem.internal`; without one the zone is empty.
+    private_names: Option<Arc<dyn super::private::PrivateNames>>,
 }
 
 impl DnsHandler {
@@ -213,6 +219,7 @@ impl DnsHandler {
             resolver,
             cache: None,
             in_flight: Arc::default(),
+            private_names: None,
         }
     }
 
@@ -231,6 +238,7 @@ impl DnsHandler {
             resolver,
             cache: Some(cache),
             in_flight: Arc::default(),
+            private_names: None,
         }
     }
 
@@ -249,6 +257,51 @@ impl DnsHandler {
             Arc::new(DnsResolver::new()),
             Arc::new(DnsAnswerCache::default()),
         )
+    }
+
+    /// Answer the private zone through `names`.
+    pub fn with_private_names(mut self, names: Arc<dyn super::private::PrivateNames>) -> Self {
+        self.private_names = Some(names);
+        self
+    }
+
+    /// The private zone and the pool's reverse zone are the host's to
+    /// answer: a member's name or address for the asker, or nothing. Zero
+    /// TTL, no cache, never upstream.
+    async fn answer_private(
+        &self,
+        query_bytes: &[u8],
+        query: DnsQuery,
+        question: super::private::PrivateQuestion,
+    ) -> DnsHandlerResult {
+        use super::private::PrivateQuestion;
+        let answer = match (&self.private_names, question) {
+            (Some(names), PrivateQuestion::Name(name)) => names
+                .address_of(&name)
+                .await
+                .map(|address| build_redirect_response(query_bytes, &[std::net::IpAddr::V4(address)], 0)),
+            (Some(names), PrivateQuestion::Reverse(address)) => names
+                .name_of(address)
+                .await
+                .map(|owner| build_ptr_response(query_bytes, &owner, 0)),
+            (None, _) => None,
+        };
+        match answer {
+            Some(Ok(bytes)) => DnsHandlerResult::redirected(bytes, query, PRIVATE_ZONE_RULE.to_string()),
+            Some(Err(error)) => {
+                warn!(error = %error, qname = %query.qname, "dns handler: failed to encode private answer");
+                let sf = build_servfail(query_bytes).unwrap_or_default();
+                DnsHandlerResult::upstream_failed(sf, query, 0)
+            }
+            None => match build_nxdomain(query_bytes) {
+                Ok(nxd) => DnsHandlerResult::denied(nxd, query, PRIVATE_MISS_RULE.to_string()),
+                Err(error) => {
+                    warn!(error = %error, "dns handler: failed to encode private NXDOMAIN");
+                    let sf = build_servfail(query_bytes).unwrap_or_default();
+                    DnsHandlerResult::upstream_failed(sf, query, 0)
+                }
+            },
+        }
     }
 
     /// Borrow the cache (debugging / metrics only).
@@ -371,6 +424,12 @@ impl DnsHandler {
                 }
             };
             let mut result = DnsHandlerResult::denied(nxd, query, matched_rule);
+            apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
+            return result;
+        }
+
+        if let Some(question) = super::private::private_question(&query.qname, query.qtype) {
+            let mut result = self.answer_private(query_bytes, query, question).await;
             apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
             return result;
         }

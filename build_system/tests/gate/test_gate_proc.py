@@ -260,14 +260,22 @@ def test_cancellation_does_not_adopt_an_unsignalable_process_group(
     processgroup._signal_group(42, signal.SIGKILL)
 
 
+# The guard samples the process table every poll, so a leader that detaches
+# a daemon and exits between two samples is not seen; only a Linux subreaper
+# could close that. The leader therefore outlives many samples: at 0.3s, a
+# loaded machine (the parallel suite itself) scanned too slowly to catch the
+# child and the guard never had a survivor to refuse or name.
+_DETACHING_CHILD = "import signal; signal.alarm(30); signal.pause()"
+_DETACHING_HELPER = (
+    "import os,subprocess,sys,time; "
+    f"child=subprocess.Popen([sys.executable,'-c',{_DETACHING_CHILD!r}],start_new_session=True); "
+    "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(2)"
+)
+
+
 def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Path) -> None:
     pids = tmp_path / "hidden-daemon"
-    child = "import signal; signal.alarm(3); signal.pause()"
-    helper = (
-        "import os,subprocess,sys,time; "
-        f"child=subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
-        "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
-    )
+    helper = _DETACHING_HELPER
 
     # Pinned rather than inherited: the refusal is now switched off where a
     # runner is disposable, so a test that asks for it must say so. Reading the
@@ -305,12 +313,7 @@ def test_a_survivor_is_reported_rather_than_refused_on_a_disposable_runner(
     knowing about. It simply does not fail a release whose artifacts are fine.
     """
     pids = tmp_path / "reported-daemon"
-    child = "import signal; signal.alarm(3); signal.pause()"
-    helper = (
-        "import os,subprocess,sys,time; "
-        f"child=subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
-        "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
-    )
+    helper = _DETACHING_HELPER
     lenient = StopPolicy(grace_seconds=10.0, poll_seconds=0.1, refuse_survivors=False)
 
     Runner(PROJECT_ROOT, stop_policy=lenient).run((sys.executable, "-c", helper, str(pids)))

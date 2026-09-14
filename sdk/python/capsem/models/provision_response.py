@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address
+
 from pydantic import StrictBool, StrictStr
 
 from .model_base import Model
@@ -16,6 +18,7 @@ class ProvisionResponse(Model):
     id: StrictStr
     name: StrictStr
     persistent: StrictBool | None = None
+    private_address: IPv4Address | None = None
     profile_id: StrictStr
     status: VmLifecycleState
     uds_path: StrictStr | None = None

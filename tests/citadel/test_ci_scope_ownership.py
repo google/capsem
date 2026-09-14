@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from capsem_builder.gate.shellnodes import commands
+from capsem_builder.gate.shellparse import parse
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yaml"
@@ -19,6 +21,22 @@ unowned source: a rename can otherwise make required verification silently
 stop running. Classification and the final aggregate job therefore fail
 closed.
 """
+
+ROUTER_COVERAGE_RATIONALE = (
+    "The confined router's seccomp and SCM_RIGHTS tests require a real child process. "
+    "Library-only Linux coverage silently excludes this security boundary."
+)
+
+
+def _router_subprocess_selected(script: str) -> bool:
+    expected = ["cargo", "nextest", "run", "--locked", "-p", "capsem-router", "--test", "subprocess", "--profile", "ci"]
+    return any(command.argv == tuple(expected) for command in commands(parse(script)))
+
+
+def test_linux_executes_confined_router_subprocesses() -> None:
+    script = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
+    assert _router_subprocess_selected(script), ROUTER_COVERAGE_RATIONALE
+    assert not _router_subprocess_selected(script.replace("--test subprocess", "--lib")), ROUTER_COVERAGE_RATIONALE
 
 REQUIRED_JOBS = frozenset(
     {

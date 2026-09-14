@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 
 export interface Schema {
-  $ref?: string; type?: string | string[]; enum?: string[]; oneOf?: Schema[];
+  $ref?: string; type?: string | string[]; format?: string; enum?: string[]; oneOf?: Schema[];
   properties?: Record<string, Schema>; required?: string[]; items?: Schema;
   additionalProperties?: Schema | false; minimum?: number;
 }
@@ -48,7 +48,7 @@ export function sample(schema: Schema, full = false, variant = 0, depth = 0): un
     case 'array':
       return full && depth < 8 && schema.items ? [sample(schema.items, full, variant, depth + 1)] : [];
     case 'null': return null;
-    case 'string': return 'value';
+    case 'string': return schema.format === 'ipv4' ? '10.128.0.2' : 'value';
     case 'boolean': return true;
     case 'integer': return schema.minimum ?? 0;
     case 'number': return schema.minimum ?? 0.5;

@@ -152,6 +152,8 @@ class CacheEntry(BaseModel):
 
     key: str
     relative_path: Path
+    #: Further paths removed with this generation, after `relative_path`.
+    member_paths: tuple[Path, ...] = ()
     logical_bytes: Annotated[StrictInt, Field(ge=0)]
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     created_ns: Annotated[StrictInt, Field(ge=0)]

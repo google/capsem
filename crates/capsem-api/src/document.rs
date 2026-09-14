@@ -48,6 +48,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
     doc.post::<UpdateApplyRequest, UpdateActionResponse>("/update/apply", "updateHypervisor");
+    doc.networks();
     doc.files();
     doc.finish()
 }
@@ -128,6 +129,37 @@ impl Document {
     fn empty_post<T: ToSchema>(&mut self, path: &str, id: &str) {
         let operation = self.operation::<T>(path, id);
         self.add(path, HttpMethod::Post, operation);
+    }
+
+    fn networks(&mut self) {
+        self.get::<NetworkListResponse>("/networks", "listNetworks");
+        self.post::<CreateNetworkRequest, NetworkInfo>("/networks", "createNetwork");
+        self.get::<NetworkInfo>("/networks/{id}", "getNetwork");
+
+        let delete = self.operation::<VmActionResponse>("/networks/{id}", "deleteNetwork");
+        self.add("/networks/{id}", HttpMethod::Delete, delete);
+
+        let member_path = "/networks/{id}/members/{vm_id}";
+        let vm_id = ParameterBuilder::new()
+            .name("vm_id")
+            .parameter_in(ParameterIn::Path)
+            .required(Required::True)
+            .schema(Some(ObjectBuilder::new().schema_type(Type::String)))
+            .build();
+        let attach = self
+            .operation::<NetworkInfo>(member_path, "attachNetworkMember")
+            .parameter(vm_id.clone());
+        self.add(member_path, HttpMethod::Put, attach);
+        let detach = self
+            .operation::<NetworkInfo>(member_path, "detachNetworkMember")
+            .parameter(vm_id);
+        self.add(member_path, HttpMethod::Delete, detach);
+
+        let logs_path = "/networks/{id}/logs";
+        let logs = self
+            .operation::<NetworkLogsResponse>(logs_path, "getNetworkLogs")
+            .parameters(Some(NetworkLogsQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add(logs_path, HttpMethod::Get, logs);
     }
 
     fn logs(&mut self) {

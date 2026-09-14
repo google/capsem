@@ -1,5 +1,6 @@
 import * as api from './operations/index.js';
 import type * as models from './models/index.js';
+import type {NetworkLogOptions} from './options.js';
 import type {CallOptions, Transport} from './transport.js';
 
 export interface VmContext {transport: Transport; id: string}
@@ -35,5 +36,30 @@ export class Stats extends Resource {
   async details(options: CallOptions = {}): Promise<models.VmStatsDetailResponse> {
     const {transport, id} = await this.context(options);
     return api.getVmStatsDetail(transport, {id}, options);
+  }
+}
+
+export class Networks {
+  constructor(private readonly transport: Transport) {}
+  async create(name: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    return api.createNetwork(this.transport, {body: {name}}, options);
+  }
+  async list(options: CallOptions = {}): Promise<models.NetworkListResponse> {
+    return api.listNetworks(this.transport, options);
+  }
+  async inspect(networkId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    return api.getNetwork(this.transport, {id: networkId}, options);
+  }
+  async delete(networkId: string, options: CallOptions = {}): Promise<models.VmActionResponse> {
+    return api.deleteNetwork(this.transport, {id: networkId}, options);
+  }
+  async attach(networkId: string, vmId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    return api.attachNetworkMember(this.transport, {id: networkId, vm_id: vmId}, options);
+  }
+  async detach(networkId: string, vmId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    return api.detachNetworkMember(this.transport, {id: networkId, vm_id: vmId}, options);
+  }
+  async logs(networkId: string, options: NetworkLogOptions = {}): Promise<models.NetworkLogsResponse> {
+    return api.getNetworkLogs(this.transport, {...options, id: networkId}, options);
   }
 }

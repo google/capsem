@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python, TypeScript and Rust SDK network resources provide typed create, list,
+  inspect, delete, member attach/detach and cursor-based audit operations over
+  authenticated gateway HTTP. VM creation accepts existing network names.
+
 - SDK detailed statistics expose shared model/MCP interaction objects with typed
   messages, content blocks, calls and results, structured tool JSON, stable ledger
   references, and explicit complete, truncated or unknown capture status.
@@ -103,6 +107,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stopped persistent VM file listings resolve canonical VM IDs consistently
   with other gateway routes; file transfer still requires the running security ledger.
 
+- `capsem run --image IMAGE --network NAME` joins the container's VM to a named
+  network at creation, like `capsem create --network`.
+- Members of a network have names: `<vm>.<network>.capsem.internal` (and
+  `<vm>.capsem.internal` when only one network answers it) resolves to the
+  member's private address, and the address resolves back, for members of a
+  shared network only. The zone is answered on the host with no TTL and never
+  forwarded upstream; a member that leaves loses its name at once.
+- UDP and ICMP between members of a network on their private addresses: every
+  guest's `tap0` is one ethernet link to the network's own confined switch
+  (`capsem-router --switch`), which forwards frames between members after
+  pinning their source, answers ARP itself and drops every other protocol,
+  including tunnels, and ICMP other than echo, unreachable and time
+  exceeded. TCP keeps its per-connection admission. A VM's profile decides once per attach
+  (`network.protocol == "link"`), and `capsem network logs` shows each link
+  and its end with frame counts; a member reads `ready` once linked.
+- TCP between members of a network on their private addresses: a guest's
+  connect to a member is intercepted, admitted by the service per connection
+  under the security rules, audited in the network's history from both VMs,
+  and carried by the destination owner's confined router under its own
+  private quota. Both profiles allow it by default between members
+  (`default.private`, `network.mode == "private"`): joining the network is
+  the authorization, and a stricter rule can narrow it by network or port.
+- Named networks: `capsem network list|create|inspect|delete|connect|disconnect`
+  and `capsem create --network NAME` group VMs that may reach each other on
+  their private addresses, over `/networks` routes on the service and gateway.
+- `capsem network logs NAME [-f]` and `GET /networks/{id}/logs` page a network's
+  audit history with a cursor and VM, connection, type, decision and time filters.
+- Every guest brings up `tap0` with its private address at boot, routed for the
+  whole `10.128.0.0/9` pool; the agent keeps the `capsem-tun` pump running.
+- Deleting a VM retires any network it leaves empty; disconnecting does not. A
+  retired network's audit database is kept 30 days and then removed by the
+  service at startup or on the next retirement.
+- Every VM receives one private IPv4 address for its whole life from the
+  host pool `10.128.0.0/9`, kept across stop and resume for named VMs and shown
+  as `private_address` by `/vms/list`, `/vms/{id}/info`, `capsem list` and
+  `capsem info`; the guest sees it as `CAPSEM_PRIVATE_ADDRESS`.
+- `capsem-bench-rs throughput` measures bulk upload, download, bidirectional
+  transfer and echo latency over N streams, and serves as the far end itself.
+- The logger supports bounded primary transport audit records, with indexed
+  connection/network identities and an additive upgrade for retained sessions
+  that preserves the shared session index's schema version.
+- Security rules recognize typed `network` routing facts. Network boundary
+  events validate owner identities and require an explicit allow; retained
+  security ledgers accept their new event types through a checked migration.
+- `capsem-bench-rs redis` collects validated Redis PING samples with configurable
+  concurrency and pipelining on both the host and guest.
+- `capsem run|create --image IMAGE -p HOST:GUEST` publishes loopback TCP ports through VSOCK
+  using a confined Rust companion, with bounded concurrent connections and
+  listener cleanup when the workload or VM exits.
+- `--image docker://IMAGE` (or a qualified registry reference) pulls and caches
+  verified OCI images and runs the image's command as the VM's workload.
+  `capsem create --image` starts it detached, with its output in `capsem logs`,
+  and keeps the VM only when it is named with `-n`; `capsem run --image` streams
+  it, exits with its status and destroys the VM however the run ends. A command
+  after the image replaces its default command. Registry-specific CA trust and
+  username/token authentication are supported.
+- Containers started with `--image` reach the internet through
+  the VM's existing DNS and HTTP(S) interception: the same rules, plugins, and
+  ledger apply, the container trusts the Capsem CA read-only, and it can reach
+  nothing else inside the VM.
+- Both profiles include `runc`; guest kernels support offline OCI process
+  namespaces and cgroup CPU, memory, and process limits.
+- Both profiles include `umoci` for OCI image layer unpacking inside the VM.
+
+### Changed
+
+- Published TCP connections require an audited allow from the existing security
+  rules and plugins before guest setup. Profile defaults explicitly allow expose;
+  deny, pending approval, audit failure, and stale control leases refuse access.
+  Transport records include trusted VM, listener, peer, and connection identities.
+
+- Active profiles can configure separate router connection and setup budgets
+  under `network.router`, within fixed resource ceilings shared by a VM's ports.
+- Published connections carry the VM owner's boot generation so stale streams
+  cannot consume reused request IDs after restart.
+- Container port forwarding uses fixed kernel socket queues, including guest
+  VSOCK credit limits, to propagate backpressure from stalled peers.
+- Guest published connections are canceled and joined on control disconnect,
+  shutdown, and snapshot preparation; namespace setup uses bounded workers.
+- Guest VSOCK connection attempts now use a finite setup deadline, including
+  published-port connections whose host stops responding during setup.
+- Published ports share VM-wide connection and guest setup budgets, with bounded
+  setup pacing across listeners.
+- VM shutdown joins published-port brokers and guest handshake readers before
+  draining session logs; publication removal requests cooperative cleanup.
+- Container port forwarding closes stalled writes and half-closed peers after
+  60 seconds while preserving quiet connections and trailing response bytes.
+  A half-close on a published or private connection is carried as a signal:
+  a slow reply after the client stops sending, and an upload after the peer
+  stops sending, both arrive in full.
+- Published TCP listeners stay with the VM owner. The confined router receives
+  only connected descriptor pairs; bounded acknowledgements and control failure
+  close both endpoints even when the router retains duplicate descriptors.
+- The confined network companion is now named `capsem-router`; package signing
+  continues to exclude virtualization authority.
+- Shell runs flush captured output before exiting, preserving short output
+  without a trailing newline.
+- Port publication reports sandbox initialization failures explicitly. macOS
+  gate tests hand off the named router to its own stricter sandbox.
+- Local focused tests preserve the invoking checkout's assembled VM assets
+  instead of replacing them with another branch's cached kernel or rootfs.
+
+- Container runs now retain their named VM for the existing stop, restart, fork
+  and delete commands. Closing the log client detaches; reboot restores the
+  saved image command and host port bindings. Forks omit host bindings.
+- Host builds and native packages include the port router; it receives no
+  virtualization entitlement.
+- Registry pulls use the existing WebPKI TLS trust stack without platform
+  keychain verification dependencies.
+- Single-architecture asset builds and initrd repacks generate manifests for
+  the selected architecture, preserving incomplete builds for other targets.
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using
@@ -315,6 +430,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Service shutdown drains pending replies before gracefully stopping its gateway,
   with bounded cleanup for stalled requests and unresponsive companion processes.
 
+- `capsem stop` no longer reports "Service stopped." while another capsem
+  service still answers on the socket: it names the socket and fails instead.
+
+- A VM created or resumed with `--network` is linked to the network's switch
+  even when its process is slow to start. The link was attempted once, before
+  the process listened, and never retried: TCP between members still worked,
+  but UDP and ICMP to or from that VM never did.
+
+- A VM joining a private network can receive UDP and ICMP from the first frame
+  sent after it is linked; the switch reported the link before it could
+  forward to it, so a peer that sent immediately lost those frames.
+
+- Under `CAPSEM_HOME`, `capsem stop` and `capsem start` act on the service that
+  home's commands started, rather than the machine's installed LaunchAgent or
+  systemd unit, which serves the real home. Stop now waits for that service to
+  exit after SIGTERM; before, it left it running.
+
+- MCP clients inside a VM no longer hang when they send a large final request
+  and close stdin right away: the guest relay ends the session with an in-band
+  frame instead of a vsock shutdown the transport could lose.
+
+- A private connection between members of a network no longer occasionally
+  times out after eight seconds: the owner's IPC channel released its socket
+  before leaving the event loop, and a new connection reusing the number could
+  never wake. About one admission in two thousand was affected.
+- A private TCP connection whose client finished sending and closed no longer
+  stays open on both VM owners for the VM's life; the destination's private
+  connection quota was exhausted after sixty-odd such transfers.
+- Ledger reads no longer fail with "database table is locked" or stall while the
+  writer is busy: `capsem network logs -f` and the session ledger routes read
+  through SQLite's `read_uncommitted` on the shared memory tables.
+
+- Published-port connection audits record `unreachable` when the guest bridge
+  never came up and `cancelled` when it was lost during setup; both were
+  recorded as `stale_generation`, which names only the post-setup recheck.
+- Editing or deleting a profile enforcement or detection rule through the API
+  now reaches running VMs on that profile before the route returns, as plugin
+  edits already did; previously running VMs kept the old rules until an explicit
+  profile reload.
+- Session ledger routes (`security/latest`, `detection/latest`,
+  `security/status`, `timeline`, `history*`, `stats/detail`) read through the
+  logger on every request. They no longer serve a cached response while a
+  commit sits only in the write-ahead log, which previously hid new rows until
+  the next checkpoint.
+- Security audit emitters report failed database admission accurately, allowing
+  security-sensitive callers to refuse work when the audit writer is closed.
+
+- Guest TCP resets propagate across VSOCK with generation-bound close reports
+  and acknowledgments; bounded replay credits prevent stalled control traffic
+  from accumulating network reports.
+- TCP reset is armed before router handoff, so forced process death also
+  closes published connections abruptly; normal completion restores graceful close.
+- Abnormal published-connection cleanup resets TCP and revokes socket copies
+  retained by the router, while normal completion preserves half-close and trailing bytes.
+- Removing an exposed port or losing its router now cancels its guest flows,
+  including queued setup, without interrupting other published ports.
+- Guest control connections use async I/O with bounded frame deadlines and
+  joined reader cleanup on reconnect, so a stalled guest cannot block a host Tokio worker.
+
+- Linux router startup no longer races thread-local libc registration when
+  installing confinement; creating new threads remains forbidden.
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
   cases, including the built-in security registry measurement, instead of
   silently omitting results outside a directory named after the Cargo target.
@@ -1362,6 +1538,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A VM no longer dies when a host client resets many published connections
+  at once. Shutting down a Virtualization.framework VSOCK descriptor while
+  the guest was still sending made the framework stop the whole VM with an
+  internal error; the confined router now closes such a descriptor without
+  shutting it down. When the framework does stop a VM, the owner records the
+  framework's reason, exits, and the service reports the VM as stopped
+  instead of running until every exec has timed out.
 - `clippy::cast_lossless` is denied, with its 116 sites converted. It is the
   one member of the numeric-cast family that cannot be wrong -- it flags
   `x as u64` where `u64::from(x)` is infallible -- so every fix is mechanical

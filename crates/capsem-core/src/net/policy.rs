@@ -116,6 +116,7 @@ pub struct UpstreamOverride {
 /// carry allow/ask/block/default semantics.
 #[derive(Debug, Clone)]
 pub struct NetworkMechanics {
+    pub router: capsem_config::router::RouterConfig,
     /// Whether to log request/response body previews.
     pub log_bodies: bool,
     /// Maximum bytes of body preview to capture in telemetry.
@@ -152,6 +153,7 @@ impl NetworkMechanics {
     /// Create network mechanics with default capture and upstream-port settings.
     pub fn new() -> Self {
         Self {
+            router: capsem_config::router::RouterConfig::default(),
             log_bodies: true,
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             http_upstream_ports: DEFAULT_HTTP_UPSTREAM_PORTS.to_vec(),

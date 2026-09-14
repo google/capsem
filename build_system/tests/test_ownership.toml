@@ -868,3 +868,18 @@ target = "build_system/tests/scripts/test_source_syntax_gate.py"
 owner = "scripts"
 source = "tests/test_sync_container_clock.py"
 target = "build_system/tests/scripts/test_sync_container_clock.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_manifest_arches.py"
+target = "build_system/tests/image/test_manifest_arches.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_router_signing.py"
+target = "build_system/tests/packaging/test_router_signing.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_pytest_excerpt.py"
+target = "build_system/tests/gate/test_pytest_excerpt.py"

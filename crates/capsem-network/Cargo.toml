@@ -1,0 +1,18 @@
+[package]
+name = "capsem-network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The private link between VMs: frame codec and the layer-2 switch verdict."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-proto = { path = "../capsem-proto" }
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

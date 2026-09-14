@@ -26,6 +26,7 @@ pub(crate) async fn handle_provision(
         ));
     }
     let id = new_persistent_vm_id();
+    let networks = network_routes::resolve_network_names(&*state.networks.lock().await, &payload.networks)?;
 
     let profile = state
         .cached_profile_config(&profile_id)
@@ -119,7 +120,12 @@ pub(crate) async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(uds_path)) => provision_response_for_running(&state, id, uds_path).map(Json),
+        Ok(Ok(uds_path)) => {
+            let response = provision_response_for_running(&state, id.clone(), uds_path)?;
+            let address = response.private_address.expect("a provisioned VM carries its address");
+            network_routes::attach_provisioned(&state, &id, address, &networks).await?;
+            Ok(Json(response))
+        }
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most

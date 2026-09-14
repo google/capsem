@@ -208,6 +208,13 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/system/status", get(proxy::handle_proxy))
         .route("/update/check", post(proxy::handle_proxy))
         .route("/update/apply", post(proxy::handle_proxy))
+        .route("/networks", get(proxy::handle_proxy).post(proxy::handle_proxy))
+        .route("/networks/{id}", get(proxy::handle_proxy).delete(proxy::handle_proxy))
+        .route("/networks/{id}/logs", get(proxy::handle_proxy))
+        .route(
+            "/networks/{id}/members/{vm_id}",
+            put(proxy::handle_proxy).delete(proxy::handle_proxy),
+        )
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))

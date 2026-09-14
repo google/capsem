@@ -11,6 +11,7 @@ export const ProvisionResponseSchema: z.ZodType<ProvisionResponse> = z.object({
   "id": z.string(),
   "name": z.string(),
   "persistent": z.boolean().exactOptional(),
+  "private_address": z.ipv4().nullable().exactOptional(),
   "profile_id": z.string(),
   "status": z.lazy(() => VmLifecycleStateSchema),
   "uds_path": z.string().nullable().exactOptional(),

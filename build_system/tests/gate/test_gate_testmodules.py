@@ -246,8 +246,23 @@ def test_nothing_runs_before_the_source_parses() -> None:
         "python.ruff",
         "python.ty.strict",
         "fast.clippy",
+        "fast.clippy.guest",
     ):
         assert _wave_of(FastModule, label) > syntax
+
+
+def test_guest_feature_set_is_linted_without_waiting_for_the_frontend() -> None:
+    """The guest crates embed no bundle, so their lint has no reason to queue
+    behind the frontend build the way workspace clippy must. The command is
+    the builder's feature set, taken from config: linting a different set
+    than the one shipped proves nothing about the shipped binaries."""
+    plan = _plan(FastModule)
+    rendered = "\n".join(plan.step_named("fast.clippy.guest").render())
+
+    assert "fast.web.frontend-build" not in plan.after_of("fast.clippy.guest")
+    assert "--no-default-features --features capsem-bench/guest --all-targets" in rendered
+    for package in CONFIG.initrd.lint_packages:
+        assert f"-p {package}" in rendered
 
 
 def test_the_environment_is_installed_before_anything_uses_it() -> None:

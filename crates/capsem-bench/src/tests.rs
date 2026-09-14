@@ -107,6 +107,7 @@ fn delta_computes_abstraction_cost() {
             p95: 1.0,
             p99: 1.5,
         },
+        #[cfg(feature = "host")]
         latency_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
@@ -121,6 +122,7 @@ fn delta_computes_abstraction_cost() {
             p99: 9.5,
             ..host.latency_ms.clone()
         },
+        #[cfg(feature = "host")]
         latency_samples: Vec::new(),
         ..host.clone()
     };
@@ -158,6 +160,7 @@ fn failed_scenarios_are_poisoned_benchmark_numbers() {
             p95: 1.0,
             p99: 1.5,
         },
+        #[cfg(feature = "host")]
         latency_samples: Vec::new(),
         errors: BTreeMap::from([("request:connection refused".to_string(), 100)]),
         secret_shaped_fixture_seen: None,
@@ -322,6 +325,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
             p95: 1.0,
             p99: 1.5,
         },
+        #[cfg(feature = "host")]
         latency_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
@@ -355,6 +359,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
                     p99: 4.5,
                     ..row.latency_ms.clone()
                 },
+                #[cfg(feature = "host")]
                 latency_samples: Vec::new(),
                 ..row
             }],

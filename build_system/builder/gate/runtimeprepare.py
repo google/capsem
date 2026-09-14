@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import hostpackage, imagebuild, initrd
+from . import assetrecovery, hostpackage, initrd
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
+from .rebuildpermission import DEFAULT_PERMISSION, RebuildPermission
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,9 @@ def prepare(
     plan: Plan,
     config: GateConfig,
     *,
-    after: tuple[Step, ...],
+    after: tuple[Step, ...] = (),
     guest: bool = True,
+    permission: RebuildPermission = DEFAULT_PERMISSION,
     build_label: str = "build-binaries",
     sign_label: str = "sign",
 ) -> Preparation:
@@ -32,9 +34,10 @@ def prepare(
     phase = plan.phase("prepare")
     previous = after
     if guest:
-        assets = imagebuild.check_assets(
+        assets = assetrecovery.check_assets(
             plan,
             config,
+            permission=permission,
             after=after,
             doctor_skips=dict(config.candidate.doctor_skips),
         )

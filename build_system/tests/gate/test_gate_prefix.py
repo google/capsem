@@ -1543,3 +1543,25 @@ def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) ->
     assert not (checkout / "cache" / "target" / "config").exists(), (
         "a tree the run was handed must not be exported as though it built it"
     )
+
+
+def test_local_runtime_assets_win_over_older_shared_build_output(tmp_path):
+    from capsem_builder.gate import buildcache
+
+    config = _config().model_copy(update={"prefix": _relocated_prefix(tmp_path)})
+    checkout, private = tmp_path / "checkout", tmp_path / "private"
+    relative = config.functional.assets_dir
+    local = checkout / relative
+    shared = buildcache.root(config) / relative
+    for directory, content in ((local, b"rebuilt OCI kernel"), (shared, b"older kernel")):
+        directory.mkdir(parents=True)
+        (directory / "kernel").write_bytes(content)
+    assert buildcache.seed_runtime(config, checkout, private)
+    buildcache.lend(config, private)
+    selected = private / relative / "kernel"
+    assert selected.read_bytes() == b"rebuilt OCI kernel"
+    selected.write_bytes(b"private repack")
+    assert (local / "kernel").read_bytes() == b"rebuilt OCI kernel"
+    assert (shared / "kernel").read_bytes() == b"older kernel"
+    assert not buildcache.seed_runtime(config, checkout, private)
+    assert selected.read_bytes() == b"private repack"

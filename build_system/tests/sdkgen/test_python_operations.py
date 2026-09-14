@@ -39,6 +39,8 @@ def sample(schema: Schema) -> object:
     if schema.type == "array":
         return []
     assert schema.type is not None
+    if schema.format == "ipv4":
+        return "10.128.0.2"
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
 
 
@@ -85,7 +87,7 @@ def test_operation_matches_the_wire_contract(route: Route, outcome: str, package
         arguments[parameter.name] = value
         if parameter.location == "path":
             expected_path = expected_path.replace("{" + parameter.name + "}", quote(str(value), safe="").replace(".", "%2E"))
-        else:
+        elif value is not None:
             expected_query[parameter.name] = ",".join(map(str, value)) if isinstance(value, list) else str(value)
     expected_body = b""
     if operation.request_body:
@@ -165,3 +167,8 @@ def test_invalid_identifiers_and_collisions_fail_generation() -> None:
     invalid = route.operation.model_copy(update={"parameters": [parameter]})
     with pytest.raises(ValueError, match="parameter"):
         render_operations([Route(route.path, route.method, invalid)])
+
+
+def test_optional_nullable_parameters_have_one_none_member() -> None:
+    sources = render_operations(ROUTES)
+    assert all("| None | None" not in source for source in sources.values())

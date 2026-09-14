@@ -106,13 +106,14 @@ def _parse_subcommand_variants(src: str, enum_name: str) -> list[str]:
     body = m.group("body")
     # Strip attributes and doc comments; find CamelCase variant identifiers at
     # top level of the enum block (ignoring inner struct fields).
-    # Variants appear as `Name {` or `Name,` or `Name` at line start (after ws).
+    # Variants appear as `Name {`, `Name,`, `Name` or the tuple form
+    # `Name(path::Args),` at line start (after ws).
     variants = []
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith(("//", "#[", "/*", "*")):
             continue
-        vm = re.match(r"([A-Z][A-Za-z0-9]*)\s*[\{,]?\s*$", stripped)
+        vm = re.match(r"([A-Z][A-Za-z0-9]*)\s*(?:\{|,|\([^)]*\),?)?\s*$", stripped)
         if vm:
             variants.append(_camel_to_kebab(vm.group(1)))
     return variants

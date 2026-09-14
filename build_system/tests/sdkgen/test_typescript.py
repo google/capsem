@@ -49,6 +49,7 @@ def test_enum_values_have_runtime_members() -> None:
     ({"type": "object", "additionalProperties": {"type": "boolean"}},
      "Record<string, boolean>"),
     ({"type": "string", "format": "binary"}, "Uint8Array"),
+    ({"type": "string", "format": "ipv4"}, "string"),
     ({"type": "integer", "format": "int64", "minimum": 0}, "number"),
 ])
 def test_nested_and_binary_types(value: object, expected: str) -> None:

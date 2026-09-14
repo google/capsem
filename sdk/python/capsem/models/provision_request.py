@@ -10,11 +10,12 @@ from .model_base import Model
 
 
 class ProvisionRequest(Model):
-    nonnullable_optional = frozenset(['persistent'])
+    nonnullable_optional = frozenset(['networks', 'persistent'])
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None
     from_: StrictStr | None = Field(default=None, alias='from')
     name: StrictStr | None = None
+    networks: list[StrictStr] | None = None
     persistent: StrictBool | None = None
     profile_id: StrictStr
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None

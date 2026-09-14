@@ -151,3 +151,27 @@ def test_zero_vcpu_is_rejected_before_network() -> None:
             with pytest.raises(ValueError, match="vcpu"):
                 await hv.create("code", vcpu=0)
     asyncio.run(run())
+
+
+def test_network_resource_maps_typed_lifecycle_and_cursor_logs() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            created = await hv.networks.create("team")
+            await hv.networks.list()
+            await hv.networks.inspect(created.id)
+            await hv.networks.attach(created.id, "vm-0")
+            await hv.networks.detach(created.id, "vm-0")
+            await hv.networks.logs(created.id, cursor="next", limit=4, event_type="network.connect")
+            await hv.networks.delete(created.id)
+            assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
+                ("POST", "/networks"),
+                ("GET", "/networks"),
+                ("GET", f"/networks/{created.id}"),
+                ("PUT", f"/networks/{created.id}/members/vm-0"),
+                ("DELETE", f"/networks/{created.id}/members/vm-0"),
+                ("GET", f"/networks/{created.id}/logs"),
+                ("DELETE", f"/networks/{created.id}"),
+            ]
+            assert "cursor=next" in state.requests[-2][1]
+            assert "type=network.connect" in state.requests[-2][1]
+    asyncio.run(run())

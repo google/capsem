@@ -1685,37 +1685,6 @@ pub(super) async fn handle_profile_plugin_update(
     Ok(Json(info))
 }
 
-#[cfg(test)]
-pub(super) async fn update_plugin_for_scope(
-    state: &Arc<ServiceState>,
-    plugin_id: String,
-    scope: PluginScope,
-    update: PluginUpdate,
-) -> Result<Json<PluginInfo>, AppError> {
-    let catalog = plugin_catalog();
-    let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
-    };
-    let mut config = effective_plugin_policy(state, &scope.profile_id)
-        .get(&plugin_id)
-        .copied()
-        .unwrap_or(catalog_entry.default_config);
-    if let Some(mode) = update.mode {
-        config.mode = mode;
-    }
-    if let Some(detection_level) = update.detection_level {
-        config.detection_level = detection_level;
-    }
-    state
-        .plugin_policy_by_profile
-        .lock()
-        .unwrap()
-        .entry(scope.profile_id.clone())
-        .or_default()
-        .insert(plugin_id.clone(), config);
-    Ok(Json(plugin_info_for(state, &plugin_id, scope, false).await?))
-}
-
 #[derive(Debug, Default)]
 pub(super) struct ServiceEvaluateEmitter;
 

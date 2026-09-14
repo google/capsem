@@ -1311,6 +1311,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
     if !matches!(args.template, ImageBuildTemplate::Kernel) {
         commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
             assets_dir: args.output.clone(),
+            arches: arches.clone(),
             version: None,
             json: false,
         }));
@@ -1769,31 +1770,12 @@ pub(super) fn copy_profile_rule_file(
     Ok(())
 }
 
-fn builder_python_command(arguments: impl IntoIterator<Item = String>) -> Vec<String> {
+pub(super) fn builder_python_command(arguments: impl IntoIterator<Item = String>) -> Vec<String> {
     ["uv", "run", "--project", "build_system", "--frozen", "python"]
         .into_iter()
         .map(str::to_owned)
         .chain(arguments)
         .collect()
-}
-
-pub(super) fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> CommandReport {
-    let version_expr = match &args.version {
-        Some(version) => format!("{version:?}"),
-        None => "get_project_version(Path('.'))".to_string(),
-    };
-    CommandReport {
-        step: "manifest".to_string(),
-        arch: None,
-        env: BTreeMap::new(),
-        argv: builder_python_command([
-            "-c".to_string(),
-            format!(
-                "from pathlib import Path; from capsem_builder.image.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
-                args.assets_dir.display().to_string()
-            ),
-        ]),
-    }
 }
 
 pub(super) fn selected_profile_arches(profile: &ProfileConfigFile, only_arch: Option<&str>) -> Result<Vec<String>> {

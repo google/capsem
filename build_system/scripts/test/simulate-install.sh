@@ -31,7 +31,7 @@ RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 # ``cache/target/cargo/debug/capsem-*`` are not caught in the blast. A bare
 # ``pkill -x capsem-service`` matches every capsem-service on the box, which
 # poisoned the full test suite whenever any install fixture fired this script.
-for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do
+for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-router capsem-mcp-aggregator capsem-mcp-builtin; do
     pkill -9 -f "$INSTALL_DIR/$name" 2>/dev/null || true
 done
 
@@ -54,7 +54,7 @@ if [[ ! -d "$CONFIG_ROOT/profiles" ]]; then
 fi
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
@@ -71,6 +71,7 @@ codesign_identifier_for_bin() {
         capsem-process) echo "org.capsem.process" ;;
         capsem-tui) echo "org.capsem.tui" ;;
         capsem-mcp) echo "org.capsem.mcp" ;;
+        capsem-router) echo "org.capsem.router" ;;
         capsem-mcp-aggregator) echo "org.capsem.mcp.aggregator" ;;
         capsem-mcp-builtin) echo "org.capsem.mcp.builtin" ;;
         capsem-gateway) echo "org.capsem.gateway" ;;
@@ -94,7 +95,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
                 exit 1
             fi
             identifier="$(codesign_identifier_for_bin "$bin")"
-            codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
+            # As the package installs it: the confined router gets no VM entitlement.
+            if [[ "$(basename "$bin")" == capsem-router ]]; then
+                codesign --sign - --identifier "$identifier" --force "$bin"
+            else
+                codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
+            fi
         fi
     done
 fi

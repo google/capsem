@@ -34,6 +34,8 @@ mod restart;
 pub use restart::*;
 mod profiles;
 pub use profiles::*;
+mod networks;
+pub use networks::*;
 
 #[cfg(test)]
 mod tests;

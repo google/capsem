@@ -24,7 +24,7 @@ class Schema(BaseModel):
     ref: str | None = Field(default=None, alias="$ref", pattern=r"^#/components/schemas/\w+$")
     type: Primitive | list[Primitive] | None = None
     description: str | None = None
-    format: Literal["int32", "int64", "double", "binary"] | None = None
+    format: Literal["int32", "int64", "double", "binary", "ipv4"] | None = None
     minimum: int | float | None = None
     enum: list[str] | None = None
     properties: dict[str, Schema] = Field(default_factory=dict)
@@ -77,7 +77,7 @@ class Schema(BaseModel):
             allowed |= {"enum", "format"}
             if self.enum is not None and (not self.enum or len(set(self.enum)) != len(self.enum)):
                 raise ValueError("enum must contain distinct values")
-            if self.format not in (None, "binary"):
+            if self.format not in (None, "binary", "ipv4"):
                 raise ValueError("unsupported string format")
         elif kind in ("integer", "number"):
             allowed |= {"minimum", "format"}

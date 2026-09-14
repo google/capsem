@@ -16,13 +16,15 @@ def test_every_pnpm_workspace_resolves_the_owned_store() -> None:
         assert (config.parent / value).resolve() == expected
 
 
-def test_cargo_retention_selects_incremental_state_under_native_locks() -> None:
+def test_cargo_retention_selects_whole_units_under_native_locks() -> None:
     policy = tomllib.loads((ROOT / "config/cache.toml").read_text(encoding="utf-8"))
 
     cargo = policy["stages"]["cargo"]
-    assert cargo["prune_strategy"] == "generational"
-    assert cargo["retention_root"] == "debug/incremental"
-    assert "debug/.cargo-lock" in cargo["mutation_locks"]
+    assert cargo["prune_strategy"] == "lru"
+    assert "retention_root" not in cargo
+    # Every target root a native lock protects is retained by unit.
+    locked = {Path(lock).parent.as_posix() for lock in cargo["mutation_locks"]}
+    assert locked == set(cargo["cargo_target_roots"])
 
 
 def test_bootstrap_and_gate_share_one_uv_content_store() -> None:

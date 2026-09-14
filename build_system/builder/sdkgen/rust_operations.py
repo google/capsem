@@ -10,9 +10,19 @@ from .schema import Schema
 
 HEADER = "// Generated from sdk/specification/openapi.json. Do not edit.\n"
 RESERVED = frozenset(["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try", "gen"])
+UNESCAPABLE = frozenset(["crate", "self", "Self", "super"])
+
+
+def parameter_name(name: str) -> str:
+    if not name.isidentifier() or name in UNESCAPABLE:
+        raise ValueError("unsupported Rust parameter identifier")
+    return f"r#{name}" if name in RESERVED else name
 
 
 def type_name(schema: Schema) -> str:
+    if isinstance(schema.type, list):
+        kind = next(kind for kind in schema.type if kind != "null")
+        return type_name(schema.model_copy(update={"type": kind}))
     if schema.ref:
         return "capsem_api::" + schema.ref.rsplit("/", 1)[1]
     if schema.type == "array" and schema.items:
@@ -27,6 +37,9 @@ def type_name(schema: Schema) -> str:
 
 
 def wire_value(schema: Schema, value: str) -> str:
+    if isinstance(schema.type, list):
+        kind = next(kind for kind in schema.type if kind != "null")
+        return wire_value(schema.model_copy(update={"type": kind}), value)
     if schema.ref:
         return f"crate::operations::enum_value({value})?"
     if schema.type == "array" and schema.items and schema.items.ref:
@@ -51,15 +64,14 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 raise ValueError("request body collides with parameter")
             properties["body"] = op.request_body.schema
             required.add("body")
-        if any(not key.isidentifier() or key in RESERVED for key in properties):
-            raise ValueError("unsupported Rust parameter identifier")
+        attributes = {key: parameter_name(key) for key in properties}
         params = op.operation_id[0].upper() + op.operation_id[1:] + "Params"
         lines = ["use crate::transport::{CallOptions, Request, Transport};", ""]
         if properties:
             lines += ["#[derive(Debug, Clone, serde::Deserialize)]", f"pub struct {params} {{"]
             for key, schema in properties.items():
                 kind = type_name(schema)
-                lines.append(f"    pub {key}: {kind if key in required else f'Option<{kind}>'},")
+                lines.append(f"    pub {attributes[key]}: {kind if key in required else f'Option<{kind}>'},")
             lines += ["}", ""]
         result = type_name(op.success.schema)
         arguments = ["transport: &Transport"]
@@ -71,16 +83,16 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                   *(f"    {arg}," for arg in arguments), f") -> crate::Result<{result}> {{"])
         query = [p for p in op.parameters if p.location == "query"]
         if query:
-            pairs = ", ".join(f"({json.dumps(p.name)}, {wire_value(p.schema_, '&input.' + p.name)})"
+            pairs = ", ".join(f"({json.dumps(p.name)}, {wire_value(p.schema_, '&input.' + attributes[p.name])})"
                               for p in query if p.required)
             optional = any(not p.required for p in query)
             lines.append(f"    let {'mut ' if optional else ''}query = {'vec!' if optional else ''}[{pairs}];")
         for p in (p for p in query if not p.required):
-            lines += [f"    if let Some(value) = &input.{p.name} {{",
+            lines += [f"    if let Some(value) = &input.{attributes[p.name]} {{",
                       f"        query.push(({json.dumps(p.name)}, {wire_value(p.schema_, 'value')}));", "    }"]
         path = [p for p in op.parameters if p.location == "path"]
         for p in path:
-            lines.append(f"    let path_{p.name} = {wire_value(p.schema_, '&input.' + p.name)};")
+            lines.append(f"    let path_{p.name} = {wire_value(p.schema_, '&input.' + attributes[p.name])};")
         lines += ["    let request = Request {"]
         if path:
             pairs = ", ".join(f'({json.dumps(p.name)}, path_{p.name}.as_str())' for p in path)

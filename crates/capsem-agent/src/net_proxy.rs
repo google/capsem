@@ -31,11 +31,13 @@ use std::path::Path;
 use std::process;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
-use capsem_proto::VSOCK_PORT_SNI_PROXY;
+use capsem_foundation::unix::router_stream;
+use capsem_proto::privatelink::ConnectHeader;
+use capsem_proto::{VSOCK_PORT_PRIVATE, VSOCK_PORT_SNI_PROXY};
 use process_attribution::encode_meta_line;
 use vsock_io::{vsock_connect, AsyncVsock, VSOCK_HOST_CID};
 
@@ -48,6 +50,12 @@ const LISTEN_PORT_HTTPS: u16 = 10443;
 /// sniff distinguishes TLS from plain HTTP, so a dedicated guest
 /// listener is just an iptables-target convenience.
 const LISTEN_PORT_HTTP: u16 = 10080;
+/// TCP port to listen on for connections to a private address (iptables
+/// REDIRECT target for outbound TCP to the 10.128.0.0/9 pool). Unlike the
+/// two above this one carries the original destination to the host: the
+/// VM owner admits the connection against the member's network and hands
+/// it to that member, so there is nothing to sniff.
+const LISTEN_PORT_PRIVATE: u16 = 10128;
 const RECENT_PID_CAPACITY: usize = 16;
 
 #[derive(Default)]
@@ -197,6 +205,125 @@ async fn handle_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAtt
     }
 }
 
+/// The destination a REDIRECT rewrote away, read back from the socket.
+#[cfg(target_os = "linux")]
+fn original_destination(stream: &TcpStream) -> io::Result<(std::net::Ipv4Addr, u16)> {
+    use std::os::fd::AsRawFd;
+    const SO_ORIGINAL_DST: nix::libc::c_int = 80;
+    // SAFETY: a zeroed sockaddr_in and its exact length are what the kernel
+    // fills; the descriptor is the stream's own for the duration of the call.
+    let mut address: nix::libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<nix::libc::sockaddr_in>() as nix::libc::socklen_t;
+    let rc = unsafe {
+        nix::libc::getsockopt(
+            stream.as_raw_fd(),
+            nix::libc::SOL_IP,
+            SO_ORIGINAL_DST,
+            std::ptr::addr_of_mut!(address).cast(),
+            &mut length,
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((
+        std::net::Ipv4Addr::from(u32::from_be(address.sin_addr.s_addr)),
+        u16::from_be(address.sin_port),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn original_destination(_: &TcpStream) -> io::Result<(std::net::Ipv4Addr, u16)> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "SO_ORIGINAL_DST is Linux only",
+    ))
+}
+
+/// A connection to a private address: the original destination goes first,
+/// then the same process meta line the MITM rail sends, then the bytes.
+async fn handle_private_connection(tcp_stream: TcpStream, attributor: Arc<ProcessAttributor>) {
+    let (peer_addr, (destination, port)) = match (tcp_stream.peer_addr(), original_destination(&tcp_stream)) {
+        (Ok(peer), Ok(destination)) => (peer, destination),
+        (_, Err(e)) => {
+            eprintln!("[capsem-net-proxy] private connection without an original destination: {e}");
+            return;
+        }
+        (Err(_), _) => return,
+    };
+    let (process_name, vsock_raw) = tokio::join!(
+        attributor.get_process_name(peer_addr.port()),
+        tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_PRIVATE)),
+    );
+    let process_name = process_name.unwrap_or_else(|| "unknown".to_string());
+    let Ok(Ok(vsock_raw)) = vsock_raw else {
+        eprintln!("[capsem-net-proxy] private vsock connect failed");
+        return;
+    };
+    let mut vsock_stream = match AsyncVsock::new(vsock_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[capsem-net-proxy] failed to create AsyncVsock: {e}");
+            return;
+        }
+    };
+    let mut preamble = ConnectHeader {
+        destination,
+        port,
+        source_port: peer_addr.port(),
+    }
+    .encode()
+    .to_vec();
+    preamble.extend_from_slice(&encode_meta_line(&process_name));
+    if let Err(e) = vsock_stream.write_all(&preamble).await {
+        eprintln!("[capsem-net-proxy] failed to send private connect header: {e}");
+        return;
+    }
+    bridge_private(tcp_stream, vsock_stream).await;
+}
+
+/// Carry a private connection's bytes both ways with the router's own
+/// duplex copy: the workload's half-close crosses the VSOCK leg as an
+/// end-of-stream frame while the other direction keeps flowing, and a peer
+/// that never finishes after a half-close is cut at the shared deadline, so
+/// it cannot hold the flow's permits. Both ends close when this returns.
+pub async fn bridge_private<T, V>(mut tcp: T, mut vsock: V)
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+    V: AsyncRead + AsyncWrite + Unpin,
+{
+    let framings = router_stream::Framings {
+        source: router_stream::Framing::Raw,
+        destination: router_stream::Framing::Framed,
+    };
+    let outcome = router_stream::copy(&mut tcp, &mut vsock, framings, router_stream::Limits::default()).await;
+    let normal = |error: &io::Error| {
+        matches!(
+            error.kind(),
+            io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+        )
+    };
+    if let Some(error) = outcome.error.filter(|error| !normal(error)) {
+        eprintln!(
+            "[capsem-net-proxy] private bridge ended ({:?}): {error}",
+            outcome.reason
+        );
+    }
+}
+
+async fn run_private_listener(attributor: Arc<ProcessAttributor>) -> io::Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", LISTEN_PORT_PRIVATE)).await?;
+    eprintln!("[capsem-net-proxy] listening on 127.0.0.1:{LISTEN_PORT_PRIVATE} (private)");
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let _ = stream.set_nodelay(true);
+        let attributor = Arc::clone(&attributor);
+        tokio::spawn(async move {
+            handle_private_connection(stream, attributor).await;
+        });
+    }
+}
+
 /// Spawn the per-port accept loop. Every accepted TCP connection is
 /// forwarded to vsock 5002 via `handle_connection`; the listen port
 /// itself is not preserved across the bridge -- the host's first-byte
@@ -220,7 +347,8 @@ async fn main() -> io::Result<()> {
 
     let attributor = Arc::new(ProcessAttributor::default());
     let https_task = tokio::spawn(run_listener(LISTEN_PORT_HTTPS, Arc::clone(&attributor)));
-    let http_task = tokio::spawn(run_listener(LISTEN_PORT_HTTP, attributor));
+    let http_task = tokio::spawn(run_listener(LISTEN_PORT_HTTP, Arc::clone(&attributor)));
+    let private_task = tokio::spawn(run_private_listener(attributor));
 
     tokio::select! {
         res = https_task => {
@@ -231,6 +359,11 @@ async fn main() -> io::Result<()> {
         res = http_task => {
             if let Ok(Err(e)) = res {
                 eprintln!("[capsem-net-proxy] HTTP listener error: {e}");
+            }
+        }
+        res = private_task => {
+            if let Ok(Err(e)) = res {
+                eprintln!("[capsem-net-proxy] private listener error: {e}");
             }
         }
         _ = signal::ctrl_c() => {

@@ -138,3 +138,27 @@ it('uses a canonical ID without a name lookup and forwards cancellation', async 
     } finally {vm.close();}
   });
 });
+
+it('maps the typed network resource including PUT membership and cursor logs', async () => {
+  const state = new FacadeGateway();
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret');
+    try {
+      const created = await hv.networks.create('team');
+      await hv.networks.list();
+      await hv.networks.inspect(created.id);
+      await hv.networks.attach(created.id, 'vm-0');
+      await hv.networks.detach(created.id, 'vm-0');
+      await hv.networks.logs(created.id, {cursor: 'next', limit: 4, type: 'network.connect'});
+      await hv.networks.delete(created.id);
+      expect(received.map(request => [request.method, request.url.split('?')[0]])).toEqual([
+        ['POST', '/networks'], ['GET', '/networks'], ['GET', `/networks/${created.id}`],
+        ['PUT', `/networks/${created.id}/members/vm-0`],
+        ['DELETE', `/networks/${created.id}/members/vm-0`],
+        ['GET', `/networks/${created.id}/logs`], ['DELETE', `/networks/${created.id}`],
+      ]);
+      expect(received.at(-2)?.url).toContain('cursor=next');
+      expect(received.at(-2)?.url).toContain('type=network.connect');
+    } finally {hv.close();}
+  });
+});

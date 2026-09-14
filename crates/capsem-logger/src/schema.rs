@@ -1,13 +1,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Mutex,
 };
 
 use rusqlite::{Connection, OptionalExtension};
 
 const MEMORY_SCHEMA: &str = "mem";
-const DISK_ONLY_TABLES: &[&str] = &["event_body_blobs"];
 static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
@@ -27,7 +26,7 @@ const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'as
 const SECURITY_DECISION_STAGE_CHECK: &str =
     "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
 const SECURITY_EVENT_TYPE_CHECK: &str =
-    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
+    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'))";
 const SECURITY_EVENT_ID_CHECK: &str =
     "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
 const MODEL_PROTOCOL_CHECK: &str =
@@ -347,7 +346,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
@@ -370,7 +369,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT NOT NULL,
         rule_id TEXT,
@@ -396,7 +395,7 @@ pub const CREATE_SCHEMA: &str = "
         timestamp_unix_ms INTEGER NOT NULL,
         ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
@@ -447,15 +446,20 @@ pub const CREATE_SCHEMA: &str = "
 
 /// Create all tables and indexes on the given connection.
 mod memory_sync;
+mod network_types;
+pub(crate) mod transport;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
 pub use memory_sync::{
-    flush_memory_tables_to_disk, rehydrate_memory_tables_from_disk_once, sync_memory_tables_from_disk,
+    flush_memory_tables_to_disk, reconcile_memory_tables_from_disk, rehydrate_memory_tables_from_disk_once,
+    sync_memory_tables_from_disk,
 };
 pub(crate) use memory_sync::{initial_memory_flush_watermarks, MemoryFlushWatermarks};
+pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(CREATE_SCHEMA)
+    conn.execute_batch(CREATE_SCHEMA)?;
+    transport::upgrade_legacy(conn)
 }
 
 /// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
@@ -484,61 +488,6 @@ pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Re
     reconcile_memory_tables_from_disk(conn)
 }
 
-/// Reconcile the attached DB-owned memory schema with the current disk schema.
-///
-/// An external reader can observe `session.db` after SQLite creates the file but
-/// before the writer process finishes its canonical DDL.  The reader must not
-/// freeze that partial snapshot for the rest of the service lifetime.  This
-/// function is intentionally DB-owned: route callers neither inspect nor repair
-/// ledger schema.
-pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );"
-    ))?;
-
-    let mut stmt = conn.prepare(
-        "SELECT name, sql
-         FROM main.sqlite_master
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-         ORDER BY name",
-    )?;
-    let tables = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    for table in tables {
-        let (name, sql) = table;
-        if is_disk_only_table(&name) {
-            continue;
-        }
-        let disk_columns = table_column_names(conn, "main", &name)?;
-        let memory_columns = table_column_names(conn, MEMORY_SCHEMA, &name)?;
-        if !memory_columns.is_empty() && memory_columns != disk_columns {
-            conn.execute_batch(&format!(
-                "DROP VIEW IF EXISTS temp.{name};
-                 DROP TABLE {MEMORY_SCHEMA}.{name};"
-            ))?;
-        }
-        let mem_sql =
-            memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
-        conn.execute_batch(&mem_sql)?;
-    }
-
-    Ok(())
-}
-
-fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(columns)
-}
-
 pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
     for (table, _) in READY_SCHEMA_COLUMNS {
         if is_disk_only_table(table) {
@@ -554,7 +503,7 @@ pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
+pub(crate) fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
     let query = if schema == "main" {
         "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1".to_string()
     } else {
@@ -574,10 +523,6 @@ fn attach_memory_schema(conn: &Connection, memory_uri: &str) -> rusqlite::Result
     }
     let escaped_uri = memory_uri.replace('\'', "''");
     conn.execute_batch(&format!("ATTACH DATABASE '{escaped_uri}' AS {MEMORY_SCHEMA}"))
-}
-
-pub(crate) fn is_disk_only_table(name: &str) -> bool {
-    DISK_ONLY_TABLES.contains(&name)
 }
 
 pub(crate) fn hot_ledger_tables() -> BTreeSet<&'static str> {
@@ -612,247 +557,14 @@ fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
         .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
 }
 
-/// SQLite mmap window for file-backed ledger databases.
-///
-/// Keep this in the DB layer: routes and security components should not know
-/// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
-/// tables.
-pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
-pub const DB_SQLITE_MMAP_CONFIG_BYTES: &str = "db.sqlite_mmap_config_bytes";
-pub const DB_SQLITE_MMAP_EFFECTIVE_BYTES: &str = "db.sqlite_mmap_effective_bytes";
-pub const DB_SQLITE_FILE_SIZE_BYTES: &str = "db.sqlite_file_size_bytes";
-pub const DB_SQLITE_WAL_SIZE_BYTES: &str = "db.sqlite_wal_size_bytes";
-pub const DB_SQLITE_MMAP_COVERAGE_RATIO: &str = "db.sqlite_mmap_coverage_ratio";
-pub const DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL: &str = "db.sqlite_mmap_budget_checks_total";
-
-fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
-    conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
-}
-
-fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
-    PathBuf::from(format!("{}{}", path.display(), suffix))
-}
-
-fn file_len(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
-}
-
-pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'static str, phase: &'static str) {
-    let effective_mmap: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap_or(0);
-    let db_file_size = file_len(path);
-    let wal_file_size = file_len(&sqlite_sidecar_path(path, "-wal"));
-    let status = if db_file_size == 0 {
-        "empty"
-    } else if db_file_size <= effective_mmap.max(0) as u64 {
-        "within_window"
-    } else {
-        "over_window"
-    };
-    let coverage_ratio = if db_file_size == 0 {
-        1.0
-    } else {
-        (effective_mmap.max(0) as u64).min(db_file_size) as f64 / db_file_size as f64
-    };
-
-    ::metrics::gauge!(DB_SQLITE_MMAP_CONFIG_BYTES, "role" => role, "phase" => phase).set(SQLITE_MMAP_SIZE_BYTES as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_EFFECTIVE_BYTES, "role" => role, "phase" => phase).set(effective_mmap as f64);
-    ::metrics::gauge!(DB_SQLITE_FILE_SIZE_BYTES, "role" => role, "phase" => phase).set(db_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_WAL_SIZE_BYTES, "role" => role, "phase" => phase).set(wal_file_size as f64);
-    ::metrics::gauge!(DB_SQLITE_MMAP_COVERAGE_RATIO, "role" => role, "phase" => phase).set(coverage_ratio);
-    ::metrics::counter!(
-        DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL,
-        "role" => role,
-        "phase" => phase,
-        "status" => status
-    )
-    .increment(1);
-
-    tracing::debug!(
-        target: "capsem.db",
-        db_path = %path.display(),
-        role,
-        phase,
-        mmap_config_bytes = SQLITE_MMAP_SIZE_BYTES,
-        mmap_effective_bytes = effective_mmap,
-        db_file_size_bytes = db_file_size,
-        wal_file_size_bytes = wal_file_size,
-        mmap_coverage_ratio = coverage_ratio,
-        mmap_budget_status = status,
-        "sqlite mmap telemetry recorded"
-    );
-}
-
-/// Apply write-mode pragmas: WAL journal + relaxed synchronous.
-/// Only call on read-write connections (the writer).
-pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    apply_mmap_pragma(conn)?;
-    Ok(())
-}
-
-const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
-    (
-        "net_events",
-        &[
-            "event_id",
-            "timestamp",
-            "domain",
-            "decision",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "model_calls",
-        &[
-            "event_id",
-            "provider",
-            "protocol",
-            "method",
-            "path",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "model_items",
-        &[
-            "event_id",
-            "model_call_id",
-            "kind",
-            "content_hash",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "tool_calls",
-        &[
-            "event_id",
-            "model_call_id",
-            "origin",
-            "call_id",
-            "tool_name",
-            "decision",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "tool_responses",
-        &[
-            "model_call_id",
-            "call_id",
-            "content_preview",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "event_body_blobs",
-        &[
-            "event_id",
-            "event_type",
-            "source_table",
-            "direction",
-            "body_hash",
-            "body",
-            "trace_id",
-            "turn_id",
-        ],
-    ),
-    (
-        "fs_events",
-        &[
-            "event_id",
-            "timestamp",
-            "action",
-            "path",
-            "directory",
-            "name",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "exec_events",
-        &[
-            "event_id",
-            "timestamp",
-            "exec_id",
-            "command",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "dns_events",
-        &[
-            "event_id",
-            "timestamp",
-            "qname",
-            "qtype",
-            "rcode",
-            "decision",
-            "answer_ip",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "audit_events",
-        &[
-            "event_id",
-            "timestamp",
-            "pid",
-            "exe",
-            "trace_id",
-            "turn_id",
-            "credential_ref",
-        ],
-    ),
-    (
-        "substitution_events",
-        &[
-            "event_id",
-            "timestamp",
-            "substitution_ref",
-            "outcome",
-            "provider",
-            "trace_id",
-        ],
-    ),
-    (
-        "security_rule_events",
-        &[
-            "event_id",
-            "rule_id",
-            "rule_action",
-            "detection_level",
-            "rule_json",
-            "event_json",
-            "credential_ref",
-        ],
-    ),
-    (
-        "security_decision_events",
-        &["event_id", "stage", "effective_decision", "credential_ref"],
-    ),
-    (
-        "security_ask_events",
-        &["event_id", "ask_id", "status", "event_json", "trace_id"],
-    ),
-    ("profile_mutation_events", &["mutation_id", "profile_id", "status"]),
-];
+mod columns;
+mod pragmas;
+use columns::READY_SCHEMA_COLUMNS;
+pub use pragmas::{
+    apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_telemetry, DB_SQLITE_FILE_SIZE_BYTES,
+    DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL, DB_SQLITE_MMAP_CONFIG_BYTES, DB_SQLITE_MMAP_COVERAGE_RATIO,
+    DB_SQLITE_MMAP_EFFECTIVE_BYTES, DB_SQLITE_WAL_SIZE_BYTES, SQLITE_MMAP_SIZE_BYTES,
+};
 
 /// Validate that a session DB is structurally ready for ledger routes.
 ///
@@ -1036,7 +748,7 @@ fn rebuild_event_body_blobs_source_check(conn: &Connection) {
 
 /// Migrate existing databases to add new columns/tables.
 /// Idempotent: safe to call on databases that already have the changes.
-pub fn migrate(conn: &Connection) {
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     for tbl in [
         "net_events",
         "model_calls",
@@ -1487,17 +1199,7 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
             ON profile_mutation_events(category, target_kind, target_key);"
     ));
-}
-
-/// Apply read-safe pragmas for DB-owned query connections.
-///
-/// These connections may be opened read-write briefly so the DB layer can
-/// attach and populate its private `mem` schema. After setup, `query_only`
-/// prevents writes through the read worker.
-pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
-    apply_mmap_pragma(conn)?;
-    conn.pragma_update(None, "query_only", "ON")?;
-    Ok(())
+    network_types::migrate(conn).and_then(|()| transport::upgrade_legacy(conn))
 }
 
 #[cfg(test)]

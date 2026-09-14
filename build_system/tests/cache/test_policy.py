@@ -11,6 +11,15 @@ from pydantic import ValidationError
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_oci_blobs_have_one_bounded_cache_contract():
+    policy = load_policy(PROJECT_ROOT).stages["oci-images"]
+    assert policy.scope is CacheScope.DISK
+    assert policy.prune_strategy is PruneStrategy.LRU
+    assert policy.entry_root == Path("blobs")
+    assert policy.mutation_locks == (Path("cache.lock"),)
+    assert 0 < policy.warm_size_bytes < policy.max_size_bytes
+
+
 @pytest.mark.parametrize("field,value", [
     ("retention_root", "../outside"), ("retention_root", "/tmp/outside"),
     ("mutation_locks", ["../outside"]), ("mutation_locks", ["/tmp/outside"]),
@@ -100,8 +109,11 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].maximum_count is None
     assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
     assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
-    assert policy.stages["cargo"].prune_strategy is PruneStrategy.GENERATIONAL
-    assert policy.stages["cargo"].retention_root == Path("debug/incremental")
+    assert policy.stages["cargo"].prune_strategy is PruneStrategy.LRU
+    assert policy.stages["cargo"].retention_root is None
+    assert policy.stages["cargo"].cargo_target_roots == (
+        Path("debug"), Path("release"), Path("llvm-cov-target/debug"),
+    )
     assert Path("debug/.cargo-lock") in policy.stages["cargo"].mutation_locks
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)

@@ -2056,7 +2056,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'test -d "/Applications/Capsem.app"' in macos
     assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in macos
     )
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
@@ -2083,7 +2083,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
         "install-manifest-request.sh write"
     )
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
@@ -5086,7 +5086,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     assert stop_arm is not None
     body = stop_arm.group("body")
 
-    assert "service_install::stop_service().await?" in body
+    assert "service_install::stop_service(&cli_service_socket_path()).await?" in body
     assert 'println!("Service stopped.");' in body
     assert "return Ok(());" in body
 
@@ -5591,7 +5591,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     app = _source_text("web/app/src/lib/components/shell/App.svelte")
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
-    cli = _source_text("crates/capsem/src/main.rs")
+    cli = _source_text("crates/capsem/src/create_command.rs")
     mcp = _source_text("crates/capsem-mcp/src/main.rs")
 
     assert "vmStore.openCreateModal()" in app
@@ -5603,7 +5603,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     assert "provision_temp" not in new_session
     assert "provision_temp" not in tray_gateway
     assert 'profile_id":"code' not in tray_gateway
-    assert "profile_id: profile.clone()" in cli
+    assert "profile_id: args.profile.clone()" in cli
     assert "params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)" in mcp
 
 
@@ -6487,7 +6487,7 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
 
 def test_capsem_agent_repairs_missing_default_venv() -> None:
     """The guest agent must not leave VIRTUAL_ENV unset if init venv races."""
-    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "main.rs").read_text()
+    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "venv.rs").read_text()
 
     assert 'const VENV_TARGET: &str = "/run/capsem-venv"' in source
     assert "std::thread::spawn(move ||" in source
@@ -6512,7 +6512,9 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
     snapshot = (PROJECT_ROOT / "crates/capsem-agent/src/snapshot.rs").read_text()
     assert 'const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";' in snapshot
 
-    prepare = source.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
+    # Snapshot control moved out of main.rs with the guest control reader.
+    control = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "control_reader.rs").read_text()
+    prepare = control.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
         "Ok(HostToGuest::Unfreeze) => {", maxsplit=1
     )[0]
     assert "freeze_system_filesystem()" in prepare

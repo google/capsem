@@ -39,6 +39,8 @@ def sample(schema: dict[str, Any]) -> object:
         return {key: sample(schema["properties"][key]) for key in schema.get("required", [])}
     if kind == "array":
         return []
+    if schema.get("format") == "ipv4":
+        return "10.128.0.2"
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[kind]
 
 

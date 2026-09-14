@@ -44,6 +44,39 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 6. Runtime materialization forwards allowed bytes to upstream
 7. Logging plugins produce ledger-safe event output for the logger DB
 
+### Private networks between VMs
+
+Every VM has one lifetime address from the host pool `10.128.0.0/9`; a named
+network is the set of VMs allowed to reach each other on those addresses
+(`capsem network ...`, `NetworkRegistry` in core, durable per-network
+database with the audit history).
+
+- TCP to a member: the guest REDIRECTs it to `capsem-net-proxy` (10128), which
+  sends the original destination over vsock 5010; the source owner asks the
+  service (`/networks/private/connect`), the service admits by membership and
+  writes both members' audit rows, a one-time token travels to the destination
+  owner's handoff socket with the stream, and that owner's confined router
+  carries the bytes under the private class budget. The destination VM's
+  profile rules see `network.mode == "private"`, `network.protocol == "tcp"`.
+  Every VSOCK leg of a private or published flow is framed (`router_stream`
+  `Framing::Framed`: `u32` length, zero = end of that direction) and never
+  shut down: Apple VZ delivers a vsock shutdown ahead of queued bytes, which
+  truncated uploads (16 KiB arrived) or left flows open. TCP legs stay raw.
+- UDP and ICMP: every guest brings up `tap0` (MAC = `mac_of(address)`) and
+  `capsem-tun` pumps its ethernet frames over vsock 5009. The service runs one
+  confined `capsem-router --switch` per network and, on attach or resume,
+  asks the owner for a duplicate of that stream (`LinkAttach` over IPC, the
+  token on the handoff socket); the profile decides once with
+  `network.protocol == "link"`. The switch pins each frame's source to its
+  member, answers ARP itself, and forwards only unicast IPv4 UDP and ICMP
+  (echo, unreachable, time exceeded) to exactly one member: an allowlist, so
+  no tunnel protocol can carry TCP around its admission. A VM has one link. Containers reach the link
+  through the guest's NAT (`launch.py`: SNAT out `tap0`, UDP DNAT in).
+- Names: `<vm>.<network>.capsem.internal` and the pool's reverse zone are
+  answered on the host by the owner's DNS handler through
+  `/networks/private/resolve`, for shared-network members only, with a zero
+  TTL, never upstream.
+
 ### Network/security policy
 
 - Corp config owns enterprise constraints, reporting endpoints, and locked

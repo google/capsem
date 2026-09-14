@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::time::{Duration, SystemTime};
 
 fn setup_reader_with_data() -> DbReader {
@@ -860,4 +860,41 @@ fn writer_updates_only_the_updatable_tables() {
         "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; extend the list so the \
          external reader copies that table whole: {offences:?}"
     );
+}
+
+#[test]
+fn a_read_during_the_writers_open_batch_neither_fails_nor_waits() {
+    // The writer's batch holds the shared-cache memory table; a reader that
+    // arrived meanwhile used to get SQLITE_LOCKED at once, and under back to
+    // back batches it starved. Hold the table from a second connection to the
+    // same memory database and read through it: `read_uncommitted` means the
+    // read completes at once.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let handle = crate::DbHandle::open(&path).unwrap();
+    let reader = DbReader::open(&path).unwrap();
+    let memory_uri = schema::memory_uri_for_path(&path);
+    let locker = Connection::open_with_flags(
+        &memory_uri,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .unwrap();
+    locker
+        .execute_batch("BEGIN IMMEDIATE; DELETE FROM transport_events WHERE 0;")
+        .unwrap();
+    let locked_for = Duration::from_millis(200);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(locked_for);
+        locker.execute_batch("COMMIT").unwrap();
+    });
+    let started = std::time::Instant::now();
+    let result = reader.query_raw("SELECT count(*) FROM transport_events");
+    let waited = started.elapsed();
+    release.join().unwrap();
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        waited < locked_for / 2,
+        "the read waited on the writer's lock: {waited:?}"
+    );
+    drop(handle);
 }

@@ -33,6 +33,8 @@ def expression(schema: Schema) -> str:
         raise ValueError("missing type")
     if schema.format == "binary":
         return "z.instanceof(Uint8Array)"
+    if schema.format == "ipv4":
+        return "z.ipv4()"
     result = {"string": "z.string()", "integer": "z.int()", "number": "z.number()",
               "boolean": "z.boolean()", "null": "z.null()"}[schema.type]
     return result + (f".min({schema.minimum})" if schema.minimum is not None else "")

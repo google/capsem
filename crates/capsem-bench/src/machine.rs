@@ -46,6 +46,34 @@ impl Fitness {
     }
 }
 
+/// What a fitness verdict is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Judgement {
+    /// About to measure: everything that would skew the numbers counts.
+    Measurement,
+    /// Before the work that precedes measuring, whose own load says nothing
+    /// about the machine later; only conditions that would still hold count.
+    Standing,
+}
+
+/// Judge the facts for one purpose.
+#[allow(clippy::too_many_arguments)]
+pub fn assess_for(
+    judgement: Judgement,
+    os: &str,
+    cpu_count: usize,
+    load: Option<f64>,
+    governor: Option<&str>,
+    kvm: bool,
+    strays: &[String],
+) -> Vec<Objection> {
+    let judged_load = match judgement {
+        Judgement::Measurement => load,
+        Judgement::Standing => None,
+    };
+    assess(os, cpu_count, judged_load, governor, kvm, strays)
+}
+
 /// The CPU frequency governor, where the kernel exposes one.
 fn governor(sysfs: &Path) -> Option<String> {
     fs::read_to_string(sysfs).ok().map(|g| g.trim().to_string())
@@ -151,13 +179,13 @@ pub fn running_capsem_processes() -> std::io::Result<Vec<String>> {
 }
 
 /// Observe this machine and judge it.
-pub fn examine(arch: &str, os: &str, strays: &[String]) -> Fitness {
+pub fn examine(judgement: Judgement, arch: &str, os: &str, strays: &[String]) -> Fitness {
     let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let load = capsem_foundation::unix::process::load_average();
     let governor = governor(Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"));
     let kvm = Path::new("/dev/kvm").exists();
 
-    let objections = assess(os, cpu_count, load, governor.as_deref(), kvm, strays);
+    let objections = assess_for(judgement, os, cpu_count, load, governor.as_deref(), kvm, strays);
 
     Fitness {
         host: Host {

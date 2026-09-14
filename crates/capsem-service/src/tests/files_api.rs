@@ -14,11 +14,22 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
     let id = entry.id.clone();
     state.persistent_registry.lock().unwrap().register(entry).unwrap();
     let app = build_service_router(state);
-    let request = |method, path: String, body| axum::http::Request::builder()
-        .method(method).uri(path).body(body).unwrap();
-    let listed = app.clone().oneshot(request(
-        axum::http::Method::GET, format!("/vms/{id}/files/list"), Body::empty(),
-    )).await.unwrap();
+    let request = |method, path: String, body| {
+        axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .body(body)
+            .unwrap()
+    };
+    let listed = app
+        .clone()
+        .oneshot(request(
+            axum::http::Method::GET,
+            format!("/vms/{id}/files/list"),
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
     assert_eq!(listed.status(), StatusCode::OK);
     let body = to_bytes(listed.into_body(), usize::MAX).await.unwrap();
     let files: api::FileListResponse = serde_json::from_slice(&body).unwrap();
@@ -27,17 +38,28 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
         (axum::http::Method::POST, "new.txt"),
         (axum::http::Method::GET, "existing.txt"),
     ] {
-        let response = app.clone().oneshot(request(
-            method, format!("/vms/{id}/files/content?path={path}"), Body::from("new bytes"),
-        )).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(
+                method,
+                format!("/vms/{id}/files/content?path={path}"),
+                Body::from("new bytes"),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert!(String::from_utf8_lossy(&body).contains("running sandbox security ledger"));
     }
     assert!(!workspace.join("new.txt").exists());
-    let missing = app.oneshot(request(
-        axum::http::Method::GET, "/vms/unknown-id/files/list".into(), Body::empty(),
-    )).await.unwrap();
+    let missing = app
+        .oneshot(request(
+            axum::http::Method::GET,
+            "/vms/unknown-id/files/list".into(),
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
@@ -46,7 +68,7 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
 // -----------------------------------------------------------------------
 
 fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &str) {
-    setup_vm_with_workspace_and_uds(state, dir, vm_id, PathBuf::from("/tmp/test.sock"));
+    setup_vm_with_workspace_and_uds(state, dir, vm_id, dir.join("process.sock"));
 }
 
 fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, vm_id: &str, uds_path: PathBuf) {
@@ -72,6 +94,8 @@ fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, 
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            owner_secret: String::new(),
         },
     );
 }
@@ -92,64 +116,30 @@ async fn spawn_file_boundary_ipc(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let uds_path = dir.path().join("process.sock");
-    let listener = tokio::net::UnixListener::bind(&uds_path).unwrap();
-    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
-    let handle = tokio::spawn(async move {
-        let mut messages = Vec::new();
-        for _ in 0..expected_messages {
-            let (stream, _) = listener.accept().await.unwrap();
-            let std_stream = stream.into_std().unwrap();
-            let std_stream = tokio::task::spawn_blocking(move || {
-                let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
-                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            let (tx, rx): (
-                tokio_unix_ipc::Sender<ProcessToService>,
-                tokio_unix_ipc::Receiver<ServiceToProcess>,
-            ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
-            let msg = rx.recv().await.unwrap();
-            match &msg {
-                ServiceToProcess::LogFileBoundary { id, .. } => {
-                    tx.send(ProcessToService::LogFileBoundaryResult {
-                        id: *id,
-                        success: true,
-                        data: None,
-                        error: None,
-                    })
-                    .await
-                    .unwrap();
-                }
-                ServiceToProcess::WriteFile { id, .. } => {
-                    if write_reply == WriteFileIpcReply::Disconnect {
-                        drop(tx);
-                    } else {
-                        tx.send(ProcessToService::WriteFileResult {
-                            id: *id,
-                            success: true,
-                            error: None,
-                        })
-                        .await
-                        .unwrap();
-                    }
-                }
-                ServiceToProcess::ReadFile { id, .. } => {
-                    tx.send(ProcessToService::ReadFileResult {
-                        id: *id,
-                        data: Some(b"guest export".to_vec()),
-                        error: None,
-                    })
-                    .await
-                    .unwrap();
-                }
-                other => panic!("unexpected IPC message in file boundary test: {other:?}"),
+    let handle = spawn_fake_process(&uds_path, expected_messages, move |message| {
+        let reply = match message {
+            ServiceToProcess::LogFileBoundary { id, .. } => Some(ProcessToService::LogFileBoundaryResult {
+                id: *id,
+                success: true,
+                data: None,
+                error: None,
+            }),
+            // No reply is a disconnect: the fixture closes the connection.
+            ServiceToProcess::WriteFile { id, .. } => {
+                (write_reply == WriteFileIpcReply::Success).then_some(ProcessToService::WriteFileResult {
+                    id: *id,
+                    success: true,
+                    error: None,
+                })
             }
-            messages.push(msg);
-        }
-        messages
+            ServiceToProcess::ReadFile { id, .. } => Some(ProcessToService::ReadFileResult {
+                id: *id,
+                data: Some(b"guest export".to_vec()),
+                error: None,
+            }),
+            other => panic!("unexpected IPC message in file boundary test: {other:?}"),
+        };
+        Box::pin(async move { reply })
     });
     (dir, uds_path, handle)
 }
@@ -373,9 +363,9 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
         .unwrap()
         .unwrap();
         let (tx, rx): (
-            tokio_unix_ipc::Sender<ProcessToService>,
-            tokio_unix_ipc::Receiver<ServiceToProcess>,
-        ) = tokio_unix_ipc::channel_from_std(std_stream).unwrap();
+            capsem_foundation::ipc_channel::Sender<ProcessToService>,
+            capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+        ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
         let msg = rx.recv().await.unwrap();
         match &msg {
             ServiceToProcess::LogFileBoundary { id, .. } => {
@@ -438,6 +428,8 @@ async fn write_file_logs_import_before_guest_write() {
             persistent: false,
             env: None,
             forked_from: None,
+            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
+            owner_secret: String::new(),
         },
     );
 

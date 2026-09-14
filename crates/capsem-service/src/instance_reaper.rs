@@ -47,6 +47,9 @@ pub(super) fn spawn_exit_reaper(
             }
             instances.remove(&id)
         };
+        if let Some(info) = &removed {
+            state.release_if_ephemeral(info);
+        }
         // Publish the exit before waiting: restore holds the write guard
         // while readiness polls this registry to detect a crashed child.
         // Filesystem/DB cleanup must not overlap the replacement's launch.

@@ -209,6 +209,37 @@ fn openapi_describes_binary_copy_and_required_vm_identity() {
 }
 
 #[test]
+fn openapi_describes_network_mutations_and_both_member_path_parameters() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    assert_eq!(paths["/networks"]["post"]["operationId"], "createNetwork");
+    assert_eq!(paths["/networks"]["get"]["operationId"], "listNetworks");
+    assert_eq!(paths["/networks/{id}"]["delete"]["operationId"], "deleteNetwork");
+
+    let member = &paths["/networks/{id}/members/{vm_id}"];
+    assert_eq!(member["put"]["operationId"], "attachNetworkMember");
+    assert_eq!(member["delete"]["operationId"], "detachNetworkMember");
+    for method in ["put", "delete"] {
+        let parameters = member[method]["parameters"].as_array().unwrap();
+        assert_eq!(
+            parameters
+                .iter()
+                .map(|parameter| parameter["name"].as_str().unwrap())
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["id", "vm_id"])
+        );
+        assert!(parameters.iter().all(|parameter| parameter["required"] == true));
+    }
+
+    let logs = &paths["/networks/{id}/logs"]["get"];
+    assert!(logs["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|parameter| parameter["name"] == "cursor"));
+}
+
+#[test]
 fn lifecycle_values_preserve_the_existing_wire_contract() {
     assert_eq!(
         serde_json::to_value(VmLifecycleState::Running).unwrap(),

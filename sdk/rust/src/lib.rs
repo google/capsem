@@ -13,7 +13,9 @@ mod vm;
 pub use error::{Error, Result};
 pub use hypervisor::Hypervisor;
 pub use memory::Memory;
-pub use options::{CreateOptions, HistoryOptions, LogOptions, PageOptions, TimelineOptions, VmSelector};
+pub use options::{
+    CreateOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, TimelineOptions, VmSelector,
+};
 pub use vm::VM;
 
 #[cfg(test)]

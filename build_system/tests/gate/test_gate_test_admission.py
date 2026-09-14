@@ -150,3 +150,64 @@ def test_failed_attempt_refuses_before_recording_or_any_plan_work(monkeypatch) -
 
     with pytest.raises(GateError, match="explicitly approved retry"):
         command.execute()
+
+
+def _history(root: Path, *runs: tuple[str, str | None]) -> None:
+    """Recorded working-tree candidates, oldest first: (head, end status or None)."""
+    import json
+
+    from capsem_builder.gate import config as gate_config
+
+    settings = gate_config.load(PROJECT_ROOT).runlog
+    for index, (head, status) in enumerate(runs):
+        directory = root / settings.root / f"20260914-{index:06d}-aaaaaa-candidate"
+        directory.mkdir(parents=True)
+        events = [{"event": "run.start", "command": "candidate", "head": head, "source_commit": None}]
+        if status is not None:
+            events.append({"event": "run.end", "status": status})
+        (directory / settings.events).write_text("".join(json.dumps(e) + "\n" for e in events))
+
+
+def _working_tree_command(monkeypatch, root: Path, impact: GitImpact | None = None) -> CandidateCommand:
+    command = CandidateCommand(Runner(PROJECT_ROOT), arguments(source_commit=None))
+    monkeypatch.setattr(
+        testadmission.qualificationevidence,
+        "authority",
+        lambda config: config.model_copy(update={"root": root}),
+    )
+    monkeypatch.setattr(testadmission, "last_admission_event", lambda *_: None)
+    if impact is not None:
+        monkeypatch.setattr(testadmission, "inspect_git", lambda *_: impact)
+    return command
+
+
+def test_a_failed_working_tree_run_refuses_the_next_one(monkeypatch, tmp_path) -> None:
+    """`just test` without a commit never reaches the exact-source archive, so
+    admission saw no attempt and no baseline and admitted fifteen full runs in
+    a row on a branch, each after the previous one failed."""
+    _history(tmp_path, ("c" * 40, "ok"), ("d" * 40, "failed"))
+    command = _working_tree_command(monkeypatch, tmp_path)
+
+    with pytest.raises(GateError, match="failed or was interrupted"):
+        testadmission.admit(command, None)
+
+
+def test_an_interrupted_working_tree_run_counts_as_failed(monkeypatch, tmp_path) -> None:
+    _history(tmp_path, ("c" * 40, "ok"), ("d" * 40, None))
+    command = _working_tree_command(monkeypatch, tmp_path)
+
+    with pytest.raises(GateError, match="failed or was interrupted"):
+        testadmission.admit(command, None)
+
+
+def test_a_green_working_tree_run_is_the_baseline_for_low_impact_repeats(monkeypatch, tmp_path) -> None:
+    baseline = "c" * 40
+    _history(tmp_path, (baseline, "ok"))
+    seen = []
+    impact = GitImpact(baseline=baseline, target="HEAD", ancestor=True, commits=1, paths=("CHANGELOG.md",))
+    command = _working_tree_command(monkeypatch, tmp_path)
+    monkeypatch.setattr(testadmission, "inspect_git", lambda _root, base, target: seen.append(base) or impact)
+
+    with pytest.raises(GateError, match="1 of 10 commits since complete proof"):
+        testadmission.admit(command, None)
+    assert seen == [baseline]

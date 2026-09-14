@@ -48,9 +48,11 @@ crates/capsem-tui/             Terminal control UI (reads and drives state via t
 crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
 crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
+crates/capsem-router/     Confined TCP publication companion (data descriptors only)
+crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
-crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil (musl)
+crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
@@ -167,11 +169,50 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 - **One way to do things.** Don't introduce a second pattern when one exists.
 - **Rust tests live in a sibling `tests.rs`.** In the parent module declare `#[cfg(test)] mod tests;` and put all `#[test]` functions in `tests.rs` next to it. Never append an inline `mod tests { ... }` block at the bottom of a production file -- it buries prod code under scroll-past test fixtures and doubles the file size for every Read and grep. See `/dev-testing`.
 
+## Fix what you find
+
+Quality and reliability are P0, not something to trade for a smaller diff. See
+something, say something, do something.
+
+When the work turns up a defect -- a bug, a lint or type violation, a failing
+guard, a stale path, a vulnerable dependency the audit flags -- fix it and
+commit it in the same session, in its own well-scoped commit. Do not stop to
+ask permission for a routine, low-risk, behavior-preserving fix, and do not
+route it to a follow-up ticket by default: a green gate is the bar, and the
+agent that found the problem is the one to fix it. This holds even when the
+defect predates your change or sits just outside the immediate task; the gate
+runs the whole tree, so the whole tree is your responsibility once you are in
+it.
+
+The same holds for improvements you notice while coding, not just outright
+defects: a fragile path, a small refactor that makes the code clearer, a way
+to make it faster or more reliable. Do not walk past it as not your problem.
+If it is small, fix it test-first (a failing test, then the change -- see
+`/dev-testing`). If it is too big to fold into the current change, say so and
+open a GitHub bug (or ask to) with enough detail to act on, rather than
+dropping it silently.
+
+Stop and ask only when the fix is genuinely a judgment call: it changes
+user-visible behavior, weakens a security boundary, forces a real scope
+expansion, or picks between options a maintainer should choose (for example a
+dependency major-version bump, or suppressing an advisory instead of
+upgrading). State the finding and your recommendation, then act on the answer.
+A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
+what you did.
+
+Stop and ask only when the fix is genuinely a judgment call: it changes
+user-visible behavior, weakens a security boundary, forces a real scope
+expansion, or picks between options a maintainer should choose (for example a
+dependency major-version bump, or suppressing an advisory instead of
+upgrading). State the finding and your recommendation, then act on the answer.
+A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
+what you did.
+
 ## Invariants (do not break)
 
 ### Ephemeral VM model
 
-**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- workspace and rootfs overlay survive stops. `capsem create` is always detached; `capsem shell` is the interactive entry point (`capsem shell` with no args = temp VM + auto-destroy on exit).
+**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- workspace and rootfs overlay survive stops. `capsem create` is always detached; `capsem run` is the one-shot that destroys its VM on exit; `capsem shell` opens the TUI over existing sessions and creates nothing.
 
 **VirtioFS mode** (default): fresh workspace + sparse rootfs.img per session. Persistent VMs store their session in `~/.capsem/run/persistent/`.
 
@@ -230,6 +271,10 @@ Telemetry and security ledgers are database-owned.
 - Service routes, UI handlers, MCP helpers, and benchmark harnesses must not
   call `rusqlite::Connection::open` or `DbReader::open` directly.
 - They must not create service-owned logged-data projection caches.
+- Whether a ledger changed is the DB object's answer (`read_cache_epoch`, the
+  reader's `data_version` sync), never the file's size or mtime: a WAL-only
+  commit changes neither, and a route once served stale rows for months on
+  that fingerprint. `tests/citadel/test_db_freshness_boundary.py` holds it.
 - They may own query intent, but the logger DB object owns query execution.
 - `capsem-logger` owns SQLite connection threads, `mem`/disk table layout,
   batching, flushing, rehydration, WAL tuning, and future FTS5/search.

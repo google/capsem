@@ -104,7 +104,8 @@ def main() -> int:
             ]
         )
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        log_stream = (args.report.parent / "tart-run.log").open("w")
+        tart_log = args.report.parent / "tart-run.log"
+        log_stream = tart_log.open("w")
         runner = subprocess.Popen(
             [
                 "tart",
@@ -118,7 +119,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             text=True,
         )
-        ip = wait_for_guest_ip(vm_name, runner)
+        ip = wait_for_guest_ip(vm_name, runner, tart_log)
         wait_for_ssh(ip)
         report = {
             "schema": "capsem.tart_readiness.v1",

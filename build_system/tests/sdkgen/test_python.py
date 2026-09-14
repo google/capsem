@@ -56,6 +56,8 @@ def _sample(schema: Schema) -> object:
     if schema.type == "array":
         return []
     assert schema.type is not None
+    if schema.format == "ipv4":
+        return "10.128.0.2"
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
 
 
@@ -121,6 +123,11 @@ def test_generation_is_deterministic_and_compact() -> None:
     assert first == render_models(dict(reversed(list(SCHEMAS.items()))))
     assert max(len(source.splitlines()) for source in first.values()) <= 300
     assert len(first) == len(SCHEMAS) + 2
+
+
+def test_ipv4_is_a_validated_address_value() -> None:
+    schema = Schema.model_validate({"type": "string", "format": "ipv4"})
+    assert type_name(schema) == "IPv4Address"
 
 
 @pytest.mark.parametrize("value", [

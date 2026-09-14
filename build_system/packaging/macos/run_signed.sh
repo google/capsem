@@ -39,15 +39,29 @@ die() {
     exit 1
 }
 
+# The lock names its holder. A runner killed while holding it cannot release
+# it, so a waiter takes it back from a dead holder, or from one that died
+# before naming itself; a living holder is waited for, since a cold nextest
+# listing serializes dozens of signatures behind it. Two waiters reclaiming
+# the same dead lock at once can sign twice, which publishes the same bytes.
 acquire_sign_lock() {
-    local attempts=0
+    local attempts=0 owner stale
     while ! mkdir "$SIGN_LOCK_DIR" 2>/dev/null; do
+        owner=$(cat "$SIGN_LOCK_DIR/owner" 2>/dev/null)
+        if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null ||
+            [[ -z "$owner" && -n "$(find "$SIGN_LOCK_DIR" -maxdepth 0 -mtime +5s 2>/dev/null)" ]]; then
+            log "reclaiming codesign lock held by ${owner:-an unnamed runner} that is gone"
+            stale="$SIGN_LOCK_DIR.stale.$$"
+            mv "$SIGN_LOCK_DIR" "$stale" 2>/dev/null && rm -rf "$stale"
+            continue
+        fi
         attempts=$((attempts + 1))
-        if [ "$attempts" -ge 600 ]; then
-            die "timed out waiting for codesign lock at $SIGN_LOCK_DIR"
+        if [ "$attempts" -ge 12000 ]; then
+            die "timed out after 10 minutes waiting for codesign lock at $SIGN_LOCK_DIR"
         fi
         sleep 0.05
     done
+    echo "$$" > "$SIGN_LOCK_DIR/owner"
     trap 'if [[ -n "$staging" ]]; then rm -f "$staging"; fi; rm -rf "$SIGN_LOCK_DIR"' EXIT
 }
 
@@ -79,8 +93,10 @@ source_identity() {
 prepare_signed_copy() {
     local source key published captured copied
     for attempt in 1 2 3; do
+        # A failed stat is Cargo's unlink-then-link, even when the new link is
+        # already back by the time anyone looks again. The attempt budget, not
+        # a second racy look, separates that from an input that never appears.
         if ! source=$(source_identity 2>> "$BUILD_LOG"); then
-            [[ -f "$original" ]] && die "cannot stat signing inputs for $original"
             log "Cargo removed $original before capture $attempt; retrying"
             sleep 0.05
             continue
@@ -99,10 +115,7 @@ prepare_signed_copy() {
             staging="$published.tmp.$$"
             copied=0
             cp -c "$original" "$staging" 2>> "$BUILD_LOG" && copied=1
-            if ! captured=$(source_identity 2>> "$BUILD_LOG"); then
-                [[ -f "$original" ]] && die "cannot recheck signing inputs for $original"
-                captured=""
-            fi
+            captured=$(source_identity 2>> "$BUILD_LOG") || captured=""
             if [[ "$captured" != "$source" ]]; then
                 # A concurrent Cargo build changed the source while copying.
                 # Retry only that observed race, before signing or publishing.

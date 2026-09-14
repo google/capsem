@@ -790,3 +790,30 @@ fn all_fixtures_have_nonzero_length() {
 // generator in `examples/` (separate compilation unit) avoids the
 // chicken-and-egg where the `include_bytes!` macros above would fail
 // to compile if the .bin files didn't exist yet.
+
+#[test]
+fn a_ptr_response_names_the_owner_of_the_reversed_address() {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RecordType};
+    let mut query = Message::new(4, MessageType::Query, OpCode::Query);
+    query.add_query(Query::query(
+        Name::from_ascii("3.0.128.10.in-addr.arpa.").unwrap(),
+        RecordType::PTR,
+    ));
+    let bytes = build_ptr_response(&query.to_vec().unwrap(), "beta.team.capsem.internal", 0).unwrap();
+    let response = Message::from_vec(&bytes).unwrap();
+    assert_eq!(response.metadata.id, 4);
+    assert_eq!(response.answers.len(), 1);
+    assert_eq!(response.answers[0].data.to_string(), "beta.team.capsem.internal.");
+    assert_eq!(response.answers[0].ttl, 0);
+    let mut not_ptr = Message::new(5, MessageType::Query, OpCode::Query);
+    not_ptr.add_query(Query::query(
+        Name::from_ascii("3.0.128.10.in-addr.arpa.").unwrap(),
+        RecordType::A,
+    ));
+    let bytes = build_ptr_response(&not_ptr.to_vec().unwrap(), "beta.team.capsem.internal", 0).unwrap();
+    assert!(
+        Message::from_vec(&bytes).unwrap().answers.is_empty(),
+        "the name exists, no record of that type"
+    );
+}

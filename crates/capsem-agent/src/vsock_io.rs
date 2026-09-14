@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::io;
-use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
+use std::os::unix::io::{AsFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::task::{Context, Poll};
@@ -45,11 +45,33 @@ const IO_TIMEOUT_SECS: i64 = 30;
 /// return EAGAIN after IO_TIMEOUT_SECS instead of hanging indefinitely
 /// if the host stops draining the buffer.
 pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
-    let fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM, 0) };
+    vsock_connect_with_timeout(cid, port, Duration::from_secs(IO_TIMEOUT_SECS as u64))
+}
+
+/// Bound setup with a nonblocking connect and a monotonic poll deadline.
+/// SO_SNDTIMEO only bounds writes: Linux VSOCK has a separate connect timeout.
+pub fn vsock_connect_with_timeout(cid: u32, port: u32, timeout: Duration) -> io::Result<RawFd> {
+    if timeout.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "vsock setup needs a finite deadline",
+        ));
+    }
+    let physical_port = physical_vsock_port(port, guest_vsock_port_offset())?;
+    #[cfg(target_os = "linux")]
+    let kind = libc::SOCK_STREAM | libc::SOCK_CLOEXEC;
+    #[cfg(not(target_os = "linux"))]
+    let kind = libc::SOCK_STREAM;
+    let fd = unsafe { libc::socket(AF_VSOCK, kind, 0) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    let physical_port = physical_vsock_port(port, guest_vsock_port_offset())?;
+    // SAFETY: socket returned a new descriptor. This owner closes every error
+    // path, including failure to install either timeout.
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    socket.set_write_timeout(Some(timeout))?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_nonblocking(true)?;
 
     let addr = SockaddrVm {
         svm_family: AF_VSOCK as libc::sa_family_t,
@@ -68,18 +90,41 @@ pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
         )
     };
     if ret < 0 {
-        let err = io::Error::last_os_error();
-        unsafe {
-            libc::close(fd);
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EINPROGRESS) {
+            return Err(error);
         }
-        return Err(err);
+        wait_connected(&socket, timeout)?;
     }
 
-    // Set I/O timeouts so blocking read/write return EAGAIN on stall
-    // rather than hanging forever inside the kernel.
-    set_io_timeouts(fd);
+    socket.set_nonblocking(false)?;
+    Ok(socket.into_raw_fd())
+}
 
-    Ok(fd)
+fn wait_connected(socket: &std::os::unix::net::UnixStream, timeout: Duration) -> io::Result<()> {
+    use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+    let started = std::time::Instant::now();
+    let mut descriptors = [PollFd::new(socket.as_fd(), PollFlags::POLLOUT)];
+    loop {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(io::Error::from(io::ErrorKind::TimedOut));
+        }
+        let millis = remaining.as_millis().saturating_add(1).min(i32::MAX as u128);
+        match poll(&mut descriptors, PollTimeout::try_from(millis as i32).unwrap()) {
+            Ok(0) | Err(nix::errno::Errno::EINTR) => continue,
+            Err(error) => return Err(error.into()),
+            Ok(_) => {
+                if descriptors[0]
+                    .revents()
+                    .is_some_and(|flags| flags.contains(PollFlags::POLLNVAL))
+                {
+                    return Err(io::Error::from(io::ErrorKind::InvalidInput));
+                }
+                return socket.take_error()?.map_or(Ok(()), Err);
+            }
+        }
+    }
 }
 
 fn guest_vsock_port_offset() -> u32 {
@@ -105,13 +150,6 @@ fn physical_vsock_port(logical_port: u32, offset: u32) -> io::Result<u32> {
             format!("vsock port overflow: logical={logical_port} offset={offset}"),
         )
     })
-}
-
-/// Apply send and receive timeouts to a socket fd.
-fn set_io_timeouts(fd: RawFd) {
-    let timeout = Duration::from_secs(IO_TIMEOUT_SECS as u64);
-    set_socket_timeout(fd, libc::SO_SNDTIMEO, timeout);
-    set_socket_timeout(fd, libc::SO_RCVTIMEO, timeout);
 }
 
 /// Set one of `SO_SNDTIMEO` / `SO_RCVTIMEO`; `Duration::ZERO` disables it.
@@ -272,13 +310,10 @@ impl AsyncVsock {
     /// The caller must not close it again; a second close on a multi-threaded
     /// runtime can hit a number another connection has just been handed.
     pub fn new(fd: RawFd) -> io::Result<Self> {
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
         // We wrap it in a UnixStream to be able to use AsyncFd,
         // although it's actually an AF_VSOCK socket.
         let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+        capsem_foundation::unix::fd::set_nonblocking(std_stream.as_fd(), true)?;
         Ok(Self {
             inner: AsyncFd::new(std_stream)?,
             fd,

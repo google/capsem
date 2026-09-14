@@ -24,6 +24,7 @@ use capsem_core::{
         SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
     },
 };
+use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
 use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_service::errors::AppError;
@@ -36,17 +37,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
 use tokio::process::Command;
-use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
+mod instance;
 mod instance_reaper;
+use instance::InstanceInfo;
+mod network_routes;
+mod private_address;
+mod private_routes;
 mod process_control;
 mod profile_mutation_cache;
 mod profile_status_cache;
+mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod switches;
+use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
@@ -215,20 +223,22 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_PROFILE_DIR: &str = "vm";
 const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
 
-// Service state
-
 struct ServiceState {
-    /// Map of instance ID to Process Info
-    instances: Mutex<HashMap<String, InstanceInfo>>,
+    instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
     /// resolve a handle here and call `ready/query`; they do not open SQLite
     /// readers or create per-route projection caches.
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
-    /// Registry of persistent (named) VMs
     persistent_registry: SharedRegistry,
+    /// One lifetime address per VM; the persistent registry is its durable half.
+    private_addresses: Mutex<capsem_core::net::address_pool::AddressAllocator>,
+    /// Named networks as groups of VMs, durable in each network's database.
+    networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
+    service_socket: PathBuf,      // this service's own, where an owner asks on a guest's behalf
+    switches: switches::Switches, // one confined switch per network, and its links
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,
@@ -380,10 +390,6 @@ struct CachedListResponse {
     bytes: Bytes,
 }
 
-fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
-    session_dir.join("session.db")
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct AssetReconcileState {
     #[serde(default)]
@@ -398,30 +404,6 @@ struct AssetReconcileState {
     last_error: Option<String>,
     #[serde(default)]
     last_downloaded: Option<usize>,
-}
-
-struct InstanceInfo {
-    id: String,
-    name: String,
-    profile_id: String,
-    profile_revision: String,
-    profile_payload_hash: String,
-    asset_pins: BootAssetPins,
-    pid: u32,
-    uds_path: PathBuf,
-    session_dir: PathBuf,
-    ram_mb: u64,
-    cpus: u32,
-    #[allow(dead_code)]
-    start_time: std::time::Instant,
-    base_version: String,
-    /// Whether this is a persistent (named) VM
-    persistent: bool,
-    /// Environment variables injected at boot
-    #[allow(dead_code)]
-    env: Option<std::collections::HashMap<String, String>>,
-    /// Sandbox this VM was cloned from, if any
-    forked_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

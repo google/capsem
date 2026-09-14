@@ -2,7 +2,7 @@
 //!
 //! Run [`negotiate_initiator`] / [`negotiate_responder`] on a fresh
 //! `std::os::unix::net::UnixStream` *before* handing it to
-//! `tokio_unix_ipc::channel_from_std`. The handshake writes/reads a
+//! `ipc_channel::channel_from_std`. The handshake writes/reads a
 //! length-prefixed `[u32 BE len][rmp-serde encoded Hello]` frame on the
 //! raw socket. After both sides verify, ownership of the stream returns
 //! to the caller and the bincode channel layer takes over.

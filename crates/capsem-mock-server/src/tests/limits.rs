@@ -1,5 +1,6 @@
 use super::*;
 use crate::limits::MAX_WS_FRAME_BYTES;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// A peer chooses the frame length and the generated body size. Both are

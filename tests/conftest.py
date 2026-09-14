@@ -97,6 +97,31 @@ def _leak_log_path(filename: str, env: dict[str, str] | None = None) -> Path:
     return path.with_name(f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}")
 
 
+def _namespaced_basetemp(basetemp: str | None, env: dict[str, str] | None = None) -> str | None:
+    """Give each named pytest invocation its own directory under `--basetemp`.
+
+    The gate exports one `--basetemp` for every step, and pytest empties it
+    when a session starts. Run one after another that went unnoticed; run side
+    by side, a second suite deleted the first one's `tmp_path` files mid-test.
+    An xdist worker is already handed a directory inside its controller's.
+    """
+    source = os.environ if env is None else env
+    namespace = source.get("CAPSEM_TEST_RUN_ID", "").strip()
+    if not basetemp or not namespace or source.get("PYTEST_XDIST_WORKER"):
+        return basetemp
+    return str(Path(basetemp) / _sanitize_leak_log_namespace(namespace))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    # Before the tmp_path factory reads the option. pytest makes basetemp with
+    # a plain mkdir, so the shared directory it now sits in must exist.
+    namespaced = _namespaced_basetemp(config.option.basetemp)
+    if namespaced is not None and namespaced != config.option.basetemp:
+        Path(namespaced).parent.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = namespaced
+
+
 LEAK_REPORT_LOG = _leak_log_path("leak-report.log")
 # Shared cross-process attribution log within a single pytest invocation.
 # Workers append; controller reads.

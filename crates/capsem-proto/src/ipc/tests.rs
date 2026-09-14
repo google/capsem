@@ -68,6 +68,10 @@ fn service_to_process_bincode_indices_and_roundtrips_are_stable() {
             namespaced_name: "server__tool".into(),
             arguments_json: "{}".into(),
         },
+        ServiceToProcess::ExecStream {
+            id: 10,
+            command: "printf live".into(),
+        },
     ];
 
     for (expected, message) in messages.iter().enumerate() {
@@ -137,6 +141,10 @@ fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
         ProcessToService::SuspendFailed {
             id: "vm".into(),
             error: "failed".into(),
+        },
+        ProcessToService::ExecOutput {
+            id: 10,
+            data: vec![0, 255, 10],
         },
     ];
 
@@ -864,4 +872,32 @@ fn exec_result_defaults_to_not_truncated_when_the_field_is_absent() {
         ProcessToService::ExecResult { truncated, .. } => assert!(!truncated),
         other => panic!("expected ExecResult, got {other:?}"),
     }
+}
+
+#[test]
+fn link_attach_roundtrip() {
+    let ask = ServiceToProcess::LinkAttach {
+        id: 12,
+        token: "00000000000000bb".into(),
+        network: "8f5a1e6e-3c2a-4b4d-9c1e-1a2b3c4d5e6f".into(),
+        network_name: "team".into(),
+    };
+    let bytes = bincode::serialize(&ask).unwrap();
+    let back: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(back, ServiceToProcess::LinkAttach { id: 12, ref token, .. } if token == "00000000000000bb"));
+    let answer = ProcessToService::LinkAttachResult {
+        id: 12,
+        handoff_socket: "/run/instances/vm-handoff.sock".into(),
+        error: None,
+    };
+    let bytes = bincode::serialize(&answer).unwrap();
+    let back: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(
+        back,
+        ProcessToService::LinkAttachResult {
+            id: 12,
+            error: None,
+            ..
+        }
+    ));
 }

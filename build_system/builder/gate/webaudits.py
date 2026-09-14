@@ -66,3 +66,34 @@ def clippy(config: GateConfig) -> Step:
         speed=Speed.FAST,
         concurrency=SATURATES,
     )
+
+
+def clippy_guest(config: GateConfig) -> Step:
+    """Lint the guest feature set with every target, on the host toolchain.
+
+    Nothing here embeds the frontend, so unlike `clippy` this does not wait
+    for the bundle: it is a second compile of two crates, not of the workspace.
+    """
+    packages = [part for package in config.initrd.lint_packages for part in ("-p", package)]
+    return step(
+        "clippy.guest",
+        Run(
+            [
+                "cargo",
+                "clippy",
+                *packages,
+                "--no-default-features",
+                "--features",
+                ",".join(config.initrd.lint_features),
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
+        ),
+        contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.COMPILE,
+        speed=Speed.FAST,
+        concurrency=SATURATES,
+    )

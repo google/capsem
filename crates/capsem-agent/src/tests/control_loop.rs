@@ -90,7 +90,7 @@ fn run_control_loop_full(
     // Drain the channel.
     let mut responses = Vec::new();
     while let Ok(msg) = ctrl_rx.lock().unwrap().try_recv() {
-        responses.push(msg);
+        responses.push(msg.message);
     }
     (responses, pending, sender)
 }
@@ -361,7 +361,8 @@ fn control_loop_shutdown_returns_once_the_writer_confirms_the_report() {
     let confirm = ctrl_tx.clone();
     let writer = thread::spawn(move || {
         let msg = ctrl_rx.lock().unwrap().recv().expect("the report");
-        assert!(matches!(msg, GuestToHost::ShutdownComplete), "{msg:?}");
+        assert!(matches!(msg.message, GuestToHost::ShutdownComplete), "{msg:?}");
+        drop(msg);
         confirm.shutdown.mark_reported();
         std::time::Instant::now()
     });

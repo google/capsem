@@ -25,6 +25,8 @@ members = [
     "crates/capsem-tray",
     "crates/capsem-gateway",
     "crates/capsem-guard",
+    "crates/capsem-router",
+    "crates/capsem-network",
 ]
 
 [workspace.package]
@@ -153,6 +155,7 @@ large_futures = "deny"
 
 [workspace.dependencies]
 anyhow = "1"
+socket2 = "0.6"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"

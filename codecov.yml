@@ -110,6 +110,9 @@ component_management:
         - crates/capsem-core/src/net/mitm_proxy/**
         - crates/capsem-core/src/net/parsers/**
         - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/address_pool.rs
+        - crates/capsem-core/src/net/network_registry.rs
+        - crates/capsem-core/src/net/network_registry/**
 
     # Policy engine and security-rule evaluation, settings registry, corp
     # lockdown/MDM, and the credential broker's storage boundary.
@@ -150,6 +153,25 @@ component_management:
         - crates/capsem-core/src/vm/**
         - crates/capsem-core/src/hypervisor/**
         - crates/capsem-core/src/host_state.rs
+        - crates/capsem-core/src/container.rs
+        - crates/capsem-core/src/container/**
+
+    - component_id: port-router
+      name: Confined Port Router
+      paths:
+        - crates/capsem-router/src/**
+
+    # The private link between VMs: the frame codec and switch verdict, the
+    # service's switch host and the shared confined-child spawn, and the UDS
+    # client owners use to ask the service on their VM's behalf.
+    - component_id: private-network
+      name: Private Network
+      paths:
+        - crates/capsem-network/src/**
+        - crates/capsem-core/src/net/router_process.rs
+        - crates/capsem-core/src/net/switch_host.rs
+        - crates/capsem-core/src/net/switch_host/**
+        - crates/capsem-core/src/service_uds.rs
 
     # Runtime half of the asset contract: manifest hash extraction plus the
     # download/verify path that resolves recorded digests before boot.

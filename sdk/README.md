@@ -9,6 +9,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | Interface | Methods |
 | --- | --- |
 | Hypervisor | `info`, `list`, `create`, `log`, `update`, `restart` |
+| Private networks | `networks.create/list/inspect/delete/attach/detach/logs` |
 | VM | `info`, `exec`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
 | VM inspection | `list`, `log`, `history`, `timeline`, `changes` |
 | VM snapshots | `snapshots.list`, `snapshots.status` |
@@ -53,8 +54,9 @@ acknowledges launch, and an exec request waits for the guest to become ready.
 File copy requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
 
-Snapshot creation/restoration, mounts, port exposure and subnet configuration
-remain deferred. The SDK does not itself enable remote or container networking.
+Snapshot creation/restoration, mounts and port exposure remain deferred. Private
+network operations use authenticated gateway HTTP and immutable network IDs;
+VM creation accepts existing network names through its `networks` option.
 
 ## Oversight
 

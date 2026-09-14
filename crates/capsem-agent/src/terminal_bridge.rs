@@ -45,17 +45,25 @@ pub(crate) fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd, shutdown: &HostShut
                 if let Some(revents) = poll_fds[0].revents() {
                     if revents.contains(PollFlags::POLLIN) {
                         match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
-                            Ok(0) => break,
+                            Ok(0) => {
+                                eprintln!("[capsem-agent] terminal bridge: vsock read ended (host closed)");
+                                break;
+                            }
                             Ok(n) => {
-                                if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
+                                if let Err(error) = write_all_fd(master_fd_clone, &local_buf[..n]) {
+                                    eprintln!("[capsem-agent] terminal bridge: pty write failed: {error}");
                                     break;
                                 }
                             }
                             Err(nix::errno::Errno::EAGAIN) => {}
-                            Err(_) => break,
+                            Err(error) => {
+                                eprintln!("[capsem-agent] terminal bridge: vsock read failed: {error}");
+                                break;
+                            }
                         }
                     }
                     if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
+                        eprintln!("[capsem-agent] terminal bridge: vsock reader saw {revents:?}");
                         break;
                     }
                 }
@@ -89,6 +97,7 @@ pub(crate) fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd, shutdown: &HostShut
 
             if let Some(revents) = poll_fds[1].revents() {
                 if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
+                    eprintln!("[capsem-agent] terminal bridge: vsock saw {revents:?}");
                     break;
                 }
             }
@@ -98,16 +107,19 @@ pub(crate) fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd, shutdown: &HostShut
                 if revents.contains(PollFlags::POLLIN) {
                     match nix::unistd::read(master_fd, &mut buf) {
                         Ok(0) => {
+                            eprintln!("[capsem-agent] terminal bridge: pty closed");
                             hold_for_shutdown_report(shutdown);
                             break;
                         }
                         Ok(n) => {
-                            if write_all_fd(vsock_fd, &buf[..n]).is_err() {
+                            if let Err(error) = write_all_fd(vsock_fd, &buf[..n]) {
+                                eprintln!("[capsem-agent] terminal bridge: vsock write failed: {error}");
                                 break;
                             }
                         }
                         Err(nix::errno::Errno::EAGAIN) => {}
-                        Err(_) => {
+                        Err(error) => {
+                            eprintln!("[capsem-agent] terminal bridge: pty read failed: {error}");
                             hold_for_shutdown_report(shutdown);
                             break;
                         }

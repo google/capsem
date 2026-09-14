@@ -17,6 +17,7 @@ QueryValue = str | int | bool | Sequence[str | int | bool] | None
 class Method(StrEnum):
     GET = "GET"
     POST = "POST"
+    PUT = "PUT"
     DELETE = "DELETE"
 
 

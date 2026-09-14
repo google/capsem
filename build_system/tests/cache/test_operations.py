@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,51 @@ def test_incremental_retention_preserves_outputs_but_explicit_clean_removes_them
     apply_prune(cache_paths, cold, reason="operator requested cold clean")
     assert not compiled.exists()
     assert lock.stat().st_ino == inode, "unlinking a held lock lets a new producer bypass it"
+
+
+def test_holding_a_cargo_lock_leaves_a_target_directory_cargo_can_clean(tmp_path: Path) -> None:
+    """Holding `<root>/debug/.cargo-lock` creates `<root>` before Cargo does,
+    and Cargo tags only directories it creates. Untagged, `cargo clean`
+    refuses the directory, so cargo-llvm-cov could not clear instrumented
+    binaries left by earlier checkouts and every one counted as uncovered."""
+    import shutil
+    import subprocess
+
+    from capsem_builder.cache.leases import mutation_locks
+
+    original = paths(tmp_path)
+    locks = (Path("debug/.cargo-lock"), Path("llvm-cov-target/debug/.cargo-lock"), Path("tool/.lock"))
+    stage = original.policy.stages["objects"].model_copy(update={"mutation_locks": locks})
+    cache_paths = CachePaths(repository_root=tmp_path, policy=original.policy.model_copy(
+        update={"stages": {"objects": stage}},
+    ))
+    root = cache_paths.stage("objects")
+    with mutation_locks(cache_paths, ["objects"]):
+        pass
+    assert not (root / "tool/CACHEDIR.TAG").exists(), "only Cargo target roots are Cargo's to tag"
+    # A cold clean keeps the roots (their lock inodes survive) and must leave
+    # them tagged too, or the next coverage run's clean aborts again.
+    from capsem_builder.cache.inventory import scan_inventory
+    from capsem_builder.cache.planner import plan_clean
+
+    (root / "llvm-cov-target/debug/deps").mkdir(parents=True)
+    (root / "llvm-cov-target/debug/deps/stale").write_bytes(b"old prefix")
+    apply_prune(cache_paths, plan_clean(scan_inventory(cache_paths, cache_paths.policy), "objects"), reason="cold")
+    assert not (root / "llvm-cov-target/debug/deps/stale").exists()
+
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        pytest.skip("cargo is not installed")
+    crate = tmp_path / "crate"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "tagged"\nversion = "0.0.0"\nedition = "2021"\n')
+    (crate / "src/lib.rs").write_text("")
+    for target in (root, root / "llvm-cov-target"):
+        cleaned = subprocess.run(
+            [cargo, "clean", "--manifest-path", str(crate / "Cargo.toml"), "--target-dir", str(target)],
+            capture_output=True, text=True, check=False, env={**os.environ, "CARGO_TARGET_DIR": str(target)},
+        )
+        assert cleaned.returncode == 0, cleaned.stderr
 
 
 def test_apply_refuses_a_target_through_a_symlinked_parent(tmp_path: Path) -> None:

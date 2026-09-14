@@ -51,10 +51,7 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
     let mut service_stream = service_stream.into_std().unwrap();
     let service = tokio::task::spawn_blocking(move || {
         capsem_foundation::ipc_handshake::negotiate_initiator(&mut service_stream, "capsem-service-test", "").unwrap();
-        let channel: (
-            tokio_unix_ipc::Sender<ServiceToProcess>,
-            tokio_unix_ipc::Receiver<ProcessToService>,
-        ) = tokio_unix_ipc::channel_from_std(service_stream).unwrap();
+        let channel: (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(service_stream).unwrap();
         channel
     });
 
@@ -76,129 +73,160 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
     assert!(open_ipc_channel(process_stream).await.unwrap().is_none());
 }
 
-#[tokio::test]
-async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
-    let temp = tempfile::tempdir().unwrap();
-    let active_profile = temp.path().join("active_profile.toml");
-    std::fs::write(
-        &active_profile,
-        r#"
+/// The owner's IPC dispatcher as `main.rs` wires it, on a fixture profile
+/// with an in-memory ledger and a canned MCP aggregator.
+struct Dispatcher {
+    job_store: Arc<JobStore>,
+    term_relay: Arc<TerminalRelay>,
+    ctrl_tx: mpsc::Sender<ServiceToProcess>,
+    events_tx: broadcast::Sender<ProcessToService>,
+    net_state: Arc<capsem_core::SandboxNetworkState>,
+    mcp_runtime: Arc<McpRuntime>,
+    runtime_source: RuntimeProfileSource,
+    scheduler: SharedSnapshotScheduler,
+    ready: Arc<AtomicBool>,
+}
+
+impl Dispatcher {
+    fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+        let active_profile = temp.join("active_profile.toml");
+        std::fs::write(
+            &active_profile,
+            r#"
 id = "code"
 name = "Code"
 description = "IPC dispatcher fixture."
 revision = "test.1"
 "#,
-    )
-    .unwrap();
-    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap());
-    let net_state = Arc::new(
-        capsem_core::create_net_state_with_policy(
-            "ipc-dispatch-test",
-            Arc::clone(&db),
-            capsem_core::net::policy::NetworkMechanics::default(),
         )
-        .unwrap(),
-    );
-    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
-    )));
-    let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())));
-    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_config::ModelEndpointRegistry::default(),
-    )));
-    let (aggregator, mut aggregator_rx) = AggregatorClient::channel(8);
-    tokio::spawn(async move {
-        while let Some((request, response_tx)) = aggregator_rx.recv().await {
-            let body = match request.method {
-                capsem_proto::mcp_aggregator::AggregatorMethod::ListServers => AggregatorResult::Servers {
-                    servers: vec![AggregatorServerStatus {
-                        name: "fixture".to_string(),
-                        url: "stdio://fixture".to_string(),
-                        enabled: true,
-                        source: "profile".to_string(),
-                        is_stdio: true,
-                        connected: true,
-                        tool_count: 1,
-                        resource_count: 0,
-                        prompt_count: 0,
-                    }],
-                },
-                capsem_proto::mcp_aggregator::AggregatorMethod::ListTools => AggregatorResult::Tools {
-                    tools: vec![McpToolDef {
-                        namespaced_name: "fixture__echo".to_string(),
-                        original_name: "echo".to_string(),
-                        description: Some("Echo fixture input".to_string()),
-                        input_schema: serde_json::json!({"type": "object"}),
-                        server_name: "fixture".to_string(),
-                        annotations: None,
-                        timeout_secs: None,
-                    }],
-                },
-                capsem_proto::mcp_aggregator::AggregatorMethod::Refresh { .. } => AggregatorResult::Ok { ok: true },
-                capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments, .. } => {
-                    AggregatorResult::CallResult {
-                        result: serde_json::json!({"tool": name, "arguments": arguments}),
+        .unwrap();
+        let db = Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap());
+        let net_state = Arc::new(
+            capsem_core::create_net_state_with_policy(
+                "ipc-dispatch-test",
+                Arc::clone(&db),
+                capsem_core::net::policy::NetworkMechanics::default(),
+            )
+            .unwrap(),
+        );
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+            capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+        )));
+        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())));
+        let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
+            capsem_core::net::policy_config::ModelEndpointRegistry::default(),
+        )));
+        let (aggregator, mut aggregator_rx) = AggregatorClient::channel(8);
+        tokio::spawn(async move {
+            while let Some((request, response_tx)) = aggregator_rx.recv().await {
+                let body = match request.method {
+                    capsem_proto::mcp_aggregator::AggregatorMethod::ListServers => AggregatorResult::Servers {
+                        servers: vec![AggregatorServerStatus {
+                            name: "fixture".to_string(),
+                            url: "stdio://fixture".to_string(),
+                            enabled: true,
+                            source: "profile".to_string(),
+                            is_stdio: true,
+                            connected: true,
+                            tool_count: 1,
+                            resource_count: 0,
+                            prompt_count: 0,
+                        }],
+                    },
+                    capsem_proto::mcp_aggregator::AggregatorMethod::ListTools => AggregatorResult::Tools {
+                        tools: vec![McpToolDef {
+                            namespaced_name: "fixture__echo".to_string(),
+                            original_name: "echo".to_string(),
+                            description: Some("Echo fixture input".to_string()),
+                            input_schema: serde_json::json!({"type": "object"}),
+                            server_name: "fixture".to_string(),
+                            annotations: None,
+                            timeout_secs: None,
+                        }],
+                    },
+                    capsem_proto::mcp_aggregator::AggregatorMethod::Refresh { .. } => AggregatorResult::Ok { ok: true },
+                    capsem_proto::mcp_aggregator::AggregatorMethod::CallTool { name, arguments, .. } => {
+                        AggregatorResult::CallResult {
+                            result: serde_json::json!({"tool": name, "arguments": arguments}),
+                        }
                     }
-                }
-                _ => AggregatorResult::Error {
-                    error: "unsupported in dispatcher fixture".to_string(),
-                },
-            };
-            let _ = response_tx.send(AggregatorResponse { id: request.id, body });
-        }
-    });
-    let endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
-        aggregator.clone(),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::new(tokio::sync::Semaphore::new(4)),
-        capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
-    ));
-    let mcp_runtime = Arc::new(McpRuntime {
-        aggregator,
-        endpoint,
-        db: Arc::clone(&db),
-        security_rules,
-        plugin_policy,
-        model_endpoints,
-    });
-    let scheduler = Arc::new(tokio::sync::Mutex::new(
-        capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-            temp.path().to_path_buf(),
-            2,
-            2,
-            Duration::from_secs(300),
-        ),
-    ));
-    let term_relay = TerminalRelay::new(8);
-    term_relay.publish(b"boot banner\n".to_vec());
-    let job_store = Arc::new(JobStore::new());
-    let (ctrl_tx, mut ctrl_rx) = mpsc::channel(16);
-    let (events_tx, _) = broadcast::channel(16);
-    let ready = Arc::new(AtomicBool::new(true));
+                    _ => AggregatorResult::Error {
+                        error: "unsupported in dispatcher fixture".to_string(),
+                    },
+                };
+                let _ = response_tx.send(AggregatorResponse { id: request.id, body });
+            }
+        });
+        let endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
+            aggregator.clone(),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::new(tokio::sync::Semaphore::new(4)),
+            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+        ));
+        let mcp_runtime = Arc::new(McpRuntime {
+            aggregator,
+            endpoint,
+            db: Arc::clone(&db),
+            security_rules,
+            plugin_policy,
+            model_endpoints,
+        });
+        let scheduler = Arc::new(tokio::sync::Mutex::new(
+            capsem_core::auto_snapshot::AutoSnapshotScheduler::new(temp.to_path_buf(), 2, 2, Duration::from_secs(300)),
+        ));
+        let term_relay = TerminalRelay::new(8);
+        let job_store = Arc::new(JobStore::new());
+        let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
+        let (events_tx, _) = broadcast::channel(16);
+        (
+            Self {
+                job_store,
+                term_relay,
+                ctrl_tx,
+                events_tx,
+                net_state,
+                mcp_runtime,
+                runtime_source: RuntimeProfileSource::new(active_profile),
+                scheduler,
+                ready: Arc::new(AtomicBool::new(true)),
+            },
+            ctrl_rx,
+        )
+    }
+
+    /// Serve one service connection the way the owner's accept loop does.
+    fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
+        tokio::spawn(handle_ipc_connection(
+            stream,
+            self.ctrl_tx.clone(),
+            self.events_tx.clone(),
+            Arc::clone(&self.term_relay),
+            Arc::clone(&self.job_store),
+            Arc::clone(&self.net_state),
+            Arc::clone(&self.mcp_runtime),
+            self.runtime_source.clone(),
+            None,
+            HashMap::new(),
+            Arc::clone(&self.scheduler),
+            Arc::clone(&self.ready),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, mut ctrl_rx) = Dispatcher::new(temp.path());
+    dispatcher.term_relay.publish(b"boot banner\n".to_vec());
+    let job_store = Arc::clone(&dispatcher.job_store);
     let (process_stream, service_stream) = tokio::net::UnixStream::pair().unwrap();
-    let handler = tokio::spawn(handle_ipc_connection(
-        process_stream,
-        ctrl_tx,
-        events_tx,
-        Arc::clone(&term_relay),
-        Arc::clone(&job_store),
-        net_state,
-        mcp_runtime,
-        RuntimeProfileSource::new(active_profile),
-        None,
-        HashMap::new(),
-        scheduler,
-        ready,
-    ));
+    let handler = dispatcher.connection(process_stream);
 
     let mut service_stream = service_stream.into_std().unwrap();
     let service = tokio::task::spawn_blocking(move || {
         capsem_foundation::ipc_handshake::negotiate_initiator(&mut service_stream, "capsem-service-test", "").unwrap();
-        let channel: (
-            tokio_unix_ipc::Sender<ServiceToProcess>,
-            tokio_unix_ipc::Receiver<ProcessToService>,
-        ) = tokio_unix_ipc::channel_from_std(service_stream).unwrap();
+        let channel: (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(service_stream).unwrap();
         channel
     });
     let (service_tx, service_rx) = service.await.unwrap();
@@ -260,6 +288,53 @@ revision = "test.1"
         service_rx.recv().await.unwrap(),
         ProcessToService::ExecResult { id: 10, exit_code: 0, stdout, .. } if stdout == b"ok"
     ));
+
+    service_tx
+        .send(ServiceToProcess::ExecStream {
+            id: 19,
+            command: "printf live".into(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        ctrl_rx.recv().await.unwrap(),
+        ServiceToProcess::Exec { id: 19, .. }
+    ));
+    let sender = job_store
+        .active_execs
+        .lock()
+        .unwrap()
+        .get(&19)
+        .unwrap()
+        .stream
+        .clone()
+        .unwrap();
+    sender
+        .send(ProcessToService::ExecOutput {
+            id: 19,
+            data: b"live\0\xff".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, data } if data == b"live\0\xff")
+    );
+    job_store
+        .jobs
+        .lock()
+        .unwrap()
+        .remove(&19)
+        .unwrap()
+        .send(JobResult::Exec {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: 7,
+            truncated: false,
+        })
+        .unwrap();
+    assert!(
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecResult { id: 19, exit_code: 7, stdout, .. } if stdout.is_empty())
+    );
 
     service_tx
         .send(ServiceToProcess::Exec {
@@ -654,6 +729,71 @@ revision = "test.1"
     service_tx.send(ServiceToProcess::Shutdown).await.unwrap();
     assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Shutdown));
     handler.await.unwrap().unwrap();
+}
+
+/// Thirty-two private admissions asked at once over the owner's socket, four
+/// hundred rounds, every one answered through the dispatcher. The redis cell
+/// of the private path benchmark lost one reply in thirty-two (gate
+/// 20260912-190634): a closed connection's descriptor number was reused by
+/// the next one before its registration had left the kqueue, and the owner
+/// sat in `recv` while the service waited its eight seconds out. Failed here
+/// by round twenty over the transport's own teardown; the foundation channel
+/// deregisters before it closes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_private_accepts_are_all_answered() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, _ctrl_rx) = Dispatcher::new(temp.path());
+    let dispatcher = Arc::new(dispatcher);
+    let socket = temp.path().join("owner.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let owner = Arc::clone(&dispatcher);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            owner.connection(stream);
+        }
+    });
+    for round in 0..400u64 {
+        let asks: Vec<_> = (0..32u64)
+            .map(|n| {
+                let socket = socket.clone();
+                tokio::spawn(async move {
+                    let id = round * 64 + n;
+                    let stream = tokio::net::UnixStream::connect(&socket)
+                        .await
+                        .unwrap()
+                        .into_std()
+                        .unwrap();
+                    let (stream, _) =
+                        capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(stream, "capsem-service", "")
+                            .await
+                            .unwrap();
+                    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
+                        channel_from_std(stream).unwrap();
+                    tx.send(ServiceToProcess::PrivateAccept {
+                        id,
+                        token: format!("{id:016x}"),
+                        network: "11111111-2222-3333-4444-555555555555".into(),
+                        network_name: "net".into(),
+                        source_vm: "alpha".into(),
+                        source_name: "alpha".into(),
+                        source_generation: 1,
+                        source_address: std::net::Ipv4Addr::new(10, 128, 0, 2),
+                        source_port: 40000,
+                        port: 6379,
+                    })
+                    .await
+                    .unwrap();
+                    match tokio::time::timeout(Duration::from_secs(5), rx.recv()).await {
+                        Ok(Ok(ProcessToService::PrivateAcceptResult { id: answered, .. })) => assert_eq!(answered, id),
+                        other => panic!("ask {id} of round {round} was not answered: {other:?}"),
+                    }
+                })
+            })
+            .collect();
+        for ask in asks {
+            ask.await.unwrap();
+        }
+    }
 }
 
 #[test]

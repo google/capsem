@@ -1,0 +1,411 @@
+"""Guest launcher policy, exercised without executing an image on the host."""
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+SOURCE = Path(__file__).resolve().parents[3] / "guest/artifacts/container/launch.py"
+
+
+@pytest.fixture
+def launcher():
+    spec = importlib.util.spec_from_file_location("container_launch", SOURCE)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def image():
+    return {
+        "config": {
+            "Entrypoint": ["docker-entrypoint.sh"],
+            "Cmd": ["redis-server"],
+            "Volumes": {"/data": {}},
+        }
+    }
+
+
+def unpacked():
+    return {
+        "process": {
+            "args": ["docker-entrypoint.sh", "redis-server"],
+            "env": ["PATH=/usr/local/bin:/usr/bin:/bin", "A=old"],
+            "cwd": "/data",
+            "user": {"uid": 0, "gid": 0},
+        },
+        "hooks": {"prestart": [{"path": "/evil"}]},
+    }
+
+
+def test_default_command_user_and_workdir_survive_hardening(launcher):
+    config = launcher.configure(unpacked(), image(), {"args": [], "env": {}})
+    process = config["process"]
+    assert process["args"] == ["docker-entrypoint.sh", "redis-server"]
+    assert process["user"] == {"uid": 0, "gid": 0}
+    assert process["cwd"] == "/data"
+    assert process["noNewPrivileges"] is True
+    assert config["root"] == {"path": "rootfs", "readonly": True}
+    hooks = config["hooks"]["prestart"]
+    assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
+    assert hooks[0]["args"] == ["/usr/bin/python3", str(SOURCE), "--network-ready"]
+    assert hooks[0]["timeout"] == 5
+    assert {ns["type"] for ns in config["linux"]["namespaces"]} == {
+        "pid",
+        "mount",
+        "ipc",
+        "uts",
+        "network",
+    }
+    assert "CAP_SYS_ADMIN" not in process["capabilities"]["bounding"]
+    assert "CAP_NET_RAW" not in process["capabilities"]["bounding"]
+    assert config["linux"]["resources"]["memory"]["limit"] == 256 * 1024**2
+    assert config["linux"]["resources"]["pids"]["limit"] == 256
+    assert all(mount["type"] in {"proc", "tmpfs", "bind"} for mount in config["mounts"])
+    assert "/data" in {mount["destination"] for mount in config["mounts"]}
+
+
+def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
+    options = {"args": [], "env": {"NODE_EXTRA_CA_CERTS": "/mine"}}
+    config = launcher.configure(unpacked(), image(), options)
+    binds = {
+        mount["destination"]: mount
+        for mount in config["mounts"]
+        if mount["type"] == "bind"
+    }
+    # Only these two host files ever enter a container, and only read-only.
+    assert set(binds) == {"/etc/resolv.conf", launcher.CA_BUNDLE}
+    assert binds[launcher.CA_BUNDLE]["source"] == launcher.CA_BUNDLE
+    assert binds["/etc/resolv.conf"]["source"] == str(launcher.RUNTIME / "resolv.conf")
+    for mount in binds.values():
+        assert {"bind", "ro", "nosuid", "nodev", "noexec"} <= set(mount["options"])
+    env = dict(entry.split("=", 1) for entry in config["process"]["env"])
+    assert env["SSL_CERT_FILE"] == launcher.CA_BUNDLE
+    assert env["REQUESTS_CA_BUNDLE"] == launcher.CA_BUNDLE
+    assert env["CURL_CA_BUNDLE"] == launcher.CA_BUNDLE
+    assert env["NODE_EXTRA_CA_CERTS"] == "/mine", "explicit user environment wins"
+    assert launcher.resolv_conf().startswith(f"nameserver {launcher.GATEWAY}\n")
+
+
+VM_OUTPUT_RULES = """\
+-P OUTPUT ACCEPT
+-A OUTPUT -p udp -m udp --dport 53 -j REDIRECT --to-ports 1053
+-A OUTPUT -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 1053
+-A OUTPUT -d 10.128.0.1/32 -p tcp -j RETURN
+-A OUTPUT -d 10.128.0.0/9 -p tcp -j REDIRECT --to-ports 10128
+-A OUTPUT -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 10443
+-A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 10080
+-A OUTPUT -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 10080
+"""
+
+
+def test_gateway_redirects_mirror_the_vm_interception_rules(launcher):
+    assert launcher.derive_redirects(VM_OUTPUT_RULES) == [
+        ("udp", 53, 1053, None),
+        ("tcp", 53, 1053, None),
+        ("tcp", None, 10128, "10.128.0.0/9"),
+        ("tcp", 443, 10443, None),
+        ("tcp", 80, 10080, None),
+        ("tcp", 8080, 10080, None),
+    ]
+    assert launcher.derive_redirects("-P OUTPUT ACCEPT\n") == []
+
+
+class FakeRun:
+    """Records every command the hook issues and answers the three it reads."""
+
+    def __init__(self, rules, jump_exists=False, tap0_address=None):
+        self.calls = []
+        self.rules = rules
+        self.jump_exists = jump_exists
+        self.tap0_address = tap0_address
+
+    def __call__(self, *argv, check=True, **kwargs):
+        self.calls.append(list(argv))
+        stdout = ""
+        returncode = 0
+        if "-S" in argv:
+            stdout = self.rules
+        elif argv[:3] == ("ip", "-o", "addr"):
+            assert not check, "the link is probed without raising"
+            if self.tap0_address:
+                stdout = f"4: tap0    inet {self.tap0_address}/9 scope global tap0\n"
+            else:
+                returncode = 1
+        if "-C" in argv:
+            assert not check, "chain existence must be probed without raising"
+            returncode = 0 if self.jump_exists else 1
+        return type("Done", (), {"returncode": returncode, "stdout": stdout})()
+
+
+def hook_environment(tmp_path):
+    (tmp_path / "net/ipv4/conf/capsem0").mkdir(parents=True)
+    return tmp_path
+
+
+def test_network_ready_hook_pins_the_container_to_the_vm_proxies(launcher, tmp_path):
+    run = FakeRun(VM_OUTPUT_RULES)
+    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    calls = run.calls
+    ns = ["nsenter", "-t", "4242", "-n"]
+    iptables = launcher.IPTABLES
+    # The container gets its own end of a veth pair, one address and one route.
+    assert [
+        "ip",
+        "link",
+        "add",
+        "capsem0",
+        "type",
+        "veth",
+        "peer",
+        "name",
+        "capsem1",
+    ] in calls
+    assert ["ip", "link", "set", "capsem1", "netns", "4242"] in calls
+    assert [
+        *ns,
+        "ip",
+        "addr",
+        "add",
+        f"{launcher.CONTAINER_ADDRESS}/30",
+        "dev",
+        "eth0",
+    ] in calls
+    assert [*ns, "ip", "route", "add", "default", "via", launcher.GATEWAY] in calls
+    assert (tmp_path / "net/ipv4/conf/capsem0/route_localnet").read_text() == "1\n"
+    # Every VM redirect is mirrored as a DNAT to the loopback proxy ...
+    for proto, dport, target, destination in launcher.derive_redirects(VM_OUTPUT_RULES):
+        dnat = [
+            iptables,
+            "-t",
+            "nat",
+            "-A",
+            launcher.NAT_CHAIN,
+            "-i",
+            "capsem0",
+            "-p",
+            proto,
+        ]
+        if destination:
+            dnat += ["-d", destination]
+        if dport is not None:
+            dnat += ["--dport", str(dport)]
+        dnat += ["-j", "DNAT", "--to-destination", f"127.0.0.1:{target}"]
+        assert dnat in calls
+        accept = [
+            iptables,
+            "-A",
+            launcher.INPUT_CHAIN,
+            "-i",
+            "capsem0",
+            "-d",
+            "127.0.0.1",
+            "-p",
+            proto,
+        ]
+        accept += ["--dport", str(target), "-j", "ACCEPT"]
+        assert accept in calls
+    # ... and nothing else in the VM is reachable from the container.
+    reject = [iptables, "-A", launcher.INPUT_CHAIN, "-i", "capsem0", "-j", "DROP"]
+    assert reject in calls
+    accepts = [
+        i
+        for i, call in enumerate(calls)
+        if call[:3] == [iptables, "-A", launcher.INPUT_CHAIN] and call[-1] == "ACCEPT"
+    ]
+    assert accepts and max(accepts) < calls.index(reject), (
+        "accepts must precede the drop"
+    )
+    assert [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"] in calls
+    assert [
+        iptables,
+        "-t",
+        "nat",
+        "-I",
+        "PREROUTING",
+        "-j",
+        launcher.NAT_CHAIN,
+    ] in calls
+    assert [iptables, "-I", "INPUT", "-j", launcher.INPUT_CHAIN] in calls
+
+
+def test_network_ready_hook_does_not_duplicate_chain_jumps(launcher, tmp_path):
+    run = FakeRun(VM_OUTPUT_RULES, jump_exists=True)
+    launcher.network_ready(7, run=run, sysctl_root=hook_environment(tmp_path))
+    iptables = launcher.IPTABLES
+    assert [
+        iptables,
+        "-t",
+        "nat",
+        "-I",
+        "PREROUTING",
+        "-j",
+        launcher.NAT_CHAIN,
+    ] not in run.calls
+    assert [iptables, "-I", "INPUT", "-j", launcher.INPUT_CHAIN] not in run.calls
+    assert [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"] not in run.calls
+    # The chains themselves are flushed so a second workload starts clean.
+    assert [iptables, "-t", "nat", "-F", launcher.NAT_CHAIN] in run.calls
+    assert [iptables, "-F", launcher.INPUT_CHAIN] in run.calls
+
+
+def test_network_ready_hook_refuses_a_vm_without_interception(launcher, tmp_path):
+    run = FakeRun("-P OUTPUT ACCEPT\n")
+    with pytest.raises(ValueError, match="interception"):
+        launcher.network_ready(7, run=run, sysctl_root=hook_environment(tmp_path))
+    assert not any("DNAT" in call for call in run.calls)
+
+
+def test_command_override_replaces_cmd_but_preserves_entrypoint(launcher):
+    options = {"args": ["redis-server", "--save", ""], "env": {"A": "new", "B": "a=b"}}
+    config = launcher.configure(unpacked(), image(), options)
+    assert config["process"]["args"] == [
+        "docker-entrypoint.sh",
+        "redis-server",
+        "--save",
+        "",
+    ]
+    assert config["process"]["env"] == [
+        "PATH=/usr/local/bin:/usr/bin:/bin",
+        "A=new",
+        f"SSL_CERT_FILE={launcher.CA_BUNDLE}",
+        f"REQUESTS_CA_BUNDLE={launcher.CA_BUNDLE}",
+        f"CURL_CA_BUNDLE={launcher.CA_BUNDLE}",
+        f"NODE_EXTRA_CA_CERTS={launcher.CA_BUNDLE}",
+        "B=a=b",
+    ]
+
+
+@pytest.mark.parametrize(
+    "volume", ["/", "../escape", "/data/../etc", "/proc", "/dev/x", "/sys", "/usr/bin"]
+)
+def test_image_cannot_replace_security_mounts_or_root(launcher, volume):
+    source = image()
+    source["config"]["Volumes"] = {volume: {}}
+    with pytest.raises(ValueError):
+        launcher.configure(unpacked(), source, {"args": [], "env": {}})
+
+
+def test_missing_command_fails_before_runtime_launch(launcher):
+    config = unpacked()
+    config["process"]["args"] = []
+    with pytest.raises(ValueError, match="command"):
+        launcher.configure(config, {"config": {}}, {"args": [], "env": {}})
+
+
+def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_path):
+    import hashlib
+    import json
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    content = b"verified OCI bytes"
+    (stage / "0-0").write_bytes(content)
+    (stage / "transfer.json").write_text(
+        json.dumps(
+            [
+                {
+                    "path": "blob",
+                    "key": 0,
+                    "parts": 1,
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            ]
+        )
+    )
+    for name in ("first-boot", "restart"):
+        layout = tmp_path / name
+        layout.mkdir()
+        launcher.assemble(stage, layout)
+        assert (layout / "blob").read_bytes() == content
+    (stage / "0-0").write_bytes(b"tampered")
+    layout = tmp_path / "tampered"
+    layout.mkdir()
+    with pytest.raises(ValueError, match="digest"):
+        launcher.assemble(stage, layout)
+
+
+def test_network_ready_hook_opens_the_private_link_to_the_container(launcher, tmp_path):
+    """With a private link up, container UDP and ICMP to the pool leave through
+    tap0 as the VM's own address, and UDP arriving on tap0 lands in the
+    container; TCP keeps its DNAT to the proxy and everything else stays
+    dropped."""
+    run = FakeRun(VM_OUTPUT_RULES, tap0_address="10.129.7.200")
+    root = hook_environment(tmp_path)
+    (root / "net/ipv4").mkdir(parents=True, exist_ok=True)
+    launcher.network_ready(4242, run=run, sysctl_root=root)
+    calls = run.calls
+    iptables = launcher.IPTABLES
+    assert (root / "net/ipv4/ip_forward").read_text() == "1\n"
+    snat = [
+        iptables,
+        "-t",
+        "nat",
+        "-A",
+        "POSTROUTING",
+        "-o",
+        "tap0",
+        "-s",
+        launcher.CONTAINER_ADDRESS,
+        "-j",
+        "SNAT",
+        "--to-source",
+        "10.129.7.200",
+    ]
+    assert snat in calls
+    dnat = [
+        iptables,
+        "-t",
+        "nat",
+        "-A",
+        launcher.NAT_CHAIN,
+        "-i",
+        "tap0",
+        "-p",
+        "udp",
+        "-j",
+        "DNAT",
+        "--to-destination",
+        launcher.CONTAINER_ADDRESS,
+    ]
+    assert dnat in calls
+    for proto in ("udp", "icmp"):
+        out = [
+            iptables,
+            "-I",
+            "FORWARD",
+            "-i",
+            "capsem0",
+            "-o",
+            "tap0",
+            "-d",
+            launcher.PRIVATE_POOL,
+            "-p",
+            proto,
+            "-j",
+            "ACCEPT",
+        ]
+        assert out in calls
+    back = [iptables, "-I", "FORWARD", "-i", "tap0", "-o", "capsem0", "-j", "ACCEPT"]
+    assert back in calls
+    drop = [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"]
+    # Inserted after the drop, so they sit above it in the chain.
+    assert calls.index(back) > calls.index(drop)
+    assert all(
+        calls.index(call) > calls.index(drop)
+        for call in calls
+        if call[-1] == "ACCEPT" and "FORWARD" in call
+    )
+
+
+def test_network_ready_hook_without_a_private_link_adds_no_link_rules(
+    launcher, tmp_path
+):
+    run = FakeRun(VM_OUTPUT_RULES)
+    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    # The link is probed and found absent; no rule names it.
+    assert not any(
+        call[0] == launcher.IPTABLES and "tap0" in call for call in run.calls
+    )
+    assert not (tmp_path / "net/ipv4/ip_forward").exists()

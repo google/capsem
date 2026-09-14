@@ -59,6 +59,24 @@ pub fn capsem_sessions_dir() -> PathBuf {
     capsem_home().join("sessions")
 }
 
+/// Return `<capsem_home>/networks`: one directory per named network, beside
+/// the sessions rather than under any of them, since a network outlives the
+/// sessions of its members.
+pub fn capsem_networks_dir() -> PathBuf {
+    capsem_home().join("networks")
+}
+
+/// Return the logger-owned database of one named network.
+pub fn network_db_path(network_id: &str) -> PathBuf {
+    network_db_path_in(&capsem_networks_dir(), network_id)
+}
+
+/// The same layout under an explicit networks root, for registries built
+/// against a directory rather than the home.
+pub fn network_db_path_in(networks_dir: &std::path::Path, network_id: &str) -> PathBuf {
+    networks_dir.join(network_id).join("network.db")
+}
+
 /// Return `<capsem_home>/bin` (installed binaries directory).
 pub fn capsem_bin_dir() -> PathBuf {
     capsem_home().join("bin")

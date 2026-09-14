@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.sdkgen.operations import Route, read_operations
-from capsem_builder.sdkgen.rust_operations import render_operations, type_name, wire_value
+from capsem_builder.sdkgen.rust_operations import parameter_name, render_operations, type_name, wire_value
 from capsem_builder.sdkgen.schema import Schema
 
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
@@ -22,6 +22,7 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     ({"type": "integer", "format": "int32"}, "i32"),
     ({"type": "integer", "minimum": 0}, "u64"),
     ({"type": "boolean"}, "bool"),
+    ({"type": ["string", "null"]}, "String"),
 ])
 def test_primitive_types(schema: dict, expected: str) -> None:
     assert type_name(Schema.model_validate(schema)) == expected
@@ -46,7 +47,8 @@ def test_collisions_and_reserved_identifiers_fail_closed() -> None:
     invalid = route.operation.model_copy(update={"operation_id": "type"})
     with pytest.raises(ValueError, match="operation"):
         render_operations([Route(route.path, route.method, invalid)])
-    parameter = route.operation.parameters[0].model_copy(update={"name": "type"})
+    assert parameter_name("type") == "r#type"
+    parameter = route.operation.parameters[0].model_copy(update={"name": "self"})
     invalid = route.operation.model_copy(update={"parameters": [parameter]})
     with pytest.raises(ValueError, match="parameter"):
         render_operations([Route(route.path, route.method, invalid)])

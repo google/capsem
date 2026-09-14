@@ -48,16 +48,51 @@ def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> Non
         qualification=qualification,
     )
 
-    assert alias.plan().describe() == owner.plan().describe()
+    planned, owned = alias.plan(), owner.plan()
+    assert set(owned.labels) <= set(planned.labels), "the alias runs the owner's whole plan"
+    for label in owned.labels:
+        assert owned.after_of(label) <= planned.after_of(label), label
+
+
+# Ruff, both Ty passes and the Citadel answer in seconds; a focused run that
+# skipped them let a type error or a lint failure reach a 70-minute gate.
+SOURCE_GUARDS = ("python.ruff", "python.ty.strict", "python.ty.relaxed", "fast.citadel")
+
+
+@pytest.mark.parametrize("group", sorted(focus.TARGETS))
+def test_every_focus_group_runs_the_source_guards_before_its_own_work(group: str) -> None:
+    runner = RecordingRunner(ROOT)
+    qualification = LocalQualification(bin_dir="cache/target/cargo/debug")
+    plan = focus.FocusTestCommand(runner, _args(group), qualification=qualification).plan()
+    labels = set(plan.labels)
+    assert set(SOURCE_GUARDS) <= labels, sorted(labels)
+
+    def upstream(label: str) -> set[str]:
+        seen: set[str] = set()
+        pending = [label]
+        while pending:
+            for earlier in plan.after_of(pending.pop()):
+                if earlier not in seen:
+                    seen.add(earlier)
+                    pending.append(earlier)
+        return seen
+
+    guard_steps = set(SOURCE_GUARDS) | {label for label in labels if label.startswith("fast.")}
+    for label in labels - guard_steps - {"python.ruff", "python.ty.strict", "python.ty.relaxed"}:
+        assert set(SOURCE_GUARDS) <= upstream(label), f"{label} can start before the source guards pass"
 
 
 def test_release_system_focus_is_source_only_and_needs_no_local_package() -> None:
     assert focus.TARGETS["release-system"] is module_contracts.ReleaseContractsModule
-    plan = focus.FocusTestCommand(
-        RecordingRunner(ROOT),
-        _args("release-system"),
-        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
-    ).plan().describe()
+    plan = (
+        focus.FocusTestCommand(
+            RecordingRunner(ROOT),
+            _args("release-system"),
+            qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+        )
+        .plan()
+        .describe()
+    )
 
     assert "contracts.release" in plan
     assert "contracts.build-system" in plan
@@ -131,8 +166,12 @@ def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: P
     for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
         (native / name).write_bytes(b"fixture")
     plan = Plan("glowup-early-content")
-    glowup(plan, config, qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
-           local_content=content)
+    glowup(
+        plan,
+        config,
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+        local_content=content,
+    )
     runner = RecordingRunner(ROOT)
     with pytest.raises(GateError, match="manifest does not declare"):
         for action in plan.step_named("glowup.content").actions:
@@ -142,9 +181,12 @@ def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: P
 
 def test_pulled_glowup_does_not_rebuild_source_assets() -> None:
     command = focus.FocusTestCommand(
-        RecordingRunner(ROOT), _args("install"),
+        RecordingRunner(ROOT),
+        _args("install"),
         qualification=BinaryQualification(
-            input_dir="pulled", package="pulled/capsem.deb", bin_dir="pulled/bin",
+            input_dir="pulled",
+            package="pulled/capsem.deb",
+            bin_dir="pulled/bin",
         ),
     )
     assert not any(label.startswith("assets.build.") for label in command.plan().labels)
@@ -162,9 +204,7 @@ def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> Non
     assert command.private_checkout == owner.private_checkout
     assert command._sandbox_mode == owner._sandbox_mode
     assert "reexec" not in vars(type(command))
-    assert re.search(
-        r"(?<![\w-])capsem-gate(?![\w-])", command.plan().describe()
-    ) is None
+    assert re.search(r"(?<![\w-])capsem-gate(?![\w-])", command.plan().describe()) is None
 
 
 @pytest.mark.parametrize(
@@ -176,10 +216,13 @@ def test_unknown_focus_names_and_modes_fail_during_parsing(argv: list[str]) -> N
         cli.build_parser().parse_args(argv)
 
 
-def test_the_public_recipe_passes_only_the_group_and_reuse_mode() -> None:
+def test_the_public_recipe_passes_only_the_group_the_mode_and_slow() -> None:
+    """`slow` is the one extra knob: it forwards `--slow`, the permission to
+    rebuild host assets whose expensive inputs changed, and nothing else."""
     recipe = (ROOT / "justfile").read_text(encoding="utf-8")
-    assert f'{variables.FOCUS_TEST} group mode="reuse":' in recipe
+    assert f'{variables.FOCUS_TEST} group mode="reuse" slow="":' in recipe
     assert f"capsem-gate {variables.FOCUS_TEST}" in recipe
+    assert '{{ if slow != "" { "--slow" } else { "" } }}' in recipe
 
 
 def test_the_just_skill_lists_every_focus_owner() -> None:
@@ -187,3 +230,31 @@ def test_the_just_skill_lists_every_focus_owner() -> None:
     row = next(line for line in guide.splitlines() if "just focus-test <group>" in line)
     for group in focus.TARGETS:
         assert f"`{group}`" in row, f"focus owner {group!r} is missing from /dev-just"
+
+
+def test_kingslanding_is_a_hermetic_owned_suite_after_fixture_preparation() -> None:
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("kingslanding"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    )
+    plan = command.plan()
+    prepared = "kingslanding.prefetch"
+    label = "kingslanding.pytest.kingslanding.code"
+    assert prepared in plan.after_of(label)
+    rendered = plan.describe()
+    assert "tests/ironbank/kingslanding" in rendered
+    assert "--platform linux/" in rendered
+    assert command.private_checkout and command.exclusive
+
+
+def test_functional_owns_kingslanding_once_per_profile() -> None:
+    command = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("functional"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    )
+    rendered = command.plan().describe()
+    for profile in ("code", "co-work"):
+        assert f"pytest.kingslanding.{profile}" in rendered
+    assert "--ignore=tests/ironbank/kingslanding" in rendered

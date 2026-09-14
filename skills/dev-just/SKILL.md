@@ -25,9 +25,10 @@ allowlist update in the same change.
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
-| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: `assets`, `binaries`, `benchmark`, `functional`, `install`, `release-system`, or affected `rust`. `release-system` is source-only; `rust` derives changed crates and reverse dependents from Cargo manifests. |
+| `just focus-test <group> [reuse\|clean] [slow]` | Rerun one existing owner: `assets`, `binaries`, `benchmark`, `functional`, `greyjoy`, `kingslanding`, `install`, `release-system`, or affected `rust`. `release-system` is source-only; `rust` derives changed crates and reverse dependents from Cargo manifests. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
 | `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Optional before release. |
+| `slow` (fourth `test` argument, third `focus-test` argument) | Permission to rebuild host VM assets whose expensive inputs changed: `Cargo.lock`, `build_system/uv.lock`, the toolchain, builder Dockerfiles, the kernel defconfig. Without it a run whose assets went stale that way stops at the first asset step and names the input, since the rebuild is the guest builder image, every agent, the initrd, the images and the host binaries. Source-only staleness (a `capsem-core` edit) rebuilds without asking. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
 
@@ -98,7 +99,9 @@ exchange for no decision made.
 - `fast-test` is exactly the incomplete `test-fast` module. It may not bundle
   compiled, VM, install, or release work.
 - `focus-test` aliases an existing owning gate command; it must not copy or
-  compose a second test graph. `focus-test release-system` aliases the
+  compose a second test graph. The one addition is the shared source guards
+  (`testmodules.source_guards`: Ruff, both Ty passes, collection, Citadel),
+  which every group runs before its own first step. `focus-test release-system` aliases the
   source-only release-contract owner; package rehearsal and installed-product
   proof belong to qualification. Neither feedback command is release authority.
 - No generic or combined release recipe. Each of the two approved release

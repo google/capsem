@@ -1,3 +1,4 @@
+pub mod address_pool;
 pub mod ai_traffic;
 pub mod cert_authority;
 pub(crate) mod decompress;
@@ -5,6 +6,9 @@ pub mod dns;
 pub mod hostname;
 pub mod interpreters;
 pub mod mitm_proxy;
+pub mod network_registry;
 pub mod parsers;
 pub mod policy;
 pub mod policy_config;
+pub mod router_process;
+pub mod switch_host;

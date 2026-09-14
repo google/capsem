@@ -9,7 +9,9 @@ import {Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
   const status = await hv.info(); // health, version, profiles and updates
-  const vm = await hv.create('code', {name: 'work', vcpu: 4, memory: '8G'});
+  const network = await hv.networks.create('private');
+  const vm = await hv.create('code', {name: 'work', vcpu: 4, memory: '8G', networks: ['private']});
+  await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   await vm.copy.toVm('/hello.txt', new TextEncoder().encode('hello'));
   const bytes = await vm.copy.fromVm('/hello.txt');
@@ -60,7 +62,8 @@ an unmanaged service returns 503. The gateway rotates its token on restart.
 Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
-Snapshot create/restore, mounts and port exposure are pending.
+`hv.networks` provides typed create/list/inspect/delete, member attach/detach and
+cursor-based audit logs. Snapshot create/restore, mounts and port exposure are pending.
 
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the

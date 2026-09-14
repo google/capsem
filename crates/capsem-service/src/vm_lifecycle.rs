@@ -12,6 +12,14 @@ pub(crate) use session_dirs::settle_persistent_session_dir;
 use session_dirs::{claim_persistent_name, remove_purged_session_dir};
 pub(super) use transcript::handle_history_transcript;
 
+/// Wall-clock milliseconds for network membership rows.
+pub(super) fn unix_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 // History endpoints
 
 /// Helper: resolve session_dir from instance ID (running or persistent).
@@ -555,14 +563,7 @@ pub(super) async fn handle_delete(
     // and can be retried after the underlying problem is repaired.
     if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
         state
-            .off_worker(move |state| {
-                let registry = state.persistent_registry.lock().unwrap();
-                if registry.contains(&key) {
-                    registry.unregister(&key)
-                } else {
-                    Ok(())
-                }
-            })
+            .off_worker(move |state| state.forget_persistent_entry(&key))
             .await?
             .map_err(|error| {
                 AppError(
@@ -572,6 +573,7 @@ pub(super) async fn handle_delete(
             })?;
     }
 
+    network_routes::vm_deleted(&state, &id).await;
     Ok(Json(api::VmActionResponse { success: true }))
 }
 
@@ -597,6 +599,7 @@ pub(super) fn provision_response_for_running(
         can_resume: false,
         available_actions: status.available_actions(false),
         uds_path: Some(uds_path),
+        private_address: Some(instance.private_address),
     };
     drop(instances);
     Ok(response)
@@ -622,6 +625,7 @@ pub(super) async fn handle_persist(
         base_version,
         forked_from,
         env,
+        private_address,
     ) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
@@ -644,6 +648,7 @@ pub(super) async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
+            i.private_address,
         );
         drop(instances);
         result
@@ -683,6 +688,7 @@ pub(super) async fn handle_persist(
         last_error: None,
         checkpoint_path: None,
         env,
+        private_address: Some(private_address),
     };
     let claim_state = Arc::clone(&state);
     tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))
@@ -749,7 +755,7 @@ pub(super) async fn handle_purge(
             if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
                 state
                     .off_worker(move |state| {
-                        let _ = state.persistent_registry.lock().unwrap().unregister(&key);
+                        let _ = state.forget_persistent_entry(&key);
                     })
                     .await?;
             }
@@ -789,7 +795,7 @@ pub(super) async fn handle_purge(
         let stopped_name = name.clone();
         state
             .off_worker(move |state| {
-                let _ = state.persistent_registry.lock().unwrap().unregister(&stopped_name);
+                let _ = state.forget_persistent_entry(&stopped_name);
             })
             .await?;
         persistent_purged += 1;

@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import GateConfig
 from .errors import GateError
 from .funnel import GuardedRunner
 from .invocation import Command
@@ -279,15 +280,10 @@ def runner_of(resources: tuple[Resource, ...]) -> Runner | None:
 
 
 def guarded_runner_of(
-    resources: tuple[Resource, ...], *, journal, tail_lines: int, checkpoint
+    resources: tuple[Resource, ...], config: GateConfig, *, journal, checkpoint
 ) -> Runner | None:
     """Capability runner with the owning plan's guards and journal attached."""
     runner = runner_of(resources)
     if runner is None:
         return None
-    return GuardedRunner(
-        runner,
-        journal=journal,
-        tail_lines=tail_lines,
-        checkpoint=checkpoint,
-    )
+    return GuardedRunner.sized_by(runner, config, journal=journal, checkpoint=checkpoint)

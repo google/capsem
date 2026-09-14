@@ -16,6 +16,7 @@ def test_nullable_and_optional_are_separate_validation_operations() -> None:
 def test_numeric_constraints_and_closed_objects_survive() -> None:
     assert expression(Schema.model_validate({"type": "integer", "minimum": 0})) == "z.int().min(0)"
     assert expression(Schema.model_validate({"type": "object", "additionalProperties": False})) == "z.strictObject({})"
+    assert expression(Schema.model_validate({"type": "string", "format": "ipv4"})) == "z.ipv4()"
 
 
 def test_recursive_references_are_lazy_and_keep_named_types() -> None:
