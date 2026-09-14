@@ -47,3 +47,24 @@ fn a_cables_guest_device_is_named_after_it_within_the_interface_name_limit() {
     // IFNAMSIZ is 16 including the terminator.
     assert!(cable_device(u32::MAX).len() < 16);
 }
+
+#[test]
+fn the_owner_plugs_and_unplugs_a_cable_by_id_over_the_control_channel() {
+    let plug = crate::HostToGuest::PlugCable {
+        cable: 2,
+        address: Ipv4Addr::new(10, 128, 3, 7),
+        prefix: 24,
+    };
+    let frame = crate::encode_host_msg(&plug).unwrap();
+    match crate::decode_host_msg(&frame[4..]).unwrap() {
+        crate::HostToGuest::PlugCable { cable, address, prefix } => {
+            assert_eq!((cable, address, prefix), (2, Ipv4Addr::new(10, 128, 3, 7), 24));
+        }
+        other => panic!("expected PlugCable, got {other:?}"),
+    }
+    let frame = crate::encode_host_msg(&crate::HostToGuest::UnplugCable { cable: 2 }).unwrap();
+    assert!(matches!(
+        crate::decode_host_msg(&frame[4..]).unwrap(),
+        crate::HostToGuest::UnplugCable { cable: 2 }
+    ));
+}

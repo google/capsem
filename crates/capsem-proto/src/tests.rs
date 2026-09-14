@@ -1455,27 +1455,3 @@ fn fits_frame_answers_from_the_real_encoding_not_the_byte_count() {
 }
 
 mod ports;
-
-#[test]
-fn roundtrip_plug_and_unplug_cable() {
-    let plug = HostToGuest::PlugCable {
-        cable: 2,
-        address: std::net::Ipv4Addr::new(10, 128, 3, 7),
-        prefix: 24,
-    };
-    let frame = encode_host_msg(&plug).unwrap();
-    match decode_host_msg(&frame[4..]).unwrap() {
-        HostToGuest::PlugCable { cable, address, prefix } => {
-            assert_eq!(
-                (cable, address, prefix),
-                (2, std::net::Ipv4Addr::new(10, 128, 3, 7), 24)
-            );
-        }
-        other => panic!("expected PlugCable, got {other:?}"),
-    }
-    let frame = encode_host_msg(&HostToGuest::UnplugCable { cable: 2 }).unwrap();
-    assert!(matches!(
-        decode_host_msg(&frame[4..]).unwrap(),
-        HostToGuest::UnplugCable { cable: 2 }
-    ));
-}
