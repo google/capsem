@@ -17,7 +17,6 @@ struct Active {
     acknowledgement: Option<Instant>,
     accepted: bool,
     close_deadline: Option<Instant>,
-    _keepalive: Option<capsem_foundation::unix::router_channel::Receiver>,
 }
 impl Drop for Active {
     fn drop(&mut self) {
@@ -47,10 +46,9 @@ pub(super) async fn serve(
     control: mpsc::Sender<ServiceToProcess>,
     router: Arc<companion::Router>,
     cancellation: CancellationToken,
-    class: capsem_router::Class,
 ) -> Result<()> {
     ensure!(owner.security.is_some(), "publication security context missing");
-    let (ingress, setup_slots, setup_rate) = owner.budget(class);
+    let (ingress, setup_slots, setup_rate) = (owner.ingress.clone(), owner.setups.clone(), owner.setup_rate.clone());
     let mut active: HashMap<u64, Active> = HashMap::new();
     let mut connecting: HashMap<u64, Active> = HashMap::new();
     let mut setups = tokio::task::JoinSet::new();
@@ -63,11 +61,11 @@ pub(super) async fn serve(
                 _ = cancellation.cancelled() => return Ok(()),
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
                 arrival = incoming.recv(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
-                    let Some(Incoming { source, audit, port: guest_port, keepalive }) = arrival else {
+                    let Some(Incoming { source, audit, port: guest_port }) = arrival else {
                         return Ok(());
                     };
                     let Ok(permit) = ingress.clone().try_acquire_owned() else {
-                        tracing::debug!(?class, "VM ingress connection quota exhausted");
+                        tracing::debug!("VM ingress connection quota exhausted");
                         continue;
                     };
                     source.prepare()?;
@@ -120,8 +118,8 @@ pub(super) async fn serve(
                         };
                         (id, result, reason)
                     });
-                    tracing::debug!(connection_id = id, guest_port, ?class, "publication connection accepted");
-                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None, _keepalive: keepalive });
+                    tracing::debug!(connection_id = id, guest_port, "publication connection accepted");
+                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
                 }
                 Some((guest, report)) = guest_records.recv() => {
                     if report.reason != capsem_proto::router::CloseReason::Complete {
@@ -190,7 +188,7 @@ pub(super) async fn serve(
                                     capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                                 flow.connection = Some(connection);
                                 flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
-                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone(), class).await
+                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await
                             }.await;
                             match grant {
                                 Ok(id) => { active.insert(id, flow); }

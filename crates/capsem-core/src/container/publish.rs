@@ -41,11 +41,6 @@ pub struct Publisher {
     ingress: Arc<Semaphore>,
     setups: Arc<Semaphore>,
     setup_rate: Arc<admission::SetupRate>,
-    /// The private class has its own budget: a flood of member traffic
-    /// cannot starve published ports, nor the other way round.
-    private_ingress: Arc<Semaphore>,
-    private_setups: Arc<Semaphore>,
-    private_rate: Arc<admission::SetupRate>,
     tasks: Mutex<tokio::task::JoinSet<()>>,
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
@@ -54,71 +49,45 @@ pub struct Publisher {
 
 type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
 
-/// Where a flow's bytes come from: a host client on a published port, or a
-/// stream another VM owner handed over for a private connection. The broker
-/// treats both the same way; only how each is prepared and torn down differs.
-pub enum Source {
-    Tcp(std::net::TcpStream),
-    Stream(std::os::fd::OwnedFd),
-}
+/// Where a flow's bytes come from: a host client on a published port.
+pub struct Source(pub std::net::TcpStream);
 
 impl Source {
     pub fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        match self {
-            Self::Tcp(stream) => stream.as_fd(),
-            Self::Stream(fd) => fd.as_fd(),
-        }
+        self.0.as_fd()
     }
 
-    /// What every source gets before it is granted: full buffers, and for
-    /// TCP no Nagle and a reset on close so a dropped host client never
-    /// lingers in the kernel.
+    /// What every source gets before it is granted: full buffers, no Nagle
+    /// and a reset on close so a dropped host client never lingers in the
+    /// kernel.
     fn prepare(&self) -> std::io::Result<()> {
         capsem_foundation::unix::fd::set_stream_buffers(
             self.as_fd(),
             capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
         )?;
-        if let Self::Tcp(stream) = self {
-            stream.set_nodelay(true)?;
-            capsem_foundation::unix::fd::tcp_reset_on_close(self.as_fd())?;
-        }
+        self.0.set_nodelay(true)?;
+        capsem_foundation::unix::fd::tcp_reset_on_close(self.as_fd())?;
         Ok(())
     }
 
     /// End the flow now, discarding what the peer has not read.
     fn reset(&self) -> std::io::Result<()> {
-        match self {
-            Self::Tcp(_) => capsem_foundation::unix::fd::reset_tcp(self.as_fd()).map(|_| ()),
-            Self::Stream(_) => {
-                capsem_foundation::unix::fd::shutdown(self.as_fd(), capsem_foundation::unix::fd::SocketShutdown::Both)
-            }
-        }
+        capsem_foundation::unix::fd::reset_tcp(self.as_fd()).map(|_| ())
     }
 
     /// End the flow after what was written has been delivered.
     fn close_gracefully(&self) -> std::io::Result<()> {
-        match self {
-            Self::Tcp(stream) => {
-                capsem_foundation::unix::fd::tcp_clear_reset_on_close(self.as_fd())?;
-                stream.shutdown(std::net::Shutdown::Both)
-            }
-            Self::Stream(_) => {
-                capsem_foundation::unix::fd::shutdown(self.as_fd(), capsem_foundation::unix::fd::SocketShutdown::Both)
-            }
-        }
+        capsem_foundation::unix::fd::tcp_clear_reset_on_close(self.as_fd())?;
+        self.0.shutdown(std::net::Shutdown::Both)
     }
 }
 
 /// One connection for a broker to set up: its source, the audit facts the
-/// feeder established, the guest port to connect, and anything that must
-/// stay open for as long as the flow does.
+/// feeder established, and the guest port to connect.
 pub struct Incoming {
     pub source: Source,
     pub audit: security::AuditFlow,
     pub port: u16,
-    /// The handoff channel from the source owner: closing it tells that
-    /// owner the flow is over, so it is held for the flow's life.
-    pub keepalive: Option<capsem_foundation::unix::router_channel::Receiver>,
 }
 
 struct GuestFlow {
@@ -154,12 +123,6 @@ impl Publisher {
             setup_rate: Arc::new(admission::SetupRate::new(
                 budgets.expose.rate_per_second,
                 budgets.expose.burst,
-            )),
-            private_ingress: Arc::new(Semaphore::new(usize::from(budgets.private.connections))),
-            private_setups: Arc::new(Semaphore::new(usize::from(budgets.private.setups))),
-            private_rate: Arc::new(admission::SetupRate::new(
-                budgets.private.rate_per_second,
-                budgets.private.burst,
             )),
             tasks: Mutex::new(tokio::task::JoinSet::new()),
             cancellation: CancellationToken::new(),
@@ -308,9 +271,7 @@ impl Publisher {
         let incoming = self.accept_publication(listener, guest_port, stop.clone())?;
         let task = self.spawn(async move {
             let _permit = permit;
-            if let Err(error) =
-                broker::serve(owner, incoming, control, router, stop, capsem_router::Class::Expose).await
-            {
+            if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
                 tracing::warn!(%error, host_port, "publication broker ended");
             }
         })?;
@@ -442,59 +403,8 @@ impl Publisher {
 }
 
 impl Publisher {
-    /// Serve private connections other owners hand over on `incoming`, for as
-    /// long as the feeder keeps the channel open. The private class has its
-    /// own router budget; everything else is the publication path.
-    pub async fn serve_private(
-        self: &Arc<Self>,
-        control: mpsc::Sender<ServiceToProcess>,
-        incoming: mpsc::Receiver<Incoming>,
-    ) -> Result<tokio::task::AbortHandle> {
-        let lifecycle = self.drain.lock().await;
-        ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
-        ensure!(self.security.is_some(), "publication security context missing");
-        let mut current = self.router.lock().await;
-        if current.as_ref().is_none_or(|router| router.closed.is_cancelled()) {
-            *current = Some(companion::start(self).await?);
-        }
-        let router = current.as_ref().unwrap().clone();
-        drop(current);
-        let owner = self.clone();
-        let stop = self.cancellation.child_token();
-        let task = self.spawn(async move {
-            if let Err(error) =
-                broker::serve(owner, incoming, control, router, stop, capsem_router::Class::Private).await
-            {
-                tracing::warn!(%error, "private connection broker ended");
-            }
-        })?;
-        drop(lifecycle);
-        Ok(task)
-    }
-
     pub fn generation(&self) -> NonZeroU64 {
         self.generation
-    }
-
-    /// The audit facts of a private connection this VM is the destination
-    /// of, against this owner's security authority.
-    pub fn private_audit(
-        &self,
-        network: crate::security_engine::network::NetworkIdentity,
-        source: crate::security_engine::network::NetworkVm,
-        source_address: std::net::SocketAddr,
-        port: u16,
-        protocol: crate::security_engine::network::NetworkProtocol,
-    ) -> Result<security::AuditFlow> {
-        let authority = self.security.clone().context("publication security context missing")?;
-        Ok(security::AuditFlow::private(
-            authority,
-            network,
-            source,
-            source_address,
-            port,
-            protocol,
-        ))
     }
 
     /// The audit facts of this VM's link to a network's switch, against
@@ -537,10 +447,9 @@ impl Publisher {
                 let Ok(source) = source.into_std() else { continue };
                 let audit = security::AuditFlow::new(authority.clone(), publication_id, host_address, peer, guest_port);
                 let arrival = Incoming {
-                    source: Source::Tcp(source),
+                    source: Source(source),
                     audit,
                     port: guest_port,
-                    keepalive: None,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;
@@ -548,19 +457,6 @@ impl Publisher {
             }
         })?;
         Ok(incoming)
-    }
-
-    /// The budget a class draws on: connections held, setups in flight, and
-    /// the setup rate.
-    fn budget(&self, class: capsem_router::Class) -> (Arc<Semaphore>, Arc<Semaphore>, Arc<admission::SetupRate>) {
-        match class {
-            capsem_router::Class::Expose => (self.ingress.clone(), self.setups.clone(), self.setup_rate.clone()),
-            capsem_router::Class::Private => (
-                self.private_ingress.clone(),
-                self.private_setups.clone(),
-                self.private_rate.clone(),
-            ),
-        }
     }
 }
 

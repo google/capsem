@@ -30,7 +30,6 @@ impl Router {
         source: BorrowedFd<'_>,
         destination: BorrowedFd<'_>,
         observer: mpsc::Sender<Event>,
-        class: capsem_router::Class,
     ) -> Result<u64> {
         let mut writer = self.writer.lock().await;
         ensure!(!self.closed.is_cancelled(), "VM router is closed");
@@ -43,7 +42,6 @@ impl Router {
                 &writer.sender,
                 Grant::Connected {
                     id,
-                    class,
                     source,
                     destination,
                 },
@@ -127,13 +125,8 @@ pub(super) async fn start(owner: &Publisher) -> Result<Arc<Router>> {
         pid,
         sender,
         events,
-    } = crate::net::router_process::spawn(&[
-        "--expose-limit".into(),
-        owner.budgets.expose.connections.to_string(),
-        "--private-limit".into(),
-        owner.budgets.private.connections.to_string(),
-    ])
-    .await?;
+    } = crate::net::router_process::spawn(&["--expose-limit".into(), owner.budgets.expose.connections.to_string()])
+        .await?;
     let router = Arc::new(Router::new(pid, sender, owner.cancellation.child_token()));
     let monitor = router.clone();
     owner.spawn(async move {
