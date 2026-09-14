@@ -18,7 +18,13 @@ pub struct Confined {
 /// Spawn the router beside this executable with `args`, and wait for it to
 /// report a confined, ready process.
 pub async fn spawn(args: &[String]) -> Result<Confined> {
-    let binary = std::env::current_exe()?.with_file_name("capsem-router");
+    spawn_from(&std::env::current_exe()?.with_file_name("capsem-router"), args).await
+}
+
+/// Spawn `binary` as the router. A child that reports anything but a
+/// confined ready state, exits, or stays silent past the deadline is killed
+/// and reaped before the error returns.
+async fn spawn_from(binary: &std::path::Path, args: &[String]) -> Result<Confined> {
     let (parent, child_socket) = std::os::unix::net::UnixStream::pair()?;
     let mut child = tokio::process::Command::new(binary)
         .args(["--parent-pid", &std::process::id().to_string()])
@@ -56,3 +62,6 @@ pub async fn spawn(args: &[String]) -> Result<Confined> {
         events,
     })
 }
+
+#[cfg(test)]
+mod tests;
