@@ -23,6 +23,7 @@ from conftest import (
     _is_pytest_descendant,
     _leak_log_path,
     _missing_required_artifacts,
+    _namespaced_basetemp,
     _raise_open_file_limit,
     _sanitize_leak_log_namespace,
     _thread_exception_hook,
@@ -155,6 +156,20 @@ def test_ancestry_returns_empty_for_missing_pid():
     # Use a very large PID that is vanishingly unlikely to be in use.
     assert _ancestry(2**31 - 1) == set()
     assert not _is_pytest_descendant(2**31 - 1)
+
+
+def test_concurrent_named_runs_get_their_own_basetemp():
+    shared = "/var/tmp/capsem-tests/run-1/pytest"
+    assert _namespaced_basetemp(shared, {"CAPSEM_TEST_RUN_ID": "pytest.kingslanding.code"}) == (
+        f"{shared}/pytest-kingslanding-code"
+    )
+    assert _namespaced_basetemp(shared, {"CAPSEM_TEST_RUN_ID": "pytest.kingslanding.co-work"}) != (
+        _namespaced_basetemp(shared, {"CAPSEM_TEST_RUN_ID": "pytest.kingslanding.code"})
+    )
+    assert _namespaced_basetemp(shared, {}) == shared, "an unnamed run keeps pytest's own choice"
+    assert _namespaced_basetemp(None, {"CAPSEM_TEST_RUN_ID": "x"}) is None
+    worker = {"CAPSEM_TEST_RUN_ID": "pytest.broad.code", "PYTEST_XDIST_WORKER": "gw0"}
+    assert _namespaced_basetemp(f"{shared}/popen-gw0", worker) == f"{shared}/popen-gw0"
 
 
 def test_leak_log_path_defaults_to_legacy_name():
