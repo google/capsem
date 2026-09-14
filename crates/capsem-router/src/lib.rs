@@ -1,13 +1,14 @@
 //! Versioned descriptor grants; policy and destination selection stay in core.
 //!
 //! Two confined companions share this protocol: [`relay`] copies bytes
-//! between granted pairs for one VM owner, and [`switch::run`] forwards
-//! private link frames between the members of one network.
+//! between granted pairs for one VM owner, and [`switch::run`] is one
+//! network's layer-2 switch, with a port for every cable plugged into it.
 use capsem_foundation::unix::{
     fd,
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
     router_stream,
 };
+use capsem_network::switch::DropReason;
 pub use router_stream::{CloseReason, CloseReport};
 use std::collections::HashMap;
 use std::io;
@@ -19,7 +20,7 @@ use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
 pub const CONNECTIONS_PER_CLASS: usize = 64;
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
@@ -38,22 +39,70 @@ pub enum Grant<Socket = OwnedFd> {
     Abort {
         id: u64,
     },
-    /// One member's private link stream for the switch; `id` is a
-    /// [`link_id`], so it names the member's address as well.
-    Link {
-        id: u64,
+    /// Plug one cable (a duplicate of the guest's VSOCK stream for it) into
+    /// the switch; `port` is a [`port_id`], so it names the attachment's
+    /// generation and address, and the address names the port's MAC.
+    Plug {
+        port: u64,
         socket: Socket,
+    },
+    Unplug {
+        port: u64,
     },
 }
 
-/// A link's grant id: a sequence the parent chooses, then the member's
-/// address, so one `u64` says which stream and whose it is.
-pub fn link_id(seq: u32, address: std::net::Ipv4Addr) -> u64 {
-    (u64::from(seq) << 32) | u64::from(address.to_bits())
+/// A port's id: the attachment generation the parent assigned, then the
+/// attachment's address, so one `u64` says which cable and whose it is.
+pub fn port_id(generation: u32, address: std::net::Ipv4Addr) -> u64 {
+    (u64::from(generation) << 32) | u64::from(address.to_bits())
 }
 
-pub fn link_address(id: u64) -> std::net::Ipv4Addr {
-    std::net::Ipv4Addr::from_bits(id as u32)
+pub fn port_address(port: u64) -> std::net::Ipv4Addr {
+    std::net::Ipv4Addr::from_bits(port as u32)
+}
+
+pub fn port_generation(port: u64) -> u32 {
+    (port >> 32) as u32
+}
+
+/// What one port carried, reported when it closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortReport {
+    pub reason: CloseReason,
+    /// Records read from the cable, whatever became of them.
+    pub frames_in: u64,
+    pub bytes_in: u64,
+    /// Records written to the cable.
+    pub frames_out: u64,
+    pub bytes_out: u64,
+    /// Frames lost, indexed by [`capsem_network::switch::DropReason`].
+    pub dropped: [u64; DropReason::ALL.len()],
+}
+
+const PORT_REPORT_BYTES: usize = 1 + 8 * (4 + DropReason::ALL.len());
+
+impl PortReport {
+    fn encode(&self) -> [u8; PORT_REPORT_BYTES] {
+        let mut bytes = [0; PORT_REPORT_BYTES];
+        bytes[0] = self.reason as u8;
+        let counters = [self.frames_in, self.bytes_in, self.frames_out, self.bytes_out];
+        for (slot, value) in counters.iter().chain(self.dropped.iter()).enumerate() {
+            bytes[1 + slot * 8..9 + slot * 8].copy_from_slice(&value.to_be_bytes());
+        }
+        bytes
+    }
+
+    fn decode(bytes: &[u8; PORT_REPORT_BYTES]) -> io::Result<Self> {
+        let counter = |slot: usize| u64::from_be_bytes(bytes[1 + slot * 8..9 + slot * 8].try_into().unwrap());
+        Ok(Self {
+            reason: CloseReason::try_from(bytes[0]).map_err(invalid)?,
+            frames_in: counter(0),
+            bytes_in: counter(1),
+            frames_out: counter(2),
+            bytes_out: counter(3),
+            dropped: std::array::from_fn(|reason| counter(4 + reason)),
+        })
+    }
 }
 
 fn encode(kind: u8, id: u64) -> [u8; FRAME_SIZE] {
@@ -88,10 +137,11 @@ impl Grant {
                 })
             }
             ((2, id), 0) if id != 0 => Ok(Self::Abort { id }),
-            ((5, id), 1) if id >> 32 != 0 => Ok(Self::Link {
-                id,
+            ((5, port), 1) if port_generation(port) != 0 => Ok(Self::Plug {
+                port,
                 socket: frame.fds.pop().unwrap(),
             }),
+            ((6, port), 0) if port_generation(port) != 0 => Ok(Self::Unplug { port }),
             _ => Err(invalid("invalid router grant or descriptor count")),
         }
     }
@@ -113,7 +163,8 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
                 .await?
         }
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
-        Grant::Link { id, socket } => sender.send(&encode(5, id), &[socket.as_raw_fd()]).await?,
+        Grant::Plug { port, socket } => sender.send(&encode(5, port), &[socket.as_raw_fd()]).await?,
+        Grant::Unplug { port } => sender.send(&encode(6, port), &[]).await?,
     };
     Ok(())
 }
@@ -125,6 +176,7 @@ pub enum Event {
     Closed(u64, CloseReport),
     ConfinementFailed,
     Refused(u64),
+    PortClosed(u64, PortReport),
 }
 impl Event {
     pub async fn read(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<Self> {
@@ -147,6 +199,11 @@ impl Event {
             }
             (3, 0) => Ok(Self::ConfinementFailed),
             (4, id) if id != 0 => Ok(Self::Refused(id)),
+            (5, port) if port != 0 => {
+                let mut report = [0; PORT_REPORT_BYTES];
+                reader.read_exact(&mut report).await?;
+                Ok(Self::PortClosed(port, PortReport::decode(&report)?))
+            }
             _ => Err(invalid("invalid router event")),
         }
     }
@@ -157,16 +214,22 @@ impl Event {
             Self::Closed(id, _) => encode(2, *id),
             Self::ConfinementFailed => encode(3, 0),
             Self::Refused(id) => encode(4, *id),
+            Self::PortClosed(port, _) => encode(5, *port),
         };
-        let mut frame = [0; 27];
+        let mut frame = [0; FRAME_SIZE + PORT_REPORT_BYTES];
         frame[..FRAME_SIZE].copy_from_slice(&header);
-        let length = if let Self::Closed(_, report) = self {
-            frame[10] = report.reason as u8;
-            frame[11..19].copy_from_slice(&report.from_source.to_be_bytes());
-            frame[19..27].copy_from_slice(&report.to_source.to_be_bytes());
-            frame.len()
-        } else {
-            FRAME_SIZE
+        let length = match self {
+            Self::Closed(_, report) => {
+                frame[10] = report.reason as u8;
+                frame[11..19].copy_from_slice(&report.from_source.to_be_bytes());
+                frame[19..27].copy_from_slice(&report.to_source.to_be_bytes());
+                27
+            }
+            Self::PortClosed(_, report) => {
+                frame[FRAME_SIZE..].copy_from_slice(&report.encode());
+                frame.len()
+            }
+            _ => FRAME_SIZE,
         };
         timeout(Duration::from_secs(2), writer.write_all(&frame[..length])).await?
     }
@@ -329,9 +392,9 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         if let Some(stop) = active.remove(&id) { let _ = stop.send(()); }
                     }
                     Grant::Hello => return Err(invalid("duplicate router hello")),
-                    Grant::Link { id, .. } => {
-                        tracing::debug!(connection_id = id, "link grant to a pair relay");
-                        Event::Refused(id).write(&mut events).await?;
+                    Grant::Plug { port, .. } | Grant::Unplug { port } => {
+                        tracing::debug!(port, "switch port grant to a pair relay");
+                        Event::Refused(port).write(&mut events).await?;
                     }
                 },
                 completed = jobs.join_next(), if !jobs.is_empty() => match completed.unwrap() {
