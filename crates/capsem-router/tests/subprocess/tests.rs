@@ -349,7 +349,7 @@ async fn unconnected_listener_descriptor_is_refused() {
     router.close().await;
 }
 
-/// One framed ethernet record on a cable: the switch reads only the MACs.
+/// One framed ethernet record on a cable, sent from `source`'s MAC.
 fn cable_record(destination: [u8; 6], source: Ipv4Addr, ethertype: u16, payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
     frame.extend_from_slice(&destination);
@@ -384,12 +384,19 @@ async fn the_confined_network_switch_carries_tcp_and_floods_arp_between_plugged_
         assert_eq!(router.event().await, Event::Accepted(port));
         guests.push(UnixStream::from_std(guest_end).unwrap());
     }
-    let mut segment = vec![0x45, 0, 0, 40, 0, 0, 0, 0, 64, 6];
+    let mut segment = vec![0x45, 0, 0, 40, 0, 0, 0, 0, 64, 6, 0, 0];
+    segment.extend_from_slice(&alpha.octets());
+    segment.extend_from_slice(&beta.octets());
     segment.resize(40, 0);
     segment.extend_from_slice(b"confined hop");
+    let mut request = vec![0, 1, 8, 0, 6, 4, 0, 1];
+    request.extend_from_slice(&mac_of(alpha));
+    request.extend_from_slice(&alpha.octets());
+    request.extend_from_slice(&[0; 6]);
+    request.extend_from_slice(&beta.octets());
     for record in [
         cable_record(mac_of(beta), alpha, 0x0800, &segment),
-        cable_record([0xff; 6], alpha, 0x0806, &[0; 28]),
+        cable_record([0xff; 6], alpha, 0x0806, &request),
     ] {
         guests[0].write_all(&record).await.unwrap();
         let mut received = vec![0u8; record.len()];

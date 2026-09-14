@@ -43,6 +43,12 @@ fn arp_request(source: Ipv4Addr, target: Ipv4Addr) -> Vec<u8> {
     ethernet([0xff; 6], mac_of(source), 0x0806, &body)
 }
 
+/// `frame` sent from `station`'s MAC, whatever else it claims.
+fn sent_by(mut frame: Vec<u8>, station: Ipv4Addr) -> Vec<u8> {
+    frame[6..12].copy_from_slice(&mac_of(station));
+    frame
+}
+
 fn framed(frame: &[u8]) -> Vec<u8> {
     let mut record = (frame.len() as u16).to_be_bytes().to_vec();
     record.extend_from_slice(frame);
@@ -211,6 +217,10 @@ async fn a_forged_source_and_an_unknown_destination_go_nowhere_and_are_counted()
     a.write_all(&framed(&ethernet([0xff; 6], mac_of(STRANGER), 0x0806, &[0; 28])))
         .await
         .unwrap();
+    // A's own MAC speaking as B: a packet from B's address, and an ARP
+    // broadcast claiming it, which would draw B's traffic to A.
+    a.write_all(&framed(&sent_by(tcp(B, B, b"as beta"), A))).await.unwrap();
+    a.write_all(&framed(&sent_by(arp_request(B, A), A))).await.unwrap();
     a.write_all(&framed(&tcp(A, STRANGER, b"stranger"))).await.unwrap();
     let delivered = tcp(A, B, b"real");
     a.write_all(&framed(&delivered)).await.unwrap();
@@ -223,9 +233,10 @@ async fn a_forged_source_and_an_unknown_destination_go_nowhere_and_are_counted()
     let (closed, report) = switch.closed().await;
     assert_eq!(closed, port_a);
     assert_eq!(report.reason, CloseReason::Complete);
-    assert_eq!((report.frames_in, report.frames_out), (4, 1));
+    assert_eq!((report.frames_in, report.frames_out), (6, 1));
     assert_eq!(report.bytes_out, framed(&tcp(B, A, b"back")).len() as u64);
     assert_eq!(report.dropped[DropReason::SourceMac as usize], 2);
+    assert_eq!(report.dropped[DropReason::SourceAddress as usize], 2);
     assert_eq!(report.dropped[DropReason::Unknown as usize], 1);
     switch.stop().await;
 }

@@ -2,7 +2,8 @@
 //!
 //! A cable is one stream of `u16`-length ethernet frames (the guest pump's
 //! codec). Where a frame goes is [`capsem_network::switch::Table::route`]:
-//! MACs only, every protocol, broadcast flooded. The table is published
+//! MACs, every protocol, broadcast flooded, and each port speaking only as
+//! its own MAC and address. The table is published
 //! whole on every plug and unplug; a port's reader checks one atomic version
 //! per read and otherwise routes without a lock.
 //!
@@ -18,7 +19,7 @@
 use super::*;
 use bytes::{Buf, Bytes, BytesMut};
 use capsem_network::frames::HEADER_BYTES;
-use capsem_network::switch::{Mac, Route, Table};
+use capsem_network::switch::{Mac, Route, Station, Table};
 use capsem_proto::privatelink::mac_of;
 use std::io::IoSlice;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -93,7 +94,7 @@ impl Storm {
 
 /// Route every record one cable sends until it ends.
 async fn read_port(
-    own: Mac,
+    own: Station,
     mut reader: impl AsyncRead + Unpin,
     published: &Published,
     counters: &mut Inbound,
@@ -138,7 +139,7 @@ async fn read_port(
                     }
                 }
                 Route::Flood if storm.allow() => {
-                    for queue in table.others(&own) {
+                    for queue in table.others(&own.mac) {
                         if queue.try_send(record.clone()).is_err() {
                             counters.dropped[DropReason::QueueFull as usize] += 1;
                         }
@@ -301,7 +302,7 @@ pub async fn run(grants: Receiver, mut events: UnixStream, port_limit: usize) ->
                             let outcome = tokio::select! {
                                 biased;
                                 _ = stopped => Ok(false),
-                                result = read_port(mac, reader, &published, &mut inbound) => result.map(|()| true),
+                                result = read_port(Station { mac, address: address.octets() }, reader, &published, &mut inbound) => result.map(|()| true),
                                 result = write_port(writer, receiver, &mut outbound) => result.map(|()| true),
                             };
                             // Both halves are gone with the select; closing the
