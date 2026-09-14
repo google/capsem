@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespaces and cgroup CPU, memory, and process limits.
 - Both profiles include `umoci` for OCI image layer unpacking inside the VM.
 
+### Security
+
+- rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
+  were accepted across encryption level boundaries on the host's TLS paths.
+
 ### Changed
 
 - Published TCP connections require an audited allow from the existing security
