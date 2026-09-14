@@ -119,7 +119,6 @@ def _interrupt_when(flag: threading.Event) -> threading.Thread:
     which is the exact behaviour under test. A signal interrupts the wait
     itself, which is what pressing Ctrl-C does.
     """
-    import os
     import signal
 
     def fire() -> None:
