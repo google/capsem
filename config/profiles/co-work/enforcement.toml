@@ -78,5 +78,5 @@ match = 'network.mode == "expose" && network.side == "destination" && network.pr
 name = "private"
 action = "allow"
 priority = "default"
-reason = "Allow a member of a shared named network to reach this VM: TCP per connection, and the frame link that carries UDP and ICMP once per attach. Joining the network is the authorization; a stricter rule can still narrow it by network, protocol or port."
-match = 'network.mode == "private" && network.side == "destination" && (network.protocol == "tcp" || network.protocol == "link")'
+reason = "Allow a member of a shared named network to plug this VM into the network's switch, once per plug; every protocol then crosses the cable. Joining the network is the authorization; a stricter rule can still narrow it by network."
+match = 'network.mode == "private" && network.side == "destination" && network.protocol == "link"'
