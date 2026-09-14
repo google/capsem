@@ -22,15 +22,16 @@ GATEWAY = "10.0.1.1"
 CONTAINER_ADDRESS = "10.0.1.2"
 NAT_CHAIN = "CAPSEM_CONTAINER_NAT"
 INPUT_CHAIN = "CAPSEM_CONTAINER_IN"
-# The VM's private link: an ethernet device to the network's switch, carrying
-# the pool address the host assigned (capsem-config PrivatePool::DEFAULT).
-PRIVATE_LINK = "tap0"
-PRIVATE_POOL = "10.128.0.0/9"
+# The VM's network cables: one tap per network it is plugged into, each to
+# that network's switch (capsem-tun names them cable<N>). They come and go
+# while the container runs, so rules name them all by prefix.
+CABLES = "cable+"
 # `-m tcp` appears only with a port match; a destination-only rule has none.
 REDIRECT_RULE = re.compile(
     r"^-A OUTPUT (?:-d (\S+) )?-p (udp|tcp) (?:-m \2 --dport (\d+) )?"
     r"-j REDIRECT --to-ports (\d+)$"
 )
+RETURN_RULE = re.compile(r"^-A OUTPUT -d (\S+) -j RETURN$")
 
 
 def configure(unpacked, image, options):
@@ -199,30 +200,22 @@ def derive_redirects(output_rules):
     return redirects
 
 
-def private_link_address(run=command):
-    """The VM's own address on its private link, or None without a link."""
-    probe = run(
-        "ip",
-        "-o",
-        "addr",
-        "show",
-        PRIVATE_LINK,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if probe.returncode != 0:
-        return None
-    match = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/", probe.stdout)
-    return match.group(1) if match else None
+def derive_returns(output_rules):
+    """Destinations the VM exempts from interception: its private networks,
+    whose traffic leaves through their cables rather than a proxy."""
+    return [
+        match.group(1)
+        for match in map(RETURN_RULE.match, (line.strip() for line in output_rules.splitlines()))
+        if match
+    ]
 
 
-def open_private_link(run, sysctl_root, address):
-    """Let the container use the VM's private link: its UDP and ICMP to the
-    pool leave through the link as the VM's own address (the switch pins
-    every frame's source to it), and UDP that arrives on the link is the
-    container's. TCP to members keeps its proxy path, so the FORWARD accepts
-    name only the two protocols the link carries.
+def open_cables(run, sysctl_root):
+    """Let the container use the VM's cables: every protocol to a member
+    leaves through the cable that routes it, as that cable's address, and
+    what arrives on a cable is the container's. MASQUERADE takes the address
+    when a packet leaves, so a cable plugged after the container started
+    carries it as well.
     """
     (sysctl_root / "net/ipv4/ip_forward").write_text("1\n")
     run(
@@ -232,13 +225,11 @@ def open_private_link(run, sysctl_root, address):
         "-A",
         "POSTROUTING",
         "-o",
-        PRIVATE_LINK,
+        CABLES,
         "-s",
         CONTAINER_ADDRESS,
         "-j",
-        "SNAT",
-        "--to-source",
-        address,
+        "MASQUERADE",
     )
     run(
         IPTABLES,
@@ -247,32 +238,15 @@ def open_private_link(run, sysctl_root, address):
         "-A",
         NAT_CHAIN,
         "-i",
-        PRIVATE_LINK,
-        "-p",
-        "udp",
+        CABLES,
         "-j",
         "DNAT",
         "--to-destination",
         CONTAINER_ADDRESS,
     )
     # Inserted after the container's FORWARD drop, so they sit above it.
-    run(IPTABLES, "-I", "FORWARD", "-i", PRIVATE_LINK, "-o", HOST_LINK, "-j", "ACCEPT")
-    for protocol in ("udp", "icmp"):
-        run(
-            IPTABLES,
-            "-I",
-            "FORWARD",
-            "-i",
-            HOST_LINK,
-            "-o",
-            PRIVATE_LINK,
-            "-d",
-            PRIVATE_POOL,
-            "-p",
-            protocol,
-            "-j",
-            "ACCEPT",
-        )
+    run(IPTABLES, "-I", "FORWARD", "-i", CABLES, "-o", HOST_LINK, "-j", "ACCEPT")
+    run(IPTABLES, "-I", "FORWARD", "-i", HOST_LINK, "-o", CABLES, "-j", "ACCEPT")
 
 
 def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
@@ -283,8 +257,8 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     the container's end of the veth is DNAT'ed to the loopback proxies the VM
     already uses; everything else that reaches the VM from that interface is
     dropped, so the container cannot talk to the VM's other listeners or its
-    dummy address. Members of the VM's networks are reached over the private
-    link for UDP and ICMP (`open_private_link`) and over the proxy for TCP.
+    dummy address. Members of the VM's networks are reached over the VM's
+    cables, every protocol, never through a proxy (`open_cables`).
     """
     namespace = ["nsenter", "-t", str(pid), "-n"]
     run("ip", "link", "add", HOST_LINK, "type", "veth", "peer", "name", "capsem1")
@@ -317,6 +291,9 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
         table_args = ["-t", table] if table == "nat" else []
         run(IPTABLES, *table_args, "-N", chain, check=False)
         run(IPTABLES, *table_args, "-F", chain)
+    # Member traffic returns before any proxy DNAT can claim it, as in the VM.
+    for destination in derive_returns(rules):
+        run(IPTABLES, "-t", "nat", "-A", NAT_CHAIN, "-i", HOST_LINK, "-d", destination, "-j", "RETURN")
     for protocol, port, proxy, destination in redirects:
         match_args = ["-d", destination] if destination else []
         if port is not None:
@@ -363,9 +340,7 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
             != 0
         ):
             run(IPTABLES, *table_args, "-I", parent, *target)
-    address = private_link_address(run)
-    if address:
-        open_private_link(run, sysctl_root, address)
+    open_cables(run, sysctl_root)
 
 
 def assemble(stage, layout):
