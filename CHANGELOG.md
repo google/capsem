@@ -13,38 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network at creation, like `capsem create --network`.
 - Members of a network have names: `<vm>.<network>.capsem.internal` (and
   `<vm>.capsem.internal` when only one network answers it) resolves to the
-  member's private address, and the address resolves back, for members of a
-  shared network only. The zone is answered on the host with no TTL and never
+  member's address on that network, and the address resolves back, for
+  members of a shared network only. The zone is answered on the host with no TTL and never
   forwarded upstream; a member that leaves loses its name at once.
-- UDP and ICMP between members of a network on their private addresses: every
-  guest's `tap0` is one ethernet link to the network's own confined switch
-  (`capsem-router --switch`), which forwards frames between members after
-  pinning their source, answers ARP itself and drops every other protocol,
-  including tunnels, and ICMP other than echo, unreachable and time
-  exceeded. TCP keeps its per-connection admission. A VM's profile decides once per attach
-  (`network.protocol == "link"`), and `capsem network logs` shows each link
-  and its end with frame counts; a member reads `ready` once linked.
-- TCP between members of a network on their private addresses: a guest's
-  connect to a member is intercepted, admitted by the service per connection
-  under the security rules, audited in the network's history from both VMs,
-  and carried by the destination owner's confined router under its own
-  private quota. Both profiles allow it by default between members
-  (`default.private`, `network.mode == "private"`): joining the network is
-  the authorization, and a stricter rule can narrow it by network or port.
+- Every network is a switch, and every membership a cable. Each network has
+  its own subnet (a `/24` from `10.128.0.0/9`) and one confined
+  `capsem-router --network` process: an ordinary layer-2 switch with no uplink.
+  Joining leases the VM an address in the subnet and plugs one cable, a
+  `cable<N>` tap in the guest declared at 10 Gb/s full duplex; a VM on several
+  networks has one cable and one address on each. TCP, UDP, ICMP and ARP
+  between members all cross that one switch, end to end between the guest
+  kernels. Broadcasts flood with a per-port storm cap, unknown destinations are
+  dropped, and port security drops any frame whose MAC, IPv4 source or ARP
+  sender is not its port's. A VM on two networks never forwards between them.
+  A VM's profile decides once per plug (`network.protocol == "link"`), and
+  `capsem network logs` shows each plug and close, a close with the cable's
+  frame, byte and drop counters; `capsem network inspect` shows each member's
+  address and state.
 - Named networks: `capsem network list|create|inspect|delete|connect|disconnect`
   and `capsem create --network NAME` group VMs that may reach each other on
   their private addresses, over `/networks` routes on the service and gateway.
 - `capsem network logs NAME [-f]` and `GET /networks/{id}/logs` page a network's
   audit history with a cursor and VM, connection, type, decision and time filters.
-- Every guest brings up `tap0` with its private address at boot, routed for the
-  whole `10.128.0.0/9` pool; the agent keeps the `capsem-tun` pump running.
+- Every VM starts unplugged; the agent runs one `capsem-tun` pump per plugged
+  cable and restarts it if it dies. The guest kernel and `capsem-init` size the
+  network stack for 10 Gb/s cables.
 - Deleting a VM retires any network it leaves empty; disconnecting does not. A
   retired network's audit database is kept 30 days and then removed by the
   service at startup or on the next retirement.
-- Every VM receives one private IPv4 address for its whole life from the
-  host pool `10.128.0.0/9`, kept across stop and resume for named VMs and shown
-  as `private_address` by `/vms/list`, `/vms/{id}/info`, `capsem list` and
-  `capsem info`; the guest sees it as `CAPSEM_PRIVATE_ADDRESS`.
 - `capsem-bench-rs throughput` measures bulk upload, download, bidirectional
   transfer and echo latency over N streams, and serves as the far end itself.
 - The logger supports bounded primary transport audit records, with indexed
@@ -80,8 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deny, pending approval, audit failure, and stale control leases refuse access.
   Transport records include trusted VM, listener, peer, and connection identities.
 
-- Active profiles can configure separate router connection and setup budgets
-  under `network.router`, within fixed resource ceilings shared by a VM's ports.
+- Active profiles can configure router connection and setup budgets under
+  `network.router.expose`, within fixed resource ceilings shared by a VM's ports.
 - Published connections carry the VM owner's boot generation so stale streams
   cannot consume reused request IDs after restart.
 - Container port forwarding uses fixed kernel socket queues, including guest
@@ -96,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draining session logs; publication removal requests cooperative cleanup.
 - Container port forwarding closes stalled writes and half-closed peers after
   60 seconds while preserving quiet connections and trailing response bytes.
-  A half-close on a published or private connection is carried as a signal:
+  A half-close on a published connection is carried as a signal:
   a slow reply after the client stops sending, and an upload after the peer
   stops sending, both arrive in full.
 - Published TCP listeners stay with the VM owner. The confined router receives
@@ -332,14 +328,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.
 
-- A VM created or resumed with `--network` is linked to the network's switch
-  even when its process is slow to start. The link was attempted once, before
-  the process listened, and never retried: TCP between members still worked,
-  but UDP and ICMP to or from that VM never did.
+- A VM created or resumed with `--network` is plugged into the network's switch
+  even when its process is slow to start. The plug was attempted once, before
+  the process listened, and never retried, leaving that VM without a cable.
 
-- A VM joining a private network can receive UDP and ICMP from the first frame
-  sent after it is linked; the switch reported the link before it could
-  forward to it, so a peer that sent immediately lost those frames.
+- A VM joining a network receives traffic from the first frame sent after it
+  is plugged; the switch reported the plug before it could forward to the new
+  port, so a peer that sent immediately lost those frames.
 
 - Under `CAPSEM_HOME`, `capsem stop` and `capsem start` act on the service that
   home's commands started, rather than the machine's installed LaunchAgent or
@@ -350,13 +345,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and close stdin right away: the guest relay ends the session with an in-band
   frame instead of a vsock shutdown the transport could lose.
 
-- A private connection between members of a network no longer occasionally
-  times out after eight seconds: the owner's IPC channel released its socket
-  before leaving the event loop, and a new connection reusing the number could
-  never wake. About one admission in two thousand was affected.
-- A private TCP connection whose client finished sending and closed no longer
-  stays open on both VM owners for the VM's life; the destination's private
-  connection quota was exhausted after sixty-odd such transfers.
+- A request to a VM owner over its IPC channel no longer occasionally times out
+  after eight seconds: the channel released its socket before leaving the
+  event loop, and a new connection reusing the number could never wake. About
+  one request in two thousand was affected.
 - Ledger reads no longer fail with "database table is locked" or stall while the
   writer is busy: `capsem network logs -f` and the session ledger routes read
   through SQLite's `read_uncommitted` on the shared memory tables.

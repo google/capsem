@@ -59,42 +59,66 @@ connection to the host over vsock port 5002.
 
 ## Private networks between VMs
 
-A VM has no way to reach another VM by default. Named networks
-(`capsem network create`, `capsem create --network`, `capsem run --image ... --network`)
-are the one exception, and they are built from the same admitted, audited
-pieces as everything else:
+A VM has no way to reach another VM by default: every VM starts unplugged.
+Named networks (`capsem network create`, `capsem create --network`,
+`capsem run --image ... --network`) are the one exception. Each network is an
+ordinary layer-2 switch, and joining it plugs a cable into that switch.
 
-- **Addresses and names.** Every VM keeps one address from `10.128.0.0/9` for
-  its life. Members of a shared network resolve each other as
-  `<vm>.<network>.capsem.internal`; the zone is answered on the host, only for
-  members, with no TTL, and is never forwarded upstream.
-- **TCP.** A connection to a member's address is intercepted in the guest like
-  any other TCP connection. The VM owner asks the service, the service admits
-  it by membership and writes a row in the network's history for both VMs,
-  and the destination VM's security rules see it as
-  `network.mode == "private"`, `network.protocol == "tcp"`. The bytes are
-  carried by the destination owner's confined router under a private budget
-  that a flood of member traffic cannot use to starve published ports.
-- **UDP and ICMP.** Each guest has a `tap0` whose ethernet frames reach one
-  confined switch process per network. The switch holds only members'
-  streams, pins every frame's source to its member, answers ARP itself,
-  forwards only UDP and ICMP (echo, destination unreachable and time
-  exceeded) to exactly one member, and drops TCP, every other protocol,
-  strangers and everything that is not IPv4. The allowlist keeps TCP on its
-  admitted path: a tunnel protocol crossing the link would carry it around. No host process parses past a frame's
-  addresses. A VM's profile decides once per attach whether the VM may be on
-  a link at all (`network.protocol == "link"`); the link, its end and its
-  frame counts are rows in the network's history, and `network inspect` shows
-  a member `ready`, `declared` (VM stopped), or `failed` with the reason.
-- **Containers.** A container reaches members through its VM's NAT: its UDP
-  and ICMP leave as the VM's own address, UDP arriving on the link is the
-  container's, TCP keeps the proxy path.
-- **Limits.** A VM has one frame link; in several networks at once, UDP and
-  ICMP reach the first network it was linked to, TCP and names work in all.
-  A half-closed private or published connection keeps its other direction
-  for up to 60 seconds. Every VSOCK leg carries each direction's end as a
-  length-prefixed end-of-stream frame, because the transport can deliver a
-  socket shutdown ahead of bytes still in flight.
+- **One switch per network.** Each network runs one confined
+  `capsem-router --network` process: no uplink, no listener, no outbound
+  socket, a cleared environment and OS confinement (Seatbelt on macOS, seccomp
+  on Linux). It holds exactly the cables of that network's running members.
+- **One cable per membership.** Joining leases the VM an address in the
+  network's own subnet (a `/24` carved from `10.128.0.0/9`) and plugs one
+  cable: a tap named `cable<N>` in the guest, declared at 10 Gb/s full duplex,
+  whose frames cross VSOCK to the VM owner and are handed to the switch. A VM
+  on ten networks has ten cables and ten addresses. Members resolve each other
+  as `<vm>.<network>.capsem.internal`; the zone is answered on the host, only
+  for members of the asker's networks, with no TTL, and is never forwarded
+  upstream.
+- **Every protocol, one path.** The switch forwards on MAC addresses only.
+  TCP, UDP, ICMP and anything else IPv4 carries cross it as frames, end to end
+  between the two guest kernels: half-close, resets and fragments behave as on
+  any LAN, and a cable's MTU is 65521 bytes. Broadcast and multicast frames
+  (ARP included) flood the network's other ports, capped at 1024 per second
+  per port; a frame for a MAC no member has is dropped, never flooded. Nothing
+  learns addresses from traffic: the service programs each port when it plugs
+  it.
+- **Port security.** A member's MAC is derived from its address, and a frame
+  must carry its port's MAC; an IPv4 packet or ARP message must carry its
+  port's address. A member cannot speak as another member or answer ARP for
+  one. Other ethertypes cross unchecked; members only have IPv4 addresses and
+  names.
+- **No transit.** A VM on two networks never carries one network's packets
+  onto the other: the guest drops cable-to-cable forwarding, and each cable
+  announces and answers ARP only as its own address.
+- **Membership is the authority.** Leaving revokes the membership first and
+  unplugs second, and every plug carries a generation, so a leave that
+  returned leaves no port behind and a stale plug cannot replace a current
+  one. Leaving cuts every flow on that cable at once, including one that is
+  mid-transfer. If a network's switch dies, only that network drops; its
+  current members are plugged into a fresh switch, and nobody who left comes
+  back. Deleting a network with members is refused; retiring an empty one
+  stops and reaps its switch.
+- **Audit.** A VM's profile decides once per plug whether the VM may be on a
+  network at all (`network.protocol == "link"`). Every plug, refusal and close
+  is a row in the network's history; a close row carries the switch's counters
+  for that cable (frames and bytes each way, and drops by reason: `short`,
+  `source_mac`, `source_address`, `unknown`, `queue_full`, `storm`).
+  `network inspect` shows each member's address and whether it is `ready`,
+  `attaching`, `declared` (VM stopped) or `failed` with the reason. The switch
+  is a network, not a policy engine: whoever is on a network can reach
+  everyone else on it.
+- **Containers.** A container reaches members through its VM's NAT: whatever
+  it sends to a member leaves through the cable that routes it, as that
+  cable's address, and whatever arrives on a cable is the container's. Member
+  traffic never passes through the HTTP or TLS proxies.
+- **Published ports** are a separate mechanism: a host loopback port relayed
+  into one VM by that VM's own confined router. A half-closed published
+  connection keeps its other direction for up to 60 seconds. Every VSOCK leg
+  carries each direction's end as a length-prefixed end-of-stream frame,
+  because the transport can deliver a socket shutdown ahead of bytes still in
+  flight.
 
 ## MITM proxy overview
 

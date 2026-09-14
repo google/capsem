@@ -263,24 +263,24 @@ capsem purge --all        # everything (requires confirmation)
 
 ## Network commands
 
-Named networks are groups of VMs. Every VM has one private address for its
-whole life (`capsem info` shows it as `Address`), and a network is the set of
-VMs allowed to reach each other on those addresses. A network name is a DNS
-label; deleting a network frees the name, and a new network under that name
-is a different network with its own history.
+Every VM starts unplugged: it can reach no other VM. A named network is a
+switch, and connecting a VM to it plugs a cable in. Each network has its own
+subnet; each member leases one address in it (`network inspect` shows it) and
+gets one cable, a `cable<N>` interface in the guest declared at 10 Gb/s. A VM
+on several networks has a cable and an address on each, and never forwards
+between them. A network name is a DNS label; deleting a network frees the
+name, and a new network under that name is a different network with its own
+history.
 
 Members reach each other by address or by name: `<vm>.<network>.capsem.internal`
 (and `<vm>.capsem.internal` when only one of the VM's networks answers it)
 resolves to the member's address, and the address resolves back. Names are
 answered on the host, only for members of a shared network, with no TTL, and
-never forwarded upstream. TCP between members is admitted per connection
-under the VM's security rules; UDP and ICMP ride each member's link to the
-network's own confined switch, which forwards frames between members and
-nothing else. A member shows `ready` in `network inspect` once its link is up
-and `declared` while its VM is stopped. A VM has one link: in several networks
-at once, UDP and ICMP reach the members of the network it was linked to first
-(the others show `failed` with that reason), while TCP and names work in all
-of them.
+never forwarded upstream. Everything between members -- TCP, UDP, ICMP, ARP --
+crosses the network's switch as ordinary frames; the switch drops any frame
+that claims another member's MAC or address. A member shows `ready` in
+`network inspect` once its cable is plugged and `declared` while its VM is
+stopped.
 
 ### network list
 
@@ -334,8 +334,9 @@ capsem network logs team -f --type network.connect --decision block
 ```
 
 The network's audit history, oldest first, as recorded in the network's own
-database: connections, their results, closes and lifecycle events, each with
-the decision that applied. `-f` keeps printing new events until Ctrl-C. The
+database: every cable plugged, refused and closed, each with the decision that
+applied; a close carries the switch's frame, byte and drop counters for that
+cable. `-f` keeps printing new events until Ctrl-C. The
 history is kept by network id, so it survives disconnecting every member and
 deleting the network; a new network under the same name starts empty.
 

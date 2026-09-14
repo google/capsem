@@ -56,7 +56,7 @@ switch is a network system, not a security boundary, and it has no route to
 the internet, the host, or another switch.
 
 Do not reintroduce per-flow machinery. There is no private TCP relay, no
-per-connection admission, no tokens per flow, no IP/TCP/UDP parsing, and no
+per-connection admission, no tokens per flow, no TCP/UDP parsing, and no
 per-flow policy in the data plane. Those were built once (guest REDIRECT to
 10128, vsock 5010, `/networks/private/connect`, `PrivateAccept`, the router's
 private class) and removed: they added privileged attack surface and a second
@@ -69,16 +69,19 @@ from logic inside it.
 - Guest end: one tap device per cable, created and removed by the agent on the
   owner's instruction, with MAC `mac_of(address)`, MTU `LINK_MTU`, a connected
   route for that network's subnet only, and a declared link of 10 Gb/s full
-  duplex with carrier up (`ETHTOOL_SLINKSETTINGS` on the tun driver; the tap
-  default is 10 Mb/s, which makes Linux tooling and schedulers treat the link
-  as slow). `/sys/class/net/<tap>/speed` reads `10000`. The guest kernel is
+  duplex with carrier up (`ETHTOOL_SSET` on the tap, which the core turns
+  into link settings; the tap default is 10 Mb/s, which makes Linux tooling
+  and schedulers treat the link as slow). `/sys/class/net/<tap>/speed` reads `10000`. The guest kernel is
   tuned to match: the defconfig carries the options a 10 Gb/s stack needs,
   `capsem-init` writes socket buffer and backlog limits sized for 10 Gb/s
   with 64 KiB frames through `/proc/sys`, and each tap gets a transmit queue
   long enough not to drop under a burst. `capsem-tun` pumps each
   tap's ethernet frames as `[u16 len][frame]` records over its own vsock 5009
   connection, opening with the cable id the owner assigned. The guest never
-  names a network and does not forward between taps.
+  names a network and never forwards between cables: the container launcher,
+  which turns forwarding on for the container, drops `cable+ -> cable+` first,
+  and `capsem-init` sets `arp_announce=2`/`arp_ignore=1` so each cable speaks
+  ARP only as its own address (port security below requires it).
 - Owner (`capsem-process`) keeps the VM's cable list, `cable id -> (network,
   generation, stream)`. It never reads frames. `plug()` has the agent create
   the tap, waits for that cable's stream, and hands the service a duplicate
@@ -97,10 +100,15 @@ neither Apple VZ nor KVM gives the VM a NIC; vsock is the only wire.
   and counted (the table is complete, so nothing floods). Broadcast
   (`ff:ff:ff:ff:ff:ff`) and multicast flood to every other port, exactly like a
   normal switch: that is how guests resolve each other with ordinary ARP
-  requests. The switch never answers ARP itself. A per-port broadcast cap exists only against storms, sized so normal
-  ARP never hits it; drops above it are counted. A frame whose source MAC is
-  not its port's MAC is dropped: one comparison that keeps counters
-  attributable.
+  requests. The switch never answers ARP itself. A per-port broadcast cap
+  (1024 floods/s) exists only against storms, sized so normal ARP never hits
+  it; drops above it are counted.
+- Port security, as a managed switch has it: each port is a `Station` (MAC and
+  leased address). A frame whose source MAC is not its port's is dropped
+  (`source_mac`); an IPv4 packet or ARP message whose sender address is not
+  its port's is dropped (`source_address`), so no member speaks as another or
+  poisons ARP. These are fixed-offset comparisons on the header, not parsing:
+  other ethertypes cross unchecked, and nothing above the IPv4 source is read.
 - `Switch::plug(port, mac)` and `Switch::unplug(port)` are the only control
   operations. A port id carries its attachment generation; a stale one is
   refused.
@@ -111,7 +119,9 @@ neither Apple VZ nor KVM gives the VM a NIC; vsock is the only wire.
   drops with `try_send` so a slow member never stalls the others.
 - A port is one owned job: reader and writer under one cancellation token.
   `unplug` cancels and joins both halves, closes the descriptor, then reports
-  `Closed{counters}` and frees the quota slot.
+  `Closed{counters}` and frees the quota slot. The service holds an unplugged
+  port until that report arrives, so the leave's close row carries the
+  counters.
 - Confined before it accepts a grant: cleared environment, inherited
   descriptors closed, parent watch, Seatbelt `(deny default)` on macOS,
   seccomp allowlist without open/connect/accept/clone on Linux, no
