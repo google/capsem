@@ -1,10 +1,13 @@
-//! The private IPv4 pool every VM draws its lifetime address from.
+//! The private IPv4 pool every network's subnet is carved from.
 //!
-//! One pool for the host: a VM's address is a host-wide fact, not a profile
-//! setting, so the pool is not something two profiles could disagree on.
-//! The pool must stay clear of the two links a guest already has -- its own
-//! dummy interface on `10.0.0.0/24` and the container veth on `10.0.1.0/30`
-//! -- or a private address would shadow a local one inside the guest.
+//! One pool for the host: a network's subnet is a host-wide fact, not a
+//! profile setting, so the pool is not something two profiles could disagree
+//! on. Each network gets its own `/NETWORK_PREFIX_LEN` subnet and each VM
+//! plugged into it an address inside that subnet, so a guest on several
+//! networks routes each one out of its own cable. The pool must stay clear of
+//! the two links a guest already has -- its own dummy interface on
+//! `10.0.0.0/24` and the container veth on `10.0.1.0/30` -- or a private
+//! address would shadow a local one inside the guest.
 
 use std::fmt;
 use std::net::Ipv4Addr;
@@ -25,6 +28,8 @@ pub const CONTAINER_LINK: PrivatePool = PrivatePool::new_unchecked(Ipv4Addr::new
 const MIN_PREFIX_LEN: u8 = 8;
 /// A /29 leaves the gateway and five VMs; anything smaller cannot hold a VM.
 const MAX_PREFIX_LEN: u8 = 29;
+/// Every network's subnet: 253 VMs, and 32768 networks in the default pool.
+pub const NETWORK_PREFIX_LEN: u8 = 24;
 
 impl PrivatePool {
     /// `10.128.0.0/9`: the upper half of `10/8`, disjoint from both guest links.
@@ -108,6 +113,24 @@ impl PrivatePool {
 
     pub const fn overlaps(&self, other: PrivatePool) -> bool {
         self.contains(other.network) || other.contains(self.network)
+    }
+
+    /// How many `/prefix_len` subnets the pool divides into; none for a
+    /// prefix no wider than the pool's or too narrow to hold a VM.
+    pub const fn subnet_count(&self, prefix_len: u8) -> u32 {
+        if prefix_len <= self.prefix_len || prefix_len > MAX_PREFIX_LEN {
+            return 0;
+        }
+        1 << (prefix_len - self.prefix_len)
+    }
+
+    /// The `index`th `/prefix_len` subnet of the pool, in address order.
+    pub const fn subnet(&self, index: u32, prefix_len: u8) -> Option<PrivatePool> {
+        if index >= self.subnet_count(prefix_len) {
+            return None;
+        }
+        let network = u32::from_be_bytes(self.network.octets()) + (index << (32 - prefix_len));
+        Some(Self::new_unchecked(Ipv4Addr::from_bits(network), prefix_len))
     }
 }
 

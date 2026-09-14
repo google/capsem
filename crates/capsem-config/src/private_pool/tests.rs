@@ -57,3 +57,51 @@ fn a_small_pool_still_carries_gateway_and_hosts() {
     assert_eq!(pool.last_host(), Ipv4Addr::new(192, 168, 7, 14));
     assert_eq!(pool.capacity(), 5);
 }
+
+#[test]
+fn a_pool_is_carved_into_network_subnets_in_order() {
+    let pool = PrivatePool::DEFAULT;
+    assert_eq!(pool.subnet_count(NETWORK_PREFIX_LEN), 1 << 15);
+    assert_eq!(pool.subnet(0, NETWORK_PREFIX_LEN).unwrap().to_string(), "10.128.0.0/24");
+    assert_eq!(pool.subnet(1, NETWORK_PREFIX_LEN).unwrap().to_string(), "10.128.1.0/24");
+    assert_eq!(
+        pool.subnet((1 << 15) - 1, NETWORK_PREFIX_LEN).unwrap().to_string(),
+        "10.255.255.0/24"
+    );
+    assert_eq!(pool.subnet(1 << 15, NETWORK_PREFIX_LEN), None);
+    let subnet = pool.subnet(3, NETWORK_PREFIX_LEN).unwrap();
+    assert!(pool.contains(subnet.network()) && pool.contains(subnet.last_host()));
+    assert_eq!(subnet.first_host(), Ipv4Addr::new(10, 128, 3, 2));
+    assert_eq!(subnet.capacity(), 253);
+}
+
+#[test]
+fn subnets_never_overlap_and_never_leave_their_pool() {
+    let pool = PrivatePool::parse("172.16.0.0/22").unwrap();
+    let subnets: Vec<_> = (0..pool.subnet_count(24))
+        .map(|index| pool.subnet(index, 24).unwrap())
+        .collect();
+    assert_eq!(subnets.len(), 4);
+    for (index, subnet) in subnets.iter().enumerate() {
+        assert!(pool.contains(subnet.network()) && pool.contains(subnet.last_host()));
+        for other in &subnets[index + 1..] {
+            assert!(!subnet.overlaps(*other), "{subnet} overlaps {other}");
+        }
+    }
+}
+
+#[test]
+fn a_prefix_the_pool_cannot_be_carved_into_has_no_subnets() {
+    let pool = PrivatePool::parse("192.168.7.8/29").unwrap();
+    for prefix_len in [24, 29, 30, 31, 32, 33] {
+        assert_eq!(pool.subnet(0, prefix_len), None, "/{prefix_len}");
+    }
+    assert_eq!(pool.subnet_count(24), 0);
+    assert_eq!(pool.subnet_count(33), 0);
+}
+
+#[test]
+fn a_subnet_parses_back_to_itself() {
+    let subnet = PrivatePool::DEFAULT.subnet(42, NETWORK_PREFIX_LEN).unwrap();
+    assert_eq!(PrivatePool::parse(&subnet.to_string()).unwrap(), subnet);
+}
