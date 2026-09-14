@@ -315,8 +315,7 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }
             | ServiceToProcess::PlugCable { .. }
-            | ServiceToProcess::UnplugCable { .. }
-            | ServiceToProcess::PrivateAccept { .. } => {
+            | ServiceToProcess::UnplugCable { .. } => {
                 anyhow::bail!("guest data-plane requests are VM-owner internal")
             }
             message @ (ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. }) => {
@@ -920,8 +919,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }
-        | ServiceToProcess::UnplugCable { .. }
-        | ServiceToProcess::PrivateAccept { .. } => IpcAction::Unexpected,
+        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
         ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
