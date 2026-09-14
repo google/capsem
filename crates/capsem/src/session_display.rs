@@ -52,9 +52,6 @@ pub(crate) fn print_session_info(info: &SessionInfo) {
     if info.pid > 0 {
         println!("PID:     {}", info.pid);
     }
-    if let Some(address) = &info.private_address {
-        println!("Address: {}", address);
-    }
 
     if info.ram_mb.is_some() || info.cpus.is_some() || info.version.is_some() {
         println!();
