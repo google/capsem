@@ -353,19 +353,20 @@ async fn handshake(
     address: Ipv4Addr,
     generation: u32,
 ) -> Result<(Arc<SwitchHost>, u64, std::os::unix::net::UnixStream)> {
-    let network_name = state
+    let summary = state
         .networks
         .lock()
         .await
         .summary(network)
-        .map(|summary| summary.name)
-        .unwrap_or_default();
+        .context("the network retired during the plug")?;
     let token = format!("{:016x}", Uuid::new_v4().as_u128() as u64);
     let ask = ServiceToProcess::LinkAttach {
         id: Uuid::new_v4().as_u128() as u64,
         token: token.clone(),
         network: network.to_string(),
-        network_name,
+        network_name: summary.name,
+        address,
+        prefix: summary.subnet.prefix_len(),
     };
     let handoff_socket = match send_ipc_command(uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
         Ok(ProcessToService::LinkAttachResult {
@@ -544,7 +545,36 @@ pub(crate) async fn detach(
         }
     }
     unplug(state, network, vm_id).await;
+    take_cable_down(state, network, vm_id);
     Ok(())
+}
+
+/// A running VM that left a network has its owner take that cable down in
+/// the guest. Nothing waits on it: the VM already left, and an owner that
+/// cannot answer is a VM that is stopping.
+fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) {
+    let running = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(vm_id)
+        .map(|instance| instance.uds_path.clone());
+    let Some(uds_path) = running else { return };
+    let vm_id = vm_id.to_string();
+    tokio::spawn(async move {
+        let ask = ServiceToProcess::LinkDetach {
+            id: Uuid::new_v4().as_u128() as u64,
+            network: network.to_string(),
+        };
+        match send_ipc_command(&uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
+            Ok(ProcessToService::LinkDetachResult { error: None, .. }) => {}
+            Ok(ProcessToService::LinkDetachResult { error: Some(error), .. }) => {
+                warn!(%network, vm_id, %error, "owner did not take the cable down")
+            }
+            Ok(other) => warn!(%network, vm_id, ?other, "unexpected owner reply to a detach"),
+            Err(error) => info!(%network, vm_id, %error, "owner unreachable to take the cable down"),
+        }
+    });
 }
 
 /// Every network a VM belongs to gets its cable plugged, once the VM's owner
