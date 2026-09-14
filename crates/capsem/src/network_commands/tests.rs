@@ -65,7 +65,18 @@ mod against_the_service {
     use serde_json::json;
 
     fn team(members: serde_json::Value) -> serde_json::Value {
-        json!({"id": "net-1", "name": "team", "created_unix_ms": 1, "members": members})
+        json!({"id": "net-1", "name": "team", "subnet": "10.128.4.0/24", "created_unix_ms": 1, "members": members})
+    }
+
+    #[test]
+    fn a_network_carries_the_subnet_its_members_are_addressed_from() {
+        let network: NetworkInfo = serde_json::from_value(team(json!([]))).unwrap();
+        assert_eq!(network.subnet, "10.128.4.0/24");
+        let missing = json!({"id": "net-1", "name": "team", "created_unix_ms": 1, "members": []});
+        assert!(
+            serde_json::from_value::<NetworkInfo>(missing).is_err(),
+            "a network without its subnet is not a network the service sends"
+        );
     }
 
     fn scripted() -> FakeService {

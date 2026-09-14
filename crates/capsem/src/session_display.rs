@@ -118,15 +118,22 @@ pub(crate) fn print_network_list(networks: &[NetworkInfo]) {
         println!("No networks.");
         return;
     }
-    println!("{:<38} {:<20} {:<8}", "ID", "NAME", "MEMBERS");
+    println!("{:<38} {:<20} {:<18} {:<8}", "ID", "NAME", "SUBNET", "MEMBERS");
     for network in networks {
-        println!("{:<38} {:<20} {:<8}", network.id, network.name, network.members.len());
+        println!(
+            "{:<38} {:<20} {:<18} {:<8}",
+            network.id,
+            network.name,
+            network.subnet,
+            network.members.len()
+        );
     }
 }
 
 pub(crate) fn print_network_info(network: &NetworkInfo) {
     println!("Network: {}", network.name);
     println!("ID:      {}", network.id);
+    println!("Subnet:  {}", network.subnet);
     if network.members.is_empty() {
         println!("Members: none");
         return;

@@ -19,6 +19,8 @@ pub struct NetworkMemberInfo {
 pub struct NetworkInfo {
     pub id: String,
     pub name: String,
+    /// Every member's address is inside it.
+    pub subnet: String,
     pub created_unix_ms: i64,
     #[serde(default)]
     pub members: Vec<NetworkMemberInfo>,
