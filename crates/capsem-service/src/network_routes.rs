@@ -50,9 +50,7 @@ pub(super) fn network_error(error: NetworkError) -> AppError {
         | NetworkError::HasMembers { .. }
         | NetworkError::SubnetsExhausted { .. }
         | NetworkError::AddressesExhausted { .. } => StatusCode::CONFLICT,
-        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } | NetworkError::NoPrivatePath { .. } => {
-            StatusCode::NOT_FOUND
-        }
+        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     };
     AppError(status, error.to_string())

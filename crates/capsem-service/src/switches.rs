@@ -91,7 +91,7 @@ impl Switches {
                 tokio::spawn(capsem_router::switch::run(
                     grants,
                     tokio::net::UnixStream::from_std(child)?,
-                    capsem_router::CONNECTIONS_PER_CLASS,
+                    capsem_router::CONNECTION_LIMIT,
                 ));
                 let host = SwitchHost::attach(
                     Sender::new(parent.try_clone()?)?,
