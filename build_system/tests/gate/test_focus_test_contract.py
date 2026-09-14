@@ -48,7 +48,38 @@ def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> Non
         qualification=qualification,
     )
 
-    assert alias.plan().describe() == owner.plan().describe()
+    planned, owned = alias.plan(), owner.plan()
+    assert set(owned.labels) <= set(planned.labels), "the alias runs the owner's whole plan"
+    for label in owned.labels:
+        assert owned.after_of(label) <= planned.after_of(label), label
+
+
+# Ruff, both Ty passes and the Citadel answer in seconds; a focused run that
+# skipped them let a type error or a lint failure reach a 70-minute gate.
+SOURCE_GUARDS = ("python.ruff", "python.ty.strict", "python.ty.relaxed", "fast.citadel")
+
+
+@pytest.mark.parametrize("group", sorted(focus.TARGETS))
+def test_every_focus_group_runs_the_source_guards_before_its_own_work(group: str) -> None:
+    runner = RecordingRunner(ROOT)
+    qualification = LocalQualification(bin_dir="cache/target/cargo/debug")
+    plan = focus.FocusTestCommand(runner, _args(group), qualification=qualification).plan()
+    labels = set(plan.labels)
+    assert set(SOURCE_GUARDS) <= labels, sorted(labels)
+
+    def upstream(label: str) -> set[str]:
+        seen: set[str] = set()
+        pending = [label]
+        while pending:
+            for earlier in plan.after_of(pending.pop()):
+                if earlier not in seen:
+                    seen.add(earlier)
+                    pending.append(earlier)
+        return seen
+
+    guard_steps = set(SOURCE_GUARDS) | {label for label in labels if label.startswith("fast.")}
+    for label in labels - guard_steps - {"python.ruff", "python.ty.strict", "python.ty.relaxed"}:
+        assert set(SOURCE_GUARDS) <= upstream(label), f"{label} can start before the source guards pass"
 
 
 def test_release_system_focus_is_source_only_and_needs_no_local_package() -> None:

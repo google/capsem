@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import bench, kingslanding, module_contracts, staticmodule, vmmodules
+from . import bench, kingslanding, module_contracts, staticmodule, testmodules, vmmodules
 from .actions import Script
 from .command import GateCommand
 from .execution import SATURATES, Kind, Needs, Speed, step
@@ -125,7 +125,19 @@ class FocusTestCommand(
         )
 
     def plan(self) -> Plan:
-        return self._target().plan()
+        """The owner's plan, started only once the source guards pass.
+
+        Every group, whatever it owns: Ruff, both Ty passes, collection and
+        the Citadel take seconds, and a focused run that skipped them let a
+        type or lint error surface only in the complete gate.
+        """
+        plan = self._target().plan()
+        starts = [step for step in plan.steps if not plan.after_of(step.label)]
+        guards = testmodules.source_guards(plan, self._config)
+        for start in starts:
+            for guard in guards.leaves:
+                plan.edge(before=guard, after=start)
+        return plan
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return self._target().resources(runner)

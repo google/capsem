@@ -99,7 +99,9 @@ exchange for no decision made.
 - `fast-test` is exactly the incomplete `test-fast` module. It may not bundle
   compiled, VM, install, or release work.
 - `focus-test` aliases an existing owning gate command; it must not copy or
-  compose a second test graph. `focus-test release-system` aliases the
+  compose a second test graph. The one addition is the shared source guards
+  (`testmodules.source_guards`: Ruff, both Ty passes, collection, Citadel),
+  which every group runs before its own first step. `focus-test release-system` aliases the
   source-only release-contract owner; package rehearsal and installed-product
   proof belong to qualification. Neither feedback command is release authority.
 - No generic or combined release recipe. Each of the two approved release

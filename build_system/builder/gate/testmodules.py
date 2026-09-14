@@ -17,6 +17,8 @@ can begin.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import (
     audits,
     digestreport,
@@ -90,6 +92,40 @@ class FastModule(
         return plan
 
 
+@dataclass(frozen=True)
+class SourceGuards:
+    python: Step
+    syntax: Step
+    leaves: tuple[Step, ...]
+
+
+def source_guards(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> SourceGuards:
+    """The checks that answer in seconds and need no network, build or VM.
+
+    Shared by the fast phase and by every `focus-test` group: a focused run
+    that skipped them let a lint or type error reach a seventy-minute gate.
+    """
+    phase = plan.phase("fast")
+    python = phase.add(toolchain.sync(config), after=after)
+    # Nothing is worth starting against a file that will not parse.
+    syntax = phase.add(audits.source_syntax(config), after=(python,))
+    # The same fragment the `lint` command composes: Ruff and both Ty passes as
+    # independent steps, so a Ruff failure no longer hides what Ty would have
+    # said and each is timed under its own name.
+    checked = sourcechecks.fragment(plan, config, after=(syntax,))
+    # Importing every test module is a source-shape proof of the same kind, and
+    # the Python counterpart of what `rustinventory` does for nextest: a suite
+    # that cannot be collected is a suite the gate would otherwise discover it
+    # was not running an hour later.
+    collected = phase.add(pytestsuite.collection(config), after=(syntax,))
+    # The Citadel belongs here and not in the broad suite. Source-level guards
+    # answering in seconds have no business waiting on an asset build, and the
+    # point of recording a mistake is to catch it before the expensive work
+    # rather than after the VMs are up.
+    guarded = phase.add(pytestsuite.citadel(config).as_step(config), after=(syntax,))
+    return SourceGuards(python=python, syntax=syntax, leaves=(*checked, collected, guarded))
+
+
 def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tuple[Step, ...]:
     """The cheap checks, returning every independent completion leaf.
 
@@ -118,13 +154,11 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # The environment first: everything below runs through uv or pnpm, and a
     # gate that assumes the lockfile is already installed is a gate that works
     # on the machine it was written on.
-    python = phase.add(toolchain.sync(config), after=after)
+    guards = source_guards(plan, config, after=after)
+    python, syntax = guards.python, guards.syntax
     node = phase.add(toolchain.node(config), after=(python,))
     rust = phase.add(toolchain.rust(config), after=(python,))
     ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.FAST), after=(python,))
-
-    # Nothing is worth starting against a file that will not parse.
-    syntax = phase.add(audits.source_syntax(config), after=(python,))
     formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
     live = audits.live(config)
@@ -135,20 +169,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         rust_policy,
         *(phase.add(check, after=(syntax,)) for check in audits.all_of(config)),
     )
-    # The same fragment the `lint` command composes: Ruff and both Ty passes as
-    # independent steps, so a Ruff failure no longer hides what Ty would have
-    # said and each is timed under its own name.
-    checked = sourcechecks.fragment(plan, config, after=(syntax,))
-    # Importing every test module is a source-shape proof of the same kind, and
-    # the Python counterpart of what `rustinventory` does for nextest: a suite
-    # that cannot be collected is a suite the gate would otherwise discover it
-    # was not running an hour later.
-    collected = phase.add(pytestsuite.collection(config), after=(syntax,))
-    # The Citadel belongs here and not in the broad suite. Source-level guards
-    # answering in seconds have no business waiting on an asset build, and the
-    # point of recording a mistake is to catch it before the expensive work
-    # rather than after the VMs are up.
-    guarded = phase.add(pytestsuite.citadel(config).as_step(config), after=(syntax,))
 
     # The web surfaces import `web/app/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -189,9 +209,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     guest = phase.add(webaudits.clippy_guest(config), after=(syntax, rust, ort))
     return (
         *audited,
-        *checked,
-        collected,
-        guarded,
+        *guards.leaves,
         formatted,
         digest,
         *(surface for surface in surfaces if surface is not blocking),
