@@ -28,6 +28,28 @@ pub const fn mac_of(address: Ipv4Addr) -> [u8; 6] {
     [0x02, 0xca, a, b, c, d]
 }
 
+/// What a guest pump writes first on its VSOCK `VSOCK_PORT_NETWORK`
+/// connection: the id of the cable the owner told it to plug. The guest names
+/// only its own cables; the owner alone knows which network each one is for.
+pub const CABLE_HEADER_BYTES: usize = 4;
+
+pub const fn cable_header(cable: u32) -> [u8; CABLE_HEADER_BYTES] {
+    cable.to_be_bytes()
+}
+
+/// The cable a pump's connection is for; ids start at one.
+pub fn decode_cable_header(bytes: &[u8; CABLE_HEADER_BYTES]) -> Result<u32, String> {
+    match u32::from_be_bytes(*bytes) {
+        0 => Err("cable id 0 names no cable".into()),
+        cable => Ok(cable),
+    }
+}
+
+/// The guest's tap device for a cable.
+pub fn cable_device(cable: u32) -> String {
+    format!("cable{cable}")
+}
+
 /// A frame on a VM owner's handoff socket: the version, what is asked, and
 /// the one-time token the service or a source owner was given for it. The
 /// size is the router channel record's, so the frame can carry a descriptor.

@@ -97,16 +97,30 @@ pub enum ServiceToProcess {
         source_port: u16,
         port: u16,
     },
-    /// The service is linking this VM to a network's switch and wants the
-    /// guest's private link stream. The owner evaluates its profile once,
-    /// then answers with the handoff socket the service should ask on,
-    /// keyed by `token`; the stream comes back on that connection.
+    /// The service is plugging this VM into a network's switch and wants the
+    /// guest's stream for that network's cable. The owner evaluates its
+    /// profile once, has the guest bring the cable up with `address`/`prefix`,
+    /// then answers with the handoff socket the service should ask on, keyed
+    /// by `token`; the stream comes back on that connection.
     LinkAttach {
         id: u64,
         token: String,
         network: String,
         network_name: String,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
     },
+    /// The VM left `network`: the owner forgets its cable and the guest's
+    /// tap for it goes away.
+    LinkDetach { id: u64, network: String },
+    /// Internal VM-owner request: bring a cable up in the guest.
+    PlugCable {
+        cable: u32,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    /// Internal VM-owner request: take a cable down in the guest.
+    UnplugCable { cable: u32 },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -201,6 +215,8 @@ pub enum ProcessToService {
         handoff_socket: String,
         error: Option<String>,
     },
+    /// Response to LinkDetach.
+    LinkDetachResult { id: u64, error: Option<String> },
 }
 
 /// Status of an MCP server as reported through IPC.

@@ -460,6 +460,15 @@ pub enum HostToGuest {
     AbortPorts { flows: Vec<router::FlowKey> },
     /// Receipt of a terminal flow report; distinct from exec/file job IDs.
     PortCloseAck { flow: router::FlowKey },
+    /// Bring up (or keep up) the tap for one network cable with this address
+    /// and prefix, and keep its pump connected under the cable's id.
+    PlugCable {
+        cable: u32,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    /// Stop the cable's pump; its tap goes with it.
+    UnplugCable { cable: u32 },
 }
 
 /// A single boot timing measurement from the guest init script.

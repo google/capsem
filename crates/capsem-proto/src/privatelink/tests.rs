@@ -71,3 +71,19 @@ fn a_seat_frame_names_its_kind_and_token_and_refuses_others() {
     wrong_version[0] = 3;
     assert!(decode_seat_frame(&wrong_version).is_err());
 }
+
+#[test]
+fn a_cable_opens_with_its_id_and_id_zero_is_no_cable() {
+    assert_eq!(cable_header(7), [0, 0, 0, 7]);
+    assert_eq!(decode_cable_header(&cable_header(7)), Ok(7));
+    assert_eq!(decode_cable_header(&cable_header(u32::MAX)), Ok(u32::MAX));
+    assert!(decode_cable_header(&[0, 0, 0, 0]).is_err());
+    assert_eq!(CABLE_HEADER_BYTES, 4);
+}
+
+#[test]
+fn a_cables_guest_device_is_named_after_it_within_the_interface_name_limit() {
+    assert_eq!(cable_device(3), "cable3");
+    // IFNAMSIZ is 16 including the terminator.
+    assert!(cable_device(u32::MAX).len() < 16);
+}
