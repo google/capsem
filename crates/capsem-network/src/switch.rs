@@ -47,7 +47,13 @@ pub enum DropReason {
 }
 
 impl DropReason {
-    pub const ALL: [DropReason; 5] = [Self::Short, Self::SourceMac, Self::Unknown, Self::QueueFull, Self::Storm];
+    pub const ALL: [DropReason; 5] = [
+        Self::Short,
+        Self::SourceMac,
+        Self::Unknown,
+        Self::QueueFull,
+        Self::Storm,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -110,7 +116,10 @@ impl<P> Table<P> {
 
     /// Every port a flood from `own` reaches.
     pub fn others<'a>(&'a self, own: &'a Mac) -> impl Iterator<Item = &'a P> {
-        self.ports.iter().filter(move |(mac, _)| *mac != own).map(|(_, port)| port)
+        self.ports
+            .iter()
+            .filter(move |(mac, _)| *mac != own)
+            .map(|(_, port)| port)
     }
 }
 

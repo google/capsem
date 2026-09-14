@@ -41,7 +41,11 @@ fn a_tcp_segment_goes_to_the_port_owning_its_destination_mac() {
 fn every_ethertype_crosses() {
     for ethertype in [ETHERTYPE_IPV4, ETHERTYPE_ARP, 0x86dd, 0x88cc, 0x0000] {
         let frame = ethernet(C, B, ethertype, &[7; 32]);
-        assert_eq!(switch().route(&B, &frame), Route::Unicast(&"c"), "ethertype {ethertype:#06x}");
+        assert_eq!(
+            switch().route(&B, &frame),
+            Route::Unicast(&"c"),
+            "ethertype {ethertype:#06x}"
+        );
     }
 }
 
@@ -61,7 +65,11 @@ fn an_arp_request_to_broadcast_floods() {
 fn any_group_address_floods() {
     // The group bit is the low bit of the first octet: IPv4 multicast and
     // anything else addressed to a group, not just all-ones.
-    for destination in [[0x01, 0x00, 0x5e, 0, 0, 1], [0x33, 0x33, 0, 0, 0, 1], [0x03, 0, 0, 0, 0, 0]] {
+    for destination in [
+        [0x01, 0x00, 0x5e, 0, 0, 1],
+        [0x33, 0x33, 0, 0, 0, 1],
+        [0x03, 0, 0, 0, 0, 0],
+    ] {
         let frame = ethernet(destination, B, ETHERTYPE_IPV4, &[0; 20]);
         assert_eq!(switch().route(&B, &frame), Route::Flood, "{destination:02x?}");
     }
@@ -93,7 +101,11 @@ fn a_frame_whose_source_is_not_its_ports_mac_is_dropped() {
     for destination in [B, BROADCAST] {
         for source in [B, STRANGER, [0; 6]] {
             let frame = ethernet(destination, source, ETHERTYPE_ARP, &[0; 28]);
-            assert_eq!(switch().route(&A, &frame), Route::Drop(DropReason::SourceMac), "{source:02x?}");
+            assert_eq!(
+                switch().route(&A, &frame),
+                Route::Drop(DropReason::SourceMac),
+                "{source:02x?}"
+            );
         }
     }
 }
@@ -102,7 +114,11 @@ fn a_frame_whose_source_is_not_its_ports_mac_is_dropped() {
 fn a_frame_shorter_than_an_ethernet_header_is_dropped() {
     let frame = ethernet(B, A, ETHERTYPE_IPV4, &[]);
     for length in 0..frame.len() {
-        assert_eq!(switch().route(&A, &frame[..length]), Route::Drop(DropReason::Short), "{length} bytes");
+        assert_eq!(
+            switch().route(&A, &frame[..length]),
+            Route::Drop(DropReason::Short),
+            "{length} bytes"
+        );
     }
 }
 
