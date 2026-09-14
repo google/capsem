@@ -9,7 +9,8 @@
 //! until the VM runs, `attaching` during the handshake, `ready` once the
 //! switch has the cable, `failed` when the owner or the switch refused, and
 //! back to `declared` when the cable ends (the VM stopped or died). Every
-//! transition writes a row in the network's ledger.
+//! transition writes a row in the network's ledger; a cable's close row
+//! carries the switch's counters for its port, an unplugged one included.
 //!
 //! Membership is the authority, and every plug and unplug bumps the
 //! attachment's generation. A plug finishes only if, under the registry
@@ -53,9 +54,17 @@ struct Plugged {
     keepalive: std::os::unix::net::UnixStream,
 }
 
+/// A port the service unplugged whose close report has not arrived yet.
+struct Unplugging {
+    vm_id: String,
+    address: Ipv4Addr,
+    connection: Uuid,
+}
+
 struct NetworkSwitch {
     host: Arc<SwitchHost>,
     ports: HashMap<u64, Plugged>,
+    unplugging: HashMap<u64, Unplugging>,
 }
 
 pub(crate) struct Switches {
@@ -245,6 +254,7 @@ async fn host(state: &Arc<ServiceState>, network: Uuid) -> Result<Arc<SwitchHost
         NetworkSwitch {
             host: Arc::clone(&host),
             ports: HashMap::new(),
+            unplugging: HashMap::new(),
         },
     );
     drop(networks);
@@ -285,6 +295,9 @@ fn replug_orphans(
     Box::pin(async move {
         dead.host.retire().await;
         warn!(%network, switch_pid = ?dead.host.pid(), members = dead.ports.len(), "network switch ended; replugging its members");
+        for (_, unplugged) in dead.unplugging {
+            record_unplugged(&state, network, &unplugged, None).await;
+        }
         for plugged in dead.ports.into_values() {
             drop(plugged.keepalive);
             if let Err(error) = plug(&state, network, &plugged.vm_id).await {
@@ -298,13 +311,14 @@ fn replug_orphans(
 /// A member whose owner still runs is plugged again once the pump has
 /// reconnected; one that is gone stays `declared` until it resumes.
 async fn port_closed(state: &Arc<ServiceState>, network: Uuid, port: u64, report: &PortReport) {
-    let plugged = state
-        .switches
-        .networks
-        .lock()
-        .await
-        .get_mut(&network)
-        .and_then(|switch| switch.ports.remove(&port));
+    let (plugged, unplugged) = match state.switches.networks.lock().await.get_mut(&network) {
+        Some(switch) => (switch.ports.remove(&port), switch.unplugging.remove(&port)),
+        None => (None, None),
+    };
+    if let Some(unplugged) = unplugged {
+        record_unplugged(state, network, &unplugged, Some(report)).await;
+        return;
+    }
     let Some(plugged) = plugged else { return };
     info!(%network, vm_id = plugged.vm_id, ?report, "network cable closed");
     drop(plugged.keepalive);
@@ -500,18 +514,44 @@ pub(crate) async fn unplug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str
         .map(|(port, _)| *port);
     let Some(port) = port else { return };
     let plugged = switch.ports.remove(&port).unwrap();
+    let unplugged = Unplugging {
+        vm_id: plugged.vm_id,
+        address: plugged.address,
+        connection: plugged.connection,
+    };
+    switch.unplugging.insert(port, unplugged);
     let host = Arc::clone(&switch.host);
     drop(networks);
+    drop(plugged.keepalive);
+    // The close row waits for the switch's report on the port, which carries
+    // its counters; a switch that cannot take the unplug will send none.
     if let Err(error) = host.unplug(port).await {
         warn!(%network, vm_id, %error, "switch did not take the unplug");
+        let unplugged = match state.switches.networks.lock().await.get_mut(&network) {
+            Some(switch) => switch.unplugging.remove(&port),
+            None => None,
+        };
+        if let Some(unplugged) = unplugged {
+            record_unplugged(state, network, &unplugged, None).await;
+        }
     }
-    drop(plugged.keepalive);
+}
+
+/// The close row of a cable the service unplugged, with the switch's report
+/// when there is one.
+async fn record_unplugged(
+    state: &Arc<ServiceState>,
+    network: Uuid,
+    unplugged: &Unplugging,
+    report: Option<&PortReport>,
+) {
+    let vm_id = &unplugged.vm_id;
     let event = link_event(
         network,
-        plugged.connection,
+        unplugged.connection,
         vm_id,
-        plugged.address,
-        Outcome::Ended("unlinked", None),
+        unplugged.address,
+        Outcome::Ended("unlinked", report),
     );
     match event {
         Ok(event) => {
@@ -630,5 +670,8 @@ pub(crate) async fn retire(state: &Arc<ServiceState>, network: Uuid) {
         .retain(|(attached, _), _| *attached != network);
     if let Some(switch) = switch {
         switch.host.retire().await;
+        for (_, unplugged) in switch.unplugging {
+            record_unplugged(state, network, &unplugged, None).await;
+        }
     }
 }

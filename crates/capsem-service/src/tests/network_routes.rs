@@ -457,9 +457,75 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     }
 }
 
+/// Leaving is audited like any other end of a cable: the close row waits for
+/// the switch's report on the port, so the frames that crossed it are in the
+/// ledger. The row used to be written before the report arrived, and the
+/// report, finding no port, was dropped.
+#[tokio::test]
+async fn leaving_writes_the_close_row_with_the_switchs_counters_for_the_cable() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_seat, _owner) = fake_link_seat(&uds_b, false, 1, 1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{id}/members/vm-b"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let close = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+            let closes: Vec<serde_json::Value> = logs["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["event_type"] == "network.close")
+                .cloned()
+                .collect();
+            if !closes.is_empty() {
+                return closes;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("leaving writes a close row");
+    assert_eq!(close.len(), 1, "{close:?}");
+    let facts = &close[0]["event"];
+    assert_eq!(facts["decision"]["reason"], "unlinked", "{facts}");
+    assert_eq!(facts["network"]["source"]["vm"]["id"], "vm-b", "{facts}");
+    assert_eq!(facts["frames"]["reason"], "Cancelled", "{facts}");
+    let dropped = facts["frames"]["dropped"]
+        .as_object()
+        .expect("per-reason drop counters");
+    let mut reasons: Vec<&str> = dropped.keys().map(String::as_str).collect();
+    reasons.sort_unstable();
+    assert_eq!(
+        reasons,
+        [
+            "queue_full",
+            "short",
+            "source_address",
+            "source_mac",
+            "storm",
+            "unknown"
+        ]
+    );
+}
+
 /// A freshly spawned owner binds its socket some time after the service
 /// registers it. Linking at start tried once, found no socket, and left the
-/// member unlinked for good: its admitted TCP worked and its UDP never did.
+/// member without a cable for good.
 #[tokio::test]
 async fn a_member_links_at_start_even_when_its_owner_binds_late() {
     let (state, _dir) = make_test_state_with_tempdir();
