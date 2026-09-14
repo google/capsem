@@ -479,7 +479,7 @@ pub fn parse_env_vars(env: &[String]) -> Result<Option<HashMap<String, String>>>
 /// overridden layout. The auto-launch path direct-spawns instead so the
 /// child service inherits `CAPSEM_HOME` and binds the socket the client
 /// is actually watching.
-fn isolation_mode_active() -> bool {
+pub(crate) fn isolation_mode_active() -> bool {
     std::env::var("CAPSEM_HOME").map(|v| !v.is_empty()).unwrap_or(false)
 }
 
@@ -883,6 +883,14 @@ impl UdsClient {
                 String::from_utf8_lossy(&body_bytes)
             )
         })
+    }
+
+    /// Start the service this client would auto-launch, unless it already answers.
+    pub(crate) async fn ensure_service(&self) -> Result<()> {
+        if self.connect_with_timeout(ConnectMode::FailFast).await.is_ok() {
+            return Ok(());
+        }
+        self.try_ensure_service().await.map(drop)
     }
 
     pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {

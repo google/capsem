@@ -332,6 +332,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.
 
+- Under `CAPSEM_HOME`, `capsem stop` and `capsem start` act on the service that
+  home's commands started, rather than the machine's installed LaunchAgent or
+  systemd unit, which serves the real home. Stop now waits for that service to
+  exit after SIGTERM; before, it left it running.
+
 - MCP clients inside a VM no longer hang when they send a large final request
   and close stdin right away: the guest relay ends the session with an in-band
   frame instead of a vsock shutdown the transport could lose.

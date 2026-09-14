@@ -1424,7 +1424,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {
-            service_install::start_service().await?;
+            service_install::start_service(&cli_service_socket_path()).await?;
             println!("Service started.");
             return Ok(());
         }

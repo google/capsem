@@ -325,6 +325,9 @@ fn reject_test_isolation_env_lists_all_set_vars() {
 /// stopped.
 #[test]
 fn a_service_still_answering_on_its_socket_is_not_reported_stopped() {
+    // A child forked by a parallel test between socket() and FIOCLEX keeps
+    // this listener open past its drop; macOS has no SOCK_CLOEXEC.
+    let _spawning = crate::lock_test_env();
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("service.sock");
     assert!(
@@ -337,8 +340,138 @@ fn a_service_still_answering_on_its_socket_is_not_reported_stopped() {
     assert!(still.contains(&socket.display().to_string()), "{still}");
 
     drop(listener);
+    let after = ensure_service_stopped(&socket);
     assert!(
-        ensure_service_stopped(&socket).is_ok(),
-        "a socket file nothing listens on is a stopped service"
+        after.is_ok(),
+        "a socket file nothing listens on is a stopped service: {after:?}"
     );
+}
+
+mod a_directly_started_service {
+    use super::super::stop_direct_service;
+    use std::path::Path;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    /// A process that serves `socket` until SIGTERM, or past it when `stubborn`.
+    fn serving(socket: &Path, stubborn: bool) -> Child {
+        let script = format!(
+            "import signal, socket, sys, time\n\
+             {}\n\
+             s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(8)\n\
+             print('ready', flush=True)\n\
+             while True:\n    conn, _ = s.accept(); conn.close()\n",
+            if stubborn {
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
+            } else {
+                ""
+            }
+        );
+        let mut child = Command::new("python3")
+            .args(["-c", &script, &socket.display().to_string()])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(child.stdout.as_mut().unwrap()), &mut ready).unwrap();
+        assert_eq!(ready.trim(), "ready");
+        child
+    }
+
+    /// Reaped the moment it exits, as an unrelated service would be by its
+    /// own parent: an unreaped child stays a zombie that still probes alive.
+    fn reaped(mut child: Child) -> (u32, std::sync::mpsc::Receiver<()>) {
+        let (pid, (exited, observed)) = (child.id(), std::sync::mpsc::channel());
+        std::thread::spawn(move || {
+            child.wait().unwrap();
+            exited.send(()).unwrap();
+        });
+        (pid, observed)
+    }
+
+    /// Every test here forks; see `a_service_still_answering_on_its_socket_is_not_reported_stopped`.
+    fn serialized(test: impl std::future::Future<Output = ()>) {
+        let _spawning = crate::lock_test_env();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(test);
+    }
+
+    fn kill(pid: u32) {
+        let pid = capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap();
+        capsem_foundation::unix::process::send_signal(pid, capsem_foundation::unix::process::Signal::Kill).unwrap();
+    }
+
+    #[test]
+    fn is_stopped_through_the_pid_its_socket_owner_recorded() {
+        serialized(async {
+            let dir = tempfile::tempdir().unwrap();
+            let (socket, pidfile) = (dir.path().join("service.sock"), dir.path().join("service.pid"));
+            let (pid, exited) = reaped(serving(&socket, false));
+            std::fs::write(&pidfile, pid.to_string()).unwrap();
+
+            stop_direct_service(&pidfile, &socket, Duration::from_secs(10))
+                .await
+                .unwrap();
+            assert!(
+                exited.try_recv().is_ok(),
+                "stop returned before the service it signalled had exited"
+            );
+        });
+    }
+
+    #[test]
+    fn nothing_answering_is_already_stopped_and_a_stale_pid_is_never_signalled() {
+        serialized(async {
+            let dir = tempfile::tempdir().unwrap();
+            let (socket, pidfile) = (dir.path().join("service.sock"), dir.path().join("service.pid"));
+            stop_direct_service(&pidfile, &socket, Duration::from_secs(1))
+                .await
+                .unwrap();
+
+            // A crashed service leaves its pid behind; that number may now be anyone's.
+            let mut bystander = Command::new("sleep").arg("30").spawn().unwrap();
+            std::fs::write(&pidfile, bystander.id().to_string()).unwrap();
+            stop_direct_service(&pidfile, &socket, Duration::from_secs(1))
+                .await
+                .unwrap();
+            assert!(
+                bystander.try_wait().unwrap().is_none(),
+                "a pid nothing vouches for was signalled"
+            );
+            bystander.kill().unwrap();
+            bystander.wait().unwrap();
+        });
+    }
+
+    #[test]
+    fn an_owner_it_cannot_name_or_stop_is_reported() {
+        serialized(async {
+            let dir = tempfile::tempdir().unwrap();
+            let (socket, pidfile) = (dir.path().join("service.sock"), dir.path().join("service.pid"));
+            let (pid, exited) = reaped(serving(&socket, true));
+
+            let unnamed = stop_direct_service(&pidfile, &socket, Duration::from_secs(1))
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{unnamed:#}").contains(&socket.display().to_string()),
+                "{unnamed:#}"
+            );
+
+            std::fs::write(&pidfile, pid.to_string()).unwrap();
+            let refused = stop_direct_service(&pidfile, &socket, Duration::from_millis(500))
+                .await
+                .unwrap_err();
+            let reported = format!("{refused:#}");
+            assert!(
+                reported.contains(&pid.to_string()) && reported.contains("did not stop"),
+                "{reported}"
+            );
+            kill(pid);
+            exited.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+    }
 }
