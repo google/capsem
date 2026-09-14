@@ -883,10 +883,14 @@ fn link_attach_roundtrip() {
         network_name: "team".into(),
         address: std::net::Ipv4Addr::new(10, 128, 5, 2),
         prefix: 24,
+        generation: 7,
     };
     let bytes = bincode::serialize(&ask).unwrap();
     let back: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
-    assert!(matches!(back, ServiceToProcess::LinkAttach { id: 12, ref token, .. } if token == "00000000000000bb"));
+    assert!(matches!(
+        back,
+        ServiceToProcess::LinkAttach { id: 12, ref token, generation: 7, .. } if token == "00000000000000bb"
+    ));
     let answer = ProcessToService::LinkAttachResult {
         id: 12,
         handoff_socket: "/run/instances/vm-handoff.sock".into(),
@@ -915,10 +919,12 @@ fn cable_requests_round_trip_with_the_address_the_guest_will_use() {
             network_name: "team".into(),
             address,
             prefix: 24,
+            generation: 4,
         },
         ServiceToProcess::LinkDetach {
             id: 2,
             network: "0f0e0d0c-0b0a-4908-8706-050403020100".into(),
+            generation: 5,
         },
         ServiceToProcess::PlugCable {
             cable: 3,

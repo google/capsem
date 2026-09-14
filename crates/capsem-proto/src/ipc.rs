@@ -86,7 +86,8 @@ pub enum ServiceToProcess {
     /// guest's stream for that network's cable. The owner evaluates its
     /// profile once, has the guest bring the cable up with `address`/`prefix`,
     /// then answers with the handoff socket the service should ask on, keyed
-    /// by `token`; the stream comes back on that connection.
+    /// by `token`; the stream comes back on that connection. `generation` is
+    /// the attachment's, which only grows: the cable remembers the newest.
     LinkAttach {
         id: u64,
         token: String,
@@ -94,10 +95,13 @@ pub enum ServiceToProcess {
         network_name: String,
         address: std::net::Ipv4Addr,
         prefix: u8,
+        generation: u32,
     },
-    /// The VM left `network`: the owner forgets its cable and the guest's
-    /// tap for it goes away.
-    LinkDetach { id: u64, network: String },
+    /// The VM left `network` as of `generation`: the owner forgets the
+    /// network's cable, and the guest's tap for it goes away, unless a newer
+    /// plug already took the cable over. Requests can reach the owner in
+    /// either order; the generation, not arrival, decides.
+    LinkDetach { id: u64, network: String, generation: u32 },
     /// Internal VM-owner request: bring a cable up in the guest.
     PlugCable {
         cable: u32,
