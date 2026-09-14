@@ -8,6 +8,8 @@ fn network_at(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("networks").join("n1").join("network.db")
 }
 
+const SUBNET: (Ipv4Addr, u8) = (Ipv4Addr::new(10, 128, 7, 0), 24);
+
 #[tokio::test]
 async fn opening_creates_the_schema_and_reopening_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -37,6 +39,21 @@ async fn a_missing_network_table_is_a_broken_database_not_an_empty_one() {
 }
 
 #[tokio::test]
+async fn a_network_table_without_a_subnet_is_a_broken_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = network_at(&dir);
+    drop(open(&path).unwrap());
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("ALTER TABLE network DROP COLUMN subnet")
+        .unwrap();
+    let error = open(&path)
+        .err()
+        .expect("a network without its subnet must refuse to open");
+    assert!(error.to_string().contains("subnet"), "{error}");
+}
+
+#[tokio::test]
 async fn an_unsupported_schema_version_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = network_at(&dir);
@@ -57,7 +74,7 @@ async fn records_are_durable_after_a_flush_barrier_and_upserted_by_key() {
     let path = network_at(&dir);
     let db = open(&path).unwrap();
     let id = Uuid::new_v4();
-    let network = NetworkRecord::new(id, "backend", 1_700_000_000_000).unwrap();
+    let network = NetworkRecord::new(id, "backend", SUBNET, 1_700_000_000_000).unwrap();
     db.write(WriteOp::Network(network.clone())).await.unwrap();
     let member = |state, at| NetworkMembership::new(id, "vm-1", Ipv4Addr::new(10, 128, 0, 2), state, at).unwrap();
     db.write(WriteOp::NetworkMembership(member(
@@ -70,9 +87,12 @@ async fn records_are_durable_after_a_flush_barrier_and_upserted_by_key() {
 
     // What another process sees on disk after the barrier.
     let reader = DbHandle::open_external_reader(&path).unwrap();
-    let networks = reader.query("SELECT name, state FROM network", &[]).await.unwrap();
+    let networks = reader
+        .query("SELECT name, subnet, state FROM network", &[])
+        .await
+        .unwrap();
     assert!(
-        networks.contains("backend") && networks.contains("active"),
+        networks.contains("backend") && networks.contains("10.128.7.0/24") && networks.contains("active"),
         "{networks}"
     );
     let members = reader
@@ -104,10 +124,16 @@ async fn records_are_durable_after_a_flush_barrier_and_upserted_by_key() {
         .unwrap();
     assert!(members.contains("[1,\"ready\",1700000000002]"), "{members}");
     let networks = reader
-        .query("SELECT COUNT(*), MAX(state), MAX(retired_unix_ms) FROM network", &[])
+        .query(
+            "SELECT COUNT(*), MAX(state), MAX(retired_unix_ms), MAX(subnet) FROM network",
+            &[],
+        )
         .await
         .unwrap();
-    assert!(networks.contains("[1,\"retired\",1700000000003]"), "{networks}");
+    assert!(
+        networks.contains("[1,\"retired\",1700000000003,\"10.128.7.0/24\"]"),
+        "{networks}"
+    );
 }
 
 #[tokio::test]
@@ -139,12 +165,23 @@ async fn audit_rows_for_a_network_use_the_shared_transport_ledger() {
 
 #[test]
 fn records_validate_identity_and_bounds_before_they_reach_sqlite() {
-    assert!(NetworkRecord::new(Uuid::nil(), "backend", 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "", 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), &"n".repeat(65), 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "two words", 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "backend", -1).is_err());
-    let network = NetworkRecord::new(Uuid::new_v4(), "backend", 10).unwrap();
+    assert!(NetworkRecord::new(Uuid::nil(), "backend", SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(Uuid::new_v4(), "", SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(Uuid::new_v4(), &"n".repeat(65), SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(Uuid::new_v4(), "two words", SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(Uuid::new_v4(), "backend", SUBNET, -1).is_err());
+    for subnet in [
+        (Ipv4Addr::new(10, 128, 7, 1), 24),
+        (Ipv4Addr::new(10, 128, 7, 0), 7),
+        (Ipv4Addr::new(10, 128, 7, 0), 31),
+        (Ipv4Addr::new(10, 128, 7, 0), 33),
+    ] {
+        assert!(
+            NetworkRecord::new(Uuid::new_v4(), "backend", subnet, 0).is_err(),
+            "{subnet:?}"
+        );
+    }
+    let network = NetworkRecord::new(Uuid::new_v4(), "backend", SUBNET, 10).unwrap();
     assert!(network.clone().retired(9).is_err());
     assert!(network.retired(10).is_ok());
 

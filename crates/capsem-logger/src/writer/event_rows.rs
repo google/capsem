@@ -258,8 +258,8 @@ pub(super) fn upsert_network(conn: &Connection, network: &NetworkRecord, target:
     execute_cached(
         conn,
         &format!(
-            "INSERT INTO {} (id, name, state, created_unix_ms, retired_unix_ms)
-                  VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO {} (id, name, subnet, state, created_unix_ms, retired_unix_ms)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                   name = excluded.name,
                   state = excluded.state,
@@ -269,6 +269,7 @@ pub(super) fn upsert_network(conn: &Connection, network: &NetworkRecord, target:
         params![
             network.id,
             network.name,
+            network.subnet,
             network.state.as_str(),
             network.created_unix_ms,
             network.retired_unix_ms

@@ -52,13 +52,25 @@ impl MembershipState {
 pub struct NetworkRecord {
     pub(crate) id: String,
     pub(crate) name: String,
+    /// The network's subnet, `a.b.c.d/prefix`, fixed for its whole life.
+    pub(crate) subnet: String,
     pub(crate) state: NetworkState,
     pub(crate) created_unix_ms: i64,
     pub(crate) retired_unix_ms: Option<i64>,
 }
 
 impl NetworkRecord {
-    pub fn new(id: Uuid, name: &str, created_unix_ms: i64) -> Result<Self, String> {
+    /// `subnet` is the network address and prefix length the network's
+    /// members are addressed from.
+    pub fn new(id: Uuid, name: &str, subnet: (Ipv4Addr, u8), created_unix_ms: i64) -> Result<Self, String> {
+        let (network, prefix_len) = subnet;
+        let aligned =
+            (8..=30).contains(&prefix_len) && network.to_bits() & (u32::MAX << (32 - prefix_len)) == network.to_bits();
+        if !aligned {
+            return Err(format!(
+                "network subnet {network}/{prefix_len} must be a network address with a /8 to /30 prefix"
+            ));
+        }
         if id.is_nil() {
             return Err("network record requires a non-nil id".into());
         }
@@ -74,6 +86,7 @@ impl NetworkRecord {
         Ok(Self {
             id: id.to_string(),
             name: name.to_string(),
+            subnet: format!("{network}/{prefix_len}"),
             state: NetworkState::Active,
             created_unix_ms,
             retired_unix_ms: None,

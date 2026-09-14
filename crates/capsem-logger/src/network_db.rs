@@ -15,14 +15,16 @@ use crate::schema::{table_column_names, table_exists};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 use std::path::Path;
 
-pub const NETWORK_SCHEMA_VERSION: i64 = 1;
+/// Version 2 gives each network its own subnet. Version 1 databases predate
+/// any release and are refused rather than migrated.
+pub const NETWORK_SCHEMA_VERSION: i64 = 2;
 
 /// Tables this module adds beside the session schema, with the columns a
 /// ready database must have.
 pub(crate) const NETWORK_TABLES: &[(&str, &[&str])] = &[
     (
         "network",
-        &["id", "name", "state", "created_unix_ms", "retired_unix_ms"],
+        &["id", "name", "subnet", "state", "created_unix_ms", "retired_unix_ms"],
     ),
     (
         "network_members",
@@ -34,6 +36,7 @@ const CREATE_NETWORK: &str = "
     CREATE TABLE IF NOT EXISTS network (
         id TEXT PRIMARY KEY CHECK(length(id) = 36),
         name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64),
+        subnet TEXT NOT NULL CHECK(length(subnet) BETWEEN 9 AND 18),
         state TEXT NOT NULL CHECK(state IN ('active', 'retired')),
         created_unix_ms INTEGER NOT NULL CHECK(created_unix_ms >= 0),
         retired_unix_ms INTEGER CHECK(retired_unix_ms IS NULL OR retired_unix_ms >= created_unix_ms)
