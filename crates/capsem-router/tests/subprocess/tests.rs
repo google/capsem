@@ -1,5 +1,5 @@
 use capsem_foundation::unix::router_channel::Sender;
-use capsem_router::{send_grant, Class, Event, Grant, CONNECTIONS_PER_CLASS};
+use capsem_router::{send_grant, Event, Grant, CONNECTION_LIMIT};
 use std::net::Ipv4Addr;
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream as StdUnixStream;
@@ -17,17 +17,11 @@ struct Router {
 }
 
 #[tokio::test]
-async fn configured_class_limits_are_independent_in_the_confined_child() {
-    let mut router = Router::with_limits(2, 1).await;
+async fn the_configured_connection_limit_holds_in_the_confined_child() {
+    let mut router = Router::with_limit(2).await;
     let mut peers = Vec::new();
-    for (id, class, allowed) in [
-        (1, Class::Private, true),
-        (2, Class::Private, false),
-        (3, Class::Expose, true),
-        (4, Class::Expose, true),
-        (5, Class::Expose, false),
-    ] {
-        peers.push(router.class_pair(id, class).await);
+    for (id, allowed) in [(1, true), (2, true), (3, false)] {
+        peers.push(router.pair(id).await);
         assert_eq!(
             router.event().await,
             if allowed {
@@ -135,16 +129,10 @@ async fn stalled_destination_backpressures_tcp_with_bounded_router_rss() {
 }
 impl Router {
     async fn start() -> Self {
-        Self::with_limits(CONNECTIONS_PER_CLASS as u16, CONNECTIONS_PER_CLASS as u16).await
+        Self::with_limit(CONNECTION_LIMIT as u16).await
     }
-    async fn with_limits(expose: u16, private: u16) -> Self {
-        Self::spawn(&[
-            "--expose-limit",
-            &expose.to_string(),
-            "--private-limit",
-            &private.to_string(),
-        ])
-        .await
+    async fn with_limit(connections: u16) -> Self {
+        Self::spawn(&["--expose-limit", &connections.to_string()]).await
     }
     async fn spawn(args: &[&str]) -> Self {
         let (parent, child) = StdUnixStream::pair().unwrap();
@@ -187,9 +175,6 @@ impl Router {
         event
     }
     async fn pair(&mut self, id: u64) -> (TcpStream, UnixStream) {
-        self.class_pair(id, Class::Expose).await
-    }
-    async fn class_pair(&mut self, id: u64, class: Class) -> (TcpStream, UnixStream) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
         let (source, _) = listener.accept().await.unwrap();
@@ -197,7 +182,6 @@ impl Router {
         peer.set_nonblocking(true).unwrap();
         self.grant(Grant::Connected {
             id,
-            class,
             source: source.as_fd(),
             destination: destination.as_fd(),
         })
@@ -272,11 +256,11 @@ async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
 async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
     let mut router = Router::start().await;
     let mut peers = Vec::new();
-    for id in 1..=CONNECTIONS_PER_CLASS as u64 {
+    for id in 1..=CONNECTION_LIMIT as u64 {
         peers.push(router.pair(id).await);
         assert_eq!(router.event().await, Event::Accepted(id));
     }
-    let excess = CONNECTIONS_PER_CLASS as u64 + 1;
+    let excess = CONNECTION_LIMIT as u64 + 1;
     let (mut refused, _peer) = router.pair(excess).await;
     assert_eq!(router.event().await, Event::Refused(excess));
     assert_eq!(
@@ -357,39 +341,11 @@ async fn unconnected_listener_descriptor_is_refused() {
     router
         .grant(Grant::Connected {
             id: 1,
-            class: Class::Expose,
             source: listener.as_fd(),
             destination: data.as_fd(),
         })
         .await;
     assert_eq!(router.event().await, Event::Refused(1));
-    router.close().await;
-}
-
-#[tokio::test]
-async fn private_saturation_preserves_expose_reservation_without_borrowing() {
-    let mut router = Router::start().await;
-    let mut peers = Vec::new();
-    for id in 1..=CONNECTIONS_PER_CLASS as u64 {
-        peers.push(router.class_pair(id, Class::Private).await);
-        assert_eq!(router.event().await, Event::Accepted(id));
-    }
-    let excess = CONNECTIONS_PER_CLASS as u64 + 1;
-    let _refused = router.class_pair(excess, Class::Private).await;
-    assert_eq!(
-        router.event().await,
-        Event::Refused(excess),
-        "private borrowed expose capacity"
-    );
-    let (mut tcp, mut peer) = router.class_pair(excess + 1, Class::Expose).await;
-    assert_eq!(router.event().await, Event::Accepted(excess + 1));
-    tcp.write_all(b"ingress still works").await.unwrap();
-    let mut bytes = [0; 23];
-    timeout(Duration::from_secs(2), peer.read_exact(&mut bytes))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(bytes.to_vec(), frame(b"ingress still works"));
     router.close().await;
 }
 

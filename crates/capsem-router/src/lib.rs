@@ -1,8 +1,9 @@
 //! Versioned descriptor grants; policy and destination selection stay in core.
 //!
 //! Two confined companions share this protocol: [`relay`] copies bytes
-//! between granted pairs for one VM owner, and [`switch::run`] is one
-//! network's layer-2 switch, with a port for every cable plugged into it.
+//! between a published host port's client and the guest for one VM owner,
+//! and [`switch::run`] is one network's layer-2 switch, with a port for every
+//! cable plugged into it.
 use capsem_foundation::unix::{
     fd,
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
@@ -20,20 +21,16 @@ use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
 pub const MAX_CONNECTIONS: usize = 128;
-pub const CONNECTIONS_PER_CLASS: usize = 64;
+/// The default ceiling on a relay's pairs and on a switch's ports.
+pub const CONNECTION_LIMIT: usize = 64;
 const VERSION: u8 = 5;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Class {
-    Expose,
-    Private,
-}
 
 pub enum Grant<Socket = OwnedFd> {
     Hello,
+    /// A published port's host client (`source`, raw TCP) and the guest's
+    /// framed VSOCK leg (`destination`).
     Connected {
         id: u64,
-        class: Class,
         source: Socket,
         destination: Socket,
     },
@@ -127,12 +124,11 @@ impl Grant {
     pub fn decode(mut frame: Frame) -> io::Result<Self> {
         match (decode(frame.bytes)?, frame.fds.len()) {
             ((0, 0), 0) => Ok(Self::Hello),
-            ((kind @ (1 | 3), id), 2) if id != 0 => {
+            ((1, id), 2) if id != 0 => {
                 let destination = frame.fds.pop().unwrap();
                 let source = frame.fds.pop().unwrap();
                 Ok(Self::Connected {
                     id,
-                    class: if kind == 1 { Class::Expose } else { Class::Private },
                     source,
                     destination,
                 })
@@ -152,15 +148,11 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
         Grant::Hello => sender.send(&encode(0, 0), &[]).await?,
         Grant::Connected {
             id,
-            class,
             source,
             destination,
         } => {
             sender
-                .send(
-                    &encode(if class == Class::Expose { 1 } else { 3 }, id),
-                    &[source.as_raw_fd(), destination.as_raw_fd()],
-                )
+                .send(&encode(1, id), &[source.as_raw_fd(), destination.as_raw_fd()])
                 .await?
         }
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
@@ -290,39 +282,31 @@ impl Drop for Stream {
 
 #[derive(Clone, Copy)]
 pub struct ConnectionLimits {
-    expose: usize,
-    private: usize,
+    connections: usize,
 }
 
 impl Default for ConnectionLimits {
     fn default() -> Self {
         Self {
-            expose: CONNECTIONS_PER_CLASS,
-            private: CONNECTIONS_PER_CLASS,
+            connections: CONNECTION_LIMIT,
         }
     }
 }
 
 impl ConnectionLimits {
-    pub fn new(expose: u16, private: u16) -> io::Result<Self> {
+    pub fn new(connections: u16) -> io::Result<Self> {
         let limits = Self {
-            expose: usize::from(expose),
-            private: usize::from(private),
+            connections: usize::from(connections),
         };
-        if !(1..=CONNECTIONS_PER_CLASS).contains(&limits.expose)
-            || !(1..=CONNECTIONS_PER_CLASS).contains(&limits.private)
-        {
-            return Err(invalid("router limits exceed per-class ceilings"));
+        if !(1..=CONNECTION_LIMIT).contains(&limits.connections) {
+            return Err(invalid("router connection limit exceeds its ceiling"));
         }
         Ok(limits)
     }
 }
 
 pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionLimits) -> io::Result<()> {
-    let slots = [
-        Arc::new(tokio::sync::Semaphore::new(limits.expose)),
-        Arc::new(tokio::sync::Semaphore::new(limits.private)),
-    ];
+    let slots = Arc::new(tokio::sync::Semaphore::new(limits.connections));
     let mut jobs = tokio::task::JoinSet::new();
     let mut active = HashMap::new();
     let mut readers = tokio::task::JoinSet::new();
@@ -342,14 +326,13 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
         loop {
             tokio::select! {
                 message = messages.recv() => match message.ok_or_else(|| invalid("router grant channel closed"))?? {
-                    Grant::Connected { id, class, source, destination } => {
+                    Grant::Connected { id, source, destination } => {
                         if id <= last_id { return Err(invalid("reused router connection id")); }
                         last_id = id;
-                        let index = usize::from(class == Class::Private);
-                        let permit = match slots[index].clone().try_acquire_owned() {
+                        let permit = match slots.clone().try_acquire_owned() {
                             Ok(permit) => permit,
                             Err(_) => {
-                                tracing::debug!(connection_id = id, ?class, "router class quota exhausted");
+                                tracing::debug!(connection_id = id, "router connection limit reached");
                                 Event::Refused(id).write(&mut events).await?;
                                 continue;
                             }
@@ -366,10 +349,9 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         // Acknowledgement precedes forwarding and is bounded.
                         Event::Accepted(id).write(&mut events).await?;
                         let (stop, stopped) = tokio::sync::oneshot::channel();
-                        // The destination is always a guest's VSOCK leg; a private
-                        // source is the other guest's, an exposed one a host client.
+                        // The source is a host client; the destination the guest's VSOCK leg.
                         let framings = router_stream::Framings {
-                            source: if class == Class::Private { router_stream::Framing::Framed } else { router_stream::Framing::Raw },
+                            source: router_stream::Framing::Raw,
                             destination: router_stream::Framing::Framed,
                         };
                         jobs.spawn(async move {
@@ -383,7 +365,7 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                             }
                             drop(source);
                             drop(destination);
-                            tracing::debug!(connection_id = id, ?class, reason = ?result.reason, from_source = result.from_source,
+                            tracing::debug!(connection_id = id, reason = ?result.reason, from_source = result.from_source,
                                 to_source = result.to_source, error = ?result.error, "router stream ended");
                             (id, result.report())
                         });

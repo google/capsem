@@ -67,7 +67,6 @@ async fn connected_pair_preserves_binary_half_close_and_concurrency() {
             &sender,
             Grant::Connected {
                 id,
-                class: Class::Expose,
                 source: source.as_fd(),
                 destination: destination.as_fd(),
             },
