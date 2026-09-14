@@ -83,23 +83,6 @@ fn network_info(registry: &NetworkRegistry, id: Uuid) -> Option<NetworkInfo> {
     })
 }
 
-/// The VM's lifetime address, running or stopped. An entry written before
-/// addresses existed cannot join a network until it resumes and gets one.
-pub(super) fn vm_private_address(state: &ServiceState, vm_id: &str) -> Result<std::net::Ipv4Addr, AppError> {
-    if let Some(instance) = state.instances.lock().unwrap().get(vm_id) {
-        return Ok(instance.private_address);
-    }
-    match vm_lifecycle::find_persistent_entry_by_route_id(state, vm_id) {
-        Some(entry) => entry.private_address.ok_or_else(|| {
-            AppError(
-                StatusCode::CONFLICT,
-                format!("VM {vm_id} has no private address until it resumes"),
-            )
-        }),
-        None => Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}"))),
-    }
-}
-
 /// Resolve network names to ids, refusing the whole request on any unknown
 /// name so a VM is never created half-connected.
 pub(super) fn resolve_network_names(registry: &NetworkRegistry, names: &[String]) -> Result<Vec<Uuid>, AppError> {

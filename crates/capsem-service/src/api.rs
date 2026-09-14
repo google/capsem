@@ -138,25 +138,6 @@ pub struct NetworkLogsResponse {
     pub next_cursor: Option<String>,
 }
 
-/// A VM owner asking, on its VM's behalf, for a TCP connection to a private
-/// address. Internal to the service UDS: the owner proves itself with the
-/// secret the service minted for it at spawn.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PrivateConnectRequest {
-    pub source_vm: String,
-    pub owner_secret: String,
-    /// The source owner's boot generation, so the destination's audit row
-    /// names the same boot the source's does.
-    #[serde(default)]
-    pub source_generation: u64,
-    /// The workload's own port; the destination's audit row names both ends.
-    pub source_port: u16,
-    pub destination: std::net::Ipv4Addr,
-    pub port: u16,
-    #[serde(default)]
-    pub process_name: String,
-}
-
 /// A VM owner asking, on its VM's behalf, what a private name or a pool
 /// address is: answered only with members of a network the VM is in.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -178,16 +159,6 @@ pub struct PrivateResolveResponse {
     pub address: std::net::Ipv4Addr,
     pub vm: String,
     pub network: String,
-}
-
-/// Where an admitted private connection goes: the destination owner's
-/// handoff socket and the one-time token it will accept the stream under.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PrivateConnectResponse {
-    pub network: String,
-    pub destination_vm: String,
-    pub handoff_socket: String,
-    pub token: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
