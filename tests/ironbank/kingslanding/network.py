@@ -9,6 +9,7 @@ host's view of the switch processes and the descriptors they hold.
 """
 
 import contextlib
+import ctypes
 import ipaddress
 import json
 import os
@@ -140,15 +141,38 @@ def socket_descriptors(pid):
     return sum(1 for line in listing.splitlines()[1:] if line.strip()), listing
 
 
+class _TaskInfo(ctypes.Structure):
+    """libproc's `struct proc_taskinfo` (PROC_PIDTASKINFO)."""
+
+    _fields_ = [
+        (name, ctypes.c_uint64)
+        for name in ("virtual_size", "resident_size", "total_user", "total_system", "threads_user", "threads_system")
+    ] + [
+        (name, ctypes.c_int32)
+        for name in (
+            "policy", "faults", "pageins", "cow_faults", "messages_sent", "messages_received",
+            "syscalls_mach", "syscalls_unix", "csw", "threadnum", "numrunning", "priority",
+        )
+    ]
+
+
+_PROC_PIDTASKINFO = 4
+
+
 def resident_kib(pid):
-    return int(
-        subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    )
+    """`pid`'s resident memory, by syscall: the gate runs this suite under
+    Seatbelt, where setuid `ps` cannot execute."""
+    if sys.platform == "linux":
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+        raise AssertionError(f"no VmRSS for {pid}")
+    info = _TaskInfo()
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    size = libproc.proc_pidinfo(pid, _PROC_PIDTASKINFO, ctypes.c_uint64(0), ctypes.byref(info), ctypes.sizeof(info))
+    assert size == ctypes.sizeof(info), (pid, size, ctypes.get_errno())
+    return info.resident_size // 1024
 
 
 def network_events(service, network):
