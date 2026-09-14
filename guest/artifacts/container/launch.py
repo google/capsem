@@ -213,7 +213,7 @@ def derive_returns(output_rules):
 def open_cables(run, sysctl_root):
     """Let the container use the VM's cables: every protocol to a member
     leaves through the cable that routes it, as that cable's address, and
-    what arrives on a cable is the container's. MASQUERADE takes the address
+    what a cable delivers to one of the VM's own addresses is the container's. MASQUERADE takes the address
     when a packet leaves, so a cable plugged after the container started
     carries it as well. Forwarding is for the container alone: a VM on two
     networks never carries one network's packets onto the other.
@@ -239,6 +239,10 @@ def open_cables(run, sysctl_root):
         NAT_CHAIN,
         "-i",
         CABLES,
+        "-m",
+        "addrtype",
+        "--dst-type",
+        "LOCAL",
         "-j",
         "DNAT",
         "--to-destination",

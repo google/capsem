@@ -2275,7 +2275,10 @@ class TestKernelConfig:
     def test_network_cables_have_what_a_switched_link_needs(self, name):
         """Every cable is a tap; a container behind the VM reaches whichever
         cables exist when it sends, so its source NAT follows the outgoing
-        cable's address (MASQUERADE) instead of one fixed at container start."""
+        cable's address (MASQUERADE) instead of one fixed at container start.
+        Only what a cable delivers to one of the VM's own addresses is handed
+        to the container (addrtype LOCAL); anything else meets the no-transit
+        drop."""
         content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         for symbol in [
             "CONFIG_TUN=y",
@@ -2285,6 +2288,7 @@ class TestKernelConfig:
             "CONFIG_NETFILTER_XT_NAT=y",
             "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y",
             "CONFIG_NF_NAT_MASQUERADE=y",
+            "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y",
         ]:
             assert symbol in content, symbol
         assert "smoltcp" not in content, "the private network has no host TCP stack"

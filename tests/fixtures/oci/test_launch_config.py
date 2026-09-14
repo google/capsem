@@ -337,9 +337,12 @@ def test_network_ready_hook_routes_the_container_through_every_cable(launcher, t
         "-o", "cable+", "-s", launcher.CONTAINER_ADDRESS, "-j", "MASQUERADE",
     ]
     assert masquerade in calls
+    # Only what is addressed to the VM itself: a packet routed through this
+    # VM toward another network is not the container's, and is dropped.
     inbound = [
         iptables, "-t", "nat", "-A", launcher.NAT_CHAIN,
-        "-i", "cable+", "-j", "DNAT", "--to-destination", launcher.CONTAINER_ADDRESS,
+        "-i", "cable+", "-m", "addrtype", "--dst-type", "LOCAL",
+        "-j", "DNAT", "--to-destination", launcher.CONTAINER_ADDRESS,
     ]
     assert inbound in calls
     out = [iptables, "-I", "FORWARD", "-i", "capsem0", "-o", "cable+", "-j", "ACCEPT"]

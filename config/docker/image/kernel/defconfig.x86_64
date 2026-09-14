@@ -131,6 +131,10 @@ CONFIG_NETFILTER_XT_NAT=y
 # rather than one fixed when the container started.
 CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
 CONFIG_NF_NAT_MASQUERADE=y
+# Only what a cable delivers to one of the VM's own addresses is handed to
+# the container; a packet routed through the VM toward another network is
+# not, and meets the cable-to-cable drop.
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 
 # Private network cables: capsem-tun opens one tap per network the VM is
 # plugged into and pumps its ethernet frames over VSOCK to that network's
