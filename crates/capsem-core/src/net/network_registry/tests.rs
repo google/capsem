@@ -54,31 +54,32 @@ async fn names_must_be_dns_labels() {
 }
 
 #[tokio::test]
-async fn membership_records_the_vm_and_its_address_and_blocks_retirement() {
+async fn membership_leases_an_address_in_the_networks_subnet_and_blocks_retirement() {
     let (_dir, root) = root();
     let mut registry = NetworkRegistry::new(root);
     let net = registry.create("team", 1).await.unwrap();
-    let address = Ipv4Addr::new(10, 128, 0, 2);
+    let a = registry.attach(net.id, "vm-a", 2).await.unwrap();
+    assert!(net.subnet.contains(a), "{a} is outside {}", net.subnet);
+    assert_eq!(
+        registry.attach(net.id, "vm-a", 3).await.unwrap(),
+        a,
+        "joining again keeps the address"
+    );
     registry
-        .attach(net.id, "vm-a", address, MembershipState::Declared, 2)
+        .set_state(net.id, "vm-a", MembershipState::Ready, 3)
         .await
         .unwrap();
-    registry
-        .attach(net.id, "vm-a", address, MembershipState::Ready, 3)
-        .await
-        .unwrap();
-    registry
-        .attach(net.id, "vm-b", Ipv4Addr::new(10, 128, 0, 3), MembershipState::Ready, 4)
-        .await
-        .unwrap();
+    let b = registry.attach(net.id, "vm-b", 4).await.unwrap();
+    assert_ne!(a, b);
+    assert!(net.subnet.contains(b));
     let members = registry.members(net.id).unwrap();
     assert_eq!(members.len(), 2);
     assert_eq!(
-        members[0].state,
-        MembershipState::Ready,
-        "a second attach updates the state"
+        (members[0].address, members[0].state, members[0].updated_unix_ms),
+        (a, MembershipState::Ready, 3)
     );
-    assert_eq!(members[0].updated_unix_ms, 3);
+    assert_eq!(members[1].state, MembershipState::Declared);
+    assert_eq!(registry.address_of(net.id, "vm-b"), Some(b));
     assert_eq!(registry.memberships_of("vm-a"), vec![net.id]);
     assert_eq!(
         registry.retire(net.id, 5).await,
@@ -92,6 +93,14 @@ async fn membership_records_the_vm_and_its_address_and_blocks_retirement() {
         })
     );
     assert_eq!(
+        registry.set_state(net.id, "vm-c", MembershipState::Ready, 6).await,
+        Err(NetworkError::NotAMember {
+            id: net.id,
+            vm_id: "vm-c".into()
+        }),
+        "only a member has a state to set"
+    );
+    assert_eq!(
         registry.vm_deleted("vm-a", 7).await.unwrap(),
         vec![Departure {
             network: net.id,
@@ -99,22 +108,77 @@ async fn membership_records_the_vm_and_its_address_and_blocks_retirement() {
         }],
         "vm-b is still a member, so the network stays"
     );
+    assert_eq!(registry.address_of(net.id, "vm-a"), None);
     registry.detach(net.id, "vm-b", 8).await.unwrap();
     registry.retire(net.id, 9).await.unwrap();
     assert_eq!(registry.retire(net.id, 10).await, Err(NetworkError::NotFound(net.id)));
     assert_eq!(
-        registry
-            .attach(
-                net.id,
-                "vm-a",
-                Ipv4Addr::new(10, 128, 0, 5),
-                MembershipState::Declared,
-                11
-            )
-            .await,
+        registry.attach(net.id, "vm-a", 11).await,
         Err(NetworkError::NotFound(net.id)),
         "a retired network never takes a member again"
     );
+}
+
+#[tokio::test]
+async fn every_network_has_its_own_subnet_and_a_vm_its_own_address_in_each() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let front = registry.create("front", 1).await.unwrap();
+    let back = registry.create("back", 1).await.unwrap();
+    assert!(
+        !front.subnet.overlaps(back.subnet),
+        "{} and {}",
+        front.subnet,
+        back.subnet
+    );
+    for net in [&front, &back] {
+        assert!(PrivatePool::DEFAULT.contains(net.subnet.network()));
+        assert_eq!(net.subnet.prefix_len(), capsem_config::NETWORK_PREFIX_LEN);
+    }
+    let in_front = registry.attach(front.id, "vm-a", 2).await.unwrap();
+    let in_back = registry.attach(back.id, "vm-a", 2).await.unwrap();
+    assert!(front.subnet.contains(in_front) && back.subnet.contains(in_back));
+    assert_ne!(in_front, in_back, "one VM on two networks has two addresses");
+}
+
+#[tokio::test]
+async fn a_retired_networks_subnet_is_not_the_next_one_handed_out() {
+    let (_dir, root) = root();
+    let mut registry = NetworkRegistry::new(root);
+    let old = registry.create("old", 1).await.unwrap();
+    registry.retire(old.id, 2).await.unwrap();
+    let new = registry.create("new", 3).await.unwrap();
+    assert_ne!(
+        new.subnet, old.subnet,
+        "audit rows naming the old subnet stay unambiguous"
+    );
+}
+
+#[tokio::test]
+async fn subnets_and_addresses_run_out_loudly() {
+    let (_dir, root) = root();
+    let pool = PrivatePool::parse("192.168.0.0/23").unwrap();
+    let mut registry = NetworkRegistry::new(root).with_pool(pool);
+    let first = registry.create("one", 1).await.unwrap();
+    registry.create("two", 1).await.unwrap();
+    assert_eq!(
+        registry.create("three", 1).await,
+        Err(NetworkError::SubnetsExhausted { pool })
+    );
+    let capacity = first.subnet.capacity();
+    let mut addresses = std::collections::BTreeSet::new();
+    for n in 0..capacity {
+        addresses.insert(registry.attach(first.id, &format!("vm-{n}"), 2).await.unwrap());
+    }
+    assert_eq!(addresses.len(), capacity as usize, "no address is handed out twice");
+    assert_eq!(
+        registry.attach(first.id, "vm-late", 3).await,
+        Err(NetworkError::AddressesExhausted {
+            id: first.id,
+            subnet: first.subnet
+        })
+    );
+    assert!(registry.address_of(first.id, "vm-late").is_none());
 }
 
 #[tokio::test]
@@ -124,12 +188,8 @@ async fn a_deleted_vm_retires_only_the_networks_it_leaves_empty() {
     let shared = registry.create("shared", 1).await.unwrap();
     let solo = registry.create("solo", 1).await.unwrap();
     let idle = registry.create("idle", 1).await.unwrap();
-    let address = Ipv4Addr::new(10, 128, 0, 9);
     for (network, vm) in [(shared.id, "vm-a"), (shared.id, "vm-b"), (solo.id, "vm-a")] {
-        registry
-            .attach(network, vm, address, MembershipState::Declared, 2)
-            .await
-            .unwrap();
+        registry.attach(network, vm, 2).await.unwrap();
     }
 
     let mut departures = registry.vm_deleted("vm-a", 3).await.unwrap();
@@ -213,47 +273,33 @@ async fn retired_databases_are_swept_after_the_retention_window_and_survive_a_re
 #[tokio::test]
 async fn a_restart_rebuilds_active_networks_and_members_from_their_databases() {
     let (_dir, root) = root();
-    let (kept, retired) = {
+    let (kept, retired, address) = {
         let mut registry = NetworkRegistry::new(root.clone());
         let kept = registry.create("kept", 10).await.unwrap();
         let retired = registry.create("gone", 11).await.unwrap();
+        let address = registry.attach(kept.id, "vm-a", 12).await.unwrap();
         registry
-            .attach(
-                kept.id,
-                "vm-a",
-                Ipv4Addr::new(10, 128, 0, 2),
-                MembershipState::Ready,
-                12,
-            )
+            .set_state(kept.id, "vm-a", MembershipState::Ready, 12)
             .await
             .unwrap();
-        registry
-            .attach(
-                kept.id,
-                "vm-b",
-                Ipv4Addr::new(10, 128, 0, 3),
-                MembershipState::Declared,
-                13,
-            )
-            .await
-            .unwrap();
+        registry.attach(kept.id, "vm-b", 13).await.unwrap();
         registry.detach(kept.id, "vm-b", 14).await.unwrap();
         registry.retire(retired.id, 15).await.unwrap();
-        (kept, retired)
+        (kept, retired, address)
     };
-    let registry = NetworkRegistry::load(root).await.unwrap();
+    let mut registry = NetworkRegistry::load(root).await.unwrap();
     assert_eq!(
         registry.list(),
         vec![NetworkSummary {
             member_count: 1,
-            ..kept
+            ..kept.clone()
         }]
     );
     assert_eq!(
         registry.members(kept.id).unwrap(),
         vec![Member {
             vm_id: "vm-a".into(),
-            address: Ipv4Addr::new(10, 128, 0, 2),
+            address,
             state: MembershipState::Ready,
             updated_unix_ms: 12
         }]
@@ -264,6 +310,10 @@ async fn a_restart_rebuilds_active_networks_and_members_from_their_databases() {
         "retired networks are history, not state"
     );
     assert_eq!(registry.find("gone"), None);
+    let newcomer = registry.attach(kept.id, "vm-c", 16).await.unwrap();
+    assert_ne!(newcomer, address, "a reloaded member's address is still taken");
+    let fresh = registry.create("fresh", 17).await.unwrap();
+    assert!(!fresh.subnet.overlaps(kept.subnet), "a reloaded subnet is still taken");
 }
 
 #[tokio::test]
@@ -646,17 +696,9 @@ async fn a_private_address_resolves_only_through_a_shared_active_network() {
     let mut registry = NetworkRegistry::new(root);
     let team = registry.create("team", 1).await.unwrap();
     let other = registry.create("other", 1).await.unwrap();
-    let (a, b, c) = (
-        Ipv4Addr::new(10, 128, 0, 2),
-        Ipv4Addr::new(10, 128, 0, 3),
-        Ipv4Addr::new(10, 128, 0, 4),
-    );
-    for (network, vm, address) in [(team.id, "vm-a", a), (team.id, "vm-b", b), (other.id, "vm-c", c)] {
-        registry
-            .attach(network, vm, address, MembershipState::Declared, 2)
-            .await
-            .unwrap();
-    }
+    let a = registry.attach(team.id, "vm-a", 2).await.unwrap();
+    let b = registry.attach(team.id, "vm-b", 2).await.unwrap();
+    let c = registry.attach(other.id, "vm-c", 2).await.unwrap();
     assert_eq!(
         registry.resolve_private("vm-a", b).unwrap(),
         PrivatePeer {
@@ -679,7 +721,7 @@ async fn a_private_address_resolves_only_through_a_shared_active_network() {
     assert!(refused(&registry, "vm-c", b), "the other way round is refused too");
     assert!(refused(&registry, "ghost", b), "a VM in no network reaches nothing");
     assert!(
-        refused(&registry, "vm-a", Ipv4Addr::new(10, 128, 9, 9)),
+        refused(&registry, "vm-a", Ipv4Addr::new(10, 255, 9, 9)),
         "an unallocated address is nobody"
     );
 
