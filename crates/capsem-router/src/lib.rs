@@ -8,7 +8,8 @@ use capsem_foundation::unix::{
     router_channel::{Frame, Receiver, Sender, FRAME_SIZE},
     router_stream,
 };
-use capsem_network::switch::DropReason;
+/// What a [`PortReport`]'s `dropped` counters are indexed by.
+pub use capsem_network::switch::DropReason;
 pub use router_stream::{CloseReason, CloseReport};
 use std::collections::HashMap;
 use std::io;
