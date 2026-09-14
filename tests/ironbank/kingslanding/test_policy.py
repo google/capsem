@@ -42,9 +42,14 @@ def _accepted_count(stream):
 
 
 def _probe(port):
-    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+    # Bound first, so the audited peer is known even when the refusal's reset
+    # reaches connect() itself -- which it does on a loaded host.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+        connection.settimeout(2)
+        connection.bind(("127.0.0.1", 0))
         peer = connection.getsockname()[1]
         try:
+            connection.connect(("127.0.0.1", port))
             connection.sendall(b"*1\r\n$4\r\nPING\r\n")
             with connection.makefile("rb") as response:
                 reply = response.readline(32)
