@@ -159,7 +159,6 @@ pub async fn run(grants: Receiver, mut events: UnixStream, link_limit: usize) ->
                                 continue;
                             }
                         };
-                        Event::Accepted(id).write(&mut events).await?;
                         let (reader, writer) = stream.into_split();
                         let (sender, receiver) = mpsc::channel(QUEUE_FRAMES);
                         let delivered = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -190,6 +189,9 @@ pub async fn run(grants: Receiver, mut events: UnixStream, link_limit: usize) ->
                             (id, CloseReport { reason, from_source: counters.forwarded,
                                 to_source: counters.delivered.load(std::sync::atomic::Ordering::Relaxed) })
                         });
+                        // Reported only once the link forwards: the owner may send the
+                        // moment it reads this.
+                        Event::Accepted(id).write(&mut events).await?;
                     }
                     Grant::Abort { id } => unlink(id, &mut links, &mut by_address),
                     Grant::Hello => return Err(invalid("duplicate switch hello")),

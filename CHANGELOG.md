@@ -332,6 +332,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.
 
+- A VM joining a private network can receive UDP and ICMP from the first frame
+  sent after it is linked; the switch reported the link before it could
+  forward to it, so a peer that sent immediately lost those frames.
+
 - Under `CAPSEM_HOME`, `capsem stop` and `capsem start` act on the service that
   home's commands started, rather than the machine's installed LaunchAgent or
   systemd unit, which serves the real home. Stop now waits for that service to

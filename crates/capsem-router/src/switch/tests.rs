@@ -56,6 +56,14 @@ async fn read_framed(stream: &mut UnixStream) -> Vec<u8> {
     frame
 }
 
+async fn read_one(stream: &mut UnixStream) -> Vec<u8> {
+    let mut header = [0u8; 2];
+    stream.read_exact(&mut header).await.unwrap();
+    let mut frame = vec![0u8; usize::from(u16::from_be_bytes(header))];
+    stream.read_exact(&mut frame).await.unwrap();
+    frame
+}
+
 async fn nothing_arrives(stream: &mut UnixStream) {
     assert!(
         timeout(Duration::from_millis(100), stream.read(&mut [0u8; 1]))
@@ -250,4 +258,49 @@ async fn a_member_that_never_reads_does_not_stall_the_one_sending_to_it() {
     assert_eq!(closed, id_a);
     assert!((QUEUE_FRAMES as u64..=1000).contains(&report.from_source), "{report:?}");
     switch.stop().await;
+}
+
+/// `Accepted` is the owner's go-ahead: a member may send to the link the
+/// moment it sees it. The switch wrote it before entering the link in its
+/// table, so a frame that fast was addressed to nobody and dropped -- the
+/// subprocess test lost one under Linux load. Holding the switch inside that
+/// write (a full event socket) makes the window deterministic.
+#[tokio::test]
+async fn a_member_is_reachable_before_its_link_is_reported_accepted() {
+    use std::io::Write;
+
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    let sender = Sender::new(parent.try_clone().unwrap()).unwrap();
+    let receiver = Receiver::new(child.try_clone().unwrap()).unwrap();
+    let mut filler = child.try_clone().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let mut events = UnixStream::from_std(parent).unwrap();
+    let task = tokio::spawn(run(receiver, UnixStream::from_std(child).unwrap(), 64));
+    assert_eq!(Event::read(&mut events).await.unwrap(), Event::Ready);
+    let mut switch = Switch { sender, events, task };
+
+    let (id_a, mut a) = switch.link(1, A).await;
+    assert_eq!(switch.event().await, Event::Accepted(id_a));
+    // Nothing reads events now, so the next event write cannot complete.
+    filler.set_nonblocking(true).unwrap();
+    while filler.write(&[0u8; 4096]).is_ok() {}
+    let (_, mut b) = switch.link(2, B).await;
+
+    // The grant is processed at some point after it is sent; until then a
+    // frame to B is rightly dropped. So keep sending: once B is linked one
+    // arrives -- unless linking waits on the event write that cannot finish.
+    let datagram = udp(A, B, b"sent as soon as linked");
+    let arrived = timeout(Duration::from_secs(2), async {
+        loop {
+            a.write_all(&framed(&datagram)).await.unwrap();
+            if let Ok(frame) = timeout(Duration::from_millis(20), read_one(&mut b)).await {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("a member linked but not yet reported must already receive");
+    assert_eq!(arrived, datagram);
+    switch.task.abort();
 }
