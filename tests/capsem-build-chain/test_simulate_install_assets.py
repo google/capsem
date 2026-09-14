@@ -5,25 +5,23 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh"
-BINARIES = [
-    "capsem",
-    "capsem-service",
-    "capsem-process",
-    "capsem-tui",
-    "capsem-mcp",
-    "capsem-mcp-aggregator",
-    "capsem-mcp-builtin",
-    "capsem-gateway",
-    "capsem-tray",
-    "capsem-admin",
-    "capsem-mock-server",
-    "capsem-bench-rs",
-]
+PACKAGE_SCRIPT = PROJECT_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh"
+_INSTALLED_LOOP = re.compile(r"for bin in (capsem(?:[ \t]+capsem[\w-]*)+)\s*;\s*do")
+
+
+def _installed_loops(path: Path) -> list[list[str]]:
+    return [match.group(1).split() for match in _INSTALLED_LOOP.finditer(path.read_text())]
+
+
+# The package's payload loop is the inventory; a copy of it here went stale the
+# same way the scripts did.
+BINARIES = _installed_loops(PACKAGE_SCRIPT)[0]
 
 
 def _host_arch() -> str:
@@ -205,3 +203,28 @@ def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> N
     assert "--identifier org.capsem.service" in log
     assert "--identifier org.capsem.tui" in log
     assert str(capsem_home / "bin" / "capsem-process") in log
+    router = [line for line in log.splitlines() if line.endswith("/bin/capsem-router")]
+    assert router and "--identifier org.capsem.router" in router[0], log
+    assert "--entitlements" not in router[0], "the confined router receives no VM entitlement"
+
+
+def test_every_installed_binary_loop_names_the_package_payload() -> None:
+    """capsem-router shipped in the package but not in the install simulation,
+    so the macOS package proof found no router in the installed home. Each
+    script that walks installed binaries by name must name all of them."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "build_system/packaging", "build_system/scripts"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    expected = set(BINARIES)
+    assert "capsem-router" in expected
+    stale = {
+        path: sorted(expected ^ set(names))
+        for path in tracked
+        for names in _installed_loops(PROJECT_ROOT / path)
+        if set(names) != expected
+    }
+    assert not stale, stale

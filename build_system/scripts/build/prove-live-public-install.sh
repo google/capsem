@@ -21,7 +21,7 @@ test -x "$capsem"
 test -x /usr/bin/capsem-app
 "$capsem" --version | grep -F "$expected_version"
 dpkg-query -W -f='${Version}' capsem | grep -Fx "$expected_version"
-for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
   test -x "$capsem_home/bin/$bin"
   "$capsem_home/bin/$bin" --version | grep -F "$expected_version"
 done
