@@ -114,8 +114,12 @@ def _namespaced_basetemp(basetemp: str | None, env: dict[str, str] | None = None
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
-    # Before the tmp_path factory reads the option.
-    config.option.basetemp = _namespaced_basetemp(config.option.basetemp)
+    # Before the tmp_path factory reads the option. pytest makes basetemp with
+    # a plain mkdir, so the shared directory it now sits in must exist.
+    namespaced = _namespaced_basetemp(config.option.basetemp)
+    if namespaced != config.option.basetemp:
+        Path(namespaced).parent.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = namespaced
 
 
 LEAK_REPORT_LOG = _leak_log_path("leak-report.log")
