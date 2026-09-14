@@ -371,3 +371,28 @@ async fn purge_refuses_a_symlinked_session_dir_under_the_persistent_root() {
         "purge must not follow a symlink out of the root"
     );
 }
+
+#[test]
+fn evicting_an_instance_hands_its_record_to_exactly_one_caller() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "evicted-vm", 4242);
+
+    let evicted = state.evict_instance("evicted-vm").expect("instance was running");
+    assert_eq!(evicted.id, "evicted-vm");
+    assert!(state.evict_instance("evicted-vm").is_none(), "eviction is idempotent");
+}
+
+#[test]
+fn forgetting_a_persistent_entry_is_idempotent_and_writes_nothing_when_absent() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let registry_file = state.run_dir.join("persistent_registry.json");
+    state.forget_persistent_entry("never-registered").unwrap();
+    assert!(!registry_file.exists(), "an absent entry must not rewrite the registry");
+
+    let entry = test_persistent_entry("kept", state.run_dir.join("persistent/kept"));
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+    state.forget_persistent_entry("kept").unwrap();
+    assert!(!state.persistent_registry.lock().unwrap().contains("kept"));
+    assert!(!PersistentRegistry::load(registry_file).unwrap().contains("kept"));
+    state.forget_persistent_entry("kept").unwrap();
+}

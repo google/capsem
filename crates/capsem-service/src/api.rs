@@ -192,9 +192,6 @@ pub struct ProvisionResponse {
     /// would exceed SUN_LEN. See capsem_foundation::uds::instance_socket_path.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
-    /// The VM's address on the private link, for its whole life.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub private_address: Option<std::net::Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,10 +276,6 @@ pub struct SandboxInfo {
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// The VM's address on the private link, held for its whole life; from
-    /// the registry for a stopped VM, so it never changes across restarts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub private_address: Option<std::net::Ipv4Addr>,
     /// On-disk size of the session dir in bytes. Populated for /info on
     /// persistent VMs; useful for verifying that fork produced a compact
     /// overlay and not a bloated sparse file.
@@ -351,7 +344,6 @@ impl SandboxInfo {
             version: None,
             forked_from: None,
             description: None,
-            private_address: None,
             size_bytes: None,
             storage: None,
             session_db: None,

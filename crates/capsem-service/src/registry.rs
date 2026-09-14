@@ -13,6 +13,9 @@ use std::sync::{LockResult, Mutex, MutexGuard, PoisonError};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// One named VM. Unknown keys are ignored on load, never refused: a field
+/// this version retired (the per-VM `private_address`) still sits in older
+/// registry files, and refusing them would strand every persistent VM.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     #[serde(default)]
@@ -54,11 +57,6 @@ pub struct PersistentVmEntry {
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
-    /// The VM's lifetime private address, drawn from the host pool at create
-    /// and reserved again at every service start. `None` only on entries
-    /// written before addresses existed; resume assigns one and saves it.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub private_address: Option<std::net::Ipv4Addr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

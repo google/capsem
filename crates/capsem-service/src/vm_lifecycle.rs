@@ -593,7 +593,6 @@ pub(super) fn provision_response_for_running(
         can_resume: false,
         available_actions: status.available_actions(false),
         uds_path: Some(uds_path),
-        private_address: Some(instance.private_address),
     };
     drop(instances);
     Ok(response)
@@ -619,7 +618,6 @@ pub(super) async fn handle_persist(
         base_version,
         forked_from,
         env,
-        private_address,
     ) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
@@ -642,7 +640,6 @@ pub(super) async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
-            i.private_address,
         );
         drop(instances);
         result
@@ -682,9 +679,6 @@ pub(super) async fn handle_persist(
         last_error: None,
         checkpoint_path: None,
         env,
-        // The running instance keeps the address it already has; the entry
-        // now owns it for the VM's lifetime.
-        private_address: Some(private_address),
     };
     let claim_state = Arc::clone(&state);
     tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))

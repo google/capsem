@@ -171,8 +171,6 @@ export interface SandboxInfo {
   version?: string;
   forked_from?: string;
   description?: string;
-  // The VM's address on the private link, for its whole life.
-  private_address?: string;
   // Telemetry (populated by /vms/{id}/info, absent from /vms/list)
   created_at?: string;
   uptime_secs?: number;

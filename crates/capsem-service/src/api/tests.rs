@@ -94,7 +94,6 @@ fn provision_response_roundtrip() {
         can_resume: false,
         available_actions: vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
         uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
-        private_address: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();

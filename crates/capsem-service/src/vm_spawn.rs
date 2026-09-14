@@ -1,7 +1,7 @@
 //! Spawning capsem-process for a new VM and for a persistent VM that resumes.
 //!
-//! Both paths build the same command line: identity and the private address
-//! for the guest, pinned assets, session directory and IPC socket. Split out
+//! Both paths build the same command line: identity for the guest, pinned
+//! assets, session directory and IPC socket. Split out
 //! of main.rs by size, not by ownership -- these are `ServiceState` methods.
 use super::*;
 
@@ -102,7 +102,6 @@ impl ServiceState {
         info!(id, version, persistent, from, "provision_sandbox called");
 
         let uds_path = self.instance_socket_path(id)?;
-        let lease = self.lease_private_address()?;
 
         // Persistent VMs go in persistent/, ephemeral in sessions/
         let session_dir = if persistent {
@@ -158,12 +157,6 @@ impl ServiceState {
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
         child_cmd.arg("--vm-name").arg(guest_name);
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_ADDRESS={}", lease.address));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -293,7 +286,6 @@ impl ServiceState {
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
-                private_address: Some(lease.address),
             });
             if let Err(error) = registration {
                 instance_reaper::kill_and_reap(child);
@@ -315,7 +307,6 @@ impl ServiceState {
             );
         }
 
-        let private_address = lease.commit();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),
@@ -336,7 +327,6 @@ impl ServiceState {
                 persistent,
                 env,
                 forked_from: from,
-                private_address,
                 owner_secret,
             },
         );
@@ -404,25 +394,6 @@ impl ServiceState {
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
 
-        // Entries written before addresses existed get one now, saved before
-        // the process that will advertise it starts.
-        let private_address = match entry.private_address {
-            Some(address) => address,
-            None => {
-                let lease = self.lease_private_address()?;
-                {
-                    let mut registry = self.persistent_registry.lock().unwrap();
-                    let Some(stored) = registry.get_mut(&name) else {
-                        return Err(anyhow!("persistent VM \"{}\" vanished during resume", name));
-                    };
-                    stored.private_address = Some(lease.address);
-                    registry.save()?;
-                }
-                lease.commit()
-            }
-        };
-        entry.private_address = Some(private_address);
-
         info!(name, version, "resume_sandbox: re-spawning process");
 
         let uds_path = self.instance_socket_path(&vm_id)?;
@@ -457,12 +428,6 @@ impl ServiceState {
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
         child_cmd.arg("--vm-name").arg(&name);
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_ADDRESS={private_address}"));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
@@ -602,7 +567,6 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from,
-                private_address,
                 owner_secret,
             },
         );

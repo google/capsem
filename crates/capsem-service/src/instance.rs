@@ -1,5 +1,5 @@
 //! One running VM as the service sees it: the owner process, its sockets,
-//! the profile it booted from, and what it holds for the VM's lifetime.
+//! the profile it booted from, and how its records are removed.
 use super::*;
 
 pub(crate) struct InstanceInfo {
@@ -24,10 +24,28 @@ pub(crate) struct InstanceInfo {
     pub(crate) env: Option<std::collections::HashMap<String, String>>,
     /// Sandbox this VM was cloned from, if any
     pub(crate) forked_from: Option<String>,
-    /// The VM's address on the private link, held for its whole life.
-    pub(crate) private_address: std::net::Ipv4Addr,
-    /// What the VM owner shows when it asks for a private connection on the
-    /// VM's behalf: minted at spawn, written to the session directory for
-    /// the owner alone, matched here. Never reaches the guest.
+    /// What the VM owner shows when it asks the service about private names
+    /// on the VM's behalf: minted at spawn, written to the session directory
+    /// for the owner alone, matched here. Never reaches the guest.
     pub(crate) owner_secret: String,
+}
+
+impl ServiceState {
+    /// Remove a running instance record. The removal is the ownership token
+    /// for teardown: of two callers racing to evict one VM, only one gets
+    /// the record back.
+    pub(crate) fn evict_instance(&self, id: &str) -> Option<InstanceInfo> {
+        self.instances.lock().unwrap().remove(id)
+    }
+
+    /// Unregister a persistent VM. An absent entry is already forgotten, so
+    /// nothing is written for it. Saves the registry file: call off the
+    /// async worker.
+    pub(crate) fn forget_persistent_entry(&self, name: &str) -> Result<()> {
+        let registry = self.persistent_registry.lock().unwrap();
+        if !registry.contains(name) {
+            return Ok(());
+        }
+        registry.unregister(name)
+    }
 }

@@ -178,9 +178,6 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
-            capsem_config::PrivatePool::DEFAULT,
-        )),
         networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
             "/nonexistent/networks",
         ))),
@@ -268,7 +265,6 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
             owner_secret: String::new(),
         },
     );
@@ -305,7 +301,6 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
             owner_secret: String::new(),
         },
     );

@@ -847,9 +847,6 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        private_addresses: Mutex::new(capsem_core::net::address_pool::AddressAllocator::new(
-            capsem_config::PrivatePool::DEFAULT,
-        )),
         networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
             "/nonexistent/networks",
         ))),
