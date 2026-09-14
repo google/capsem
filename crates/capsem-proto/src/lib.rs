@@ -50,7 +50,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Pre-W3 binaries fail decode within 1 second.
 /// Version 2 adds router flow keys tied to the owner generation.
 /// Version 4 links VMs to a network switch and admits only TCP by handoff.
-pub const PROTOCOL_VERSION: u16 = 4;
+/// Version 5 plugs one cable per network and removes the private TCP handoff.
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -129,13 +130,11 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
-/// The guest's tun0 packet stream: `capsem-tun` pumps raw IP frames over one
-/// connection to the host network endpoint that terminates them in smoltcp.
+/// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames
+/// over its own connection, opened with the cable id
+/// (`privatelink::cable_header`), and the VM owner hands it to that network's
+/// switch.
 pub const VSOCK_PORT_NETWORK: u32 = 5009;
-/// Guest TCP connections to a private address, intercepted by the guest
-/// proxy and carried whole to the VM owner with their original destination
-/// (`privatelink::ConnectHeader`) for admission and hand-off to the member.
-pub const VSOCK_PORT_PRIVATE: u32 = 5010;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -155,7 +154,6 @@ pub enum HostVsockService {
     DnsProxy,
     Publication,
     Network,
-    Private,
 }
 
 impl HostVsockService {
@@ -170,7 +168,6 @@ impl HostVsockService {
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
             Self::Publication => VSOCK_PORT_PUBLICATION,
             Self::Network => VSOCK_PORT_NETWORK,
-            Self::Private => VSOCK_PORT_PRIVATE,
         }
     }
 
@@ -185,7 +182,6 @@ impl HostVsockService {
             Self::DnsProxy => "dns_proxy",
             Self::Publication => "publication",
             Self::Network => "network",
-            Self::Private => "private",
         }
     }
 
@@ -200,7 +196,6 @@ impl HostVsockService {
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
             VSOCK_PORT_PUBLICATION => Some(Self::Publication),
             VSOCK_PORT_NETWORK => Some(Self::Network),
-            VSOCK_PORT_PRIVATE => Some(Self::Private),
             _ => None,
         }
     }
@@ -216,7 +211,6 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::DnsProxy,
     HostVsockService::Publication,
     HostVsockService::Network,
-    HostVsockService::Private,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -229,7 +223,6 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_DNS_PROXY,
     VSOCK_PORT_PUBLICATION,
     VSOCK_PORT_NETWORK,
-    VSOCK_PORT_PRIVATE,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {

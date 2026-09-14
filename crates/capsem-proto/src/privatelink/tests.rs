@@ -1,46 +1,6 @@
 use super::*;
 
 #[test]
-fn header_round_trips_and_is_ten_bytes() {
-    let header = ConnectHeader {
-        destination: Ipv4Addr::new(10, 129, 7, 200),
-        port: 6379,
-        source_port: 40001,
-    };
-    let bytes = header.encode();
-    assert_eq!(bytes.len(), HEADER_BYTES);
-    assert_eq!(bytes, [2, 6, 10, 129, 7, 200, 0x18, 0xeb, 0x9c, 0x41]);
-    assert_eq!(ConnectHeader::decode(&bytes).unwrap(), header);
-}
-
-#[test]
-fn a_wrong_version_protocol_or_port_is_refused() {
-    let good = ConnectHeader {
-        destination: Ipv4Addr::new(10, 128, 0, 2),
-        port: 80,
-        source_port: 40001,
-    }
-    .encode();
-    assert!(ConnectHeader::decode(&good).is_ok());
-    for (index, value, what) in [
-        (0, 1, "version"),
-        (1, 17, "protocol"),
-        (6, 0, "port"),
-        (8, 0, "source port"),
-    ] {
-        let mut bad = good;
-        bad[index] = value;
-        if what == "port" {
-            bad[7] = 0;
-        }
-        if what == "source port" {
-            bad[9] = 0;
-        }
-        assert!(ConnectHeader::decode(&bad).is_err(), "{what}: {bad:?}");
-    }
-}
-
-#[test]
 fn a_member_mac_is_locally_administered_unicast_and_names_its_address() {
     let mac = mac_of(Ipv4Addr::new(10, 129, 7, 200));
     assert_eq!(mac, [0x02, 0xca, 10, 129, 7, 200]);
@@ -59,9 +19,9 @@ fn a_seat_frame_names_its_kind_and_token_and_refuses_others() {
     let frame = seat_frame(SEAT_LINK, 0x00ff_00ff_00ff_00ff);
     assert_eq!(frame, [1, 5, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff]);
     assert_eq!(decode_seat_frame(&frame).unwrap(), (SEAT_LINK, 0x00ff_00ff_00ff_00ff));
-    assert_eq!(
-        decode_seat_frame(&seat_frame(SEAT_HANDOFF, 7)).unwrap(),
-        (SEAT_HANDOFF, 7)
+    assert!(
+        decode_seat_frame(&seat_frame(4, 7)).is_err(),
+        "the retired private TCP handoff kind is not a seat frame"
     );
     assert!(
         decode_seat_frame(&seat_frame(1, 7)).is_err(),

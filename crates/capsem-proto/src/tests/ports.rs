@@ -10,20 +10,11 @@ fn vsock_dns_proxy_port_constant() {
 
 #[test]
 fn vsock_network_port_constant() {
-    // Pinned like the DNS port: the guest `capsem-tun` pump and the host
-    // dispatch both name this exact port for the tun0 packet stream.
+    // Pinned like the DNS port: every guest `capsem-tun` pump and the host
+    // dispatch name this exact port for network cables.
     assert_eq!(VSOCK_PORT_NETWORK, 5009);
     assert_eq!(HostVsockService::from_port(5009), Some(HostVsockService::Network));
     assert_eq!(HostVsockService::Network.as_str(), "network");
-}
-
-#[test]
-fn vsock_private_port_constant() {
-    // The guest proxy's private listener and the owner's dispatch both name
-    // this exact port for intercepted private TCP.
-    assert_eq!(VSOCK_PORT_PRIVATE, 5010);
-    assert_eq!(HostVsockService::from_port(5010), Some(HostVsockService::Private));
-    assert_eq!(HostVsockService::Private.as_str(), "private");
 }
 
 #[test]
@@ -38,7 +29,6 @@ fn vsock_port_constants_are_distinct() {
         VSOCK_PORT_DNS_PROXY,
         VSOCK_PORT_PUBLICATION,
         VSOCK_PORT_NETWORK,
-        VSOCK_PORT_PRIVATE,
     ];
     let unique: std::collections::HashSet<_> = ports.iter().collect();
     assert_eq!(unique.len(), ports.len(), "vsock port collision");
@@ -59,7 +49,6 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
             VSOCK_PORT_DNS_PROXY,
             VSOCK_PORT_PUBLICATION,
             VSOCK_PORT_NETWORK,
-            VSOCK_PORT_PRIVATE,
         ],
         "boot must use the typed host VSOCK service registry, not an inline array"
     );
@@ -67,6 +56,10 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
     assert!(
         HostVsockService::from_port(5003).is_none(),
         "retired raw MCP VSOCK port must stay closed"
+    );
+    assert!(
+        HostVsockService::from_port(5010).is_none(),
+        "retired private TCP VSOCK port must stay closed"
     );
     assert!(
         HostVsockService::from_port(11434).is_none(),
