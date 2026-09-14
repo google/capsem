@@ -3,7 +3,7 @@
 //! The registry behind `ServiceState::networks` is the authority and makes
 //! every change durable before answering; these handlers only translate
 //! between it and the wire. Attaching records a `declared` membership; the
-//! link to the network's switch that makes it `ready` is `switches`' job.
+//! cable plugged into the network's switch that makes it `ready` is `switches`' job.
 use super::*;
 use capsem_core::net::network_registry::{LogQuery, NetworkError, NetworkRegistry, NETWORK_AUDIT_RETENTION};
 use uuid::Uuid;
@@ -12,20 +12,28 @@ use uuid::Uuid;
 /// past retention. Nothing here can fail the deletion: the VM is gone either
 /// way, and what could not be recorded is logged with the reason.
 pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
-    switches::unlink_everywhere(state, vm_id).await;
+    // Memberships go first, cables second: a plug finishing in between finds
+    // no membership and unplugs itself.
     let now_unix_ms = vm_lifecycle::unix_time_ms();
     let mut registry = state.networks.lock().await;
-    match registry.vm_deleted(vm_id, now_unix_ms).await {
-        Ok(departures) => {
-            for departure in departures.iter().filter(|departure| departure.retired) {
-                tracing::info!(vm_id, network = %departure.network, "network retired with its last member");
-                switches::retire(state, departure.network).await;
-            }
+    let retired = match registry.vm_deleted(vm_id, now_unix_ms).await {
+        Ok(departures) => departures
+            .iter()
+            .filter(|departure| departure.retired)
+            .map(|departure| departure.network)
+            .collect(),
+        Err(error) => {
+            tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
+            Vec::new()
         }
-        Err(error) => tracing::warn!(vm_id, %error, "deleted VM left a network membership behind"),
-    }
+    };
     sweep_retired(&mut registry, now_unix_ms);
     drop(registry);
+    switches::unplug_everywhere(state, vm_id).await;
+    for network in retired {
+        tracing::info!(vm_id, %network, "network retired with its last member");
+        switches::retire(state, network).await;
+    }
 }
 
 /// The retention sweep, run wherever a network retires and at startup.
@@ -126,8 +134,8 @@ pub(super) async fn attach_provisioned(
     }
     drop(registry);
     // The owner is registered by now; its guest may still be booting, which
-    // the link waits for.
-    switches::link_memberships(Arc::clone(state), vm_id.to_string());
+    // the plug waits for.
+    switches::plug_memberships(Arc::clone(state), vm_id.to_string());
     Ok(())
 }
 
@@ -206,12 +214,12 @@ pub(super) async fn handle_network_attach(
             .map_err(network_error)?;
         drop(registry);
     }
-    // A running member is linked before the answer, so the caller sees
+    // A running member is plugged before the answer, so the caller sees
     // `ready`, or `failed` with the reason in the network's history. The
-    // membership stands either way: the VM joined, its link is retried when
-    // it next starts.
-    if let Err(error) = switches::link(&state, network, &vm_id).await {
-        tracing::warn!(%network, vm_id, %error, "member joined but its link failed");
+    // membership stands either way: the VM joined, its cable is plugged again
+    // when it next starts.
+    if let Err(error) = switches::plug(&state, network, &vm_id).await {
+        tracing::warn!(%network, vm_id, %error, "member joined but its cable was not plugged");
     }
     let info = network_info(&*state.networks.lock().await, network).expect("attached to an existing network");
     Ok(Json(info))
@@ -222,17 +230,8 @@ pub(super) async fn handle_network_detach(
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {
     let network = parse_network_id(&id)?;
-    switches::unlink(&state, network, &vm_id).await;
-    let info = {
-        let mut registry = state.networks.lock().await;
-        registry
-            .detach(network, &vm_id, vm_lifecycle::unix_time_ms())
-            .await
-            .map_err(network_error)?;
-        let info = network_info(&registry, network).expect("detached from an existing network");
-        drop(registry);
-        info
-    };
+    switches::detach(&state, network, &vm_id).await.map_err(network_error)?;
+    let info = network_info(&*state.networks.lock().await, network).expect("detached from an existing network");
     Ok(Json(info))
 }
 

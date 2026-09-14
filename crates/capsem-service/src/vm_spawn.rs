@@ -610,7 +610,7 @@ impl ServiceState {
         let _reaper =
             instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
         // A resumed member's networks get their links back.
-        switches::link_memberships(Arc::clone(self), vm_id.clone());
+        switches::plug_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)
     }
 }

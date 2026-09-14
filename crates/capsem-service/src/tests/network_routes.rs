@@ -802,6 +802,74 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
     );
 }
 
+/// Finding 1 of the PR #200 review. Disconnect used to unplug first and
+/// revoke the membership second: a plug that finished between the two saw a
+/// member, kept its port, and the disconnect then returned success with the
+/// VM still on the network. The window is held open here, and the plug is
+/// finished inside it.
+#[tokio::test]
+async fn a_plug_that_finishes_inside_a_disconnect_leaves_no_port_behind() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, _owner) = fake_link_seat(&uds_b, false, 1);
+    seat.answers.forget_permits(1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let network: uuid::Uuid = id.parse().unwrap();
+    let joining = {
+        let (router, uri) = (app(&state), format!("/networks/{id}/members/vm-b"));
+        tokio::spawn(async move { route_request(router, Method::PUT, &uri, None).await })
+    };
+    for _ in 0..100 {
+        if member_state(&state, &id, "vm-b").await == "attaching" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(member_state(&state, &id, "vm-b").await, "attaching");
+
+    let window = Arc::new((tokio::sync::Notify::new(), tokio::sync::Notify::new()));
+    *state.switches.detach_window.lock().unwrap() = Some(Arc::clone(&window));
+    let leaving = {
+        let (router, uri) = (app(&state), format!("/networks/{id}/members/vm-b"));
+        tokio::spawn(async move { route_request(router, Method::DELETE, &uri, None).await })
+    };
+    tokio::time::timeout(Duration::from_secs(5), window.0.notified())
+        .await
+        .expect("the disconnect reached its window");
+    // The owner answers now: the plug gets its port inside the window.
+    seat.answers.add_permits(1);
+    let (status, _) = joining.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    window.1.notify_one();
+    let (status, _) = leaving.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+    assert!(
+        state.switches.plugged(network).await.is_empty(),
+        "a disconnected member kept its port"
+    );
+    assert!(
+        released_within(&seat, Duration::from_secs(3)).await,
+        "the owner's stream was never let go"
+    );
+    let guest_end = seat.guest_end();
+    guest_end.set_nonblocking(true).unwrap();
+    let mut guest_end = tokio::net::UnixStream::from_std(guest_end).unwrap();
+    let read = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::io::AsyncReadExt::read(&mut guest_end, &mut [0u8; 1]),
+    )
+    .await
+    .expect("the switch closed the disconnected member's cable")
+    .unwrap();
+    assert_eq!(read, 0);
+}
+
 #[tokio::test]
 async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     let (state, _dir) = make_test_state_with_tempdir();
