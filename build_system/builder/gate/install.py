@@ -285,7 +285,7 @@ def macos_report(config, environ: Mapping[str, str] | None = None) -> str | None
     handed = (source.get(config.modules.macos_report_variable) or "").strip()
     if handed:
         return handed
-    written = config.path(config.modules.macos_glowup_report)
+    written = cachelayout.stage_path(config, "release-proofs") / config.modules.macos_glowup_report
     return str(written) if written.is_file() else None
 
 

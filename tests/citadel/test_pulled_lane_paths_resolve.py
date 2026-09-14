@@ -43,9 +43,6 @@ LINKED_FOR_A_PULLED_LANE = {"debug", "config"}
 CREATED_BY_THE_RUN = {
     "ironbank-assets",
     "local-release-glowup",
-    "macos-package-boot",
-    "macos-release-glowup",
-    "macos-tart-glowup",
     "release",
     "storage",
     "tart-readiness",

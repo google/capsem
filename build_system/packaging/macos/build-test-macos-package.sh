@@ -12,6 +12,7 @@ VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/
 MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
 ASSETS_DIR=""
 CONFIG_ROOT=""
+SBOM=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -31,8 +32,12 @@ while [ "$#" -gt 0 ]; do
             CONFIG_ROOT="${2:?--config-root requires a value}"
             shift 2
             ;;
+        --sbom)
+            SBOM="${2:?--sbom requires a value}"
+            shift 2
+            ;;
         *)
-            echo "usage: $0 [--version VERSION] [--manifest-url URL] --assets-dir DIR --config-root DIR" >&2
+            echo "usage: $0 [--version VERSION] [--manifest-url URL] --assets-dir DIR --config-root DIR --sbom FILE" >&2
             exit 2
             ;;
     esac
@@ -40,6 +45,10 @@ done
 
 [ -n "$ASSETS_DIR" ] && [ -n "$CONFIG_ROOT" ] || {
     echo "ERROR: --assets-dir and --config-root are required as one content pair" >&2
+    exit 2
+}
+[ -n "$SBOM" ] || {
+    echo "ERROR: --sbom names where the package SBOM is written" >&2
     exit 2
 }
 [ -d "$ASSETS_DIR" ] && [ -d "$CONFIG_ROOT" ] || {
@@ -80,7 +89,7 @@ bash "$SCRIPT_DIR/build-pkg.sh" \
 
 PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"
 test -s "$PKG"
-SBOM="$ROOT/cache/target/macos-package-sbom.spdx.json"
+mkdir -p "$(dirname "$SBOM")"
 python3 build_system/scripts/release/generate-host-binary-sbom.py --output "$SBOM" "$PKG"
 python3 - "$SBOM" <<'PY'
 import json

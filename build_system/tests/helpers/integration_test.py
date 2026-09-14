@@ -36,6 +36,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from capsem_builder.cache.config import load_paths
+
 from .mock_server import local_fixture_env, start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -51,7 +53,7 @@ def _integration_home() -> Path:
     """
     if env := os.environ.get("CAPSEM_INTEGRATION_HOME"):
         return Path(env)
-    return PROJECT_ROOT / "cache" / "target" / f"integration-capsem-home-{os.getpid()}"
+    return load_paths(PROJECT_ROOT).stage("test-home") / f"integration-{os.getpid()}"
 
 
 INTEGRATION_HOME = _integration_home()

@@ -229,6 +229,16 @@ prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 4
 
+[stages.release-proofs]
+description = "Evidence from the macOS package release proofs: Tart install, physical VZ boot, candidate manifests and SBOM."
+scope = "disk"
+path = "target/tests/release-proofs"
+warm_size_bytes = 6442450944 # 6 GiB
+max_size_bytes = 12884901888 # 12 GiB
+prune_strategy = "lru"
+maximum_age_hours = 336
+maximum_count = 12
+
 [stages.test-home]
 description = "Isolated CAPSEM_HOME state used by local gate tests."
 scope = "disk"

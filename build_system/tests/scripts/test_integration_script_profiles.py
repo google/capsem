@@ -173,8 +173,9 @@ def test_integration_telemetry_uses_a_retained_named_session(tmp_path, monkeypat
 def test_integration_script_service_paths_use_process_scoped_isolated_home():
     module = load_integration_script()
 
+    # Inside the test-home cache stage, so `just cache` accounts for and prunes it.
     assert (
-        module.PROJECT_ROOT / "cache" / "target" / f"integration-capsem-home-{os.getpid()}"
+        module.load_paths(module.PROJECT_ROOT).stage("test-home") / f"integration-{os.getpid()}"
     ) == module.INTEGRATION_HOME
     assert module.CAPSEM_HOME == module.INTEGRATION_HOME
     assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"

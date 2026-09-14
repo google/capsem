@@ -9,6 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import tomllib
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh"
 PACKAGE_SCRIPT = PROJECT_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh"
@@ -228,3 +230,26 @@ def test_every_installed_binary_loop_names_the_package_payload() -> None:
         if set(names) != expected
     }
     assert not stale, stale
+
+
+def test_release_proof_outputs_live_in_their_cache_stage() -> None:
+    """The macOS release proofs wrote gigabytes under cache/target by literal
+    path, outside every cache stage, so `just cache verify` could only report
+    them as unclassified and nothing bounded or pruned them."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "build_system", "scripts", "tests"],
+        cwd=PROJECT_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    literal = re.compile(
+        r"cache/target/(macos-package-boot|macos-release-glowup|macos-tart-glowup|macos-package-sbom|integration-capsem-home)"
+        r'|"cache"\s*/\s*"target"\s*/\s*f?"(macos-|integration-capsem-home)'
+    )
+    offenders = [
+        path for path in tracked
+        if path != "tests/capsem-build-chain/test_simulate_install_assets.py"
+        and (PROJECT_ROOT / path).is_file()
+        and literal.search((PROJECT_ROOT / path).read_text(errors="ignore"))
+    ]
+    assert not offenders, offenders
+    stages = tomllib.loads((PROJECT_ROOT / "config" / "cache.toml").read_text())["stages"]
+    assert "release-proofs" in stages

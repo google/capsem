@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+from capsem_builder.gate import cachelayout
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.releaseauthoring import author_native_candidate
@@ -57,10 +58,7 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
 
 def project_version() -> str:
     manifest = (ROOT / "Cargo.toml").read_text()
-    workspace = re.search(
-        r"(?ms)^\[workspace\.package\]\s*(.*?)(?=^\[|\Z)",
-        manifest,
-    )
+    workspace = re.search(r"(?ms)^\[workspace\.package\]\s*(.*?)(?=^\[|\Z)", manifest)
     if workspace is None:
         raise RuntimeError("Cargo.toml is missing [workspace.package]")
     version = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', workspace.group(1))
@@ -78,11 +76,10 @@ def prepare_candidate_manifest(
     content: ProfileContent,
     config: gate_config.GateConfig,
     source_commit: SourceCommit,
+    work_dir: Path,
 ) -> tuple[Path, Path, Path]:
     """Generate the candidate graph from the exact package release pipeline."""
-    work_dir = ROOT / "cache" / "target" / "macos-release-glowup"
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
+    shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True)
     source_manifest = work_dir / "candidate-assets-manifest.json"
     shutil.copy2(content.assets / config.install.manifest_name, source_manifest)
@@ -271,13 +268,13 @@ def main() -> int:
     )
     content.require_complete(config)
     manifest_url = f"{GUEST_RELEASE_ROOT}/assets/{args.channel}/manifest.json"
+    proofs = cachelayout.stage_path(config, "release-proofs")
+    tart_report_path = proofs / config.modules.macos_glowup_report
+    physical_work_root = proofs / "macos-package-boot"
+    sbom = proofs / "macos-package-sbom.spdx.json"
 
-    frontend_env = os.environ.copy()
-    frontend_env["CI"] = "true"
-    run(
-        ["pnpm", "--dir", "web/app", "install", "--frozen-lockfile"],
-        env=frontend_env,
-    )
+    frontend_env = {**os.environ, "CI": "true"}
+    run(["pnpm", "--dir", "web/app", "install", "--frozen-lockfile"], env=frontend_env)
     run(
         [
             "bash",
@@ -290,10 +287,11 @@ def main() -> int:
             str(content.assets),
             "--config-root",
             str(content.config),
+            "--sbom",
+            str(sbom),
         ]
     )
     package = config.path(config.outputs.packages) / f"Capsem-{args.version}.pkg"
-    sbom = ROOT / "cache" / "target" / "macos-package-sbom.spdx.json"
     manifest_path, asset_share, profile_share = prepare_candidate_manifest(
         package=package,
         sbom=sbom,
@@ -302,11 +300,9 @@ def main() -> int:
         content=content,
         config=config,
         source_commit=source_commit_for_checkout(ROOT),
+        work_dir=proofs / "macos-release-glowup",
     )
-    candidates = stage_transition_candidates(
-        manifest_path,
-        manifest_path.parent,
-    )
+    candidates = stage_transition_candidates(manifest_path, manifest_path.parent)
     run(
         [
             sys.executable,
@@ -333,6 +329,8 @@ def main() -> int:
             str(profile_share),
             "--channel",
             args.channel,
+            "--work-dir",
+            str(tart_report_path.parent),
         ]
     )
     run(
@@ -345,13 +343,13 @@ def main() -> int:
             args.version,
             "--assets-dir",
             str(content.assets),
+            "--work-root",
+            str(physical_work_root),
         ]
     )
-    tart_report_path = ROOT / "cache" / "target" / "macos-tart-glowup" / "report.json"
-    physical_report_path = ROOT / "cache" / "target" / "macos-package-boot" / "report.json"
     finalize_native_report(
         report_path=tart_report_path,
-        physical_report_path=physical_report_path,
+        physical_report_path=physical_work_root / "report.json",
         manifest_path=manifest_path,
         candidates=candidates,
         package=package,

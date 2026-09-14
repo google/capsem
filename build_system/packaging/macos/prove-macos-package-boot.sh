@@ -6,6 +6,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 PKG=""
 VERSION=""
 ASSETS_DIR=""
+WORK_ROOT=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --package)
@@ -20,17 +21,20 @@ while [ "$#" -gt 0 ]; do
             ASSETS_DIR="${2:?--assets-dir requires a value}"
             shift 2
             ;;
+        --work-root)
+            WORK_ROOT="${2:?--work-root requires a value}"
+            shift 2
+            ;;
         *)
-            echo "usage: $0 --package PKG --version VERSION --assets-dir DIR" >&2
+            echo "usage: $0 --package PKG --version VERSION --assets-dir DIR --work-root DIR" >&2
             exit 2
             ;;
     esac
 done
-[ -n "$PKG" ] && [ -n "$VERSION" ] && [ -n "$ASSETS_DIR" ] || {
-    echo "ERROR: package, version, and selected assets are required" >&2
+[ -n "$PKG" ] && [ -n "$VERSION" ] && [ -n "$ASSETS_DIR" ] && [ -n "$WORK_ROOT" ] || {
+    echo "ERROR: package, version, selected assets, and a work root are required" >&2
     exit 2
 }
-WORK_ROOT="$ROOT/cache/target/macos-package-boot"
 EXPANDED="$WORK_ROOT/expanded"
 CAPSEM_HOME_DIR="$WORK_ROOT/home"
 RUN_DIR=$(mktemp -d /tmp/capsem-pkg-boot.XXXXXX)
