@@ -358,7 +358,6 @@ fn main() {
                     &mut blog,
                     &format!("BootConfigDone: {} env vars, {} files", boot_env.len(), file_count,),
                 );
-                blog_line(&mut blog, &tun_supervisor::start(&boot_env));
                 eprintln!(
                     "[capsem-agent] boot config done ({} env vars, {} files)",
                     boot_env.len(),

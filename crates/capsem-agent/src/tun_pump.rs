@@ -1,14 +1,16 @@
-// capsem-tun: the guest end of the private network link.
+// capsem-tun: the guest end of one network cable.
 //
-// Opens `tap0`, gives it the address the host assigned, the MAC that
-// address implies and the pool's netmask so every private address routes
-// into it, and pumps ethernet frames between the device and one VSOCK
-// connection to the host network endpoint (port 5009), each frame with a
-// big-endian u16 length. The kernel does ARP, IP and everything above; the
-// network's switch on the host forwards by destination. Nothing here reads
-// a frame: this is a wire, not a stack, and it has no authority beyond the
-// one device and the one connection it opens at start. The agent starts it
-// once the host has named the address (`tun_supervisor` in capsem-agent).
+// Opens the cable's tap (`cable<N>`), gives it the address the host leased
+// in the network, the MAC that address implies, the network's netmask so
+// only that subnet routes into it, a 10 Gb/s full-duplex link and a long
+// transmit queue, then pumps ethernet frames between the device and one
+// VSOCK connection to the host network endpoint (port 5009). The connection
+// opens with the cable id; after that every frame carries a big-endian u16
+// length. The kernel does ARP, IP and everything above; the network's switch
+// on the host forwards by MAC. Nothing here reads a frame: this is a wire,
+// not a stack, and it has no authority beyond the one device and the one
+// connection it opens at start. The agent runs one per plugged cable
+// (`tun_supervisor` in capsem-agent); the tap exists while this process does.
 //
 // The frame format is shared with `crates/capsem-network/src/frames.rs`;
 // the MTU and the MAC rule with `capsem_proto::privatelink`.
@@ -25,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use capsem_proto::privatelink::{mac_of, ETHERNET_HEADER_BYTES, LINK_MTU};
+use capsem_proto::privatelink::{cable_device, cable_header, mac_of, ETHERNET_HEADER_BYTES, LINK_MTU};
 use capsem_proto::VSOCK_PORT_NETWORK;
 use nix::libc;
 use vsock_io::VSOCK_HOST_CID;
@@ -67,7 +69,32 @@ pub static STREAM_TO_DEVICE: Counters = Counters::new();
 /// A frame's u16 length bounds the frame, and so the device MTU plus its
 /// ethernet header.
 pub const MAX_FRAME_BYTES: usize = u16::MAX as usize;
-const DEVICE: &str = "tap0";
+/// The link speed a cable declares. A tap reports 10 Mb/s by default, which
+/// makes Linux tooling and schedulers treat a private network as slow.
+pub const LINK_SPEED_MBPS: u32 = 10_000;
+/// Frames the kernel queues for a cable before it drops, sized for bursts
+/// at that speed rather than the tap default of 500.
+pub const TX_QUEUE_FRAMES: i32 = 10_000;
+/// `ETHTOOL_SSET`: the legacy settings call, which the core converts into
+/// the tun driver's link settings.
+pub const ETHTOOL_SSET: u32 = 0x0000_0002;
+
+/// A `struct ethtool_cmd` setting `speed_mbps`, full duplex and no
+/// autonegotiation, in the kernel's native byte order.
+pub fn link_settings_request(speed_mbps: u32) -> [u8; 44] {
+    let mut request = [0u8; 44];
+    request[..4].copy_from_slice(&ETHTOOL_SSET.to_ne_bytes());
+    request[12..14].copy_from_slice(&(speed_mbps as u16).to_ne_bytes());
+    request[14] = 1; // DUPLEX_FULL
+    request[18] = 0; // AUTONEG_DISABLE
+    request[32..34].copy_from_slice(&((speed_mbps >> 16) as u16).to_ne_bytes());
+    request
+}
+
+/// Name the cable on the connection, before any frame.
+pub fn announce(stream: &mut impl Write, cable: u32) -> io::Result<()> {
+    stream.write_all(&cable_header(cable))
+}
 
 /// One frame per read and per write, as a tap device behaves.
 pub trait PacketDevice {
@@ -135,14 +162,19 @@ pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, 
 }
 
 pub struct Options {
+    pub cable: u32,
     pub address: Ipv4Addr,
-    /// The pool's prefix length: with it the kernel routes the whole pool
-    /// into the device.
+    /// The network's prefix length: with it the kernel routes that subnet,
+    /// and only that subnet, into the cable.
     pub prefix: u8,
     pub mtu: usize,
 }
 
 impl Options {
+    pub fn device(&self) -> String {
+        cable_device(self.cable)
+    }
+
     /// The largest frame the device hands over or accepts.
     pub fn frame_bytes(&self) -> usize {
         self.mtu + ETHERNET_HEADER_BYTES
@@ -164,6 +196,7 @@ impl Options {
 }
 
 pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
+    let mut cable = None;
     let mut address = None;
     let mut prefix = 32u8;
     let mut mtu = LINK_MTU;
@@ -171,6 +204,15 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
+            "--cable" => {
+                cable = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|cable| *cable > 0)
+                        .ok_or_else(|| format!("invalid cable {value}"))?,
+                )
+            }
             "--address" => address = Some(value.parse().map_err(|_| format!("invalid address {value}"))?),
             "--prefix" => {
                 prefix = value.parse().map_err(|_| format!("invalid prefix {value}"))?;
@@ -188,6 +230,7 @@ pub fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Options, 
         }
     }
     Ok(Options {
+        cable: cable.ok_or("--cable is required")?,
         address: address.ok_or("--address is required")?,
         prefix,
         mtu,
@@ -200,7 +243,7 @@ mod tun {
     //! and raise it. Written against the kernel's `ifreq` layout directly;
     //! the musl target has no netlink helper worth a dependency for five
     //! calls made once.
-    use super::Options;
+    use super::{link_settings_request, Options, LINK_SPEED_MBPS, TX_QUEUE_FRAMES};
     use nix::libc;
     use std::fs::{File, OpenOptions};
     use std::io;
@@ -213,6 +256,8 @@ mod tun {
     const SIOCSIFNETMASK: libc::Ioctl = 0x891c;
     const SIOCSIFMTU: libc::Ioctl = 0x8922;
     const SIOCSIFHWADDR: libc::Ioctl = 0x8924;
+    const SIOCSIFTXQLEN: libc::Ioctl = 0x8943;
+    const SIOCETHTOOL: libc::Ioctl = 0x8946;
     const IFF_TAP: u16 = 0x0002;
     /// `ARPHRD_ETHER`: the hardware address family of an ethernet device.
     const ARPHRD_ETHER: u16 = 1;
@@ -278,12 +323,21 @@ mod tun {
         request[NAME_BYTES..NAME_BYTES + 4].copy_from_slice(&(options.mtu as i32).to_ne_bytes());
         ioctl(&socket, SIOCSIFMTU, &mut request)?;
         let mut request = ifreq(name);
+        request[NAME_BYTES..NAME_BYTES + 4].copy_from_slice(&TX_QUEUE_FRAMES.to_ne_bytes());
+        ioctl(&socket, SIOCSIFTXQLEN, &mut request)?;
+        let mut settings = link_settings_request(LINK_SPEED_MBPS);
+        let mut request = ifreq(name);
+        request[NAME_BYTES..NAME_BYTES + size_of::<usize>()]
+            .copy_from_slice(&(settings.as_mut_ptr() as usize).to_ne_bytes());
+        ioctl(&socket, SIOCETHTOOL, &mut request)?;
+        let mut request = ifreq(name);
         ioctl(&socket, SIOCGIFFLAGS, &mut request)?;
         let flags = u16::from_ne_bytes([request[NAME_BYTES], request[NAME_BYTES + 1]]) | IFF_UP | IFF_RUNNING;
         request[NAME_BYTES..NAME_BYTES + 2].copy_from_slice(&flags.to_ne_bytes());
         ioctl(&socket, SIOCSIFFLAGS, &mut request)
     }
 
+    use std::mem::size_of;
     use std::os::fd::FromRawFd;
 }
 
@@ -303,22 +357,24 @@ mod tun {
 }
 
 fn run(options: Options) -> io::Result<()> {
-    let device = tun::open(DEVICE)?;
-    tun::configure(DEVICE, &options)?;
+    let name = options.device();
+    let device = tun::open(&name)?;
+    tun::configure(&name, &options)?;
     let fd = vsock_io::vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_NETWORK)?;
     // A packet stream idles for as long as the guest is quiet; the connect
     // helper's I/O timeouts are for channels with a heartbeat.
     vsock_io::clear_recv_timeout(fd);
     vsock_io::set_socket_timeout(fd, libc::SO_SNDTIMEO, Duration::ZERO);
     // SAFETY: vsock_connect returns a new owned descriptor.
-    let stream = unsafe { UnixStream::from_raw_fd(fd) };
+    let mut stream = unsafe { UnixStream::from_raw_fd(fd) };
+    announce(&mut stream, options.cable)?;
     capsem_foundation::unix::fd::set_stream_buffers(
         stream.as_fd(),
         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
     )?;
     let mac = options.mac().map(|byte| format!("{byte:02x}")).join(":");
     eprintln!(
-        "[capsem-tun] {DEVICE} {}/{} {mac} mtu {} attached to host port {VSOCK_PORT_NETWORK}",
+        "[capsem-tun] {name} {}/{} {mac} mtu {} {LINK_SPEED_MBPS} Mb/s attached to host port {VSOCK_PORT_NETWORK}",
         options.address, options.prefix, options.mtu
     );
     let mut device_reader = device.try_clone()?;
@@ -366,7 +422,7 @@ fn main() {
         Ok(options) => options,
         Err(error) => {
             eprintln!("[capsem-tun] {error}");
-            eprintln!("usage: capsem-tun --address A.B.C.D [--prefix N] [--mtu N]");
+            eprintln!("usage: capsem-tun --cable N --address A.B.C.D [--prefix N] [--mtu N]");
             process::exit(2);
         }
     };
