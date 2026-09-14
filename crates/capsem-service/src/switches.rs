@@ -381,6 +381,7 @@ async fn handshake(
         network_name: summary.name,
         address,
         prefix: summary.subnet.prefix_len(),
+        generation,
     };
     let handoff_socket = match send_ipc_command(uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
         Ok(ProcessToService::LinkAttachResult {
@@ -501,18 +502,20 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
 }
 
 /// Unplug a member's cable, if it has one, and end any plug under way.
-pub(crate) async fn unplug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) {
-    state.switches.next_generation(network, vm_id);
+/// Returns the attachment generation the unplug started, which every plug
+/// before it is older than.
+pub(crate) async fn unplug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) -> u32 {
+    let generation = state.switches.next_generation(network, vm_id);
     let mut networks = state.switches.networks.lock().await;
     let Some(switch) = networks.get_mut(&network) else {
-        return;
+        return generation;
     };
     let port = switch
         .ports
         .iter()
         .find(|(_, plugged)| plugged.vm_id == vm_id)
         .map(|(port, _)| *port);
-    let Some(port) = port else { return };
+    let Some(port) = port else { return generation };
     let plugged = switch.ports.remove(&port).unwrap();
     let unplugged = Unplugging {
         vm_id: plugged.vm_id,
@@ -535,6 +538,7 @@ pub(crate) async fn unplug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str
             record_unplugged(state, network, &unplugged, None).await;
         }
     }
+    generation
 }
 
 /// The close row of a cable the service unplugged, with the switch's report
@@ -584,15 +588,17 @@ pub(crate) async fn detach(
             window.1.notified().await;
         }
     }
-    unplug(state, network, vm_id).await;
-    take_cable_down(state, network, vm_id);
+    let generation = unplug(state, network, vm_id).await;
+    take_cable_down(state, network, vm_id, generation);
     Ok(())
 }
 
 /// A running VM that left a network has its owner take that cable down in
 /// the guest. Nothing waits on it: the VM already left, and an owner that
-/// cannot answer is a VM that is stopping.
-fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) {
+/// cannot answer is a VM that is stopping. The request names the leave's
+/// generation, so if it reaches the owner after a rejoin's plug, the owner
+/// keeps the rejoined cable.
+fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str, generation: u32) {
     let running = state
         .instances
         .lock()
@@ -605,6 +611,7 @@ fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) {
         let ask = ServiceToProcess::LinkDetach {
             id: Uuid::new_v4().as_u128() as u64,
             network: network.to_string(),
+            generation,
         };
         match send_ipc_command(&uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
             Ok(ProcessToService::LinkDetachResult { error: None, .. }) => {}

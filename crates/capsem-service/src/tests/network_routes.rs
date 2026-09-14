@@ -448,13 +448,65 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
             network,
             address,
             prefix,
+            generation: plugged,
             ..
-        }, ServiceToProcess::LinkDetach { network: detached, .. }] => {
+        }, ServiceToProcess::LinkDetach {
+            network: detached,
+            generation: left,
+            ..
+        }] => {
             assert_eq!((network, *address, *prefix), (&id, lease, 24));
             assert_eq!(detached, &id);
+            assert!(
+                left > plugged,
+                "the leave ends the plug's attachment: {left} > {plugged}"
+            );
         }
         other => panic!("unexpected owner messages {other:?}"),
     }
+}
+
+/// A leave and the next join reach the owner as separate jobs, in either
+/// order. The leave names a generation older than the rejoin's plug, so the
+/// owner never lets a late leave take down the rejoined cable.
+#[tokio::test]
+async fn a_rejoin_plugs_with_a_generation_newer_than_the_leave_before_it() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_seat, owner) = fake_link_seat(&uds_b, false, 2, 1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let member = format!("/networks/{id}/members/vm-b");
+    for method in [Method::PUT, Method::DELETE, Method::PUT] {
+        let (status, body) = route_request(app(&state), method, &member, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let messages = tokio::time::timeout(Duration::from_secs(10), owner)
+        .await
+        .expect("the owner hears plug, leave and plug")
+        .unwrap();
+    let generation = |kind: &str| -> Vec<u32> {
+        messages
+            .iter()
+            .filter_map(|message| match (kind, message) {
+                ("attach", ServiceToProcess::LinkAttach { generation, .. }) => Some(*generation),
+                ("detach", ServiceToProcess::LinkDetach { generation, .. }) => Some(*generation),
+                _ => None,
+            })
+            .collect()
+    };
+    let (attaches, detaches) = (generation("attach"), generation("detach"));
+    assert_eq!((attaches.len(), detaches.len()), (2, 1), "{messages:?}");
+    assert!(
+        attaches[0] < detaches[0] && detaches[0] < attaches[1],
+        "plug {} < leave {} < rejoin {}",
+        attaches[0],
+        detaches[0],
+        attaches[1]
+    );
 }
 
 /// Leaving is audited like any other end of a cable: the close row waits for
