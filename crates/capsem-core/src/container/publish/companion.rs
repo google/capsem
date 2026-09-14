@@ -100,6 +100,7 @@ impl Router {
                 Event::Accepted(id) => (id, false),
                 Event::Closed(id, _) | Event::Refused(id) => (id, true),
                 Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
+                Event::PortClosed(port, _) => anyhow::bail!("pair relay reported a switch port {port}"),
             };
             let observer = {
                 let mut observers = self.observers.lock().unwrap();

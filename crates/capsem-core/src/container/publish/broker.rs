@@ -166,6 +166,7 @@ pub(super) async fn serve(
                         audit.record(Type::NetworkConnectResult, NetworkReason::Refused, 0, 0).await?;
                     }
                     Event::Ready | Event::ConfinementFailed => anyhow::bail!("unexpected router startup event"),
+                    Event::PortClosed(port, _) => anyhow::bail!("pair relay reported a switch port {port}"),
                 },
                 completed = setups.join_next(), if !setups.is_empty() => {
                     let (id, result, reason) = completed.unwrap().context("publication setup task failed")?;
