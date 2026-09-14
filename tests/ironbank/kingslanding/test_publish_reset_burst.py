@@ -1,6 +1,6 @@
 """A burst of host-side resets on a published port must not take the VM down.
 
-Three of five private-link recordings failed at the end of a bidirectional
+Three of five published-port recordings failed at the end of a bidirectional
 trial: the host client reset sixteen connections at once, the guest reported
 each close, and the owner's reset of a source the kernel had already torn
 down failed with EINVAL. That error ended the control link, and with it
@@ -10,17 +10,17 @@ same burst three times and asserts the links survive each one.
 
 import pytest
 
-from tests.ironbank.kingslanding.test_private_link_benchmark import (
+from tests.ironbank.kingslanding.test_publish_benchmark import (
     BENCH,
     IN_CONTAINER,
     THROUGHPUT_PORT,
     client_args,
     container,
     evidence,
-    guest,
     probe,
     service,
     start_in_guest,
+    unplugged,
 )
 from tests.ironbank.kingslanding.test_run import wait_for
 
@@ -76,11 +76,8 @@ def test_a_reset_burst_on_a_published_port_leaves_every_guest_link_up(
         # The control lease: a fresh publication is set up and answers.
         again = probe(latency)
         assert again.returncode == 0, f"round {round_number}: {again.stderr}"
-        # Exec and the link: the guest answers and still holds tap0.
-        device = guest(service, vm_id, "ip -o addr show tap0", timeout=20)
-        assert f"inet {container['vm']['private_address']}/9" in device["stdout"], (
-            device
-        )
+        # Exec answers, and the burst plugged nothing: still no cable.
+        assert unplugged(service, vm_id)
         log = owner_log(service)
         for line in COLLAPSE_LINES:
             assert line not in log, f"round {round_number}: owner logged {line!r}"

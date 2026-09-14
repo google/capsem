@@ -2,11 +2,11 @@
 
 A host client, a published port, the confined router copying bytes into the
 container: `capsem-bench-rs throughput` records every direction and stream
-count through the benchmark store. The tun0 lane this file once measured
-against it is gone with its smoltcp endpoint (S04-004 no-go, artifacts A026
-and A028); tap0 now carries private datagrams between members. Kingslanding
-uses a pinned native image prepared before hermetic execution; the image
-only provides the container.
+count through the benchmark store, beside the member-to-member lanes of
+`test_network_benchmark.py`. The shared helpers here (a guest exec, a
+detached helper, the store) serve every kingslanding network test.
+Kingslanding uses a pinned native image prepared before hermetic execution;
+the image only provides the container.
 """
 
 import hashlib
@@ -15,7 +15,6 @@ import re
 import shlex
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 import pytest
@@ -48,7 +47,7 @@ def evidence():
     anyone could read it."""
     return Path(
         tempfile.mkdtemp(
-            prefix="private-link-",
+            prefix="kingslanding-",
             dir=benchmark_output_dir(PROJECT_ROOT, "kingslanding"),
         )
     )
@@ -94,7 +93,7 @@ def container(service, tmp_path, evidence):
             for name in ("process.log", "serial.log", ".capsem-agent-stdio.log"):
                 for log in service.tmp_dir.rglob(name):
                     (evidence / name).write_bytes(log.read_bytes())
-            print(f"PRIVATE LINK EVIDENCE: {evidence}")
+            print(f"KINGSLANDING EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -125,6 +124,14 @@ def start_in_guest(service, vm_id, name, shell):
     guest(service, vm_id, detached)
 
 
+def unplugged(service, vm_id):
+    """Whether the guest has no cable and no pump running: a VM in no network."""
+    links = guest(service, vm_id, "ip -o link show; pgrep -x capsem-tun || true")
+    return " cable" not in links["stdout"] and not any(
+        line.strip().isdigit() for line in links["stdout"].splitlines()
+    )
+
+
 def probe(argv):
     return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
 
@@ -141,7 +148,7 @@ def client_args(direction, streams, seconds=SECONDS):
     ]
 
 
-def test_private_link_and_published_port_transport_samples(
+def test_published_port_transport_samples(
     container, service, evidence
 ):
     output = evidence
@@ -196,11 +203,8 @@ def test_private_link_and_published_port_transport_samples(
         "published throughput server",
         timeout=30,
     )
-    # The agent brought tap0 up at boot with the address the service named
-    # and the pool prefix that routes 10.128.0.0/9 into it; the test never
-    # starts the pump itself.
-    device = guest(service, vm_id, "ip -o addr show tap0")
-    assert f"inet {container['vm']['private_address']}/9" in device["stdout"], device
+    # Every VM starts unplugged: no network, so no cable.
+    assert unplugged(service, vm_id)
 
     metrics = {}
     try:
@@ -221,7 +225,7 @@ def test_private_link_and_published_port_transport_samples(
         helpers = guest(
             service,
             vm_id,
-            "ls -la /var/tmp; pgrep -a capsem-tun; ip -o addr show tap0",
+            "ls -la /var/tmp; pgrep -a capsem-tun; ip -o link",
             check=False,
         )
         (output / "guest-helpers.txt").write_text(json.dumps(helpers, indent=2))
@@ -286,54 +290,3 @@ def record(output, metrics, source_commit):
     )
     assert report.returncode == 0, report.stderr
     (output / "report.txt").write_bytes(report.stdout)
-
-
-def test_private_tcp_is_intercepted_and_refused_before_any_byte(container, service):
-    """The guest proxy intercepts TCP to a private address, carries the
-    original destination to the VM owner over VSOCK 5010, and the owner refuses
-    it while no private path exists: a fast failure with the destination in the
-    owner's log, from the VM and from inside the container alike."""
-    vm_id = container["vm"]["id"]
-    listeners = guest(service, vm_id, "ss -ltn")
-    assert "127.0.0.1:10128" in listeners["stdout"], listeners
-    destination = "10.128.0.9"
-    for label, prefix in (("vm", ""), ("container", f"{IN_CONTAINER} ")):
-        started = time.monotonic()
-        attempt = guest(
-            service,
-            vm_id,
-            prefix
-            + shlex.join(
-                [
-                    "capsem-bench-rs",
-                    *client_args("latency", 1, seconds=1),
-                    "--address",
-                    f"{destination}:{THROUGHPUT_PORT}",
-                ]
-            ),
-            timeout=15,
-            check=False,
-        )
-        elapsed = time.monotonic() - started
-        assert attempt.get("exit_code") not in (None, 0), (label, attempt)
-        assert elapsed < 10, (
-            f"{label}: a refusal must not wait for a deadline: {elapsed:.1f}s"
-        )
-
-    def refused_in_owner_log():
-        # A run's VM is unnamed, so its session is not under persistent/.
-        for log in service.tmp_dir.rglob("process.log"):
-            text = log.read_text(errors="replace")
-            # The service's answer, not a failure to ask it.
-            if (
-                "private connection refused" in text
-                and "service refused (404)" in text
-                and f'"destination":"{destination}"' in text
-                and f'"port":{THROUGHPUT_PORT}' in text
-            ):
-                return True
-        return False
-
-    wait_for(
-        refused_in_owner_log, "owner logged the refused private destination", timeout=20
-    )

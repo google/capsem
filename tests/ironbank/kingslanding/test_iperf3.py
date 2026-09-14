@@ -1,12 +1,12 @@
-"""Native iperf3 between two real members over the private path.
+"""Native iperf3 between two real members over their network's switch.
 
 Two iperf3 containers in two VMs on one network, from a digest-pinned image
 served by the hermetic registry. The server container listens; each client
 container joins the network at creation and runs one short bounded transfer
-by the server's private name: forward and reverse over TCP (the per
-connection admitted path) and one over UDP (the frame link). The JSON iperf3
-prints is the evidence, kept with the run; this is a smoke of the rail
-S07-002 measures with, not a number to hold anything to.
+by the server's private name: forward and reverse over TCP and one over UDP,
+all frames on the same cables through the same switch. The JSON iperf3
+prints is the evidence, kept with the run; this is a smoke of the rail the
+benchmarks measure with, not a number to hold anything to.
 """
 
 import contextlib
@@ -17,8 +17,8 @@ import pytest
 from helpers.constants import PROJECT_ROOT
 
 from tests.fixtures.oci.registry import registry
-from tests.ironbank.kingslanding.test_private_datagram import linked
-from tests.ironbank.kingslanding.test_private_link_benchmark import (
+from tests.ironbank.kingslanding.network import linked
+from tests.ironbank.kingslanding.test_publish_benchmark import (
     IN_CONTAINER,
     evidence,
     guest,
@@ -99,7 +99,7 @@ def transfer(service, keep, reference, certificate, label, *iperf_args):
     return report
 
 
-def test_native_iperf3_transfers_both_ways_over_the_private_path(
+def test_native_iperf3_transfers_both_ways_over_the_switch(
     service, tmp_path, evidence
 ):
     api = service.client()
@@ -118,12 +118,13 @@ def test_native_iperf3_transfers_both_ways_over_the_private_path(
         )
         assert udp["end"]["sum"]["packets"] > 0, udp["end"]
         assert udp["end"]["sum"]["lost_percent"] < 50, udp["end"]
-        # The history names the clients' admitted TCP flows and every link.
+        # The history names cables, never flows: nothing admitted TCP
+        # per connection, so no row but the cables' own.
         protocols = {
             event["event"]["network"].get("protocol")
             for event in api.get(f"/networks/{network}/logs").get("events", [])
         }
-        assert {"tcp", "link"} <= protocols, protocols
+        assert protocols == {"link"}, protocols
         # The native numbers join the benchmark store beside the bench's own.
         metrics = {
             "iperf3.forward.megabits_per_sec": {

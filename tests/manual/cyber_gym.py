@@ -179,12 +179,15 @@ def main() -> int:
             network = client.post("/networks", {"name": NETWORK})
             for vm in (target, agent):
                 client.put(f"/networks/{network['id']}/members/{vm['id']}")
-            # The private address is a per-membership lease, assigned on join,
-            # so read it back from the registry rather than the boot-time row.
+            # The address is the membership's lease in the network's subnet,
+            # usable once the target's cable is plugged.
             addr = ""
             for _ in range(20):
-                rows = {r["id"]: r for r in client.get("/vms/list")["sandboxes"]}
-                addr = rows.get(target["id"], {}).get("private_address") or ""
+                members = client.get(f"/networks/{network['id']}")["members"]
+                addr = next(
+                    (m["address"] for m in members if m["vm_id"] == target["id"] and m["state"] == "ready"),
+                    "",
+                )
                 if addr:
                     break
                 time.sleep(1)
