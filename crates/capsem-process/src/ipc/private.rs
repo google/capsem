@@ -1,40 +1,12 @@
-//! The service's private network requests: a TCP connection admitted to
-//! this VM (`PrivateAccept`), plugging this VM's cable into a network's
-//! switch (`LinkAttach`), and taking the cable down when it leaves
-//! (`LinkDetach`). The first two answer with the handoff socket the asker
-//! presents its token on; every refusal names its reason.
+//! The service's network cable requests: plugging this VM's cable into a
+//! network's switch (`LinkAttach`), answered with the seat the service
+//! presents its token on, and taking the cable down when the VM leaves
+//! (`LinkDetach`). Every refusal names its reason.
 use super::*;
 
 pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output: mpsc::Sender<ProcessToService>) {
     tokio::spawn(async move {
         let response = match message {
-            ServiceToProcess::PrivateAccept {
-                id,
-                token,
-                network,
-                network_name,
-                source_vm,
-                source_name,
-                source_generation,
-                source_address,
-                source_port,
-                port,
-            } => {
-                let accepted = (|| {
-                    let network = capsem_core::security_engine::network::NetworkIdentity::parse(&network, network_name)
-                        .map_err(anyhow::Error::msg)?;
-                    let source = crate::private_handoff::source_vm(source_vm, source_name, source_generation);
-                    let handoff = job_store.private.get().context("no private handoff on this owner")?;
-                    handoff.expect(&token, network, source, (source_address, source_port).into(), port)?;
-                    Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
-                })();
-                let (handoff_socket, error) = outcome(accepted);
-                ProcessToService::PrivateAcceptResult {
-                    id,
-                    handoff_socket,
-                    error,
-                }
-            }
             ServiceToProcess::LinkAttach {
                 id,
                 token,
@@ -48,8 +20,8 @@ pub(super) fn handle(message: ServiceToProcess, job_store: Arc<JobStore>, output
                         .map_err(anyhow::Error::msg)?;
                     let cables = job_store.cables.get().context("no cables on this owner")?;
                     cables.expect(&token, network, address, prefix).await?;
-                    let handoff = job_store.private.get().context("no private handoff on this owner")?;
-                    Ok::<_, anyhow::Error>(handoff.socket_path().to_string_lossy().into_owned())
+                    let seat = job_store.cable_seat.get().context("no cable seat on this owner")?;
+                    Ok::<_, anyhow::Error>(seat.to_string_lossy().into_owned())
                 }
                 .await;
                 let (handoff_socket, error) = outcome(linked);

@@ -731,7 +731,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     handler.await.unwrap().unwrap();
 }
 
-/// Thirty-two private admissions asked at once over the owner's socket, four
+/// Thirty-two cable requests asked at once over the owner's socket, four
 /// hundred rounds, every one answered through the dispatcher. The redis cell
 /// of the private path benchmark lost one reply in thirty-two (gate
 /// 20260912-190634): a closed connection's descriptor number was reused by
@@ -740,7 +740,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
 /// by round twenty over the transport's own teardown; the foundation channel
 /// deregisters before it closes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_private_accepts_are_all_answered() {
+async fn concurrent_cable_requests_are_all_answered() {
     let temp = tempfile::tempdir().unwrap();
     let (dispatcher, _ctrl_rx) = Dispatcher::new(temp.path());
     let dispatcher = Arc::new(dispatcher);
@@ -769,22 +769,14 @@ async fn concurrent_private_accepts_are_all_answered() {
                             .unwrap();
                     let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
                         channel_from_std(stream).unwrap();
-                    tx.send(ServiceToProcess::PrivateAccept {
+                    tx.send(ServiceToProcess::LinkDetach {
                         id,
-                        token: format!("{id:016x}"),
                         network: "11111111-2222-3333-4444-555555555555".into(),
-                        network_name: "net".into(),
-                        source_vm: "alpha".into(),
-                        source_name: "alpha".into(),
-                        source_generation: 1,
-                        source_address: std::net::Ipv4Addr::new(10, 128, 0, 2),
-                        source_port: 40000,
-                        port: 6379,
                     })
                     .await
                     .unwrap();
                     match tokio::time::timeout(Duration::from_secs(5), rx.recv()).await {
-                        Ok(Ok(ProcessToService::PrivateAcceptResult { id: answered, .. })) => assert_eq!(answered, id),
+                        Ok(Ok(ProcessToService::LinkDetachResult { id: answered, .. })) => assert_eq!(answered, id),
                         other => panic!("ask {id} of round {round} was not answered: {other:?}"),
                     }
                 })

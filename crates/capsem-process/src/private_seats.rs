@@ -1,6 +1,6 @@
 //! Binding this owner's private seats at start: the cables holding each
-//! network's guest stream, and the handoff socket other owners deliver TCP
-//! streams to and the service asks a cable's stream from.
+//! network's guest stream, and the socket the service asks a cable's stream
+//! on.
 //! It needs the service's socket, the run directory the service named and
 //! the secret it minted for this VM.
 use crate::job_store::JobStore;
@@ -57,23 +57,14 @@ pub(crate) fn bind(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run_dir.join("service.sock"));
 
-    let cables = Arc::new(crate::cables::Cables::new(job_store.publisher.clone(), control.clone()));
+    let cables = Arc::new(crate::cables::Cables::new(job_store.publisher.clone(), control));
     let _ = job_store.cables.set(Arc::clone(&cables));
-    let (handoff_path, handoff_listener) = bound(
+    let (seat_path, seat_listener) = bound(
         capsem_foundation::uds::private_handoff_socket_path(&run_dir, seats.id)?,
-        "private handoff",
+        "cable seat",
     )?;
-    let handoff = Arc::new(crate::private_handoff::PrivateHandoff::new(
-        handoff_path,
-        job_store.publisher.clone(),
-        control,
-        service_socket.clone(),
-        owner_secret.clone(),
-        seats.id.to_string(),
-        cables,
-    ));
-    let _ = job_store.private.set(Arc::clone(&handoff));
-    tokio::spawn(handoff.serve(handoff_listener));
+    let _ = job_store.cable_seat.set(seat_path);
+    tokio::spawn(cables.serve_seat(seat_listener));
     Ok(Bound {
         service_socket,
         owner_secret,

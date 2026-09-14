@@ -978,7 +978,7 @@ fn dispatch_aux_connection(
 ) {
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
-        Some(HostVsockService::Network | HostVsockService::Private) => streams::serve(conn, job_store, vm_id),
+        Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
         Some(HostVsockService::DnsProxy) => {
             // Long-lived framed session, one DNS round trip per frame; every

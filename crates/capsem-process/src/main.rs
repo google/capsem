@@ -4,7 +4,6 @@ mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
-mod private_handoff;
 mod private_names;
 mod private_seats;
 mod runtime_config;

@@ -315,12 +315,11 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }
             | ServiceToProcess::PlugCable { .. }
-            | ServiceToProcess::UnplugCable { .. } => {
+            | ServiceToProcess::UnplugCable { .. }
+            | ServiceToProcess::PrivateAccept { .. } => {
                 anyhow::bail!("guest data-plane requests are VM-owner internal")
             }
-            message @ (ServiceToProcess::PrivateAccept { .. }
-            | ServiceToProcess::LinkAttach { .. }
-            | ServiceToProcess::LinkDetach { .. }) => {
+            message @ (ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. }) => {
                 private::handle(message, Arc::clone(&job_store), ipc_tx_out.clone());
             }
             ServiceToProcess::WriteFile { id, path, data }
@@ -921,10 +920,9 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }
-        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
-        ServiceToProcess::PrivateAccept { .. }
-        | ServiceToProcess::LinkAttach { .. }
-        | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
+        | ServiceToProcess::UnplugCable { .. }
+        | ServiceToProcess::PrivateAccept { .. } => IpcAction::Unexpected,
+        ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,

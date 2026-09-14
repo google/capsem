@@ -36,12 +36,11 @@ pub(crate) struct JobStore {
     /// `Notify` keeps a permit, so a report that lands before the wait
     /// starts is not lost.
     pub(crate) shutdown_complete: Notify,
-    /// Private connections in and out of this VM; set once the owner has its
-    /// handoff socket, absent in fixtures that never take one.
-    pub(crate) private: std::sync::OnceLock<Arc<crate::private_handoff::PrivateHandoff>>,
-    /// The guest end of the private link, for the network's switch; set with
-    /// the handoff socket, absent in fixtures that never bind one.
+    /// This VM's network cables; set with the seat the service asks them on,
+    /// absent in fixtures that never bind one.
     pub(crate) cables: std::sync::OnceLock<Arc<crate::cables::Cables>>,
+    /// The socket the service asks for a cable's guest stream on.
+    pub(crate) cable_seat: std::sync::OnceLock<std::path::PathBuf>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -88,8 +87,8 @@ impl JobStore {
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
-            private: std::sync::OnceLock::new(),
             cables: std::sync::OnceLock::new(),
+            cable_seat: std::sync::OnceLock::new(),
         }
     }
 

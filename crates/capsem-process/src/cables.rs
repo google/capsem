@@ -21,9 +21,9 @@ use capsem_core::container::publish::{AuditFlow, Publisher};
 use capsem_core::security_engine::network::{NetworkIdentity, NetworkReason};
 use capsem_core::security_engine::{RuntimeSecurityEventType, SecurityEnforcementAction};
 use capsem_core::VsockConnection;
-use capsem_foundation::unix::router_channel::Sender;
+use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_proto::ipc::ServiceToProcess;
-use capsem_proto::privatelink::{seat_frame, SEAT_LINK};
+use capsem_proto::privatelink::{decode_seat_frame, seat_frame, SEAT_LINK};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
@@ -251,6 +251,40 @@ impl Cables {
         tokio::time::timeout(deadline, wait)
             .await
             .context("the guest never connected a fresh stream for the cable")?
+    }
+
+    /// Take the service's plug requests on the cable seat for as long as the
+    /// socket lives. Each connection presents one token and gets that cable's
+    /// guest stream back; any other frame is closed without an answer.
+    pub(crate) async fn serve_seat(self: Arc<Self>, listener: tokio::net::UnixListener) {
+        loop {
+            let stream = match listener.accept().await {
+                Ok((stream, _)) => stream,
+                Err(error) => {
+                    tracing::warn!(%error, "cable seat socket failed");
+                    return;
+                }
+            };
+            let cables = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(error) = cables.seat(stream).await {
+                    tracing::debug!(%error, "cable seat request refused");
+                }
+            });
+        }
+    }
+
+    async fn seat(&self, stream: tokio::net::UnixStream) -> Result<()> {
+        let socket = stream.into_std()?;
+        let receiver = Receiver::new(socket.try_clone()?)?;
+        let frame = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .context("seat frame timed out")??;
+        let (kind, token) = decode_seat_frame(&frame.bytes).map_err(anyhow::Error::msg)?;
+        ensure!(kind == SEAT_LINK, "seat frame kind {kind} is not a plug request");
+        ensure!(frame.fds.is_empty(), "a plug request carries no descriptor");
+        drop(receiver);
+        self.take(token, socket).await
     }
 
     /// The service presented `token` on `socket`: answer with the cable's

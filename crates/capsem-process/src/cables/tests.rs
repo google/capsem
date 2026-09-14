@@ -411,3 +411,38 @@ async fn detaching_takes_the_cable_down_and_leaves_the_other_one() {
     let again = plugged(&cables, &mut instructions, 0x93, TEAM, IN_TEAM).await;
     assert_ne!(again, team, "a network plugged after detaching gets a new cable");
 }
+
+#[tokio::test]
+async fn the_seat_answers_a_plug_request_and_closes_anything_else() {
+    let (cables, mut instructions) = cables("allow");
+    let team = plugged(&cables, &mut instructions, 0x71, TEAM, IN_TEAM).await;
+    let (conn, _guest) = guest_stream();
+    cables.attach_guest(team, conn);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("seat.sock");
+    tokio::spawn(Arc::clone(&cables).serve_seat(tokio::net::UnixListener::bind(&path).unwrap()));
+
+    let asked = std::os::unix::net::UnixStream::connect(&path).unwrap();
+    let sender = Sender::new(asked.try_clone().unwrap()).unwrap();
+    let receiver = Receiver::new(asked).unwrap();
+    sender.send(&seat_frame(SEAT_LINK, 0x71), &[]).await.unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(answer.fds.len(), 1, "a plug request gets its cable's stream");
+
+    for frame in [seat_frame(4, 0x72), [9u8; 10]] {
+        let refused = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        let sender = Sender::new(refused.try_clone().unwrap()).unwrap();
+        let receiver = Receiver::new(refused).unwrap();
+        sender.send(&frame, &[]).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+                .await
+                .unwrap()
+                .is_err(),
+            "a frame that is not a plug request is closed without an answer"
+        );
+    }
+}
