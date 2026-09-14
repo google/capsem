@@ -263,7 +263,7 @@ def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> No
         assert len(matching) == 1, f"{profile} has {len(matching)} recorded baselines, expected one"
 
     step = _gate_plan().step_named(next(label for label in labels if "pytest.benchmark." in label))
-    assert [e.name for e in step.contends] == ["apple_vz"]
+    assert {e.name: e.shared for e in step.contends}["apple_vz"] is False, "the baseline runs alone"
 
 
 def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
@@ -288,7 +288,9 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
         assert path in snapshot.argv(config)
 
     assert config.suites.pytest.stop_at_first in broad
-    assert [e.name for e in snapshot.contends] == ["host_service"]
+    assert {e.name: e.shared for e in snapshot.contends} == {
+        "host_service": False, "apple_vz": False, "workspace_binaries": True,
+    }
     assert not snapshot.parallel
 
     labels = list(_gate_plan().labels)

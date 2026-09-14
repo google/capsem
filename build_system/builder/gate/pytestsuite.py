@@ -106,6 +106,7 @@ class Suite:
             # Fails closed before collection, rather than passing vacuously
             # against a tree whose assets were never built.
             env[settings.require_artifacts] = "1"
+        env[settings.run_id_variable] = self.label
         if self.profile:
             env[settings.profile_variable] = self.profile
         if self.assets_dir or self.profiles_dir:
@@ -203,7 +204,7 @@ def broad(
         parallel=True,
         coverage=(CoverageMode.FINISH if source_contracts_proved else CoverageMode.SINGLE),
         profile=profile,
-        contends=(config.exclusive("workspace_binaries"),),
+        contends=_fleet(config),
     )
 
 
@@ -215,7 +216,7 @@ def host_snapshot(config: GateConfig, *, profile: str) -> Suite:
         paths=settings.host_snapshot_serial,
         markers="not serial",
         profile=profile,
-        contends=(config.exclusive("host_service"),),
+        contends=(config.exclusive("host_service"), *measuring(config)),
     )
 
 
@@ -229,7 +230,7 @@ def timing(config: GateConfig, *, profile: str) -> Suite:
         deselect=settings.benchmark_deselect,
         stop_at_first_failure=False,
         profile=profile,
-        contends=(config.exclusive("apple_vz"),),
+        contends=measuring(config),
     )
 
 
@@ -241,7 +242,7 @@ def benchmark(config: GateConfig, *, profile: str) -> Suite:
         paths=(settings.benchmark_baseline,),
         stop_at_first_failure=False,
         profile=profile,
-        contends=(config.exclusive("apple_vz"),),
+        contends=measuring(config),
     )
 
 
@@ -265,5 +266,24 @@ def compatibility(config: GateConfig, *, profile: str) -> Suite:
         ignore_globs=config.modules.contract_globs,
         parallel=True,
         profile=profile,
-        contends=(config.exclusive("workspace_binaries"),),
+        contends=_fleet(config),
     )
+
+
+def _fleet(config: GateConfig) -> tuple[Exclusive, ...]:
+    """Four VMs at a time: beside other VM suites, never beside the other fleet."""
+    return (
+        config.shared("workspace_binaries"),
+        config.shared("apple_vz"),
+        config.exclusive("vm_fleet"),
+    )
+
+
+def measuring(config: GateConfig) -> tuple[Exclusive, ...]:
+    """The machine to itself, among VM suites, so the numbers mean something."""
+    return (config.shared("workspace_binaries"), config.exclusive("apple_vz"))
+
+
+def sharing(config: GateConfig) -> tuple[Exclusive, ...]:
+    """A VM suite that needs correct answers, not a quiet machine."""
+    return (config.shared("workspace_binaries"), config.shared("apple_vz"))

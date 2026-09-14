@@ -1198,7 +1198,12 @@ survivors_unenforced_when_set = "CI"
 cancellation_grace_seconds = 10.0
 
 [execution.exclusives.apple_vz]
+# VM suites that only need correct answers hold it shared and overlap; timing,
+# benchmarks and host-snapshot hold it alone.
 reason = "two benchmark files launching VMs at once measure each other, not Capsem"
+
+[execution.exclusives.vm_fleet]
+reason = "the broad and compatibility suites each run four xdist workers booting 12 GB VMs; two at once overcommit host memory and turn boot deadlines into flakes"
 
 [execution.exclusives.host_service]
 reason = "production has one service and one service-scoped snapshot lock; an xdist worker per service does not reproduce that"
@@ -2209,6 +2214,9 @@ serial_paths = [
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
 benchmark_deselect = "not test_capsem_bench_baseline"
+# Namespaces tests/conftest.py's leak ledger per step, so suites running at the
+# same time neither erase nor inherit each other's attribution.
+run_id_variable = "CAPSEM_TEST_RUN_ID"
 
 # Fails closed before collection rather than passing vacuously against a tree
 # whose assets were never built.

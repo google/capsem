@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import (
@@ -109,7 +109,7 @@ def functional(
     # pulled path, which is the same for every profile, and the compatibility
     # axis is what the candidate's own `functional` phase is for.
     proven = tuple(profiles.selected(config)) if axis is None else axis
-    base, rest = proven[0], proven[1:]
+    base = proven[0]
 
     # That the materialized catalog agrees with the source axis and the manifest
     # under test is still required: a run-time question, asked once, before any lane.
@@ -184,29 +184,69 @@ def functional(
         )
 
     fixture = phase.add(kingslanding.prefetch(config), after=first)
-    previous = _profile_lane(
-        phase,
-        config,
-        base,
-        after=(fixture,),
-        broad=True,
-        isolated_assets=isolated_assets,
-        staged=staged,
-        benchmark=benchmark,
-        source_contracts_proved=source_contracts_proved,
-    )
-    for profile in rest:
-        previous = _profile_lane(
+    # Each profile's VM suites share the machine with the other profile's: they
+    # claim Apple VZ and the workspace binaries shared, and the two xdist
+    # suites claim the VM fleet alone so their eight VMs never overlap. Order
+    # within a lane is kept, bounding the machine to one suite per profile.
+    lanes = tuple(
+        _profile_lane(
             phase,
             config,
             profile,
-            after=(previous,),
-            broad=False,
-            isolated_assets=isolated_assets,
-            staged=staged,
-            benchmark=benchmark,
+            after=(fixture,),
+            broad=profile == base,
+            content=_content_selector(config, profile, staged=staged, isolated=isolated_assets),
+            source_contracts_proved=source_contracts_proved and profile == base,
         )
-    return previous
+        for profile in proven
+    )
+    # Measurements hold Apple VZ alone, so they wait for every lane and then
+    # run one at a time; the declared order gives the phase one end.
+    current: tuple[Step, ...] = lanes
+    for profile in proven:
+        content = _content_selector(config, profile, staged=staged, isolated=isolated_assets)
+        measured = [pytestsuite.timing(config, profile=profile)]
+        if benchmark:
+            measured += [
+                kingslanding.benchmark_suite(config, profile=profile),
+                pytestsuite.benchmark(config, profile=profile),
+            ]
+        for suite in measured:
+            current = (phase.add(content.suite(suite).as_step(config), after=current),)
+    return current[0]
+
+
+@dataclass(frozen=True)
+class _Content:
+    """The content one profile's suites and VM proofs are pointed at."""
+
+    assets: Path | None
+    profiles_dir: Path | None
+
+    def suite(self, suite: pytestsuite.Suite) -> pytestsuite.Suite:
+        if self.assets is None or self.profiles_dir is None:
+            return suite
+        return replace(suite, assets_dir=str(self.assets), profiles_dir=str(self.profiles_dir))
+
+    def proof_arguments(self) -> dict[str, str | None]:
+        return {
+            "assets": str(self.assets) if self.assets else None,
+            "profiles_dir": str(self.profiles_dir) if self.profiles_dir else None,
+        }
+
+
+def _content_selector(
+    config: GateConfig, profile: str, *, staged: ProfileContent | None, isolated: bool
+) -> _Content:
+    # A release lane's cohort is one staged pair for every profile, not a
+    # private tree per profile. Without this the suites inherit no content
+    # selection at all and fall back to the checkout -- which, inside the
+    # prefix, is the one place the lane never staged anything.
+    if staged is not None:
+        return _Content(staged.assets, staged.profiles(config))
+    if isolated:
+        return _Content(*_profile_content(config, profile))
+    return _Content(None, None)
 
 
 def _profile_content(config: GateConfig, profile: str) -> tuple[Path, Path]:
@@ -224,77 +264,32 @@ def _profile_lane(
     *,
     after: tuple,
     broad: bool,
-    isolated_assets: bool,
-    staged: ProfileContent | None = None,
-    benchmark: bool = True,
+    content: _Content,
     source_contracts_proved: bool = False,
-):
-    """One profile's VM-owned suites, in the order they depend on.
+) -> Step:
+    """One profile's VM-owned suites that can share the machine, in order.
 
     The base profile takes the broad proof -- everything that can share a
     machine, four VMs at a time. Each remaining profile repeats the VM-owned
     suites instead: that is the compatibility axis, not a reduced substitute.
+    Timing and benchmarks are not here; they need the machine to themselves.
     """
     head = (
-        pytestsuite.broad(
-            config,
-            profile=profile,
-            source_contracts_proved=source_contracts_proved,
-        )
+        pytestsuite.broad(config, profile=profile, source_contracts_proved=source_contracts_proved)
         if broad
         else pytestsuite.compatibility(config, profile=profile)
     )
-    # A release lane's cohort is one staged pair for every profile, not a
-    # private tree per profile. Without this the suites inherit no content
-    # selection at all and fall back to the checkout -- which, inside the
-    # prefix, is the one place the lane never staged anything.
-    if staged is not None:
-        assets, profiles_dir = staged.assets, staged.profiles(config)
-    elif isolated_assets:
-        assets, profiles_dir = _profile_content(config, profile)
-    else:
-        assets, profiles_dir = None, None
-
-    def selected(suite):
-        if assets is None or profiles_dir is None:
-            return suite
-        return replace(suite, assets_dir=str(assets), profiles_dir=str(profiles_dir))
-
-    head = selected(head)
-    current = phase.add(head.as_step(config), after=after)
+    current = phase.add(content.suite(head).as_step(config), after=after)
     for owned in (
-        kingslanding.suite(config, profile=profile, benchmark=benchmark),
+        kingslanding.suite(config, profile=profile, benchmark=False),
         kingslanding.greyjoy_suite(config, profile=profile),
+        pytestsuite.host_snapshot(config, profile=profile),
     ):
-        current = phase.add(selected(owned).as_step(config), after=(current,))
+        current = phase.add(content.suite(owned).as_step(config), after=(current,))
     current = phase.add(
-        selected(pytestsuite.host_snapshot(config, profile=profile)).as_step(config),
-        after=(current,),
+        vmproofs.injection(config, profile=profile, **content.proof_arguments()), after=(current,)
     )
-    current = phase.add(
-        selected(pytestsuite.timing(config, profile=profile)).as_step(config), after=(current,)
-    )
-    current = phase.add(
-        vmproofs.injection(
-            config,
-            profile=profile,
-            assets=str(assets) if assets else None,
-            profiles_dir=str(profiles_dir) if profiles_dir else None,
-        ),
-        after=(current,),
-    )
-    current = phase.add(
-        vmproofs.integration(
-            config,
-            profile=profile,
-            assets=str(assets) if assets else None,
-            profiles_dir=str(profiles_dir) if profiles_dir else None,
-        ),
-        after=(current,),
-    )
-    if not benchmark:
-        return current
     return phase.add(
-        selected(pytestsuite.benchmark(config, profile=profile)).as_step(config),
+        vmproofs.integration(config, profile=profile, **content.proof_arguments()),
         after=(current,),
     )

@@ -35,18 +35,29 @@ def greyjoy_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
         label=f"pytest.greyjoy.{profile}",
         paths=(config.functional.greyjoy.suite_path,),
         profile=profile,
-        contends=(config.exclusive("workspace_binaries"), config.exclusive("apple_vz")),
+        contends=pytestsuite.sharing(config),
     )
 
 
 def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytestsuite.Suite:
+    """The acceptance suite; with its measurement files it needs the machine alone."""
     settings = config.functional.kingslanding
     return pytestsuite.Suite(
         label=f"pytest.kingslanding.{profile}",
         paths=(settings.suite_path,),
         ignores=() if benchmark else settings.benchmark_paths,
         profile=profile,
-        contends=(config.exclusive("workspace_binaries"), config.exclusive("apple_vz")),
+        contends=pytestsuite.measuring(config) if benchmark else pytestsuite.sharing(config),
+    )
+
+
+def benchmark_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+    """Kingslanding's measurement files, split out so the rest can share the machine."""
+    return pytestsuite.Suite(
+        label=f"pytest.kingslanding-benchmark.{profile}",
+        paths=config.functional.kingslanding.benchmark_paths,
+        profile=profile,
+        contends=pytestsuite.measuring(config),
     )
 
 

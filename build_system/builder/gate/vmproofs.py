@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import pytestsuite
 from .actions import Script
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
@@ -60,7 +61,7 @@ def injection(
             "--profile",
             profile,
         ),
-        contends=(config.exclusive("apple_vz"),),
+        contends=pytestsuite.sharing(config),
         kind=Kind.CAPSEM,
         needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
         speed=Speed.SLOW,
@@ -89,7 +90,7 @@ def integration(
             profile,
             env=config.environment.content(profiles=profiles_dir or _profiles_dir(config)),
         ),
-        contends=(config.exclusive("apple_vz"),),
+        contends=pytestsuite.sharing(config),
         kind=Kind.CAPSEM,
         needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
         speed=Speed.SLOW,

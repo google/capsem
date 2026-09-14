@@ -282,6 +282,7 @@ class PytestConfig(Strict):
     serial_paths: tuple[str, ...]
     benchmark_baseline: str
     benchmark_deselect: str
+    run_id_variable: str
     require_artifacts: str
     profile_variable: str
     base_profile: str
