@@ -59,6 +59,15 @@ fn dns_fixture_answers_known_names_and_rejects_unknown() {
     assert_eq!(response[3] & 0x0F, 0);
     assert_eq!(&response[response.len() - 4..], &[127, 0, 0, 1]);
 
+    let query = test_dns_query("egress.capsem.test", 0xD00D);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(response[3] & 0x0F, 0);
+    assert_eq!(
+        &response[response.len() - 4..],
+        &[198, 51, 100, 10],
+        "the egress fixture must resolve to an address a container can route"
+    );
+
     let query = test_dns_query("unknown.capsem.invalid", 0xBEEF);
     let response = dns_response(&query).expect("dns response");
     assert_eq!(&response[..2], b"\xBE\xEF");

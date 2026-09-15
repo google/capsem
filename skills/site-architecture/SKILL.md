@@ -27,6 +27,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Guest-side:**
 - **capsem-init** (`capsem-init`): PID 1, sets up air-gapped networking, mounts filesystems, deploys guest binaries, launches daemons, writes boot timing JSONL
 - **capsem-pty-agent** (`capsem-pty-agent`): main guest agent -- PTY bridge, control channel, exec, file I/O, shutdown handler (see "Guest agent architecture" below)
+- **capsem-tun** (`capsem-tun`): guest end of a network cable. One tap per attached network, MAC `capsem_proto::privatelink::mac_of(address)`, MTU 65521, pumping ethernet frames as u16-framed records over that cable's own vsock:5009 connection. The VM owner holds each cable's stream and hands a duplicate to that network's switch on `plug()`. A wire, not a stack: it parses nothing, and every protocol crosses it.
 - **capsem-sysutil** (`capsem-sysutil`): guest suspend helper. Opens its own vsock:5004 connection independently of the agent, so suspend works even if the agent is hung. Symlinked by capsem-init only to `/usr/local/bin/suspend`; in-VM shutdown commands are disabled.
 - **capsem-net-proxy** (`capsem-net-proxy`): redirects HTTPS traffic to host MITM proxy via vsock
 - **capsem-mcp-server** (`capsem-mcp-server`): guest MCP stdio-to-framed-vsock relay for tool calls to the host MITM MCP endpoint
@@ -60,6 +61,11 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
   `references/service-and-guest-protocols.md`.
 - The guest is air-gapped: it has no real NIC, DNS, or direct internet. HTTPS
   reaches the host only through the guest net proxy and the MITM/security path.
+- VMs start unplugged. A private network is one confined L2 switch process
+  (`capsem-router --network`); `plug()`/`unplug()` connect a VM's cable to it.
+  Plugged VMs talk over any protocol. The switch forwards on MAC only and is a
+  network, not a security boundary: never add per-flow relays, admission,
+  or IP/TCP parsing to it. See `references/storage-network-and-lifecycle.md`.
 - Corp config owns enterprise constraints; profiles own VM assets and runtime
   policy; settings own UI preferences. All enforcement and detection compiles
   into one `SecurityRuleSet` over `SecurityEvent`.

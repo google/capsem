@@ -1,6 +1,7 @@
 //! Apple Virtualization.framework backend.
 
 pub(crate) mod boot;
+mod lifecycle;
 pub(crate) mod machine;
 pub(crate) mod serial;
 pub(crate) mod vsock;
@@ -103,6 +104,10 @@ impl VmHandle for AppleVzHandle {
 
     fn state(&self) -> VmState {
         self.machine.state()
+    }
+
+    fn stop_reason(&self) -> Option<String> {
+        self.machine.stop_reason()
     }
 
     fn serial(&self) -> &dyn SerialConsole {

@@ -7,9 +7,13 @@ mod commands;
 mod comparison;
 #[cfg(feature = "host")]
 mod machine;
+mod ping;
 mod protocol;
 #[cfg(feature = "host")]
 mod protocol_record;
+#[path = "stats/rates.rs"]
+mod rates;
+mod redis;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;
@@ -17,6 +21,8 @@ mod schema;
 mod stats;
 #[cfg(feature = "host")]
 mod store;
+mod throughput;
+mod udp;
 
 use anyhow::Result;
 use clap::Parser;
@@ -54,6 +60,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "host")]
         profile: "code".to_string(),
     })) {
+        Command::Redis(args) => println!("{}", serde_json::to_string(&redis::run(args).await?)?),
+        Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
+        Command::Udp(args) => println!("{}", serde_json::to_string(&udp::run(args).await?)?),
+        Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();
@@ -92,7 +102,9 @@ async fn main() -> Result<()> {
         #[cfg(feature = "host")]
         Command::List => commands::list_dimensions(),
         #[cfg(feature = "host")]
-        Command::Doctor(args) => return commands::doctor(args.json, machine::running_capsem_processes()?),
+        Command::Doctor(args) => {
+            return commands::doctor(args.json, args.standing, machine::running_capsem_processes()?)
+        }
         #[cfg(feature = "host")]
         Command::Compare(args) => {
             let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];

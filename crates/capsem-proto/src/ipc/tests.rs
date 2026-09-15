@@ -68,6 +68,10 @@ fn service_to_process_bincode_indices_and_roundtrips_are_stable() {
             namespaced_name: "server__tool".into(),
             arguments_json: "{}".into(),
         },
+        ServiceToProcess::ExecStream {
+            id: 10,
+            command: "printf live".into(),
+        },
     ];
 
     for (expected, message) in messages.iter().enumerate() {
@@ -137,6 +141,10 @@ fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
         ProcessToService::SuspendFailed {
             id: "vm".into(),
             error: "failed".into(),
+        },
+        ProcessToService::ExecOutput {
+            id: 10,
+            data: vec![0, 255, 10],
         },
     ];
 
@@ -864,4 +872,73 @@ fn exec_result_defaults_to_not_truncated_when_the_field_is_absent() {
         ProcessToService::ExecResult { truncated, .. } => assert!(!truncated),
         other => panic!("expected ExecResult, got {other:?}"),
     }
+}
+
+#[test]
+fn link_attach_roundtrip() {
+    let ask = ServiceToProcess::LinkAttach {
+        id: 12,
+        token: "00000000000000bb".into(),
+        network: "8f5a1e6e-3c2a-4b4d-9c1e-1a2b3c4d5e6f".into(),
+        network_name: "team".into(),
+        address: std::net::Ipv4Addr::new(10, 128, 5, 2),
+        prefix: 24,
+        generation: 7,
+    };
+    let bytes = bincode::serialize(&ask).unwrap();
+    let back: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(
+        back,
+        ServiceToProcess::LinkAttach { id: 12, ref token, generation: 7, .. } if token == "00000000000000bb"
+    ));
+    let answer = ProcessToService::LinkAttachResult {
+        id: 12,
+        handoff_socket: "/run/instances/vm-handoff.sock".into(),
+        error: None,
+    };
+    let bytes = bincode::serialize(&answer).unwrap();
+    let back: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(
+        back,
+        ProcessToService::LinkAttachResult {
+            id: 12,
+            error: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn cable_requests_round_trip_with_the_address_the_guest_will_use() {
+    let address = std::net::Ipv4Addr::new(10, 128, 5, 9);
+    for message in [
+        ServiceToProcess::LinkAttach {
+            id: 1,
+            token: "00000000000000aa".into(),
+            network: "0f0e0d0c-0b0a-4908-8706-050403020100".into(),
+            network_name: "team".into(),
+            address,
+            prefix: 24,
+            generation: 4,
+        },
+        ServiceToProcess::LinkDetach {
+            id: 2,
+            network: "0f0e0d0c-0b0a-4908-8706-050403020100".into(),
+            generation: 5,
+        },
+        ServiceToProcess::PlugCable {
+            cable: 3,
+            address,
+            prefix: 24,
+        },
+        ServiceToProcess::UnplugCable { cable: 3 },
+    ] {
+        let bytes = bincode::serialize(&message).unwrap();
+        let decoded: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(bincode::serialize(&decoded).unwrap(), bytes, "{message:?}");
+    }
+    let reply = ProcessToService::LinkDetachResult { id: 2, error: None };
+    let bytes = bincode::serialize(&reply).unwrap();
+    let decoded: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    assert_eq!(bincode::serialize(&decoded).unwrap(), bytes);
 }

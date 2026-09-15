@@ -215,6 +215,8 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     else:
         snapshot.populate(config.root, path, config)
     if not clean:
+        if commit is None and reuse is None and buildcache.seed_runtime(config, config.root, path):
+            runner.note("seeded isolated runtime assets from the invoking checkout")
         # Before the lend, and only when the cache has nothing of its own: the
         # checkout holds what the last completed run exported, so a cache that
         # is merely empty is not the same as no previous work. Without this the

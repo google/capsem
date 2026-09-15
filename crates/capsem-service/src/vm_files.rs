@@ -887,6 +887,9 @@ pub(super) async fn handle_provision(
         ));
     }
     let id = new_persistent_vm_id();
+    // Every named network must exist before the VM does: a VM is never
+    // created half-connected.
+    let networks = network_routes::resolve_network_names(&*state.networks.lock().await, &payload.networks)?;
 
     let profile = state
         .cached_profile_config(&profile_id)
@@ -934,10 +937,10 @@ pub(super) async fn handle_provision(
                 let stale_name = name.clone();
                 let _ = state
                     .off_worker(move |state| {
-                        let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
+                        let _ = state.forget_persistent_entry(&stale_name);
                     })
                     .await;
-                state.instances.lock().unwrap().remove(&id);
+                state.evict_instance(&id);
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 
@@ -980,7 +983,11 @@ pub(super) async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(uds_path)) => provision_response_for_running(&state, id, uds_path).map(Json),
+        Ok(Ok(uds_path)) => {
+            let response = provision_response_for_running(&state, id.clone(), uds_path)?;
+            network_routes::attach_provisioned(&state, &id, &networks).await?;
+            Ok(Json(response))
+        }
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -1184,22 +1191,7 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
-            let mut info = SandboxInfo::new(
-                i.id.clone(),
-                i.profile_id.clone(),
-                i.pid,
-                VmLifecycleState::Running,
-                i.persistent,
-            );
-            info.name = Some(i.name.clone());
-            info.ram_mb = Some(i.ram_mb);
-            info.cpus = Some(i.cpus);
-            info.version = Some(i.base_version.clone());
-            info.forked_from = i.forked_from.clone();
-            info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-            info.can_resume = false;
-            info.refresh_available_actions();
-            sandboxes.push(info);
+            sandboxes.push(sandbox_info::running_sandbox_info(i));
         }
     }
 
@@ -1219,23 +1211,13 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
     for entry in inactive_persistent {
         let vm_id = persistent_entry_vm_id(&entry);
         let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
-        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
-        info.name = Some(entry.name.clone());
-        info.ram_mb = Some(entry.ram_mb);
-        info.cpus = Some(entry.cpus);
-        info.version = Some(entry.base_version.clone());
-        info.forked_from = entry.forked_from.clone();
-        info.description = entry.description.clone();
-        info.can_resume = can_resume;
-        if can_resume {
-            info.resume_blocked_reason = None;
-        } else if entry.defunct {
-            info.last_error = blocked_reason;
-        } else {
-            info.resume_blocked_reason = blocked_reason;
-        }
-        info.refresh_available_actions();
-        sandboxes.push(info);
+        sandboxes.push(sandbox_info::inactive_sandbox_info(
+            vm_id,
+            &entry,
+            status,
+            can_resume,
+            blocked_reason,
+        ));
     }
 
     ListResponse { sandboxes }
@@ -1280,24 +1262,7 @@ pub(super) async fn handle_info(
         let (instance_data, session_dir) = {
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
-                Some(i) => {
-                    let mut info = SandboxInfo::new(
-                        i.id.clone(),
-                        i.profile_id.clone(),
-                        i.pid,
-                        VmLifecycleState::Running,
-                        i.persistent,
-                    );
-                    info.name = Some(i.name.clone());
-                    info.ram_mb = Some(i.ram_mb);
-                    info.cpus = Some(i.cpus);
-                    info.version = Some(i.base_version.clone());
-                    info.forked_from = i.forked_from.clone();
-                    info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-                    info.can_resume = false;
-                    info.refresh_available_actions();
-                    (Some(info), Some(i.session_dir.clone()))
-                }
+                Some(i) => (Some(sandbox_info::running_sandbox_info(i)), Some(i.session_dir.clone())),
                 None => (None, None),
             }
         };
@@ -1318,22 +1283,7 @@ pub(super) async fn handle_info(
         let (status, can_resume, blocked_reason) = state
             .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
             .await?;
-        let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
-        info.name = Some(entry.name.clone());
-        info.ram_mb = Some(entry.ram_mb);
-        info.cpus = Some(entry.cpus);
-        info.version = Some(entry.base_version.clone());
-        info.forked_from = entry.forked_from.clone();
-        info.description = entry.description.clone();
-        info.can_resume = can_resume;
-        if can_resume {
-            info.resume_blocked_reason = None;
-        } else if entry.defunct {
-            info.last_error = blocked_reason;
-        } else {
-            info.resume_blocked_reason = blocked_reason;
-        }
-        info.refresh_available_actions();
+        let mut info = sandbox_info::inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
         // Disk usage is a recursive walk of the session dir (including every
         // snapshot clone). Run it off the async worker so it does not stall the
         // axum runtime, and log rather than silently swallow a failure.
@@ -1561,10 +1511,6 @@ pub(super) async fn handle_stats_detail(
 ) -> Result<impl IntoResponse, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "stats_detail", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
-
     let payload = read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?;
     let body = serde_json::to_vec(&payload).map_err(|error| {
         AppError(
@@ -1572,7 +1518,6 @@ pub(super) async fn handle_stats_detail(
             format!("failed to serialize stats detail response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "stats_detail", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 

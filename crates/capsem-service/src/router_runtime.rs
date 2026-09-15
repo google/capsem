@@ -11,6 +11,23 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/version",
             get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
         )
+        .route(
+            "/networks",
+            get(network_routes::handle_networks_list).post(network_routes::handle_network_create),
+        )
+        .route(
+            "/networks/{id}",
+            get(network_routes::handle_network_inspect).delete(network_routes::handle_network_delete),
+        )
+        .route("/networks/{id}/logs", get(network_routes::handle_network_logs))
+        .route(
+            "/networks/private/resolve",
+            post(private_routes::handle_private_resolve),
+        )
+        .route(
+            "/networks/{id}/members/{vm_id}",
+            put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
+        )
         .route("/vms/create", post(handle_provision))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))

@@ -39,7 +39,7 @@ fn seed_dns_rows(path: &std::path::Path, rows: usize) {
     let mut conn = Connection::open(path).expect("open seed db");
     schema::apply_pragmas(&conn).expect("apply pragmas");
     schema::create_tables(&conn).expect("create schema");
-    schema::migrate(&conn);
+    schema::migrate(&conn).expect("migrate schema");
 
     let tx = conn.transaction().expect("seed transaction");
     {

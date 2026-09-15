@@ -7,6 +7,8 @@ use tokio::sync::{oneshot, Notify};
 use tracing::{info, warn};
 
 pub(crate) struct JobStore {
+    pub(crate) publisher: Arc<capsem_core::container::publish::Publisher>,
+    pub(crate) publications: Mutex<Vec<capsem_core::container::publish::Publication>>,
     pub(crate) jobs: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
     /// Active exec jobs keyed by id, each with captured stdout and a notifier
     /// the EXEC-port reader thread fires after depositing captured bytes.
@@ -34,6 +36,11 @@ pub(crate) struct JobStore {
     /// `Notify` keeps a permit, so a report that lands before the wait
     /// starts is not lost.
     pub(crate) shutdown_complete: Notify,
+    /// This VM's network cables; set with the seat the service asks them on,
+    /// absent in fixtures that never bind one.
+    pub(crate) cables: std::sync::OnceLock<Arc<crate::cables::Cables>>,
+    /// The socket the service asks for a cable's guest stream on.
+    pub(crate) cable_seat: std::sync::OnceLock<std::path::PathBuf>,
 }
 
 /// State for an in-flight exec. `deposited` is notified once by the
@@ -49,6 +56,9 @@ pub(crate) struct ActiveExec {
     /// real volume rather than the retained slice.
     pub(crate) total_bytes: u64,
     pub(crate) deposited: Arc<Notify>,
+    pub(crate) stream: Option<tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
+    pub(crate) completion_started: bool,
+    pub(crate) output_error: Option<String>,
 }
 
 impl ActiveExec {
@@ -59,6 +69,9 @@ impl ActiveExec {
             captured: Vec::new(),
             total_bytes: 0,
             deposited: Arc::new(Notify::new()),
+            stream: None,
+            completion_started: false,
+            output_error: None,
         }
     }
 }
@@ -66,12 +79,16 @@ impl ActiveExec {
 impl JobStore {
     pub(crate) fn new() -> Self {
         Self {
+            publisher: Arc::new(capsem_core::container::publish::Publisher::default()),
+            publications: Mutex::new(Vec::new()),
             jobs: Mutex::new(HashMap::new()),
             active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
             shutdown_complete: Notify::new(),
+            cables: std::sync::OnceLock::new(),
+            cable_seat: std::sync::OnceLock::new(),
         }
     }
 
@@ -103,7 +120,7 @@ impl JobStore {
         // Wake every ExecDone handler parked on a deposit notifier. Each will
         // then observe its removed slot and complete without hanging.
         for (_, active) in self.active_execs.lock().unwrap().drain() {
-            active.deposited.notify_waiters();
+            active.deposited.notify_one();
         }
         self.active_file_ops.lock().unwrap().clear();
     }

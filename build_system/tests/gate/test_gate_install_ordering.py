@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -759,7 +760,14 @@ def test_an_install_that_recorded_no_source_is_refused(
 # ---------------------------------------------------------------------------
 
 
-def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path) -> None:
+def _cache_policy_at(root: Path, monkeypatch) -> None:
+    """The report lives in a cache stage, resolved from the root's own policy."""
+    monkeypatch.delenv("CAPSEM_CACHE_AUTHORITY", raising=False)
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(PROJECT_ROOT / "config" / "cache.toml", root / "config" / "cache.toml")
+
+
+def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path, monkeypatch) -> None:
     """A macOS host cannot boot a guest inside the Linux install container, so
     the native Tart proof stands in for it -- and the install rail refuses
     without that report.
@@ -769,19 +777,18 @@ def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path) -> No
     there, so a complete local gate always failed at the last step with
     "requires the native glow-up report from this module".
     """
+    from capsem_builder.gate import cachelayout
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.install import macos_report
 
-    config = gate_config.load(PROJECT_ROOT)
-    written = config.path(config.modules.macos_glowup_report)
+    _cache_policy_at(tmp_path, monkeypatch)
+    local = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
+    assert macos_report(local, environ={}) is None
 
-    assert macos_report(config, environ={}) in (None, str(written))
-
-    # With the report on disk and no variable, the rail finds it.
-    fake = tmp_path / config.modules.macos_glowup_report
+    # With the report where the glow-up writes it and no variable, the rail finds it.
+    fake = cachelayout.stage_path(local, "release-proofs") / local.modules.macos_glowup_report
     fake.parent.mkdir(parents=True)
     fake.write_text("{}", encoding="utf-8")
-    local = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
     assert macos_report(local, environ={}) == str(fake)
 
 
@@ -796,11 +803,12 @@ def test_a_release_lane_may_hand_the_report_over_by_variable(tmp_path) -> None:
     assert macos_report(config, environ={config.modules.macos_report_variable: handed}) == handed
 
 
-def test_neither_present_still_refuses(tmp_path) -> None:
+def test_neither_present_still_refuses(tmp_path, monkeypatch) -> None:
     """The refusal is right when the proof genuinely did not run."""
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.install import macos_report
 
+    _cache_policy_at(tmp_path, monkeypatch)
     config = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
 
     assert macos_report(config, environ={}) is None

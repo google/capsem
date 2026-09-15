@@ -17,6 +17,8 @@ pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
+pub mod privatelink;
+pub mod router;
 
 pub use handshake::{HandshakeError, Hello};
 
@@ -46,10 +48,13 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Version 2 adds router flow keys tied to the owner generation.
+/// Version 4 links VMs to a network switch and admits only TCP by handoff.
+/// Version 5 plugs one cable per network and removes the private TCP handoff.
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
-/// handshake.rs). Computed by `build.rs`. Detects "I added a variant in
+/// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
 /// the middle without bumping PROTOCOL_VERSION" -- silent re-numbering of
 /// bincode variants -- which is exactly the bug that motivated this
 /// sprint.
@@ -123,6 +128,13 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+/// Guest-initiated data connections for explicitly published container TCP ports.
+pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
+/// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames
+/// over its own connection, opened with the cable id
+/// (`privatelink::cable_header`), and the VM owner hands it to that network's
+/// switch.
+pub const VSOCK_PORT_NETWORK: u32 = 5009;
 
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
@@ -140,6 +152,8 @@ pub enum HostVsockService {
     Exec,
     Audit,
     DnsProxy,
+    Publication,
+    Network,
 }
 
 impl HostVsockService {
@@ -152,6 +166,8 @@ impl HostVsockService {
             Self::Exec => VSOCK_PORT_EXEC,
             Self::Audit => VSOCK_PORT_AUDIT,
             Self::DnsProxy => VSOCK_PORT_DNS_PROXY,
+            Self::Publication => VSOCK_PORT_PUBLICATION,
+            Self::Network => VSOCK_PORT_NETWORK,
         }
     }
 
@@ -164,6 +180,8 @@ impl HostVsockService {
             Self::Exec => "exec",
             Self::Audit => "audit",
             Self::DnsProxy => "dns_proxy",
+            Self::Publication => "publication",
+            Self::Network => "network",
         }
     }
 
@@ -176,6 +194,8 @@ impl HostVsockService {
             VSOCK_PORT_EXEC => Some(Self::Exec),
             VSOCK_PORT_AUDIT => Some(Self::Audit),
             VSOCK_PORT_DNS_PROXY => Some(Self::DnsProxy),
+            VSOCK_PORT_PUBLICATION => Some(Self::Publication),
+            VSOCK_PORT_NETWORK => Some(Self::Network),
             _ => None,
         }
     }
@@ -189,6 +209,8 @@ pub const HOST_VSOCK_SERVICES: &[HostVsockService] = &[
     HostVsockService::Exec,
     HostVsockService::Audit,
     HostVsockService::DnsProxy,
+    HostVsockService::Publication,
+    HostVsockService::Network,
 ];
 
 pub const HOST_VSOCK_PORTS: &[u32] = &[
@@ -199,6 +221,8 @@ pub const HOST_VSOCK_PORTS: &[u32] = &[
     VSOCK_PORT_EXEC,
     VSOCK_PORT_AUDIT,
     VSOCK_PORT_DNS_PROXY,
+    VSOCK_PORT_PUBLICATION,
+    VSOCK_PORT_NETWORK,
 ];
 
 pub const fn host_vsock_services() -> &'static [HostVsockService] {
@@ -223,6 +247,10 @@ pub const MCP_FRAME_HEADER_LEN: u8 = 16;
 pub const MCP_FRAME_FLAG_NOTIFICATION: u16 = 0x0001;
 /// Maximum MCP frame body size after the four-byte length prefix.
 pub const MCP_FRAME_MAX_SIZE: usize = 1_052_672;
+/// The guest's end of an MCP session, in band: a length no frame can have.
+/// A vsock shutdown can reach the host ahead of bytes still in flight on
+/// Apple VZ, so the relay never uses one to say it is done.
+pub const MCP_SESSION_END: [u8; 4] = [0; 4];
 /// Maximum per-frame process attribution length.
 pub const MCP_FRAME_MAX_PROCESS_NAME_LEN: usize = 128;
 
@@ -419,6 +447,21 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
+    /// Connect to loopback in the active container's network namespace.
+    ConnectPort { flow: router::FlowKey, port: u16 },
+    /// Cancel a bounded set of flows from this control connection's VM boot.
+    AbortPorts { flows: Vec<router::FlowKey> },
+    /// Receipt of a terminal flow report; distinct from exec/file job IDs.
+    PortCloseAck { flow: router::FlowKey },
+    /// Bring up (or keep up) the tap for one network cable with this address
+    /// and prefix, and keep its pump connected under the cable's id.
+    PlugCable {
+        cable: u32,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    /// Stop the cable's pump; its tap goes with it.
+    UnplugCable { cable: u32 },
 }
 
 /// A single boot timing measurement from the guest init script.
@@ -610,6 +653,11 @@ pub enum GuestToHost {
     ShutdownComplete,
     /// Quiescence ack: filesystem frozen, safe to snapshot.
     SnapshotReady,
+    /// Terminal guest endpoint report. Replayed until PortCloseAck.
+    PortClosed {
+        flow: router::FlowKey,
+        report: router::CloseReport,
+    },
 }
 
 // ---------------------------------------------------------------------------

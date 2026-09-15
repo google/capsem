@@ -212,6 +212,11 @@ chmod 755 /newroot/etc
 # /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
 mount -t proc     proc     /newroot/proc
 mount -t sysfs    sysfs    /newroot/sys
+mkdir -p /newroot/sys/fs/cgroup
+mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /newroot/sys/fs/cgroup || {
+    echo "[capsem-init] FATAL: cannot mount cgroup v2 for resource limits"
+    exit 1
+}
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
@@ -378,6 +383,10 @@ iptables_add() {
 }
 iptables_add -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
+# Everything to a private network member (the host pool, capsem-config
+# PrivatePool::DEFAULT) leaves through that network's cable, TCP included:
+# it returns before any port rule below could hand it to a proxy.
+iptables_add -t nat -A OUTPUT -d 10.128.0.0/9 -j RETURN
 iptables_add -t nat -A OUTPUT -p tcp --dport 443   -j REDIRECT --to-port 10443
 iptables_add -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 3128  -j REDIRECT --to-port 10080
@@ -385,6 +394,26 @@ iptables_add -t nat -A OUTPUT -p tcp --dport 3713  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 8080  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 iptables_add -t nat -S OUTPUT
+
+# Network cables declare 10 Gb/s with 64 KiB frames (capsem-tun); size the
+# stack to match, or TCP windows and the receive backlog cap throughput far
+# below the link. Buffers grow to 64 MiB only as a flow needs them.
+net_tune() {
+    if ! echo "$2" > "/proc/sys/$1"; then
+        echo "[capsem-init] FATAL: sysctl $1 = $2 failed"
+        exit 1
+    fi
+}
+net_tune net/core/rmem_max 67108864
+net_tune net/core/wmem_max 67108864
+net_tune net/ipv4/tcp_rmem "4096 131072 67108864"
+net_tune net/ipv4/tcp_wmem "4096 65536 67108864"
+net_tune net/core/netdev_max_backlog 30000
+net_tune net/ipv4/tcp_slow_start_after_idle 0
+# A switch drops ARP naming an address its port did not lease; on several
+# networks, announce and answer on each cable only as that cable's address.
+net_tune net/ipv4/conf/all/arp_announce 2
+net_tune net/ipv4/conf/all/arp_ignore 1
 init_log "network ready"
 boot_mark "network"
 
@@ -510,6 +539,13 @@ if [ -x /capsem-bench-rs ]; then
     cp /capsem-bench-rs /newroot/usr/local/bin/capsem-bench-rs
     chmod 555 /newroot/usr/local/bin/capsem-bench-rs
     echo "[capsem-init] capsem-bench-rs deployed"
+fi
+# The private-link pump. capsem-agent starts it once the host has named the
+# VM's private address in the boot environment, and restarts it if it exits.
+if [ -x /capsem-tun ]; then
+    cp /capsem-tun /newroot/usr/local/bin/capsem-tun
+    chmod 555 /newroot/usr/local/bin/capsem-tun
+    echo "[capsem-init] capsem-tun deployed"
 fi
 if [ -d /capsem_bench ]; then
     rm -rf /newroot/usr/local/lib/capsem_bench
@@ -638,11 +674,49 @@ else
     while true; do sleep 60; done
 fi
 
+# A configured container is session state, so existing cold restart/fork boots
+# its saved command. Runtime namespaces/cgroups belong only to this boot.
+if [ -f /newroot/root/.capsem-image/ready ]; then
+    rm -rf /newroot/var/tmp/capsem-container
+    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
+fi
+
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
 if [ -d /mnt/shared/workspace ]; then
     AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log
 fi
 export RUST_BACKTRACE=1
+
+# The guest's side of a link failure. When every VSOCK connection to the
+# host ends at once, exec is dead and the serial console -- which the host
+# keeps -- is the only witness left. Silent while nothing changes; when the
+# agent logs a bridge or pump event, or the kernel says anything, print
+# what changed with the guest's socket table and virtio interrupt counts.
+# One heartbeat a minute proves the guest itself is still running.
+WATCH_EVENTS='bridge exited\|reconnect\|capsem-tun exited\|could not start\|control writer\|poll error\|link closed\|terminal bridge'
+(
+    last_agent=0
+    last_dmesg=$(dmesg 2>/dev/null | wc -l)
+    last_beat=0
+    while sleep 3; do
+        now=$(cut -d. -f1 /proc/uptime)
+        agent=$(grep -c "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null || echo 0)
+        kernel=$(dmesg 2>/dev/null | wc -l)
+        if [ "$agent" != "$last_agent" ] || [ "$kernel" != "$last_dmesg" ]; then
+            echo "[capsem-watch] t=$now agent-events=$agent kernel-lines=$kernel"
+            grep "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null | tail -n 6 | sed 's/^/[capsem-watch] agent: /'
+            dmesg 2>/dev/null | tail -n "$((kernel - last_dmesg))" | sed 's/^/[capsem-watch] kernel: /'
+            chroot /newroot ss -a --vsock 2>/dev/null | sed 's/^/[capsem-watch] vsock: /'
+            grep -i virtio /proc/interrupts | sed 's/^/[capsem-watch] irq: /'
+            last_agent=$agent
+            last_dmesg=$kernel
+        elif [ $((now - last_beat)) -ge 60 ]; then
+            echo "[capsem-watch] t=$now alive agent-events=$agent kernel-lines=$kernel $(grep -i virtio /proc/interrupts | awk '{s+=$2} END {print "virtio-irqs=" s}')"
+            last_beat=$now
+        fi
+    done
+) &
+
 init_log "starting PTY agent (vsock mode): $AGENT_PATH"
 chroot /newroot "$AGENT_PATH" >> "$AGENT_STDIO_LOG" 2>&1
 AGENT_STATUS=$?

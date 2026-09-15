@@ -252,3 +252,81 @@ pub(super) fn insert_profile_mutation_event(
     )?;
     Ok(())
 }
+
+/// The network's current row: an insert on creation, an update on retirement.
+pub(super) fn upsert_network(conn: &Connection, network: &NetworkRecord, target: WriteTarget) -> rusqlite::Result<()> {
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (id, name, subnet, state, created_unix_ms, retired_unix_ms)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  state = excluded.state,
+                  retired_unix_ms = excluded.retired_unix_ms",
+            target.table("network")
+        ),
+        params![
+            network.id,
+            network.name,
+            network.subnet,
+            network.state.as_str(),
+            network.created_unix_ms,
+            network.retired_unix_ms
+        ],
+    )?;
+    Ok(())
+}
+
+/// A membership's current row, keyed by network and VM; the ledger keeps the
+/// history of how it got there.
+pub(super) fn upsert_network_membership(
+    conn: &Connection,
+    membership: &NetworkMembership,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (network_id, vm_id, address, state, updated_unix_ms)
+                  VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(network_id, vm_id) DO UPDATE SET
+                  address = excluded.address,
+                  state = excluded.state,
+                  updated_unix_ms = excluded.updated_unix_ms",
+            target.table("network_members")
+        ),
+        params![
+            membership.network_id,
+            membership.vm_id,
+            membership.address,
+            membership.state.as_str(),
+            membership.updated_unix_ms
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn insert_transport_event(
+    conn: &Connection,
+    event: &TransportEvent,
+    target: WriteTarget,
+) -> rusqlite::Result<()> {
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (event_id,timestamp_unix_ms,event_type,network_id,connection_id,event_json)
+                  VALUES (?1,?2,?3,?4,?5,?6)",
+            target.table("transport_events")
+        ),
+        params![
+            event.event_id,
+            event.timestamp_unix_ms,
+            event.kind.as_str(),
+            event.network_id,
+            event.connection_id,
+            event.event_json
+        ],
+    )?;
+    Ok(())
+}

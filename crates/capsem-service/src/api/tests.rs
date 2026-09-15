@@ -53,6 +53,7 @@ fn provision_request_env_omitted() {
         persistent: false,
         env: None,
         from: None,
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&r).unwrap();
     assert!(!json.contains("env"));
@@ -74,11 +75,12 @@ fn provision_request_with_from() {
     assert_eq!(r.from.as_deref(), Some("my-fork"));
 }
 
+/// `image` names an OCI image on the CLI now, never a session to clone.
 #[test]
-fn provision_request_image_alias_deserializes_to_from() {
-    let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "image": "old-img"});
+fn provision_request_image_is_not_a_clone_source() {
+    let json = json!({"profile_id": "code", "image": "old-img"});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(r.from.as_deref(), Some("old-img"));
+    assert_eq!(r.from, None);
 }
 
 #[test]
@@ -339,4 +341,60 @@ fn exec_response_from_an_older_service_decodes_as_not_truncated() {
 
     assert!(!back.truncated);
     assert_eq!(back.stdout, "ok");
+}
+
+// ---------------------------------------------------------------------------
+// Networks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn create_network_request_requires_a_name() {
+    let request: CreateNetworkRequest = serde_json::from_value(json!({ "name": "team" })).unwrap();
+    assert_eq!(request.name, "team");
+    assert!(serde_json::from_value::<CreateNetworkRequest>(json!({})).is_err());
+}
+
+#[test]
+fn provision_request_networks_default_to_none_and_are_omitted_when_empty() {
+    let request: ProvisionRequest = serde_json::from_value(json!({ "profile_id": "code" })).unwrap();
+    assert!(request.networks.is_empty());
+    assert!(!serde_json::to_value(&request)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("networks"));
+    let request: ProvisionRequest =
+        serde_json::from_value(json!({ "profile_id": "code", "networks": ["team", "ci"] })).unwrap();
+    assert_eq!(request.networks, vec!["team", "ci"]);
+}
+
+#[test]
+fn network_info_roundtrip_keeps_member_addresses_as_text() {
+    let info = NetworkInfo {
+        id: "0f0e0d0c-0b0a-4908-8706-050403020100".into(),
+        name: "team".into(),
+        subnet: "10.128.0.0/24".into(),
+        created_unix_ms: 1_700_000_000_000,
+        members: vec![NetworkMemberInfo {
+            vm_id: "vm-1".into(),
+            address: "10.128.0.2".parse().unwrap(),
+            state: "declared".into(),
+            updated_unix_ms: 1_700_000_000_001,
+        }],
+    };
+    let value = serde_json::to_value(&info).unwrap();
+    assert_eq!(value["members"][0]["address"], "10.128.0.2");
+    let back: NetworkInfo = serde_json::from_value(value).unwrap();
+    assert_eq!(back, info);
+}
+
+#[test]
+fn network_logs_query_reads_type_and_defaults_the_rest() {
+    let query: NetworkLogsQuery = serde_json::from_value(json!({ "type": "network.connect", "limit": 5 })).unwrap();
+    assert_eq!(query.event_type.as_deref(), Some("network.connect"));
+    assert_eq!(query.limit, Some(5));
+    assert_eq!(
+        serde_json::from_value::<NetworkLogsQuery>(json!({})).unwrap(),
+        NetworkLogsQuery::default()
+    );
 }

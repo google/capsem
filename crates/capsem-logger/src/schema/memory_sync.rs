@@ -4,6 +4,77 @@
 
 use super::*;
 
+/// Tables that live on disk only and never mirror into the memory schema:
+/// body blobs are too large to keep hot, the schema markers are not data, and
+/// the network registry tables (`network_db`) are small state, not a ledger.
+const DISK_ONLY_TABLES: &[&str] = &[
+    "event_body_blobs",
+    "transport_schema",
+    "network",
+    "network_members",
+    "network_schema",
+];
+
+pub(crate) fn is_disk_only_table(name: &str) -> bool {
+    DISK_ONLY_TABLES.contains(&name)
+}
+
+/// Reconcile the attached DB-owned memory schema with the current disk schema.
+///
+/// An external reader can observe `session.db` after SQLite creates the file but
+/// before the writer process finishes its canonical DDL.  The reader must not
+/// freeze that partial snapshot for the rest of the service lifetime.  This
+/// function is intentionally DB-owned: route callers neither inspect nor repair
+/// ledger schema.
+pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );"
+    ))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT name, sql
+         FROM main.sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let tables = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for table in tables {
+        let (name, sql) = table;
+        if is_disk_only_table(&name) {
+            continue;
+        }
+        let disk_columns = table_column_names(conn, "main", &name)?;
+        let memory_columns = table_column_names(conn, MEMORY_SCHEMA, &name)?;
+        if !memory_columns.is_empty() && memory_columns != disk_columns {
+            conn.execute_batch(&format!(
+                "DROP VIEW IF EXISTS temp.{name};
+                 DROP TABLE {MEMORY_SCHEMA}.{name};"
+            ))?;
+        }
+        let mem_sql =
+            memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
+        network_types::reconcile_memory(conn, &name, &mem_sql)?;
+        conn.execute_batch(&mem_sql)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn table_column_names(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns)
+}
+
 pub(crate) type MemoryFlushWatermarks = BTreeMap<&'static str, i64>;
 
 pub(crate) fn initial_memory_flush_watermarks<'a>(

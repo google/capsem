@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from capsem_builder.cache.config import load_policy
+from capsem_builder.gate import assetrecovery, imagebases, imagebuild, initrd
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import imagebases, imagebuild, initrd
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.plan import Plan
 from capsem_builder.image import guestbuilder
@@ -222,7 +222,8 @@ def test_warm_prefetch_uses_the_input_keyed_helper_without_registry_egress() -> 
 
 @pytest.mark.parametrize("machine", ("arm64", "x86_64"))
 def test_asset_prefetch_includes_target_truststores_even_when_compilers_are_crossed(
-    monkeypatch: pytest.MonkeyPatch, machine: str,
+    monkeypatch: pytest.MonkeyPatch,
+    machine: str,
 ) -> None:
     monkeypatch.setattr(guestbuilder.platform, "machine", lambda: machine)
     config = gate_config.load(PROJECT_ROOT)
@@ -333,7 +334,7 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("capsem_builder.gate.imagebuild.missing", lambda *_args: ["initrd.img"])
 
-    imagebuild.check_assets(plan, config)
+    assetrecovery.check_assets(plan, config)
 
     assert plan.after_of("assets.guest-execution") == {"assets.doctor"}
     assert plan.after_of("assets.guest-builders") == {"assets.guest-execution"}

@@ -16,6 +16,7 @@ capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-proto = { path = "../capsem-proto" }
+capsem-router = { path = "../capsem-router" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -25,7 +26,6 @@ serde_json.workspace = true
 toml.workspace = true
 humantime.workspace = true
 clap.workspace = true
-tokio-unix-ipc.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
 axum = { version = "0.8", features = ["macros"] }
@@ -43,6 +43,7 @@ uuid = { version = "1", features = ["v4"] }
 workspace = true
 
 [dev-dependencies]
+capsem-config = { path = "../capsem-config" }
 tempfile = "3"
 filetime = "0.2"
 tower = { version = "0.5", features = ["util"] }

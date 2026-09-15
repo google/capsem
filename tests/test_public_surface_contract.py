@@ -86,6 +86,34 @@ def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
     assert all(values == sorted(set(values)) for values in surfaces.values())
 
 
+def test_a_flattened_field_is_not_a_flattened_command() -> None:
+    """Only the attributes above a variant decide its policy. A struct variant
+    that flattens shared flags into its own fields is still one command."""
+    source = """
+enum Commands {
+    /// Create a VM
+    Create {
+        #[arg(long)]
+        name: Option<String>,
+        #[command(flatten)]
+        image: ImageArgs,
+    },
+    #[command(flatten)]
+    Session(SessionCommands),
+}
+
+enum SessionCommands {
+    #[command(subcommand)]
+    Network(NetworkCommands),
+}
+
+enum NetworkCommands {
+    List,
+}
+"""
+    assert checker._cli_paths(source, "Commands") == ["create", "network list"]
+
+
 def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
     policy = (ROOT / "config" / "public-surface.toml").read_text()
 

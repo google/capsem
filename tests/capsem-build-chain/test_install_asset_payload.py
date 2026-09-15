@@ -3350,12 +3350,6 @@ def test_security_event_rows_go_through_security_engine_emitter() -> None:
     ]
     allowed_files = {
         PROJECT_ROOT / "crates" / "capsem-core" / "src" / "security_engine" / "mod.rs",
-        PROJECT_ROOT
-        / "crates"
-        / "capsem-core"
-        / "src"
-        / "security_engine"
-        / "tests.rs",
     }
     patterns = [
         "write(WriteOp::",
@@ -3368,7 +3362,12 @@ def test_security_event_rows_go_through_security_engine_emitter() -> None:
     violations: list[str] = []
     for root in roots:
         for path in root.rglob("*.rs"):
-            if path in allowed_files or "/tests/" in path.as_posix():
+            # Test code is exempt: the boundary is about production rows. The
+            # repo keeps Rust tests in a sibling `tests.rs` (see
+            # test_rust_test_layout.py), so exempt those by name, not just a
+            # `/tests/` directory -- e.g. net/network_registry/tests.rs writes
+            # transport events directly to exercise the network DB.
+            if path in allowed_files or path.name == "tests.rs" or "/tests/" in path.as_posix():
                 continue
             text = path.read_text()
             for lineno, line in enumerate(text.splitlines(), start=1):

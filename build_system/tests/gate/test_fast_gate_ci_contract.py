@@ -89,6 +89,8 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
         "build_system/scripts/audit/audit-dependencies.py",
         "build_system/scripts/audit/check-cargo-audit.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
+        # The guest feature set, which workspace clippy never compiles.
+        "--no-default-features --features capsem-bench/guest --all-targets -- -D warnings",
         # Both halves of what was one `frontend` target, named in full. The
         # bare prefix would have gone on passing against `frontend-build`
         # alone, which is the failure mode this whole surface exists to avoid:

@@ -1,8 +1,19 @@
 mod client;
 mod completions;
+mod container_image;
+mod container_run;
+mod create_command;
+mod grouped_help;
+use grouped_help::GROUPED_HELP;
+mod network_commands;
 mod paths;
 mod platform;
+mod route_ids;
 mod service_install;
+mod session_display;
+use network_commands::NetworkCommands;
+use route_ids::resolve_session_route_id;
+use session_display::{format_uptime, print_session_info, session_blocked_reason};
 mod support;
 mod support_bundle;
 mod uninstall;
@@ -32,7 +43,7 @@ use client::UpdateTrackState;
 use client::{
     ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
     ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse,
-    RunRequest, SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
+    SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -204,44 +215,6 @@ const fn cli_styles() -> Styles {
         .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
 }
 
-const GROUPED_HELP: &str = "\
-\x1b[36;1;4mSession Commands:\x1b[0m
-  \x1b[32;1mcreate\x1b[0m       Create and boot a new session
-  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
-  \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
-  \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
-  \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)
-  \x1b[32;1mexec\x1b[0m         Execute a command in a running session
-  \x1b[32;1mrun\x1b[0m          Run a command in a fresh session (destroyed after)
-  \x1b[32;1mlist\x1b[0m         List all sessions (running + suspended persistent)
-  \x1b[32;1minfo\x1b[0m         Show detailed information about a session
-  \x1b[32;1mlogs\x1b[0m         Show logs from a session
-  \x1b[32;1mdelete\x1b[0m       Delete a session and all its state
-  \x1b[32;1mfork\x1b[0m         Fork a session into a reusable snapshot
-  \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
-  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
-
-\x1b[36;1;4mService:\x1b[0m
-  \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
-  \x1b[32;1mstatus\x1b[0m       Show service status
-  \x1b[32;1mstart\x1b[0m        Start the background service
-  \x1b[32;1mstop\x1b[0m         Stop the background service
-  \x1b[32;1massets\x1b[0m       Inspect or repair VM assets
-
-\x1b[36;1;4mMCP:\x1b[0m
-  \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
-  \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
-  \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
-  \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
-
-\x1b[36;1;4mMisc:\x1b[0m
-  \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
-  \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
-  \x1b[32;1mdebug\x1b[0m        Write a redacted support bundle for bug reports
-  \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
-  \x1b[32;1mversion\x1b[0m      Show version and build information
-  \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
-
 #[derive(Parser)]
 #[command(
     author,
@@ -275,6 +248,10 @@ enum Commands {
     /// Inspect or repair VM assets
     #[command(subcommand)]
     Assets(AssetsCommands),
+
+    /// Manage named networks: groups of sessions that can reach each other
+    #[command(subcommand)]
+    Network(NetworkCommands),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -344,30 +321,12 @@ enum SessionCommands {
     ///
     /// Sessions are ephemeral by default and destroyed on delete. Use -n <name> to
     /// create a persistent session that survives suspend/resume cycles.
-    Create {
-        /// Name for the session (makes it persistent -- "if you name it, you keep it")
-        #[arg(short = 'n', long)]
-        name: Option<String>,
-        /// Profile to use for this session
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-        /// RAM in GB
-        #[arg(long, default_value_t = 4)]
-        ram: u64,
-        /// CPU cores
-        #[arg(long, default_value_t = 4)]
-        cpu: u32,
-        /// Set environment variables (repeatable: -e KEY=VALUE)
-        #[arg(short = 'e', long = "env")]
-        env: Vec<String>,
-        /// Clone state from an existing persistent session
-        #[arg(long, alias = "image")]
-        from: Option<String>,
-    },
-    /// Open an interactive shell in a session
+    Create(create_command::CreateArgs),
+    /// Open the terminal UI
     ///
-    /// With no arguments, creates a temporary session (destroyed on exit).
-    /// Pass a session name/ID or --name to attach to an existing running session.
+    /// With no arguments, opens the TUI over every session. Pass a session
+    /// name/ID or --name to open it focused on that session. It creates and
+    /// destroys nothing; use `create` or `run` for a VM.
     Shell {
         /// Find by name (for persistent sessions)
         #[arg(short = 'n', long)]
@@ -406,23 +365,8 @@ enum SessionCommands {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Run a command in a fresh session (destroyed after)
-    ///
-    /// Creates a temporary session, runs the command, prints output, and
-    /// destroys the session. Useful for one-shot tasks and CI pipelines.
-    Run {
-        /// Command to execute
-        command: String,
-        /// Profile to use for this session
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-        /// Timeout in seconds
-        #[arg(long)]
-        timeout: Option<u64>,
-        /// Set environment variables (repeatable: -e KEY=VALUE)
-        #[arg(short = 'e', long = "env")]
-        env: Vec<String>,
-    },
+    /// Run a shell command or OCI image in a fresh session, then destroy it
+    Run(container_run::RunArgs),
     /// Copy a file in or out of a session's workspace.
     ///
     /// Either `src` or `dst` (but not both) must use the form
@@ -643,24 +587,6 @@ fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> 
     update::validate_source_url_arg("--corp", value)
 }
 
-fn format_uptime(secs: Option<u64>) -> String {
-    match secs {
-        None | Some(0) => "-".into(),
-        Some(s) => {
-            let days = s / 86400;
-            let hours = (s % 86400) / 3600;
-            let mins = (s % 3600) / 60;
-            if days > 0 {
-                format!("{}d {}h", days, hours)
-            } else if hours > 0 {
-                format!("{}h {:02}m", hours, mins)
-            } else {
-                format!("{}m", mins.max(1))
-            }
-        }
-    }
-}
-
 fn print_asset_status(status: &AssetStatusResponse) {
     println!(
         "Assets: {}{}",
@@ -727,103 +653,6 @@ fn print_asset_status(status: &AssetStatusResponse) {
             None => println!("  {:<14} {}", asset.name, asset.status),
         }
     }
-}
-
-/// The one line saying why a session cannot run, if it cannot.
-///
-/// The service splits the reason across two fields on purpose: a crashed VM
-/// carries its `process.log` tail in `last_error`, one the service refuses to
-/// resume carries the validation failure in `resume_blocked_reason`, and a
-/// healthy session carries neither. Matching a field to a particular status is
-/// how a `Stopped` VM that can never start came to print as a plain row.
-fn session_blocked_reason(info: &SessionInfo) -> Option<&str> {
-    info.last_error
-        .as_deref()
-        .or(info.resume_blocked_reason.as_deref())
-        .map(capsem_core::session::boot_failure_summary)
-}
-
-fn print_session_info(info: &SessionInfo) {
-    println!("Session: {}", info.id);
-    if let Some(name) = &info.name {
-        println!("Name:    {}", name);
-    }
-    println!("Status:  {}", info.status);
-    // `capsem info` is what a user reaches for after `capsem list` shows a VM
-    // that will not run. Printing the status without the reason sent them to
-    // `capsem logs` to learn something the service had already returned here.
-    if let Some(reason) = session_blocked_reason(info) {
-        println!("Problem: {}", reason);
-        if info.last_error.is_some() {
-            println!("Logs:    capsem logs {}", info.id);
-        }
-    }
-    if info.pid > 0 {
-        println!("PID:     {}", info.pid);
-    }
-
-    if info.ram_mb.is_some() || info.cpus.is_some() || info.version.is_some() {
-        println!();
-        if let Some(ram) = info.ram_mb {
-            println!("RAM:     {} GB", ram / 1024);
-        }
-        if let Some(cpus) = info.cpus {
-            println!("CPUs:    {}", cpus);
-        }
-        if let Some(ver) = &info.version {
-            println!("Version: {}", ver);
-        }
-    }
-
-    if let Some(from) = &info.forked_from {
-        println!("Forked:  {}", from);
-    }
-    if let Some(desc) = &info.description {
-        println!("Desc:    {}", desc);
-    }
-
-    let has_telemetry = info.created_at.is_some()
-        || info.uptime_secs.is_some()
-        || info.total_input_tokens.is_some()
-        || info.total_tool_calls.is_some();
-    if has_telemetry {
-        println!();
-        println!("Telemetry:");
-        if let Some(created) = &info.created_at {
-            println!("  Created:       {}", created);
-        }
-        if let Some(secs) = info.uptime_secs {
-            println!("  Uptime:        {}", format_uptime(Some(secs)));
-        }
-        if let Some(inp) = info.total_input_tokens {
-            println!("  Input Tokens:  {}", inp);
-        }
-        if let Some(out) = info.total_output_tokens {
-            println!("  Output Tokens: {}", out);
-        }
-        if let Some(cost) = info.total_estimated_cost {
-            println!("  Est. Cost:     ${:.2}", cost);
-        }
-        if let Some(tc) = info.total_tool_calls {
-            println!("  Tool Calls:    {}", tc);
-        }
-        if info.total_requests.is_some() || info.allowed_requests.is_some() {
-            let total = info.total_requests.unwrap_or(0);
-            let allowed = info.allowed_requests.unwrap_or(0);
-            let denied = info.denied_requests.unwrap_or(0);
-            println!("  Requests:      {} ({} allowed, {} denied)", total, allowed, denied);
-        }
-        if let Some(fe) = info.total_file_events {
-            println!("  File Events:   {}", fe);
-        }
-    }
-}
-
-async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> anyhow::Result<String> {
-    client
-        .listed_session_id(typed)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown session name or id: {typed}"))
 }
 
 fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
@@ -1328,7 +1157,7 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run { .. }) => client::DirectServiceLifetime::BoundToCommand,
+        Commands::Session(SessionCommands::Run(..)) => client::DirectServiceLifetime::BoundToCommand,
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1595,12 +1424,12 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {
-            service_install::start_service().await?;
+            service_install::start_service(&cli_service_socket_path()).await?;
             println!("Service started.");
             return Ok(());
         }
         Commands::Misc(MiscCommands::Stop) => {
-            service_install::stop_service().await?;
+            service_install::stop_service(&cli_service_socket_path()).await?;
             println!("Service stopped.");
             return Ok(());
         }
@@ -1669,35 +1498,7 @@ async fn main() -> Result<()> {
                 print_asset_status(&status);
             }
         }
-        Commands::Session(SessionCommands::Create {
-            name,
-            profile,
-            ram,
-            cpu,
-            env,
-            from,
-        }) => {
-            client::validate_id(profile)?;
-            let persistent = name.is_some() || from.is_some();
-            let req = ProvisionRequest {
-                name: name.clone(),
-                profile_id: profile.clone(),
-                ram_mb: ram * 1024,
-                cpus: *cpu,
-                persistent,
-                env: client::parse_env_vars(env)?,
-                from: from.clone(),
-            };
-
-            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", &req).await?;
-            let info = resp.into_result()?;
-
-            if persistent {
-                println!("{} (persistent)", info.id);
-            } else {
-                println!("{}", info.id);
-            }
-        }
+        Commands::Session(SessionCommands::Create(args)) => create_command::create(&client, args).await?,
         Commands::Session(SessionCommands::Fork {
             session,
             name,
@@ -1812,32 +1613,10 @@ async fn main() -> Result<()> {
             }
             std::process::exit(resp.exit_code);
         }
-        Commands::Session(SessionCommands::Run {
-            command,
-            profile,
-            timeout,
-            env,
-        }) => {
-            client::validate_id(profile)?;
-            let req = RunRequest {
-                command: command.clone(),
-                profile_id: profile.clone(),
-                timeout_secs: *timeout,
-                env: client::parse_env_vars(env)?,
-            };
-            let request: Result<ApiResponse<ExecResponse>> = client.post("/run", &req).await;
-            let resp = client.finish_direct_request(request).await?;
-            let resp = resp.into_result()?;
-            if !resp.stdout.is_empty() {
-                print!("{}", resp.stdout);
-            }
-            if !resp.stderr.is_empty() {
-                eprint!("{}", resp.stderr);
-            }
-            if let Some(notice) = resp.truncation_notice() {
-                eprintln!("{notice}");
-            }
-            std::process::exit(resp.exit_code);
+        Commands::Session(SessionCommands::Run(args)) => {
+            let result = container_run::run(&client, args).await;
+            let exit_code = client.finish_direct_request(result).await?;
+            std::process::exit(exit_code);
         }
         Commands::Session(SessionCommands::Cp { src, dst }) => {
             handle_cp(&client, src, dst).await?;
@@ -2038,6 +1817,7 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
+        Commands::Network(command) => network_commands::run(&client, command).await?,
         Commands::Mcp(McpCommands::Servers { profile }) => {
             client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> =
@@ -2161,8 +1941,8 @@ async fn main() -> Result<()> {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { bundle }) => {
+            use capsem_foundation::ipc_channel::channel_from_std;
             use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-            use tokio_unix_ipc::channel_from_std;
 
             // Log file: ~/.capsem/run/doctor-latest.log (always overwritten)
             let log_path = run_dir.join("doctor-latest.log");
@@ -2186,11 +1966,12 @@ async fn main() -> Result<()> {
             let req = ProvisionRequest {
                 name: None,
                 profile_id: DEFAULT_PROFILE_ID.to_string(),
-                ram_mb: 2048,
-                cpus: 2,
+                ram_mb: Some(2048),
+                cpus: Some(2),
                 persistent: false,
                 env: Some(doctor_env),
                 from: None,
+                networks: Vec::new(),
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;

@@ -71,7 +71,20 @@ class ModulesConfig(Strict):
     release_pairing: ReleasePairingEnvironment
 
 
+class KingslandingConfig(Strict):
+    fixture_script: str
+    fixture_dir: str
+    suite_path: str
+    benchmark_paths: tuple[str, ...]
+
+
+class GreyjoyConfig(Strict):
+    suite_path: str
+
+
 class FunctionalConfig(Strict):
+    kingslanding: KingslandingConfig
+    greyjoy: GreyjoyConfig
     injection_script: str
     integration_script: str
     binary: str
@@ -242,6 +255,13 @@ class InitrdConfig(Strict):
     binaries: tuple[str, ...]
     staging: str
     build: tuple[str, ...]
+    lint_packages: tuple[str, ...]
+    lint_features: tuple[str, ...]
+    """The guest feature set, linted on the host with every target. Workspace
+    clippy compiles the host feature set, and the guest builder only runs
+    `cargo build`, so between them nothing ever compiled a guest test target:
+    `capsem-bench --features guest` had uncompilable tests for as long as the
+    field they named was host-only."""
     init: str
     files: tuple[str, ...]
     trees: tuple[str, ...]

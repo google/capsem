@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn router_budgets_are_explicit_and_bounded() {
+    let configured: NetworkConfig =
+        toml::from_str("[router.expose]\nconnections = 4\nsetups = 2\nrate_per_second = 8\nburst = 2\n")
+            .expect("valid router budgets were rejected");
+    configured.validate().unwrap();
+    assert!(!configured.is_empty());
+    for (field, too_large) in [
+        ("connections", 65),
+        ("setups", 9),
+        ("rate_per_second", 1025),
+        ("burst", 65),
+    ] {
+        for value in [0, too_large] {
+            let text = format!("[router.expose]\n{field} = {value}\n");
+            let config: NetworkConfig = toml::from_str(&text).unwrap();
+            assert!(config.validate().is_err(), "accepted {text}");
+        }
+    }
+}
+
+#[test]
+fn a_private_router_budget_is_refused_because_member_traffic_rides_the_switch() {
+    let removed = toml::from_str::<NetworkConfig>("[router.private]\nconnections = 16\n");
+    assert!(removed.is_err(), "a private budget would silently tune nothing");
+}
+
 fn make_map() -> HashMap<String, String> {
     let mut m = HashMap::new();
     m.insert("k".into(), "v".into());

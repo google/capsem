@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from . import (
     assetplan,
+    assetrecovery,
     bench,
     cancellation,
     candidate,
@@ -76,6 +77,7 @@ COMMAND_MODULES = (
     module_contracts,
     module_qualify,
     vmmodules,
+    assetrecovery,
     imagebuild,
     linuxrustimage,
     localinstall,
@@ -115,6 +117,14 @@ def _inspection() -> argparse.ArgumentParser:
         "--clean-build",
         action="store_true",
         help="discard the build output reused between runs and compile from nothing",
+    )
+    shared.add_argument(
+        "--slow",
+        action="store_true",
+        help=(
+            "allow rebuilding host VM assets whose inputs changed (lock, defconfig, guest "
+            "sources, builder images); without it a stale input is a refusal that names it"
+        ),
     )
     shared.add_argument(
         "--from",

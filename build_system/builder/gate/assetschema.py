@@ -30,7 +30,18 @@ class AssetsConfig(Strict):
     #: necessary on purpose: over-hashing costs a rebuild, under-hashing ships
     #: a stale rootfs in a run that stays green.
     identity_roots: tuple[str, ...]
+    #: The identity roots whose change is refused without `--slow`: toolchain,
+    #: dependency locks and builder images, where a change is usually an
+    #: accident and a rebuild is the most expensive thing the gate does.
+    #: Source crates stay out: their rebuild is the only way to test them.
+    expensive_inputs: tuple[str, ...]
     lane_receipt: str
+    #: Recorded beside the host asset tree after its last image build: the
+    #: identity plus per-input digests, so a later run can say which inputs
+    #: made the tree stale instead of only that it is.
+    host_identity_record: str
+    #: How many changed inputs a stale-asset note names before "and N more".
+    host_identity_changed_inputs_shown: int
     evidence_artifacts: tuple[str, ...]
     obom_artifact: str
     failure_tail_lines: int
@@ -51,6 +62,28 @@ class AssetsConfig(Strict):
     current_link: str
     evidence_suffixes: tuple[str, ...]
     evidence_prune_dirs: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _expensive_inputs_are_identity_roots(self) -> AssetsConfig:
+        """A refusal can only name inputs the identity already digests."""
+        outside = [
+            path
+            for path in self.expensive_inputs
+            if not any(
+                path == root or path.startswith(root.rstrip("/") + "/")
+                for root in self.identity_roots
+            )
+        ]
+        if outside:
+            raise ValueError(f"expensive_inputs must lie under identity_roots; outside: {outside}")
+        return self
+
+    def is_expensive(self, path: str) -> bool:
+        """Whether a changed checkout-relative input is refused without `--slow`."""
+        return any(
+            path == root or path.startswith(root.rstrip("/") + "/")
+            for root in self.expensive_inputs
+        )
 
     @model_validator(mode="after")
     def semantic_evidence_is_declared(self) -> AssetsConfig:

@@ -5,6 +5,49 @@ use std::os::unix::net::UnixStream;
 use std::thread;
 
 #[test]
+fn connect_rejects_an_unbounded_setup_deadline_before_opening_a_socket() {
+    assert_eq!(
+        vsock_connect_with_timeout(VSOCK_HOST_CID, 9999, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::InvalidInput
+    );
+}
+
+#[test]
+fn connection_readiness_obeys_its_deadline_when_the_peer_stalls() {
+    use std::io::Write;
+    let (mut socket, _peer) = UnixStream::pair().unwrap();
+    socket.set_nonblocking(true).unwrap();
+    while socket.write(&[0; 16384]).is_ok() {}
+    let started = std::time::Instant::now();
+    assert_eq!(
+        wait_connected(&socket, Duration::from_millis(30)).unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
+    assert!(started.elapsed() >= Duration::from_millis(30));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+/// A connect that failed can still wake the poll as writable, with no
+/// pending SO_ERROR: macOS reports a refused VSOCK connect that way on a
+/// runner that has a VSOCK transport. Readiness is not a connection.
+#[test]
+fn connection_readiness_is_a_failure_when_the_socket_is_not_connected() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    assert!(wait_connected(&socket, Duration::from_secs(1)).is_err());
+}
+
+#[test]
+fn connection_readiness_succeeds_without_waiting_for_the_deadline() {
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let started = std::time::Instant::now();
+    wait_connected(&socket, Duration::from_secs(10)).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
 fn vsock_connect_fails_gracefully_on_host() {
     let result = vsock_connect(VSOCK_HOST_CID, 9999);
     assert!(

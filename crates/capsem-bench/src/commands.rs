@@ -35,8 +35,13 @@ pub(crate) fn list_dimensions() {
 /// Exits non-zero when unfit, so a caller can gate on it rather than read
 /// prose. Every measurement in this repository predating this command was
 /// taken without knowing any of these facts.
-pub(crate) fn doctor(json: bool, strays: Vec<String>) -> Result<()> {
-    let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
+pub(crate) fn doctor(json: bool, standing: bool, strays: Vec<String>) -> Result<()> {
+    let judgement = if standing {
+        machine::Judgement::Standing
+    } else {
+        machine::Judgement::Measurement
+    };
+    let fitness = machine::examine(judgement, std::env::consts::ARCH, std::env::consts::OS, &strays);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&fitness)?);
@@ -84,7 +89,12 @@ pub(crate) fn run_dimensions(
     profile: &str,
     strays: Vec<String>,
 ) -> Result<()> {
-    let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
+    let fitness = machine::examine(
+        machine::Judgement::Measurement,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        &strays,
+    );
     let mut connection = store::open(out)?;
     let mut ran = 0usize;
 

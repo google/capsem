@@ -61,10 +61,13 @@ scope = "disk"
 path = "target/cargo"
 warm_size_bytes = 161061273600 # 150 GiB
 max_size_bytes = 193273528320 # 180 GiB
-prune_strategy = "generational"
-# Ordinary retention selects only disposable incremental sessions. Explicit
-# clean still owns the whole Cargo stage; native lock inodes survive both.
-retention_root = "debug/incremental"
+prune_strategy = "lru"
+# Retention takes whole compilation units, least recently used first: each
+# gate prefix salts workspace units with its checkout path and leaves a full
+# set behind, which retention of incremental sessions alone never reclaimed
+# (issue #205). Explicit clean still owns the whole stage; native lock inodes
+# survive both, and a held lock protects every unit.
+cargo_target_roots = ["debug", "release", "llvm-cov-target/debug"]
 mutation_locks = ["debug/.cargo-lock", "release/.cargo-lock", "llvm-cov-target/debug/.cargo-lock"]
 maximum_age_hours = 720
 
@@ -117,6 +120,18 @@ warm_size_bytes = 34359738368 # 32 GiB
 max_size_bytes = 51539607552 # 48 GiB
 prune_strategy = "none"
 maximum_age_hours = 2160
+
+[stages.oci-images]
+description = "Verified OCI blobs reused across container runs; manifests are refreshed from the registry."
+scope = "disk"
+path = "oci-images"
+entry_root = "blobs"
+# Retain one maximum-size (4 GiB) accepted image, with room for its replacement.
+warm_size_bytes = 4294967296
+max_size_bytes = 8589934592
+prune_strategy = "lru"
+maximum_age_hours = 168
+mutation_locks = ["cache.lock"]
 
 [stages.prefix-products]
 description = "Cargo outputs lent between source-isolated gate worktrees."
@@ -213,6 +228,16 @@ max_size_bytes = 17179869184 # 16 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 4
+
+[stages.release-proofs]
+description = "Evidence from the macOS package release proofs: Tart install, physical VZ boot, candidate manifests and SBOM."
+scope = "disk"
+path = "target/tests/release-proofs"
+warm_size_bytes = 6442450944 # 6 GiB
+max_size_bytes = 12884901888 # 12 GiB
+prune_strategy = "lru"
+maximum_age_hours = 336
+maximum_count = 12
 
 [stages.test-home]
 description = "Isolated CAPSEM_HOME state used by local gate tests."
@@ -316,6 +341,15 @@ maximum_age_hours = 168
 maximum_count = 20
 managed_globs = ["cpython-*"]
 lease_template = ".{key}.lock"
+
+[stages.node-compile-cache]
+description = "Node's V8 compile cache, shared so tool processes start warm instead of rewriting thousands of cache files into each run's TMPDIR."
+scope = "disk"
+path = "tools/node/compile-cache"
+warm_size_bytes = 268435456 # 256 MiB
+max_size_bytes = 536870912 # 512 MiB
+prune_strategy = "lru"
+maximum_age_hours = 720
 
 [stages.node-pnpm]
 description = "pnpm package store shared by frontend workspaces and release builds."

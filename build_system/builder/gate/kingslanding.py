@@ -1,0 +1,123 @@
+"""Container acceptance: explicit fixture acquisition, then hermetic VM proof."""
+
+from . import pytestsuite, runtimeprepare
+from .actions import Script
+from .command import GateCommand
+from .config import GateConfig
+from .execution import Kind, Needs, Speed, Step, step
+from .plan import Plan
+from .testmodules import InWorkspace
+
+
+def prefetch(config: GateConfig) -> Step:
+    settings = config.functional.kingslanding
+    return step(
+        "prefetch",
+        Script(
+            config,
+            settings.fixture_script,
+            "--output",
+            settings.fixture_dir,
+            "--platform",
+            config.host_arch().docker_platform,
+            outside_sandbox=True,
+        ),
+        contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.DOCKER, Needs.NETWORK}),
+        speed=Speed.SLOW,
+    )
+
+
+def greyjoy_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+    """The chaos suite: the same fixture, its own owner, adversaries only."""
+    return pytestsuite.Suite(
+        label=f"pytest.greyjoy.{profile}",
+        paths=(config.functional.greyjoy.suite_path,),
+        profile=profile,
+        contends=pytestsuite.sharing(config),
+    )
+
+
+def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytestsuite.Suite:
+    """The acceptance suite; with its measurement files it needs the machine alone."""
+    settings = config.functional.kingslanding
+    return pytestsuite.Suite(
+        label=f"pytest.kingslanding.{profile}",
+        paths=(settings.suite_path,),
+        ignores=() if benchmark else settings.benchmark_paths,
+        profile=profile,
+        contends=pytestsuite.measuring(config) if benchmark else pytestsuite.sharing(config),
+    )
+
+
+def benchmark_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+    """Kingslanding's measurement files, split out so the rest can share the machine."""
+    return pytestsuite.Suite(
+        label=f"pytest.kingslanding-benchmark.{profile}",
+        paths=config.functional.kingslanding.benchmark_paths,
+        profile=profile,
+        contends=pytestsuite.measuring(config),
+    )
+
+
+class KingslandingModule(
+    InWorkspace,
+    GateCommand,
+    name="test-kingslanding",
+    help="container lifecycle, isolation and Redis publication through real VMs",
+):
+    uses_qualification = True
+    outside_egress = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        ready = (
+            ()
+            if self.qualification.pulled
+            else (
+                runtimeprepare.prepare(
+                    plan, self._config, permission=self.rebuild_permission
+                ).ready,
+            )
+        )
+        phase = plan.phase("kingslanding")
+        fixture = phase.add(prefetch(self._config), after=ready)
+        phase.add(
+            suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
+                self._config
+            ),
+            after=(fixture,),
+        )
+        return plan
+
+
+class GreyjoyModule(
+    InWorkspace,
+    GateCommand,
+    name="test-greyjoy",
+    help="adversaries against private networks through real VMs: kills, floods, deletions",
+):
+    uses_qualification = True
+    outside_egress = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        ready = (
+            ()
+            if self.qualification.pulled
+            else (
+                runtimeprepare.prepare(
+                    plan, self._config, permission=self.rebuild_permission
+                ).ready,
+            )
+        )
+        phase = plan.phase("greyjoy")
+        fixture = phase.add(prefetch(self._config), after=ready)
+        phase.add(
+            greyjoy_suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
+                self._config
+            ),
+            after=(fixture,),
+        )
+        return plan

@@ -23,3 +23,8 @@ Rules:
 
 If a public contract is missing, write the RED test against the missing
 contract and fix the product contract before relying on implementation details.
+
+Kingslanding, under `kingslanding/`, owns container E2E coverage. Run
+`just focus-test kingslanding` for the isolated build, pinned native Redis fixture,
+and hermetic VM tests. The functional gate repeats it for each selected profile.
+See [the container proof](../fixtures/oci/README.md) for coverage and limitations.

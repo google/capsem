@@ -154,15 +154,15 @@ return 404 without contacting the UDS service.
 |---|---|---|
 | `/profiles/{profile_id}/enforcement/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
 | `/profiles/{profile_id}/enforcement/rules/list` | `GET` | Return compiled profile rule truth, including source, default-rule, priority, action, detection level, and lock metadata. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. |
-| `/profiles/{profile_id}/enforcement/reload` | `POST` | Reload that profile's enforcement rules. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/enforcement/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
 | `/profiles/{profile_id}/detection/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture against the profile detection rules. |
 | `/profiles/{profile_id}/detection/info` | `GET` | Return detection file/config info for the profile. |
 | `/profiles/{profile_id}/detection/rules/list` | `GET` | Return compiled profile detection rule truth. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. |
-| `/profiles/{profile_id}/detection/reload` | `POST` | Reload that profile's detection rules. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. Running VMs on the profile receive the change before the route returns. |
+| `/profiles/{profile_id}/detection/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
 | `/profiles/{profile_id}/plugins/list` | `GET` | Return profile plugin config plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. No runtime counters. |
 | `/profiles/{profile_id}/plugins/info` | `GET` | Return plugin subsystem info for the profile. |
 | `/profiles/{profile_id}/plugins/{plugin_id}/info` | `GET` | Inspect one profile plugin config object plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. |
@@ -281,7 +281,7 @@ match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com
 ## First-Party Fields
 
 Rules must use one of these roots: `http`, `dns`, `mcp`, `model`, `file`,
-`process`, `ip`, `tcp`, or `udp`.
+`process`, `ip`, `tcp`, `udp`, or `network`.
 
 Every field a rule can read is listed below. The compiler rejects anything else,
 including a misspelled leaf (`file.wrte.path`) and a bare root (`has(http)`),
@@ -293,6 +293,7 @@ at all -- `has(http.valid)`, not `has(http)`.
 |---|---|
 | `http` | `http.valid`, `http.host`, `http.method`, `http.path`, `http.query`, `http.status`, `http.body` |
 | `dns` | `dns.valid`, `dns.qname`, `dns.qtype` |
+| `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
 | `mcp` | `mcp.valid`, `mcp.method`, `mcp.server.valid`, `mcp.server.name`, `mcp.tool_call.valid`, `mcp.tool_call.name`, `mcp.tool_list.valid`, `mcp.tool_list`, `mcp.request.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.response.valid`, `mcp.response.content`, `mcp.event.valid` |
 | `model` | `model.valid`, `model.provider`, `model.name`, `model.request.valid`, `model.request.body`, `model.request.tool_calls`, `model.response.valid`, `model.response.body`, `model.tool_call.valid` |
 | `file` | `file.valid`, `file.content` |
@@ -312,6 +313,32 @@ status and BLAKE3 references on real events. It is not a CEL root. Neither is
 `security`: decision state is the engine's output, not an input a rule reads.
 Workspace snapshots are MCP/tool/runtime activity unless and until we
 deliberately add a first-party snapshot parser and rules contract.
+
+The `network` contract describes owner-supplied routing facts. Modes are `expose`
+and `private`; sides are `source` and `destination`, identifying the endpoint
+whose policy is evaluated. Ports and boot generations use decimal strings in
+CEL, like the existing `tcp.port` field. Boot generations also serialize as
+decimal strings in audit JSON to preserve their full 64-bit identity. Network names and IDs exist for private
+routes; a publication ID exists for expose routes. Host socket endpoints have no
+VM identity. Connection and synthetic probe authorization require complete
+facts and an explicit allow rule. Missing facts are errors. Counters, close
+reasons, connection IDs, and decision state are audit data and cannot be read
+by rules. Expose records also include the actual loopback listener address.
+
+Published TCP ports evaluate the destination VM's current rules and plugins
+before requesting any guest connection. Both profiles have a visible default
+expose allow rule; a more specific deny or ask prevents setup. An unavailable
+audit writer, evaluation error, or expired guest control lease also refuses
+setup. Existing connections retain their decision until closed; a rule edit is
+pushed to the running VM before the edit route returns and applies to new
+connections. A control disconnect immediately revokes live sockets, and queued
+requests from that lease cannot cross a replacement control stream.
+
+The primary transport ledger records requests, setup results, and close reports
+with one connection ID. Matched rules use that same event identity and the
+existing security ledger. These are buffered audit records, not a per-connection
+disk sync; counters describe transport bytes, not decoded application payloads.
+Private routing remains subsequent work.
 
 Do not use old callback-local roots such as `request.host` or
 `tool.name`. The rule compiler rejects them because they are not

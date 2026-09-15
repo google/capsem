@@ -14,6 +14,11 @@ use crate::ackable_response_id;
 use crate::shutdown::HostShutdown;
 use crate::vsock_io::write_all_fd;
 
+mod network;
+
+#[cfg(test)]
+mod tests;
+
 /// Frame `msg` for the control channel. A message that cannot be framed (over
 /// `MAX_FRAME_SIZE`) is logged, evicted from the replay map, and dropped:
 /// the host would never decode or ack it, and replaying it on every
@@ -34,7 +39,16 @@ pub(crate) fn frame_or_drop(msg: &GuestToHost, pending: &PendingResponses) -> Op
 #[allow(clippy::too_many_arguments)]
 pub(crate) type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>;
 
-pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<GuestToHost>>>;
+pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Queued>>>;
+
+/// A queued network report retains its credit even if an earlier replay was
+/// acknowledged. Otherwise reconnects could free slots ahead of queue drain.
+#[derive(Debug, Clone)]
+pub(crate) struct Queued {
+    pub(crate) message: GuestToHost,
+    credit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+    acknowledged: Option<std::sync::Arc<tokio::sync::Notify>>,
+}
 
 /// Producer side of the serialized control-channel writer.
 ///
@@ -50,8 +64,9 @@ pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::
 /// them and every fresh connection replays what is left.
 #[derive(Clone)]
 pub(crate) struct CtrlSender {
-    pub(crate) tx: std::sync::mpsc::Sender<GuestToHost>,
+    tx: std::sync::mpsc::Sender<Queued>,
     pub(crate) pending: PendingResponses,
+    pub(crate) network: std::sync::Arc<network::Reports>,
     /// The host-initiated shutdown handshake; see `HostShutdown`.
     pub(crate) shutdown: std::sync::Arc<HostShutdown>,
 }
@@ -62,12 +77,16 @@ impl CtrlSender {
         let sender = Self {
             tx,
             pending,
+            network: std::sync::Arc::new(network::Reports::default()),
             shutdown: std::sync::Arc::new(HostShutdown::default()),
         };
         (sender, std::sync::Arc::new(std::sync::Mutex::new(rx)))
     }
 
     pub(crate) fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
+        if matches!(msg, GuestToHost::PortClosed { .. }) {
+            return Err(std::sync::mpsc::SendError(msg));
+        }
         if let Some(id) = ackable_response_id(&msg) {
             let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             // Bound the map at 4096 to match the exec_done cap -- under
@@ -77,7 +96,30 @@ impl CtrlSender {
             }
             p.insert(id, msg.clone());
         }
-        self.tx.send(msg)
+        self.tx
+            .send(Queued {
+                message: msg,
+                credit: None,
+                acknowledged: None,
+            })
+            .map_err(|error| std::sync::mpsc::SendError(error.0.message))
+    }
+
+    pub(crate) fn send_closed(
+        &self,
+        flow: capsem_proto::router::FlowKey,
+        report: capsem_proto::router::CloseReport,
+        credit: std::sync::Arc<tokio::sync::OwnedSemaphorePermit>,
+    ) -> std::io::Result<std::sync::Arc<tokio::sync::Notify>> {
+        let (acknowledged, sent) = {
+            let queued = self.network.park(flow, report, credit)?;
+            (queued.acknowledged.as_ref().unwrap().clone(), self.tx.send(queued))
+        };
+        if sent.is_err() {
+            self.network.acknowledge(flow);
+            return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        }
+        Ok(acknowledged)
     }
 }
 
@@ -148,32 +190,48 @@ pub(crate) fn control_writer_loop(
         }
     }
 
+    // At most one report per reserved network credit. A replay never appends
+    // another queue entry; its snapshot retains the original credit.
+    for queued in sender.network.snapshot() {
+        let frame = encode_guest_msg(&queued.message).expect("fixed-size network report");
+        if write_all_fd(control_fd, &frame).is_err() {
+            mark_dead();
+            return;
+        }
+    }
+
     while alive.load(Ordering::SeqCst) {
-        let received = rx
+        if sender.network.take_failure() {
+            mark_dead();
+            return;
+        }
+        let queued = match rx
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .recv_timeout(CTRL_WRITER_POLL);
-        let msg = match received {
+            .recv_timeout(CTRL_WRITER_POLL)
+        {
             Ok(msg) => msg,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         };
+        let msg = &queued.message;
         // Frame first: a message that cannot be framed is a bug in the
         // producer, not a transport loss, and must not tear the connection
         // down.
-        let Some(frame) = frame_or_drop(&msg, &sender.pending) else {
+        let Some(frame) = frame_or_drop(msg, &sender.pending) else {
             continue;
         };
         if write_all_fd(control_fd, &frame).is_err() {
             mark_dead();
-            if ackable_response_id(&msg).is_some() {
-                let _ = sender.tx.send(msg);
+            if (ackable_response_id(msg).is_some() || queued.credit.is_some()) && sender.tx.send(queued).is_err() {
+                tracing::error!("control replay queue closed after transport failure");
             }
             return;
         }
         if matches!(msg, GuestToHost::ShutdownComplete) {
             sender.shutdown.mark_reported();
         }
+        drop(queued);
     }
 }
 

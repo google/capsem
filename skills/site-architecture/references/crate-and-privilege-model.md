@@ -27,6 +27,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: profile/asset/release validation and materialization.
 - **`capsem-mcp`**: host MCP server bridging AI-agent tools to the service API.
+- **`capsem-router`**: Seatbelt/seccomp-confined companion with two jobs from one binary. Per VM owner, a TCP relay for published host ports only (connected descriptor pairs over a private, bounded grant channel). Per named network, `--network`: that network's layer-2 switch. The service plugs each attached VM's cable (a duplicate of that cable's VSOCK 5009 stream) into it; it forwards ethernet frames on MAC only, floods broadcast under a cap, and carries every protocol. No service control socket, ambient file access, listener acceptance, or virtualization entitlement in either job.
+- **`capsem-network`**: the cable's frame codec (`u16` length + ethernet frame) and the switch's MAC forwarding table as pure code. The kernel inside each guest does ARP, IP and everything above; no host process parses past a frame's MAC addresses.
 - **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
 - **`capsem-mcp-builtin`**: built-in HTTP and file/snapshot MCP tools.
 - **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.

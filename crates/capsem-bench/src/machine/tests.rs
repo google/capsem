@@ -1,4 +1,4 @@
-use super::{assess, Objection};
+use super::{assess, assess_for, Judgement, Objection};
 use capsem_foundation::proctable::Process;
 
 fn process(pid: u32, parent_pid: u32, arguments: &str) -> Process {
@@ -130,7 +130,7 @@ fn a_cyclic_process_snapshot_cannot_loop_forever() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_does_not_require_a_linux_kvm_device() {
-    let fitness = super::examine(std::env::consts::ARCH, "macos", &[]);
+    let fitness = super::examine(super::Judgement::Measurement, std::env::consts::ARCH, "macos", &[]);
     assert!(!fitness.host.kvm);
     assert!(!reasons(&fitness.objections).contains(&"kvm"));
 }
@@ -140,4 +140,33 @@ fn macos_does_not_require_a_linux_kvm_device() {
 fn macos_observes_load_without_linux_procfs() {
     let load = capsem_foundation::unix::process::load_average();
     assert!(load.is_some_and(|value| value.is_finite() && value >= 0.0));
+}
+
+/// The gate checks fitness before an hour of asset work, straight after its
+/// own compile has loaded every core. Load is judged where it is measured;
+/// the early check judges what would still be true then: strays, the clock,
+/// the hypervisor.
+#[test]
+fn a_standing_judgement_ignores_load_but_keeps_every_standing_objection() {
+    let strays = ["capsem-service".to_string()];
+    let standing = assess_for(
+        Judgement::Standing,
+        "linux",
+        18,
+        Some(100.0),
+        Some("powersave"),
+        false,
+        &strays,
+    );
+    assert_eq!(reasons(&standing), ["governor", "kvm", "strays"]);
+    let measurement = assess_for(
+        Judgement::Measurement,
+        "linux",
+        18,
+        Some(100.0),
+        Some("performance"),
+        true,
+        &[],
+    );
+    assert_eq!(reasons(&measurement), ["load"]);
 }

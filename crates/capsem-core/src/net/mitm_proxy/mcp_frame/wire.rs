@@ -47,6 +47,9 @@ pub(super) async fn read_next_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Res
         Err(e) => return Err(e).context("read MCP frame length"),
     }
 
+    if len_buf == capsem_proto::MCP_SESSION_END {
+        return Ok(FrameRead::End);
+    }
     let total_len = u32::from_be_bytes(len_buf) as usize;
     if !(capsem_proto::MCP_FRAME_HEADER_LEN as usize..=capsem_proto::MCP_FRAME_MAX_SIZE).contains(&total_len) {
         bail!("invalid MCP frame length: {total_len}");

@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import pytestsuite
+from capsem_builder.gate import kingslanding, pytestsuite
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -32,12 +32,17 @@ def _argv(suite) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _claims(suite) -> dict[str, str]:
+    return {e.name: "shared" if e.shared else "alone" for e in suite.contends}
+
+
 def test_host_snapshot_tests_claim_the_one_service() -> None:
     """Production has one service and one service-scoped save/restore lock.
-    An xdist worker per service does not reproduce that."""
+    An xdist worker per service does not reproduce that, and neither does
+    another suite's service running beside it."""
     suite = pytestsuite.host_snapshot(CONFIG, profile="code")
 
-    assert [e.name for e in suite.contends] == ["host_service"]
+    assert _claims(suite) == {"host_service": "alone", "apple_vz": "alone", "workspace_binaries": "shared"}
     assert not suite.parallel
 
 
@@ -46,9 +51,37 @@ def test_benchmarks_claim_the_vz_launch_budget() -> None:
     for suite in (
         pytestsuite.timing(CONFIG, profile="code"),
         pytestsuite.benchmark(CONFIG, profile="code"),
+        kingslanding.benchmark_suite(CONFIG, profile="code"),
     ):
-        assert [e.name for e in suite.contends] == ["apple_vz"]
+        assert _claims(suite) == {"apple_vz": "alone", "workspace_binaries": "shared"}
         assert not suite.parallel
+
+
+def test_suites_that_need_answers_not_quiet_share_the_machine() -> None:
+    """Profile lanes overlap only through shared claims; the two four-VM xdist
+    suites still exclude each other, and no suite may rebuild binaries."""
+    for suite in (
+        kingslanding.suite(CONFIG, profile="code", benchmark=False),
+        kingslanding.greyjoy_suite(CONFIG, profile="code"),
+    ):
+        assert _claims(suite) == {"apple_vz": "shared", "workspace_binaries": "shared"}
+    for fleet in (pytestsuite.broad, pytestsuite.compatibility):
+        assert _claims(fleet(CONFIG, profile="code")) == {
+            "apple_vz": "shared", "workspace_binaries": "shared", "vm_fleet": "alone",
+        }
+    # With its measurement files, the whole suite needs the machine alone.
+    assert _claims(kingslanding.suite(CONFIG, profile="code"))["apple_vz"] == "alone"
+
+
+def test_every_pytest_step_namespaces_the_leak_ledger() -> None:
+    """Concurrent suites shared tests/leak-report.log: each erased the other's
+    attribution at session start and could fail on the other's services."""
+    labels = {
+        pytestsuite.broad(CONFIG, profile="code").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
+        kingslanding.suite(CONFIG, profile="code").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
+        kingslanding.suite(CONFIG, profile="co-work").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
+    }
+    assert len(labels) == 3
 
 
 def test_timing_rail_owns_the_route_health_probe_once() -> None:
@@ -65,7 +98,8 @@ def test_the_broad_suite_claims_the_binaries_it_runs_against() -> None:
     concurrent VM test is using, so anything that rebuilds must not overlap."""
     suite = pytestsuite.broad(CONFIG, profile="code")
 
-    assert [e.name for e in suite.contends] == ["workspace_binaries"]
+    # Shared: readers of the binaries overlap, and any build holds it alone.
+    assert _claims(suite)["workspace_binaries"] == "shared"
 
 
 def test_every_exclusive_a_suite_claims_is_declared() -> None:
@@ -78,7 +112,8 @@ def test_every_exclusive_a_suite_claims_is_declared() -> None:
         pytestsuite.compatibility,
     ):
         for exclusive in build(CONFIG, profile="code").contends:
-            assert CONFIG.exclusive(exclusive.name) is exclusive
+            assert CONFIG.exclusive(exclusive.name).name == exclusive.name
+            assert exclusive in (CONFIG.exclusive(exclusive.name), CONFIG.shared(exclusive.name))
 
 
 # ---------------------------------------------------------------------------

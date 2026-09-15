@@ -13,7 +13,10 @@ from pathlib import Path
 
 import click
 
+from ..release import project_root
 from .config import load_guest_config
+
+DEFAULT_GUEST_DIR = "config/docker/image"
 
 
 @click.group(invoke_without_command=True)
@@ -40,7 +43,7 @@ def doctor(profile_id: str, config_root: str) -> None:
     """Check build prerequisites and the profile-derived build contract."""
     from .doctor import format_results, run_all_checks
 
-    repo_root = Path.cwd()
+    repo_root = project_root(__file__)
     results = run_all_checks(
         repo_root,
         profile_id=profile_id,
@@ -78,7 +81,7 @@ def validate_skills(skills_dir: str, json_output: bool) -> None:
 
 
 @cli.command()
-@click.argument("guest_dir", default="config/docker/image", type=click.Path(exists=False))
+@click.argument("guest_dir", default=None, required=False, type=click.Path(exists=False))
 @click.option("--arch", default=None, help="Build for a single architecture only.")
 @click.option(
     "--output",
@@ -88,18 +91,20 @@ def validate_skills(skills_dir: str, json_output: bool) -> None:
     help="Output directory for agent binaries.",
 )
 def agent(
-    guest_dir: str,
+    guest_dir: str | None,
     arch: str | None,
     output_dir: str,
 ) -> None:
     """Compile guest agent binaries (native or container-based)."""
-    path = Path(guest_dir)
+    # The checkout, not the working directory: the same command must mean the
+    # same thing from the repository root and from build_system/.
+    repo_root = project_root(__file__)
+    path = Path(guest_dir) if guest_dir else repo_root / DEFAULT_GUEST_DIR
     if not path.is_dir():
-        click.echo(f"error: directory not found: {guest_dir}", err=True)
+        click.echo(f"error: directory not found: {path}", err=True)
         raise SystemExit(1)
 
     config = load_guest_config(path)
-    repo_root = Path.cwd()
 
     # Default to host architecture
     import os

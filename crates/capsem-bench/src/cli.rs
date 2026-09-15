@@ -12,6 +12,14 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Measure validated Redis PING batches; emit raw collector samples.
+    Redis(crate::redis::Args),
+    /// Measure bulk TCP throughput, or serve as the far end of it.
+    Throughput(crate::throughput::Args),
+    /// Send numbered UDP datagrams and count the echoes, or serve the echo.
+    Udp(crate::udp::Args),
+    /// ICMP echo against an address, without a ping binary.
+    Ping(crate::ping::Args),
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.
@@ -116,6 +124,10 @@ pub(crate) struct VerifyArgs {
 pub(crate) struct DoctorArgs {
     #[arg(long)]
     pub(crate) json: bool,
+    /// Judge only conditions that would still hold when measuring later
+    /// (stray capsem processes, the clock, the hypervisor), not current load.
+    #[arg(long)]
+    pub(crate) standing: bool,
 }
 
 #[derive(Parser, Debug)]

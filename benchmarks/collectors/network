@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Measure two VMs talking over a private network's switch.
+
+Two VMs join one network, each plugged into its switch by one cable, and the
+guest's own `capsem-bench-rs` drives TCP and UDP between their addresses.
+Beside throughput it records what explains a number: TCP retransmissions on
+the sending guest, the CPU each hop spent (the switch, the VM owners, the
+hypervisor, and both guests' cable pumps), and the switch's own per-reason
+drop counters from the network's history. Raw samples only; `capsem-bench`
+computes every statistic.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import json
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT))
+
+from helpers.constants import (  # noqa: E402 - after the path insert
+    CODE_PROFILE_ID,
+    EXEC_READY_TIMEOUT,
+)
+from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
+
+THROUGHPUT_PORT = 5201
+ECHO_PORT = 5202
+# Guest clock ticks per second (`getconf CLK_TCK` on the guest kernel).
+GUEST_HZ = 100
+LANES = (("upload", 1), ("upload", 4), ("download", 4))
+# `upload.s4` is the lane whose CPU is sampled: every hop busy at once.
+PROFILED = ("upload", 4)
+DROPS = ("short", "source_mac", "source_address", "unknown", "queue_full", "storm")
+
+
+def guest(client, vm, command, timeout=60):
+    result = client.post(f"/vms/{vm}/exec", {"command": command, "timeout_secs": timeout}, timeout=timeout + 5)
+    if result is None or result.get("exit_code") != 0:
+        raise RuntimeError(f"{vm}: {command!r} -> {result}")
+    return result["stdout"]
+
+
+def retransmits(client, vm):
+    snmp = guest(client, vm, "cat /proc/net/snmp").splitlines()
+    names, values = [line.split() for line in snmp if line.startswith("Tcp:")][:2]
+    return int(values[names.index("RetransSegs")])
+
+
+def pump_ticks(client, vm):
+    """utime+stime of the VM's cable pump."""
+    stat = guest(client, vm, 'cat "/proc/$(pgrep -x capsem-tun | head -n 1)/stat"')
+    fields = stat[stat.rindex(")") + 2 :].split()
+    return int(fields[11]) + int(fields[12])
+
+
+class _TaskInfo(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_uint64) for n in ("virtual", "resident", "user", "system", "tu", "ts")] + [
+        (f"i{n}", ctypes.c_int32) for n in range(12)
+    ]
+
+
+def host_cpu_seconds(pid):
+    if sys.platform == "linux":
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / 100
+    info = _TaskInfo()
+    size = ctypes.CDLL("/usr/lib/libproc.dylib").proc_pidinfo(pid, 4, ctypes.c_uint64(0), ctypes.byref(info), 96)
+    if size != 96:
+        return 0.0
+
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    timebase = Timebase()
+    ctypes.CDLL("/usr/lib/libSystem.dylib").mach_timebase_info(ctypes.byref(timebase))
+    return (info.user + info.system) * timebase.numer / timebase.denom / 1e9
+
+
+def pids(pattern, parent=None):
+    argv = ["pgrep", "-f", pattern] if parent is None else ["pgrep", "-P", str(parent), "-f", pattern]
+    return [int(pid) for pid in subprocess.run(argv, capture_output=True, text=True, check=False).stdout.split()]
+
+
+def host_hops(service):
+    hops = {
+        "switch": pids(r"capsem-router .*--network", service.proc.pid),
+        "owners": pids("capsem-process", service.proc.pid),
+    }
+    if sys.platform == "darwin":
+        hops["hypervisor"] = pids("com.apple.Virtualization.VirtualMachine")
+    return hops
+
+
+def history(client, network):
+    """Every row of the network's history, page by page: a cable that flaps
+    under load writes rows enough to push the leaves off the first page."""
+    events, cursor = [], ""
+    while True:
+        page = client.get(f"/networks/{network}/logs" + (f"?cursor={cursor}" if cursor else ""))
+        events += page.get("events", [])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return events
+
+
+def member(client, network, vm_id):
+    for row in client.get(f"/networks/{network}")["members"]:
+        if row["vm_id"] == vm_id:
+            return row
+    return None
+
+
+def throughput(client, vm, address, direction, streams, seconds):
+    report = json.loads(
+        guest(
+            client,
+            vm,
+            f"capsem-bench-rs throughput --direction {direction} --streams {streams} "
+            f"--seconds {seconds} --address {address}:{THROUGHPUT_PORT}",
+            timeout=seconds + 60,
+        )
+    )["metrics"]
+    key = "send_megabits_per_sec" if direction == "upload" else "receive_megabits_per_sec"
+    return report[key]["samples"][0], report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true", help="one short trial")
+    parser.add_argument("--trials", type=int, default=None)
+    parser.add_argument("--seconds", type=int, default=None)
+    args = parser.parse_args()
+    trials = args.trials or (1 if args.quick else 3)
+    seconds = args.seconds or (2 if args.quick else 5)
+
+    samples: dict[str, dict] = {}
+
+    def add(key, unit, value):
+        samples.setdefault(key, {"unit": unit, "samples": []})["samples"].append(float(value))
+
+    service = ServiceInstance()
+    suffix = uuid.uuid4().hex[:6]
+    sender, receiver = f"bench-net-a-{suffix}", f"bench-net-b-{suffix}"
+    try:
+        service.start()
+        client = service.client()
+        ids = {}
+        for name in (sender, receiver):
+            created = client.post(
+                "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": 2048, "cpus": 4}
+            )
+            ids[name] = created["id"]
+            if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
+                raise RuntimeError(f"{name} never became exec-ready")
+        network = client.post("/networks", {"name": f"bench{suffix}"})["id"]
+        for name in (sender, receiver):
+            client.put(f"/networks/{network}/members/{ids[name]}")
+        deadline = time.monotonic() + 90
+        while any((member(client, network, ids[name]) or {}).get("state") != "ready" for name in ids):
+            if time.monotonic() > deadline:
+                raise RuntimeError("members never plugged into the switch")
+            time.sleep(0.2)
+        address = member(client, network, ids[receiver])["address"]
+        guest(
+            client,
+            receiver,
+            f"setsid sh -c 'capsem-bench-rs throughput --serve 0.0.0.0:{THROUGHPUT_PORT} & "
+            f"capsem-bench-rs udp --serve 0.0.0.0:{ECHO_PORT}' </dev/null >/dev/null 2>&1 &",
+        )
+        time.sleep(1)
+
+        for trial in range(trials):
+            print(f"network trial {trial + 1}/{trials}", file=sys.stderr)
+            for direction, streams in LANES:
+                lane = f"tcp.{direction}.s{streams}"
+                resent = retransmits(client, sender) + retransmits(client, receiver)
+                profiled = (direction, streams) == PROFILED
+                if profiled:
+                    hops = host_hops(service)
+                    host_before = {hop: sum(map(host_cpu_seconds, found)) for hop, found in hops.items()}
+                    pumps_before = (pump_ticks(client, sender), pump_ticks(client, receiver))
+                    started = time.monotonic()
+                megabits, _ = throughput(client, sender, address, direction, streams, seconds)
+                add(f"{lane}.megabits_per_sec", "megabits_per_second", megabits)
+                add(
+                    f"{lane}.retransmits",
+                    "count",
+                    retransmits(client, sender) + retransmits(client, receiver) - resent,
+                )
+                if profiled:
+                    elapsed = time.monotonic() - started
+                    busy = {
+                        hop: (sum(map(host_cpu_seconds, found)) - host_before[hop]) / elapsed * 100
+                        for hop, found in hops.items()
+                    }
+                    pumps_after = (pump_ticks(client, sender), pump_ticks(client, receiver))
+                    for side, before, after in zip(("sender", "receiver"), pumps_before, pumps_after, strict=True):
+                        busy[f"{side}_pump"] = (after - before) / GUEST_HZ / elapsed * 100
+                    # Share of a core per Gb/s moved in the same trial: work
+                    # per bit, which a change that only moves fewer bits
+                    # cannot improve.
+                    for hop, percent in busy.items():
+                        add(f"cpu.{hop}_percent", "ratio", percent)
+                        add(f"cpu.{hop}_percent_per_gbps", "ratio", percent / (megabits / 1000))
+            _, latency = throughput(client, sender, address, "latency", 1, 1)
+            for value in latency["round_trip_ms"]["samples"]:
+                add("tcp.round_trip_ms", "milliseconds", value)
+            udp = json.loads(
+                guest(
+                    client,
+                    sender,
+                    f"capsem-bench-rs udp --address {address}:{ECHO_PORT} --count 200 --size 1400 "
+                    "--interval-ms 2 --wait-ms 2000",
+                )
+            )["metrics"]
+            for value in udp["round_trip_ms"]["samples"]:
+                add("udp.round_trip_ms", "milliseconds", value)
+            add("udp.lost", "count", udp["lost"]["samples"][0])
+
+        # The switch counted every frame it could not deliver; its counters
+        # arrive in each port's close row: one per leave, and one per cable
+        # that ended on its own mid-run (a flap, replugged by the service).
+        for name in (sender, receiver):
+            client.delete(f"/networks/{network}/members/{ids[name]}")
+        closes, left = [], []
+        deadline = time.monotonic() + 20
+        while len(left) < 2 and time.monotonic() < deadline:
+            events = history(client, network)
+            closes = [e for e in events if e["event_type"] == "network.close" and "frames" in e["event"]]
+            left = [e for e in closes if e["event"]["decision"]["reason"] == "unlinked"]
+            time.sleep(0.2)
+        add("switch.cable_flaps", "count", len(closes) - len(left))
+        if len(left) < 2:
+            for event in events:
+                print(json.dumps(event), file=sys.stderr)
+            log = service.tmp_dir / "service.log"
+            for line in log.read_text(errors="replace").splitlines() if log.exists() else []:
+                if "cable" in line or "switch" in line:
+                    print(line, file=sys.stderr)
+            raise RuntimeError(f"the switch reported {len(left)} of 2 leaves ({len(closes)} closes)")
+        for reason in DROPS:
+            add(f"switch.dropped.{reason}", "count", sum(e["event"]["frames"]["dropped"][reason] for e in closes))
+    finally:
+        service.stop()
+
+    json.dump({"metrics": samples}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

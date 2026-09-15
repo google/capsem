@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CRATES = ROOT / "crates"
 
 INLINE_TEST_MOD = re.compile(r"^\s*(?:pub\s+)?mod\s+tests\s*\{", re.MULTILINE)
-TEST_MOD_DECL = re.compile(r"^\s*(?:pub\s+)?mod\s+tests\s*;", re.MULTILINE)
+TEST_MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+tests\s*;", re.MULTILINE)
 # `//` comments only; a `mod tests {` inside a block comment or string literal has
 # never appeared here, and the guards below fail loudly if one ever does.
 LINE_COMMENT = re.compile(r"//.*$", re.MULTILINE)

@@ -10,7 +10,12 @@ pub(crate) fn build(
     profile: &str,
     strays: Vec<String>,
 ) -> schema::Record {
-    let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
+    let fitness = machine::examine(
+        machine::Judgement::Measurement,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        &strays,
+    );
     let report = &artifact.mock_server_protocol;
     let mut metrics = Vec::new();
 

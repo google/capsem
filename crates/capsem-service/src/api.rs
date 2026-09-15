@@ -46,8 +46,119 @@ pub struct ProvisionRequest {
     pub env: Option<HashMap<String, String>>,
     /// Sandbox to clone state from. If provided, the new sandbox's session will
     /// be cloned from this existing persistent sandbox.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Named networks the new VM joins at create, by name. Every name must
+    /// exist before the VM is provisioned; membership is recorded with the
+    /// VM's lifetime private address.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<String>,
+}
+
+/// Request for POST /networks.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateNetworkRequest {
+    /// A DNS label: members will resolve each other under it.
+    pub name: String,
+}
+
+/// One member of a network: the VM and the address it leased in the
+/// network's subnet.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkMemberInfo {
+    pub vm_id: String,
+    pub address: std::net::Ipv4Addr,
+    /// `declared`, `attaching`, `ready`, `failed`: how far the membership has
+    /// come; `detached` rows are history and never listed here.
+    pub state: String,
+    pub updated_unix_ms: i64,
+}
+
+/// Response for GET /networks/{id} and each row of GET /networks.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInfo {
+    /// Immutable; a new network under a reused name has a new id.
+    pub id: String,
+    pub name: String,
+    /// `a.b.c.d/prefix`: every member's address is inside it.
+    pub subnet: String,
+    pub created_unix_ms: i64,
+    pub members: Vec<NetworkMemberInfo>,
+}
+
+/// Response for GET /networks.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkListResponse {
+    pub networks: Vec<NetworkInfo>,
+}
+
+/// Query for GET /networks/{id}/logs. Every filter is optional; `cursor`
+/// continues a previous page and must have been cut with the same filters.
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+pub struct NetworkLogsQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// 1..=1000; 100 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<i64>,
+}
+
+/// One audit row of a network, as written by the transport ledger.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct NetworkLogEvent {
+    pub sequence: i64,
+    pub event_id: String,
+    pub timestamp_unix_ms: i64,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    pub event: serde_json::Value,
+}
+
+/// Response for GET /networks/{id}/logs.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkLogsResponse {
+    pub events: Vec<NetworkLogEvent>,
+    /// Continue from here; the same cursor polls for new rows when the page
+    /// was not full.
+    pub cursor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// A VM owner asking, on its VM's behalf, what a private name or a pool
+/// address is: answered only with members of a network the VM is in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PrivateResolveRequest {
+    pub source_vm: String,
+    pub owner_secret: String,
+    /// The labels before `capsem.internal`: `<vm>.<network>` or `<vm>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// A pool address to name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<std::net::Ipv4Addr>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PrivateResolveResponse {
+    /// The member's full name, `<vm>.<network>.capsem.internal`.
+    pub name: String,
+    pub address: std::net::Ipv4Addr,
+    pub vm: String,
+    pub network: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

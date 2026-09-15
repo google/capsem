@@ -66,3 +66,17 @@ action = "allow"
 priority = "default"
 reason = "Default allow for process execution and audit activity."
 match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"
+
+[default.expose]
+name = "expose"
+action = "allow"
+priority = "default"
+reason = "Allow explicitly published loopback TCP ports."
+match = 'network.mode == "expose" && network.side == "destination" && network.protocol == "tcp"'
+
+[default.private]
+name = "private"
+action = "allow"
+priority = "default"
+reason = "Allow a member of a shared named network to plug this VM into the network's switch, once per plug; every protocol then crosses the cable. Joining the network is the authorization; a stricter rule can still narrow it by network."
+match = 'network.mode == "private" && network.side == "destination" && network.protocol == "link"'

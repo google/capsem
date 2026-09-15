@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Shared with every command's tests that talk to the service.
+pub(crate) mod fake_service;
+
 #[test]
 fn asset_status_retains_background_start_acknowledgement() {
     let status: AssetStatusResponse = serde_json::from_value(serde_json::json!({
@@ -336,17 +339,18 @@ fn provision_request_serde() {
     let req = ProvisionRequest {
         name: Some("test".into()),
         profile_id: "code".into(),
-        ram_mb: 4096,
-        cpus: 4,
+        ram_mb: Some(4096),
+        cpus: Some(4),
         persistent: true,
         env: None,
         from: None,
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.name, Some("test".into()));
     assert_eq!(req2.profile_id, "code");
-    assert_eq!(req2.ram_mb, 4096);
+    assert_eq!(req2.ram_mb, Some(4096));
     assert!(req2.persistent);
     assert!(req2.env.is_none());
 }
@@ -358,11 +362,12 @@ fn provision_request_with_env() {
     let req = ProvisionRequest {
         name: Some("test".into()),
         profile_id: "code".into(),
-        ram_mb: 2048,
-        cpus: 2,
+        ram_mb: Some(2048),
+        cpus: Some(2),
         persistent: true,
         env: Some(env),
         from: None,
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("FOO"));
@@ -375,14 +380,32 @@ fn provision_request_env_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
         profile_id: "code".into(),
-        ram_mb: 2048,
-        cpus: 2,
+        ram_mb: Some(2048),
+        cpus: Some(2),
         persistent: false,
         env: None,
         from: None,
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("env"));
+}
+
+/// Resources left unset are left out, so the service applies the profile's.
+#[test]
+fn provision_request_omits_unset_resources_for_the_profile_defaults() {
+    let req = ProvisionRequest {
+        name: None,
+        profile_id: "code".into(),
+        ram_mb: None,
+        cpus: None,
+        persistent: false,
+        env: None,
+        from: None,
+        networks: Vec::new(),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert!(json.get("ram_mb").is_none() && json.get("cpus").is_none(), "{json}");
 }
 
 #[test]
@@ -390,11 +413,12 @@ fn provision_request_with_from() {
     let req = ProvisionRequest {
         name: None,
         profile_id: "code".into(),
-        ram_mb: 2048,
-        cpus: 2,
+        ram_mb: Some(2048),
+        cpus: Some(2),
         persistent: false,
         env: None,
         from: Some("my-sandbox".into()),
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("my-sandbox"));
@@ -407,11 +431,12 @@ fn provision_request_from_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
         profile_id: "code".into(),
-        ram_mb: 2048,
-        cpus: 2,
+        ram_mb: Some(2048),
+        cpus: Some(2),
         persistent: false,
         env: None,
         from: None,
+        networks: Vec::new(),
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("from"));
@@ -622,6 +647,8 @@ fn run_request_serde() {
         command: "echo hi".into(),
         profile_id: "code".into(),
         timeout_secs: Some(60),
+        ram_mb: Some(1024),
+        cpus: Some(1),
         env: Some(env),
     };
     let json = serde_json::to_string(&req).unwrap();
@@ -629,6 +656,7 @@ fn run_request_serde() {
     assert_eq!(req2.command, "echo hi");
     assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.timeout_secs, Some(60));
+    assert_eq!((req2.ram_mb, req2.cpus), (Some(1024), Some(1)));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
 }
 
@@ -638,11 +666,17 @@ fn run_request_env_omitted_when_none() {
         command: "ls".into(),
         profile_id: "code".into(),
         timeout_secs: None,
+        ram_mb: None,
+        cpus: None,
         env: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("timeout_secs"));
     assert!(!json.contains("env"));
+    assert!(
+        !json.contains("ram_mb") && !json.contains("cpus"),
+        "unset resources are the profile's"
+    );
 }
 
 #[test]

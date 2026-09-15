@@ -36,6 +36,22 @@ pub(super) const DNS_SESSION_MAX_IN_FLIGHT: usize = 128;
 
 type SecurityRulesHandle = Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 
+/// Serve one guest DNS session on its own task: long-lived, many queries at
+/// once, each a `dns_events` row under the ambient trace id.
+pub(super) fn serve(
+    conn: VsockConnection,
+    handler: &Arc<capsem_core::net::dns::DnsHandler>,
+    db: &Arc<capsem_logger::DbWriter>,
+    security_rules: &SecurityRulesHandle,
+) {
+    tokio::spawn(serve_dns_session(
+        conn,
+        Arc::clone(handler),
+        Arc::clone(db),
+        Arc::clone(security_rules),
+    ));
+}
+
 pub(super) async fn serve_dns_session(
     conn: VsockConnection,
     handler: Arc<capsem_core::net::dns::DnsHandler>,

@@ -1,5 +1,6 @@
 pub mod db;
 pub mod events;
+pub mod network_db;
 pub mod reader;
 pub mod schema;
 pub mod session_index;
@@ -9,9 +10,10 @@ pub mod writer;
 pub use db::{checkpoint_and_vacuum_session_db, snapshot_session_db, DbHandle, ReadCacheDomain, SessionDb};
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
-    FileAction, FileEvent, McpCall, ModelCall, NetEvent, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent,
-    SecurityAskPending, SecurityAskStatus, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage,
-    SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry,
+    FileAction, FileEvent, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
+    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
+    SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction,
+    SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent, TransportEventKind,
     CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{

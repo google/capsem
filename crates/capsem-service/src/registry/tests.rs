@@ -104,6 +104,30 @@ fn persistent_registry_backfills_missing_ids() {
     );
 }
 
+// Registries written while every VM held a lifetime private address carry a
+// `private_address` key per entry. Refusing the file would strand every
+// persistent VM; the key is ignored on load and gone after the next save.
+#[test]
+fn persistent_registry_loads_entries_with_the_retired_private_address() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test_registry.json");
+    let mut entry = serde_json::to_value(make_entry("addressed", dir.path().join("addressed"))).unwrap();
+    entry["private_address"] = serde_json::json!("10.128.0.9");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&serde_json::json!({ "vms": { "addressed": entry } })).unwrap(),
+    )
+    .unwrap();
+
+    let registry = PersistentRegistry::load(path.clone()).expect("a retired key must not refuse the registry");
+    assert!(registry.contains("addressed"));
+    registry.save().unwrap();
+    assert!(
+        !std::fs::read_to_string(&path).unwrap().contains("private_address"),
+        "the retired key is not written back"
+    );
+}
+
 #[test]
 fn persistent_registry_rejects_duplicate() {
     let dir = TempDir::new().unwrap();

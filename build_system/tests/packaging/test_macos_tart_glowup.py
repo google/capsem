@@ -270,8 +270,8 @@ def test_ip_wait_fails_immediately_when_tart_runner_exits() -> None:
         def poll(self) -> int:
             return 64
 
-    with pytest.raises(RuntimeError, match="runner exited before boot"):
-        module.wait_for_guest_ip("capsem-glowup-123", ExitedRunner())
+    with pytest.raises(RuntimeError, match=r"runner exited before boot.*proof/tart-run\.log"):
+        module.wait_for_guest_ip("capsem-glowup-123", ExitedRunner(), Path("proof/tart-run.log"))
 
 
 @pytest.mark.parametrize("script", [

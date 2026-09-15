@@ -123,6 +123,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
         Some(&"12".to_string())
     );
     assert_eq!(plan.commands[2].step, "manifest");
+    assert!(plan.commands[2].argv.last().unwrap().contains("arches=[\"arm64\"]"));
 }
 
 #[test]

@@ -60,6 +60,31 @@ def test_glib_function_advisory_rejects_any_resolved_source_caller(
         AUDIT.validate_function_scoped_advisories(metadata)
 
 
+def test_a_vulnerability_failure_names_each_advisory_package_and_fix() -> None:
+    """A red audit said only "reported 1 vulnerabilities": the reader of a CI
+    log could not tell which crate to move, or to what."""
+    report = {
+        "vulnerabilities": {
+            "count": 1,
+            "list": [
+                {
+                    "advisory": {"id": "RUSTSEC-2026-0285", "title": "TLS 1.3 handshake messages"},
+                    "package": {"name": "rustls", "version": "0.23.40"},
+                    "versions": {"patched": [">=0.23.45"], "unaffected": ["<0.23.13"]},
+                }
+            ],
+        },
+        "warnings": {},
+    }
+
+    with pytest.raises(ValueError) as failure:
+        AUDIT.validate_report(report)
+    assert str(failure.value) == (
+        "cargo audit reported 1 vulnerabilities: "
+        "RUSTSEC-2026-0285 rustls 0.23.40 (patched >=0.23.45): TLS 1.3 handshake messages"
+    )
+
+
 def test_glib_function_advisory_disappears_on_patched_line(tmp_path: Path) -> None:
     metadata = {
         "packages": [

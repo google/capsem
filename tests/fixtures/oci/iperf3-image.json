@@ -1,0 +1,8 @@
+{
+  "tag": "networkstatic/iperf3:latest",
+  "version": "3",
+  "images": {
+    "linux/arm64": "networkstatic/iperf3@sha256:79260bb3f5c13ec6cbbddc1f0a2f2c1cc3873b16bfc724f1e9b83ef51e7e7350",
+    "linux/amd64": "networkstatic/iperf3@sha256:81740ab08ab24605a71227ffe2b0be5a545ddb0fe0f68b4efb9718f20615f975"
+  }
+}

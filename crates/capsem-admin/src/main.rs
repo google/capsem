@@ -23,6 +23,7 @@ mod assets_channel_build;
 mod assets_channel_render;
 mod assets_channel_validation;
 mod channel_bootstrap;
+mod manifest_generation;
 mod package_inspection;
 mod profile_images;
 #[allow(dead_code)]
@@ -32,6 +33,7 @@ mod source_commit;
 use assets_channel_build::*;
 use assets_channel_render::*;
 use assets_channel_validation::*;
+use manifest_generation::*;
 use profile_images::*;
 
 use package_inspection::binary_files_from_artifacts;
@@ -306,19 +308,6 @@ struct ManifestCheckArgs {
     /// Manifest JSON file to validate.
     path: PathBuf,
     /// Emit a machine-readable manifest report.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
-struct ManifestGenerateArgs {
-    /// Asset directory containing built per-arch assets.
-    #[arg(default_value = "assets")]
-    assets_dir: PathBuf,
-    /// Binary version to record. Defaults to capsem-builder's project version.
-    #[arg(long)]
-    version: Option<String>,
-    /// Emit the generated manifest after writing it.
     #[arg(long)]
     json: bool,
 }

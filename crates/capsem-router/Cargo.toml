@@ -1,0 +1,23 @@
+[package]
+name = "capsem-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Confined descriptor-only companions: the published-port pair relay and the per-network layer-2 switch."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bytes.workspace = true
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-guard = { path = "../capsem-guard" }
+capsem-network = { path = "../capsem-network" }
+capsem-proto = { path = "../capsem-proto" }
+tokio.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

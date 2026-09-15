@@ -13,6 +13,9 @@ use std::sync::{LockResult, Mutex, MutexGuard, PoisonError};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// One named VM. Unknown keys are ignored on load, never refused: a field
+/// this version retired (the per-VM `private_address`) still sits in older
+/// registry files, and refusing them would strand every persistent VM.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     #[serde(default)]

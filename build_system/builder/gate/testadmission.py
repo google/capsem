@@ -12,7 +12,7 @@ from ..cache.gitimpact import inspect_git
 from ..cache.models import AdmissionEvent, AdmissionEventKind
 from ..cache.operations import last_admission_event, record_admission_event
 from ..cache.paths import CachePaths
-from . import qualificationevidence, qualificationjournal
+from . import qualificationevidence, qualificationjournal, runhistory
 from .config import GateConfig
 from .errors import GateError
 from .proc import Runner
@@ -32,6 +32,36 @@ def _identity(command: CandidateLike, commit: SourceCommit | None) -> str:
     return str(commit or source_commit_for_checkout(command._config.root))
 
 
+def _working_tree_history(config: GateConfig) -> tuple[bool, str | None]:
+    """Whether the last working-tree candidate failed, and the HEAD of the last green one.
+
+    `just test` without a commit never reaches the exact-source archive, so
+    admission read no attempt and no baseline for it and admitted every run on
+    a branch as the first -- fifteen full runs in a row, each after the last
+    failed. The run history records the same facts. A run with no end that no
+    one is writing was interrupted, which counts as failed.
+    """
+    running = runhistory.live(config)
+    failed: bool | None = None
+    for directory in runhistory.runs(config):
+        if directory.name in running:
+            continue
+        try:
+            events = runhistory.read(directory, config.runlog)
+        except ValueError:
+            events = []
+        start = next((event for event in events if event.get("event") == "run.start"), None)
+        if start is None or start.get("command") != "candidate" or start.get("source_commit"):
+            continue
+        end = next((event for event in reversed(events) if event.get("event") == "run.end"), None)
+        green = end is not None and end.get("status") == OK
+        if failed is None:
+            failed = not green
+        if green:
+            return failed, str(start["head"])
+    return bool(failed), None
+
+
 def admit(command: CandidateLike, commit: SourceCommit | None) -> None:
     """Refuse wasteful complete proof before the machine lock and plan actions."""
     if command._runner.observing:
@@ -39,15 +69,18 @@ def admit(command: CandidateLike, commit: SourceCommit | None) -> None:
     cache_policy = load_policy(command._config.root)
     authority = qualificationevidence.authority(command._config)
     paths = CachePaths(repository_root=authority.root, policy=cache_policy)
-    latest = qualificationevidence.latest_complete(authority)
-    attempt = qualificationjournal.latest_attempt(authority)
     target = _identity(command, commit)
-    if latest is None:
-        baseline = None
+    if commit is None:
+        attempt_failed, baseline = _working_tree_history(authority)
+    else:
+        latest = qualificationevidence.latest_complete(authority)
+        attempt = qualificationjournal.latest_attempt(authority)
+        attempt_failed = attempt is not None and attempt.end.status != OK
+        baseline = None if latest is None else str(latest[0])
+    if baseline is None:
         changed_paths: tuple[str, ...] = ()
         commits = 0
     else:
-        baseline = str(latest[0])
         impact = inspect_git(command._config.root, baseline, None if commit is None else target)
         changed_paths = impact.paths if impact.ancestor else ()
         commits = impact.commits
@@ -62,7 +95,7 @@ def admit(command: CandidateLike, commit: SourceCommit | None) -> None:
         forced=forced,
         force_reason=getattr(command._args, "reason", ""),
         prior_forced=prior is not None and prior.kind is AdmissionEventKind.FORCED_ATTEMPT,
-        failed_attempt=attempt is not None and attempt.end.status != OK,
+        failed_attempt=attempt_failed,
     )
     if not decision.allowed:
         routes = "\n".join(f"  just focus-test {group}" for group in decision.groups)

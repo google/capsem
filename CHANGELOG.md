@@ -7,8 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `capsem run --image IMAGE --network NAME` joins the container's VM to a named
+  network at creation, like `capsem create --network`.
+- Members of a network have names: `<vm>.<network>.capsem.internal` (and
+  `<vm>.capsem.internal` when only one network answers it) resolves to the
+  member's address on that network, and the address resolves back, for
+  members of a shared network only. The zone is answered on the host with no TTL and never
+  forwarded upstream; a member that leaves loses its name at once.
+- Every network is a switch, and every membership a cable. Each network has
+  its own subnet (a `/24` from `10.128.0.0/9`) and one confined
+  `capsem-router --network` process: an ordinary layer-2 switch with no uplink.
+  Joining leases the VM an address in the subnet and plugs one cable, a
+  `cable<N>` tap in the guest declared at 10 Gb/s full duplex; a VM on several
+  networks has one cable and one address on each. TCP, UDP, ICMP and ARP
+  between members all cross that one switch, end to end between the guest
+  kernels. Broadcasts flood with a per-port storm cap, unknown destinations are
+  dropped, and port security drops any frame whose MAC, IPv4 source or ARP
+  sender is not its port's. A VM on two networks never forwards between them.
+  A VM's profile decides once per plug (`network.protocol == "link"`), and
+  `capsem network logs` shows each plug and close, a close with the cable's
+  frame, byte and drop counters; `capsem network inspect` shows each member's
+  address and state.
+- Named networks: `capsem network list|create|inspect|delete|connect|disconnect`
+  and `capsem create --network NAME` group VMs that may reach each other on
+  their private addresses, over `/networks` routes on the service and gateway.
+- `capsem network logs NAME [-f]` and `GET /networks/{id}/logs` page a network's
+  audit history with a cursor and VM, connection, type, decision and time filters.
+- Every VM starts unplugged; the agent runs one `capsem-tun` pump per plugged
+  cable and restarts it if it dies. The guest kernel and `capsem-init` size the
+  network stack for 10 Gb/s cables.
+- Deleting a VM retires any network it leaves empty; disconnecting does not. A
+  retired network's audit database is kept 30 days and then removed by the
+  service at startup or on the next retirement.
+- `capsem-bench-rs throughput` measures bulk upload, download, bidirectional
+  transfer and echo latency over N streams, and serves as the far end itself.
+- The logger supports bounded primary transport audit records, with indexed
+  connection/network identities and an additive upgrade for retained sessions
+  that preserves the shared session index's schema version.
+- Security rules recognize typed `network` routing facts. Network boundary
+  events validate owner identities and require an explicit allow; retained
+  security ledgers accept their new event types through a checked migration.
+- `capsem-bench-rs redis` collects validated Redis PING samples with configurable
+  concurrency and pipelining on both the host and guest.
+- `capsem run|create --image IMAGE -p HOST:GUEST` publishes loopback TCP ports through VSOCK
+  using a confined Rust companion, with bounded concurrent connections and
+  listener cleanup when the workload or VM exits.
+- `--image docker://IMAGE` (or a qualified registry reference) pulls and caches
+  verified OCI images and runs the image's command as the VM's workload.
+  `capsem create --image` starts it detached, with its output in `capsem logs`,
+  and keeps the VM only when it is named with `-n`; `capsem run --image` streams
+  it, exits with its status and destroys the VM however the run ends. A command
+  after the image replaces its default command. Registry-specific CA trust and
+  username/token authentication are supported.
+- Containers started with `--image` reach the internet through
+  the VM's existing DNS and HTTP(S) interception: the same rules, plugins, and
+  ledger apply, the container trusts the Capsem CA read-only, and it can reach
+  nothing else inside the VM.
+- Both profiles include `runc`; guest kernels support offline OCI process
+  namespaces and cgroup CPU, memory, and process limits.
+- Both profiles include `umoci` for OCI image layer unpacking inside the VM.
+
+### Security
+
+- rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
+  were accepted across encryption level boundaries on the host's TLS paths.
+
 ### Changed
 
+- Published TCP connections require an audited allow from the existing security
+  rules and plugins before guest setup. Profile defaults explicitly allow expose;
+  deny, pending approval, audit failure, and stale control leases refuse access.
+  Transport records include trusted VM, listener, peer, and connection identities.
+
+- Active profiles can configure router connection and setup budgets under
+  `network.router.expose`, within fixed resource ceilings shared by a VM's ports.
+- Published connections carry the VM owner's boot generation so stale streams
+  cannot consume reused request IDs after restart.
+- Container port forwarding uses fixed kernel socket queues, including guest
+  VSOCK credit limits, to propagate backpressure from stalled peers.
+- Guest published connections are canceled and joined on control disconnect,
+  shutdown, and snapshot preparation; namespace setup uses bounded workers.
+- Guest VSOCK connection attempts now use a finite setup deadline, including
+  published-port connections whose host stops responding during setup.
+- Published ports share VM-wide connection and guest setup budgets, with bounded
+  setup pacing across listeners.
+- VM shutdown joins published-port brokers and guest handshake readers before
+  draining session logs; publication removal requests cooperative cleanup.
+- Container port forwarding closes stalled writes and half-closed peers after
+  60 seconds while preserving quiet connections and trailing response bytes.
+  A half-close on a published connection is carried as a signal:
+  a slow reply after the client stops sending, and an upload after the peer
+  stops sending, both arrive in full.
+- Published TCP listeners stay with the VM owner. The confined router receives
+  only connected descriptor pairs; bounded acknowledgements and control failure
+  close both endpoints even when the router retains duplicate descriptors.
+- The confined network companion is now named `capsem-router`; package signing
+  continues to exclude virtualization authority.
+- Shell runs flush captured output before exiting, preserving short output
+  without a trailing newline.
+- Port publication reports sandbox initialization failures explicitly. macOS
+  gate tests hand off the named router to its own stricter sandbox.
+- Local focused tests preserve the invoking checkout's assembled VM assets
+  instead of replacing them with another branch's cached kernel or rootfs.
+
+- Container runs now retain their named VM for the existing stop, restart, fork
+  and delete commands. Closing the log client detaches; reboot restores the
+  saved image command and host port bindings. Forks omit host bindings.
+- Host builds and native packages include the port router; it receives no
+  virtualization entitlement.
+- Registry pulls use the existing WebPKI TLS trust stack without platform
+  keychain verification dependencies.
+- Single-architecture asset builds and initrd repacks generate manifests for
+  the selected architecture, preserving incomplete builds for other targets.
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using
@@ -44,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving the shared minimums and Linux floors.
 - Temporary build outputs cannot publish into the shared component cache;
   guest cache reuse rejects placeholder or non-executable binaries and rebuilds them.
-- Install smoke tests use their configured writable pytest cache, allowing
+  Linked worktrees publish and reuse guest binaries staged in their own cache
+  tree instead of recompiling every guest agent on each gate run.- Install smoke tests use their configured writable pytest cache, allowing
   qualification to finish while the source directory remains protected.
 - Sealed install smoke checks retain tool stdout and stderr in gate evidence
   so failed qualification identifies the missing or broken input.
@@ -71,8 +184,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so guest tests launch the host binaries they just built.
   Copied source timestamps also invalidate stale Cargo fingerprints from other
   worktrees instead of reusing binaries for different source contents.
-  Compiler inputs are refreshed again under the machine lock, so a build that
-  finishes while another checkout queues cannot supply that checkout's binary.
+  Gate runs no longer touch every Rust source when they take the machine lock,
+  so an unedited checkout stops rebuilding the whole workspace on each Cargo
+  invocation; the checkout-keyed workspace wrapper already keeps a build that
+  finishes while another checkout queues from supplying that checkout's binary.
 - Failed or interrupted complete local tests now block automatic full reruns;
   retries require an explicitly approved reason, while focused checks and
   self-qualifying release commands remain available.
@@ -218,6 +333,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem stop` no longer reports "Service stopped." while another capsem
+  service still answers on the socket: it names the socket and fails instead.
+
+- A VM created or resumed with `--network` is plugged into the network's switch
+  even when its process is slow to start. The plug was attempted once, before
+  the process listened, and never retried, leaving that VM without a cable.
+
+- A VM joining a network receives traffic from the first frame sent after it
+  is plugged; the switch reported the plug before it could forward to the new
+  port, so a peer that sent immediately lost those frames.
+
+- Under `CAPSEM_HOME`, `capsem stop` and `capsem start` act on the service that
+  home's commands started, rather than the machine's installed LaunchAgent or
+  systemd unit, which serves the real home. Stop now waits for that service to
+  exit after SIGTERM; before, it left it running.
+
+- MCP clients inside a VM no longer hang when they send a large final request
+  and close stdin right away: the guest relay ends the session with an in-band
+  frame instead of a vsock shutdown the transport could lose.
+
+- A request to a VM owner over its IPC channel no longer occasionally times out
+  after eight seconds: the channel released its socket before leaving the
+  event loop, and a new connection reusing the number could never wake. About
+  one request in two thousand was affected.
+- Ledger reads no longer fail with "database table is locked" or stall while the
+  writer is busy: `capsem network logs -f` and the session ledger routes read
+  through SQLite's `read_uncommitted` on the shared memory tables.
+
+- Published-port connection audits record `unreachable` when the guest bridge
+  never came up and `cancelled` when it was lost during setup; both were
+  recorded as `stale_generation`, which names only the post-setup recheck.
+- Editing or deleting a profile enforcement or detection rule through the API
+  now reaches running VMs on that profile before the route returns, as plugin
+  edits already did; previously running VMs kept the old rules until an explicit
+  profile reload.
+- Session ledger routes (`security/latest`, `detection/latest`,
+  `security/status`, `timeline`, `history*`, `stats/detail`) read through the
+  logger on every request. They no longer serve a cached response while a
+  commit sits only in the write-ahead log, which previously hid new rows until
+  the next checkpoint.
+- Security audit emitters report failed database admission accurately, allowing
+  security-sensitive callers to refuse work when the audit writer is closed.
+
+- Guest TCP resets propagate across VSOCK with generation-bound close reports
+  and acknowledgments; bounded replay credits prevent stalled control traffic
+  from accumulating network reports.
+- TCP reset is armed before router handoff, so forced process death also
+  closes published connections abruptly; normal completion restores graceful close.
+- Abnormal published-connection cleanup resets TCP and revokes socket copies
+  retained by the router, while normal completion preserves half-close and trailing bytes.
+- Removing an exposed port or losing its router now cancels its guest flows,
+  including queued setup, without interrupting other published ports.
+- Guest control connections use async I/O with bounded frame deadlines and
+  joined reader cleanup on reconnect, so a stalled guest cannot block a host Tokio worker.
+
+- Linux router startup no longer races thread-local libc registration when
+  installing confinement; creating new threads remains forbidden.
 - Criterion benchmark collection now retains ungrouped cases as well as grouped
   cases, including the built-in security registry measurement, instead of
   silently omitting results outside a directory named after the Cargo target.
@@ -1265,6 +1437,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A VM no longer dies when a host client resets many published connections
+  at once. Shutting down a Virtualization.framework VSOCK descriptor while
+  the guest was still sending made the framework stop the whole VM with an
+  internal error; the confined router now closes such a descriptor without
+  shutting it down. When the framework does stop a VM, the owner records the
+  framework's reason, exits, and the service reports the VM as stopped
+  instead of running until every exec has timed out.
 - `clippy::cast_lossless` is denied, with its 116 sites converted. It is the
   one member of the numeric-cast family that cannot be wrong -- it flags
   `x as u64` where `u64::from(x)` is infallible -- so every fix is mechanical

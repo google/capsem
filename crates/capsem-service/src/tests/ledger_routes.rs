@@ -1,5 +1,7 @@
 use super::*;
 
+mod freshness;
+
 #[tokio::test]
 async fn security_routes_read_security_ledger_from_session_db() {
     let state = make_test_state();

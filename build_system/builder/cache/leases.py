@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 
 _HELD: dict[Path, BinaryIO] = {}
 
+#: Cargo's own cache directory tag, byte for byte. Cargo writes it only into a
+#: target directory it creates and `cargo clean` refuses one without it.
+CARGO_LOCK_NAME = ".cargo-lock"
+CARGO_CACHEDIR_TAG = (
+    "Signature: 8a477f597d28d172789f06886806bc55\n"
+    "# This file is a cache directory tag created by cargo.\n"
+    "# For information about cache directory tags see https://bford.info/cachedir/\n"
+)
+
 
 def retain_path(path: Path) -> BinaryIO:
     """Hold one shared lease until explicit release or process exit."""
@@ -82,6 +91,8 @@ def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tupl
                 if not lock.parent.resolve().is_relative_to(root.resolve()) or lock.is_symlink():
                     raise ValueError(f"mutation lock escapes cache stage: {lock}")
                 lock.parent.mkdir(parents=True, exist_ok=True)
+                if lock.name == CARGO_LOCK_NAME:
+                    _tag_cargo_target(lock.parent.parent)
                 descriptor = stack.enter_context(os.fdopen(
                     os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b",
                 ))
@@ -91,6 +102,22 @@ def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tupl
                     raise ValueError(f"cache stage is busy: {lock}") from error
                 locked.append(lock)
         yield tuple(locked)
+        # A cold clean keeps each root for its lock inode but removes the tag
+        # beside it; the root has to leave the mutation as Cargo would.
+        for lock in locked:
+            if lock.name == CARGO_LOCK_NAME:
+                _tag_cargo_target(lock.parent.parent)
+
+
+def _tag_cargo_target(root: Path) -> None:
+    """Tag `<root>`, which holding `<root>/<profile>/.cargo-lock` created before
+    Cargo could: untagged, cargo-llvm-cov's clean aborted and instrumented
+    binaries from earlier checkouts were counted as uncovered code."""
+    tag = root / "CACHEDIR.TAG"
+    if tag.is_symlink():
+        raise ValueError(f"Cargo cache tag is a symlink: {tag}")
+    if not tag.exists():
+        tag.write_text(CARGO_CACHEDIR_TAG, encoding="utf-8")
 
 
 atexit.register(release_all)

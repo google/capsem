@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,14 @@ esac
         + """
 import os, sys
 for path in sys.argv[3:]:
-    s = os.stat(path)
+    try:
+        s = os.stat(path)
+    except FileNotFoundError:
+        # Cargo's link lands between the failed stat and the caller's next look.
+        parked = os.environ.get("SOURCE_BINARY", "") + ".next"
+        if os.environ.get("RELINK_AFTER_FAILED_STAT") == "1" and os.path.exists(parked):
+            os.rename(parked, os.environ["SOURCE_BINARY"])
+        sys.exit(1)
     if sys.argv[2] == "%d-%i":
         print(f"{s.st_dev}-{s.st_ino}")
     else:
@@ -197,6 +205,20 @@ for path in sys.argv[3:]:
     assert missing.returncode == 0, missing.stderr
     assert missing.stdout == b"survived-recheck\n"
     (state / "recheck").unlink()
+    # The link can be back by the time the runner looks again. A failed stat is
+    # still the observed race, not an unreadable input.
+    binary.write_text("#!/bin/sh\necho survived-relink\n")
+    relinked = subprocess.run(
+        command,
+        env={
+            **env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1",
+            "RELINK_AFTER_FAILED_STAT": "1",
+        },
+        capture_output=True, timeout=5,
+    )
+    assert relinked.returncode == 0, relinked.stderr
+    assert relinked.stdout == b"survived-relink\n"
+    (state / "recheck").unlink()
     binary.write_text("#!/bin/sh\necho must-not-retry-forever\n")
     missing = subprocess.run(
         command, env={**env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1"},
@@ -218,6 +240,37 @@ for path in sys.argv[3:]:
     for invocation in (command, alias_command):
         subprocess.run(invocation, env=env, check=True, capture_output=True)
     assert verifies.read_text() == verified, "hardlinked names must retain independent receipts"
+
+    # The codesign lock belongs to a living runner. One killed while holding
+    # it -- or before it could say who it is -- must not wedge every later
+    # launch, and a live holder is waited for rather than timed out on.
+    lock = tmp_path / "cache/target/.run_signed_codesign.lock"
+    reaped = subprocess.Popen(["true"])
+    reaped.wait()
+    for label, owner, age in (("dead-holder", str(reaped.pid), 0), ("ownerless", None, 60)):
+        binary.write_text(f"#!/bin/sh\necho {label}\n")
+        lock.mkdir()
+        if owner is not None:
+            (lock / "owner").write_text(owner)
+        if age:
+            past = time.time() - age
+            os.utime(lock, (past, past))
+        reclaimed = subprocess.run(command, env=env, capture_output=True, timeout=10, check=False)
+        assert reclaimed.returncode == 0, (label, reclaimed.stderr)
+        assert reclaimed.stdout == f"{label}\n".encode()
+        assert not lock.exists(), label
+    binary.write_text("#!/bin/sh\necho after-live-holder\n")
+    lock.mkdir()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", f"import shutil, time; time.sleep(1.5); shutil.rmtree({str(lock)!r})"]
+    )
+    (lock / "owner").write_text(str(holder.pid))
+    started = time.monotonic()
+    waited = subprocess.run(command, env=env, capture_output=True, timeout=20, check=False)
+    holder.wait()
+    assert waited.returncode == 0, waited.stderr
+    assert waited.stdout == b"after-live-holder\n"
+    assert time.monotonic() - started >= 1.0, "a live holder's lock was taken from it"
 
     binary.write_text(
         '#!/bin/sh\nif [ -e "/dev/fd/$PROBE_FD" ]; then echo inherited; else echo closed; fi\n'

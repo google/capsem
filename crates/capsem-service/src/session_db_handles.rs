@@ -3,6 +3,10 @@
 
 use super::*;
 
+pub(super) fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
+    session_dir.join("session.db")
+}
+
 impl ServiceState {
     pub(crate) fn register_session_db_handle(
         &self,

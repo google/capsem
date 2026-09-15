@@ -74,6 +74,42 @@ pub enum ServiceToProcess {
         namespaced_name: String,
         arguments_json: String,
     },
+    /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
+    ExecStream { id: u64, command: String },
+    /// Publish one loopback host TCP port into this VM's container namespace.
+    PublishPort { id: u64, host_port: u16, guest_port: u16 },
+    /// Internal VM-owner request for one declared publication data stream.
+    ConnectPort { flow: crate::router::FlowKey, port: u16 },
+    /// Internal VM-owner cancellation for bounded generation-bound flows.
+    AbortPorts { flows: Vec<crate::router::FlowKey> },
+    /// The service is plugging this VM into a network's switch and wants the
+    /// guest's stream for that network's cable. The owner evaluates its
+    /// profile once, has the guest bring the cable up with `address`/`prefix`,
+    /// then answers with the handoff socket the service should ask on, keyed
+    /// by `token`; the stream comes back on that connection. `generation` is
+    /// the attachment's, which only grows: the cable remembers the newest.
+    LinkAttach {
+        id: u64,
+        token: String,
+        network: String,
+        network_name: String,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+        generation: u32,
+    },
+    /// The VM left `network` as of `generation`: the owner forgets the
+    /// network's cable, and the guest's tap for it goes away, unless a newer
+    /// plug already took the cable over. Requests can reach the owner in
+    /// either order; the generation, not arrival, decides.
+    LinkDetach { id: u64, network: String, generation: u32 },
+    /// Internal VM-owner request: bring a cable up in the guest.
+    PlugCable {
+        cable: u32,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    /// Internal VM-owner request: take a cable down in the guest.
+    UnplugCable { cable: u32 },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -146,6 +182,23 @@ pub enum ProcessToService {
     /// Warm suspend failed before the durable checkpoint marker was written.
     /// Kept at the end so existing bincode variant indexes remain stable.
     SuspendFailed { id: String, error: String },
+    /// Live merged stdout/stderr for an ExecStream job. Each chunk is at most 8 KiB.
+    ExecOutput { id: u64, data: Vec<u8> },
+    PortPublished {
+        id: u64,
+        host_port: u16,
+        router_pid: u32,
+        error: Option<String>,
+    },
+    /// Response to LinkAttach: where the service asks for the stream, or
+    /// why this owner will not link.
+    LinkAttachResult {
+        id: u64,
+        handoff_socket: String,
+        error: Option<String>,
+    },
+    /// Response to LinkDetach.
+    LinkDetachResult { id: u64, error: Option<String> },
 }
 
 /// Status of an MCP server as reported through IPC.

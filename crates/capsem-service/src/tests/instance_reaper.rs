@@ -26,16 +26,17 @@ fn provision_persistent_validates_name() {
 
 #[test]
 fn child_reapers_start_after_instance_registration() {
-    let source = include_str!("../main.rs");
+    let source = include_str!("../vm_spawn.rs");
     for (function, next_function, reaper) in [
         (
-            "    fn provision_sandbox(",
-            "    fn resume_sandbox(",
+            "    pub(crate) fn provision_sandbox(",
+            "    pub(crate) fn resume_sandbox(",
             "instance_reaper::spawn_exit_reaper(",
         ),
         (
-            "    fn resume_sandbox(",
-            "    fn has_existing_resume_checkpoint(",
+            "    pub(crate) fn resume_sandbox(",
+            // resume_sandbox closes the impl block; the file ends there.
+            "\n}\n",
             "instance_reaper::spawn_exit_reaper(",
         ),
     ] {

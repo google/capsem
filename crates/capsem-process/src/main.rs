@@ -1,8 +1,11 @@
 mod aggregator_driver;
+mod cables;
 mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
+mod private_names;
+mod private_seats;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -31,6 +34,7 @@ use vsock::VsockOptions;
 /// cleanup".
 #[derive(Default)]
 pub(crate) struct Shutdown {
+    publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
 }
@@ -50,24 +54,30 @@ impl Shutdown {
 }
 
 pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
-    // Taking the owners makes this safe when graceful shutdown, a signal,
-    // and an error path race. Exactly one path drains; the others see an
-    // empty owner set.
-    let mut owned = {
-        let mut guard = shutdown.lock().await;
-        std::mem::take(&mut *guard)
-    };
-    let _ = tokio::task::spawn_blocking(move || owned.drain_blocking()).await;
+    // Keep the lock through joining: a concurrent shutdown caller must not
+    // stop the run loop while the first caller is still draining its owners.
+    let mut guard = shutdown.lock().await;
+    let mut owned = std::mem::take(&mut *guard);
+    if let Some(publisher) = owned.publisher.take() {
+        publisher.shutdown().await;
+    }
+    if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
+        error!(%error, "background owner drain failed");
+    }
+    drop(guard);
 }
 
+/// `loglevel=4`: kernel warnings and errors reach the serial console, which
+/// the test fixtures keep. At `loglevel=1` a guest whose every VSOCK link
+/// ended in one millisecond left a console that said nothing at all.
 fn process_kernel_cmdline() -> &'static str {
     #[cfg(target_arch = "x86_64")]
     {
-        "console=ttyS0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
+        "console=ttyS0 root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        "console=hvc0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
+        "console=hvc0 root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
     }
 }
 
@@ -76,6 +86,9 @@ fn process_kernel_cmdline() -> &'static str {
 struct Args {
     #[arg(long)]
     id: String,
+    /// Trusted host-side identity; independent of guest environment overrides.
+    #[arg(long)]
+    vm_name: Option<String>,
     #[arg(long)]
     assets_dir: PathBuf,
     #[arg(long)]
@@ -120,6 +133,11 @@ struct Args {
     /// gateway dialled `{run_dir}/instances/...`.
     #[arg(long)]
     run_dir: Option<PathBuf>,
+    /// The service's own socket, where this owner asks on a guest's behalf
+    /// (private names). Given by the service: it is not always
+    /// `{run_dir}/service.sock`.
+    #[arg(long)]
+    service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
@@ -287,6 +305,7 @@ fn main() -> Result<()> {
     let shutdown_for_loop = Arc::clone(&shutdown);
     let shutdown_for_loop_error = Arc::clone(&shutdown);
     let vm_for_signal = Arc::clone(&vm_arc);
+    let vm_for_exit = Arc::clone(&vm_arc);
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(
             args,
@@ -349,6 +368,12 @@ fn main() -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     rt.block_on(tokio::signal::ctrl_c())?;
 
+    // A VM the hypervisor stopped on its own is not a clean exit: the
+    // service keeps the session directory and reports the VM as exited
+    // unexpectedly, which is what happened.
+    if let Some(reason) = rt.block_on(async { vm_for_exit.lock().await.stop_reason() }) {
+        anyhow::bail!("the hypervisor stopped the VM: {reason}");
+    }
     Ok(())
 }
 
@@ -361,9 +386,8 @@ async fn run_async_main_loop(
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
 ) -> Result<()> {
-    let job_store = Arc::new(JobStore::new());
-    let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
-    let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
+    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
+    let runtime_config = runtime_source.load()?;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
@@ -375,8 +399,6 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
-    let runtime_config = runtime_source.load()?;
     let security_rule_ids = runtime_config
         .security_rules
         .rules()
@@ -395,6 +417,44 @@ async fn run_async_main_loop(
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
+    let job_store = Arc::new(JobStore {
+        publisher: Arc::new(
+            capsem_core::container::publish::Publisher::for_session(
+                &session_dir,
+                runtime_config.network.router.clone(),
+            )?
+            .with_security(
+                args.id.clone(),
+                args.vm_name.clone().unwrap_or_else(|| args.id.clone()),
+                Arc::new(capsem_core::security_engine::network::ledger::NetworkSecurity {
+                    db: db.clone(),
+                    rules: security_rules.clone(),
+                    plugins: plugin_policy.clone(),
+                }),
+            ),
+        ),
+        ..JobStore::new()
+    });
+    shutdown.lock().await.publisher = Some(job_store.publisher.clone());
+    let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
+    let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
+    let seats = private_seats::bind(
+        private_seats::Seats {
+            id: &args.id,
+            service_socket: args.service_socket.as_deref(),
+            uds_path: &args.uds_path,
+            run_dir: args.run_dir.as_deref(),
+            session_dir: &session_dir,
+        },
+        &job_store,
+        ctrl_tx.clone(),
+    )?;
+    let restored = job_store
+        .publisher
+        .restore(ctrl_tx.clone())
+        .await
+        .context("restore published ports")?;
+    *job_store.publications.lock().unwrap() = restored;
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.
@@ -548,13 +608,22 @@ async fn run_async_main_loop(
     } else {
         DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
     };
-    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_cache(
-        Arc::clone(&net_state.policy),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::new(dns_resolver),
-        Arc::new(DnsAnswerCache::default()),
+    // The private zone is the service's to answer, for this VM's networks.
+    let private_names = Arc::new(private_names::ServicePrivateNames::new(
+        seats.service_socket,
+        seats.owner_secret,
+        args.id.clone(),
     ));
+    let dns_handler = Arc::new(
+        capsem_core::net::dns::DnsHandler::with_cache(
+            Arc::clone(&net_state.policy),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::new(dns_resolver),
+            Arc::new(DnsAnswerCache::default()),
+        )
+        .with_private_names(private_names),
+    );
 
     let sched_clone = Arc::clone(&scheduler);
     tokio::spawn(async move {

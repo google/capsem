@@ -44,6 +44,7 @@ TMPDIR = "TMPDIR"
 UV_CACHE = "UV_CACHE_DIR"
 RUFF_CACHE = "RUFF_CACHE_DIR"
 PNPM_STORE = "npm_config_store_dir"
+NODE_COMPILE_CACHE = "NODE_COMPILE_CACHE"
 CARGO_TARGET = "CARGO_TARGET_DIR"
 RUSTC_WRAPPER = "RUSTC_WRAPPER"
 SCCACHE_DIR = "SCCACHE_DIR"
@@ -215,11 +216,16 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     cache = _policy(source)
     environment = {
         **python,
+        cache["authority_environment"]: str(authority),
         PYTEST_ADDOPTS: _pytest_addopts(pytest, test_tmp / "pytest"),
         TMPDIR: str(test_tmp),
         UV_CACHE: str(uv),
         RUFF_CACHE: str(ruff),
         PNPM_STORE: str(_policy_stage(source, authority, "node-pnpm")),
+        # Node otherwise caches under TMPDIR, which is new for every process
+        # here: each rewrote ~7,000 files it would never read back, and that
+        # write volume left fseventsd hours behind.
+        NODE_COMPILE_CACHE: str(_policy_stage(source, authority, "node-compile-cache")),
         CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
         SCCACHE_DIR: str(rust),
         SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['max_size_bytes'] // 1024**3}G",

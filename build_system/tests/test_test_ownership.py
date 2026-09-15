@@ -32,6 +32,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/cache/test_admission.py",
         "build_system/tests/cache/test_admission_state.py",
+        "build_system/tests/cache/test_cargounits.py",
         "build_system/tests/cache/test_cli.py",
         "build_system/tests/cache/test_direct_environment.py",
         "build_system/tests/cache/test_docker_anchor_inventory.py",

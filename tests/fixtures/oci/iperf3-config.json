@@ -1,0 +1,15 @@
+{
+  "ExposedPorts": {
+    "5201/tcp": {},
+    "5201/udp": {}
+  },
+  "Env": [
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  ],
+  "Entrypoint": [
+    "iperf3"
+  ],
+  "Cmd": [
+    "-s"
+  ]
+}

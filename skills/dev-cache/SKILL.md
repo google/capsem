@@ -100,10 +100,14 @@ after usage crosses `max_size_bytes`. `enforce` is an applied preflight and
 fails if protected state prevents compliance. `clean` is the explicit cold
 operation; it still preserves active leases and protected generations.
 
-Cargo's ordinary retention selects generations under `debug/incremental`.
-Compiled dependencies, executables, and verified signed copies count toward
-capacity but survive ordinary pruning. Inventory counts nested retention roots
-once. Native Cargo output locks protect the whole stage and are acquired again
+Cargo's ordinary retention selects whole compilation units under each
+`cargo_target_roots` entry: a unit's fingerprint, build output, libraries,
+dep-info, executables and verified signed copies share one metadata hash and
+are removed together, fingerprint first, least recently used first. Every gate
+prefix salts workspace units with its checkout path, so incremental-only
+retention let stale prefixes fill the stage until enforcement refused every
+run (issue #205). Paths Cargo does not name by unit, such as uplifted
+binaries, count toward capacity but are never selected. Native Cargo output locks protect the whole stage and are acquired again
 through deletion; even an explicit cold clean preserves their lock inodes.
 
 Retained cache lifetime ends only through these typed operations. Do not add

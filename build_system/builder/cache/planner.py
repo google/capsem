@@ -27,15 +27,18 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
     selected: dict[str, set[str]] = {stage.stage_id: set() for stage in inventory.stages}
 
     def choose(stage, entry, reason: str) -> None:
-        actions.append(
-            PruneAction(
-                stage_id=stage.stage_id,
-                key=entry.key,
-                path=stage.path / entry.relative_path,
-                logical_bytes=entry.logical_bytes,
-                reason=reason,
+        # A generation with members is removed whole and in order; its bytes
+        # are carried once, on the first path.
+        for index, relative in enumerate((entry.relative_path, *entry.member_paths)):
+            actions.append(
+                PruneAction(
+                    stage_id=stage.stage_id,
+                    key=entry.key,
+                    path=stage.path / relative,
+                    logical_bytes=entry.logical_bytes if index == 0 else 0,
+                    reason=reason,
+                )
             )
-        )
         selected[stage.stage_id].add(entry.key)
 
     for stage in inventory.stages:

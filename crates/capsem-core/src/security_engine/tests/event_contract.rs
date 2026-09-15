@@ -1,5 +1,113 @@
 use super::*;
 
+#[tokio::test]
+async fn closed_audit_emission_reports_failure_instead_of_an_accepted_identity() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let recorder = DebuggingRecorder::new();
+    let snapshots = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    let writer = capsem_logger::DbWriter::open_in_memory(8).unwrap();
+    writer.shutdown_blocking();
+    let asynchronous = emit_security_write(&writer, file_write(None)).await;
+    let synchronous = emit_security_write_blocking(&writer, file_write(None));
+    assert!(
+        asynchronous.is_none() && synchronous.is_none(),
+        "a closed audit writer was reported as accepting an event"
+    );
+    let mut queued = 0;
+    let mut failed = 0;
+    for (key, _, _, value) in snapshots.snapshot().into_vec() {
+        if key.key().name() != SECURITY_EVENT_EMIT_TOTAL {
+            continue;
+        }
+        if let DebugValue::Counter(count) = value {
+            for label in key.key().labels() {
+                if label.key() == "queue_result" {
+                    match label.value() {
+                        "queued" => queued += count,
+                        "failed" => failed += count,
+                        value => panic!("unexpected audit admission result: {value}"),
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(queued, 0);
+    assert_eq!(failed, 2);
+}
+
+#[test]
+fn transport_write_preserves_phase_and_primary_event_identity() {
+    use capsem_logger::{TransportEvent, TransportEventKind as Kind};
+    for (kind, expected) in [
+        (Kind::Connect, RuntimeSecurityEventType::NetworkConnect),
+        (Kind::ConnectResult, RuntimeSecurityEventType::NetworkConnectResult),
+        (Kind::Close, RuntimeSecurityEventType::NetworkClose),
+        (Kind::Lifecycle, RuntimeSecurityEventType::NetworkLifecycle),
+        (Kind::Probe, RuntimeSecurityEventType::NetworkProbe),
+        (Kind::ProbeResult, RuntimeSecurityEventType::NetworkProbeResult),
+    ] {
+        let record = TransportEvent::new(
+            "abcdef123456".into(),
+            1,
+            kind,
+            Some(uuid::Uuid::from_u128(1)),
+            (kind != Kind::Lifecycle).then(|| uuid::Uuid::from_u128(2)),
+            &(),
+        )
+        .unwrap();
+        let mut op = WriteOp::TransportEvent(record);
+        assert_eq!(RuntimeSecurityEventType::for_write_op(&op), expected);
+        assert_eq!(op.ensure_event_id().as_deref(), Some("abcdef123456"));
+        assert_eq!(op.event_id(), Some("abcdef123456"));
+    }
+}
+
+#[test]
+fn network_event_types_and_authorization_fields_are_canonical() {
+    for name in [
+        "network.connect",
+        "network.connect_result",
+        "network.close",
+        "network.lifecycle",
+        "network.probe",
+        "network.probe_result",
+    ] {
+        let event_type = RuntimeSecurityEventType::try_from(name).expect("network boundary has a canonical type");
+        assert_eq!(event_type.family().as_str(), "network");
+        assert!(crate::net::policy_config::security_event_type_is_known(name));
+    }
+    for field in [
+        "network.id",
+        "network.name",
+        "network.mode",
+        "network.side",
+        "network.protocol",
+        "network.source.vm_id",
+        "network.source.vm_name",
+        "network.source.generation",
+        "network.source.ip",
+        "network.source.port",
+        "network.destination.vm_id",
+        "network.destination.vm_name",
+        "network.destination.generation",
+        "network.destination.ip",
+        "network.destination.port",
+        "network.publication.id",
+    ] {
+        crate::net::policy_config::validate_security_event_match(&format!("has({field})"))
+            .unwrap_or_else(|error| panic!("{field}: {error}"));
+    }
+    for field in [
+        "network.report.bytes_sent",
+        "network.report.reason",
+        "network.decision",
+        "network.payload",
+    ] {
+        assert!(crate::net::policy_config::validate_security_event_match(&format!("has({field})")).is_err());
+    }
+}
+
 #[test]
 fn security_event_cel_evaluates_one_cross_root_rule_without_fanout() {
     let condition = r#"
@@ -146,7 +254,8 @@ fn security_event_cel_exposes_all_first_party_roots() {
         })
         .with_udp(UdpSecurityEvent {
             port: Some("53".to_string()),
-        });
+        })
+        .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
 
     let conditions = [
         r#"http.valid == "true""#,
@@ -211,6 +320,8 @@ fn security_event_cel_exposes_all_first_party_roots() {
         r#"tcp.port == "11434""#,
         r#"udp.valid == "true""#,
         r#"udp.port == "53""#,
+        r#"network.valid == "true""#,
+        r#"network.name == "eval""#,
     ];
     let covered_roots = conditions
         .iter()
@@ -318,7 +429,7 @@ fn runtime_security_event_families_mark_only_credential_as_ledger_only() {
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let families = [Http, Model, Mcp, Dns, File, Process, Credential, Security];
+    let families = [Http, Model, Mcp, Dns, File, Process, Network, Credential, Security];
 
     for family in families {
         assert_eq!(

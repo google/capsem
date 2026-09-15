@@ -103,18 +103,6 @@ pub(super) async fn handle_history(
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
 ) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!(
-        "history:layer={}:limit={}:offset={}:search={}",
-        params.layer,
-        params.limit,
-        params.offset,
-        params.search.as_deref().unwrap_or("")
-    );
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let session = history_ledger_for_vm(&state, &id).await?;
     let response = query_history_ledger(&session, &params);
     let body = serde_json::to_vec(&response).map_err(|error| {
@@ -123,7 +111,6 @@ pub(super) async fn handle_history(
             format!("failed to serialize history response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -132,11 +119,6 @@ pub(super) async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "history_processes", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let session = history_ledger_for_vm(&state, &id).await?;
     let processes = session.processes.into_iter().take(100).collect();
     let response = api::HistoryProcessesResponse { processes };
@@ -146,7 +128,6 @@ pub(super) async fn handle_history_processes(
             format!("failed to serialize history processes response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "history_processes", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -155,11 +136,6 @@ pub(super) async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "history_counts", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
     let session = history_ledger_for_vm(&state, &id).await?;
     let response = api::HistoryCountsResponse {
         exec_count: session.counts.exec_count,
@@ -171,7 +147,6 @@ pub(super) async fn handle_history_counts(
             format!("failed to serialize history counts response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "history_counts", &db_path, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -467,7 +442,7 @@ pub(super) async fn handle_suspend(
             process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
         }
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
-        state.instances.lock().unwrap().remove(&id);
+        state.evict_instance(&id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
@@ -480,7 +455,7 @@ pub(super) async fn handle_suspend(
     wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
-    state.instances.lock().unwrap().remove(&id);
+    state.evict_instance(&id);
     state.unregister_session_db_handle(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
@@ -524,6 +499,14 @@ pub(super) async fn handle_stop(
     } else {
         Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
+}
+
+/// Wall-clock milliseconds for network membership rows.
+pub(super) fn unix_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 pub(super) async fn handle_delete(
@@ -570,14 +553,7 @@ pub(super) async fn handle_delete(
     // and can be retried after the underlying problem is repaired.
     if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
         state
-            .off_worker(move |state| {
-                let registry = state.persistent_registry.lock().unwrap();
-                if registry.contains(&key) {
-                    registry.unregister(&key)
-                } else {
-                    Ok(())
-                }
-            })
+            .off_worker(move |state| state.forget_persistent_entry(&key))
             .await?
             .map_err(|error| {
                 AppError(
@@ -586,6 +562,11 @@ pub(super) async fn handle_delete(
                 )
             })?;
     }
+
+    // A deleted VM leaves every network it was in; the memberships are
+    // history in each network's own database, never resurrected, and a
+    // network it leaves empty retires with it.
+    network_routes::vm_deleted(&state, &id).await;
 
     Ok(Json(json!({ "success": true })))
 }
@@ -764,7 +745,7 @@ pub(super) async fn handle_purge(
             if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
                 state
                     .off_worker(move |state| {
-                        let _ = state.persistent_registry.lock().unwrap().unregister(&key);
+                        let _ = state.forget_persistent_entry(&key);
                     })
                     .await?;
             }
@@ -804,7 +785,7 @@ pub(super) async fn handle_purge(
         let stopped_name = name.clone();
         state
             .off_worker(move |state| {
-                let _ = state.persistent_registry.lock().unwrap().unregister(&stopped_name);
+                let _ = state.forget_persistent_entry(&stopped_name);
             })
             .await?;
         persistent_purged += 1;

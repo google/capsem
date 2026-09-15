@@ -12,7 +12,7 @@ fn main() {
     // Files whose bytes we hash. Adding a new file that defines protocol
     // types? Add it here. Comment-only edits trip the hash; we accept
     // that fast-and-loud cost in exchange for not pulling in `syn`.
-    let files = ["lib.rs", "ipc.rs", "handshake.rs"];
+    let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs"];
 
     let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a 64 offset basis
     for f in files {

@@ -218,6 +218,9 @@ class RunLogConfig(Strict):
     artifact_digest: str
     slow_action_seconds: NonNegativeFloat
     failure_tail_lines: PositiveInt
+    #: For a failed pytest command, how many `E ` lines of each failure's
+    #: message the error repeats after the short test summary.
+    pytest_failure_lines: PositiveInt
     timing_regression: TimingRegressionConfig
     #: What `fast-test` may cost end to end, as an absolute promise.
     #: The distilled history that outlives the directories above, and the
@@ -279,6 +282,7 @@ class PytestConfig(Strict):
     serial_paths: tuple[str, ...]
     benchmark_baseline: str
     benchmark_deselect: str
+    run_id_variable: str
     require_artifacts: str
     profile_variable: str
     base_profile: str

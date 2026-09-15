@@ -526,6 +526,7 @@
    "rand",
    "rstest",
    "rstest_reuse",
+   "structopt",
    "strum"
   ]
  },
@@ -784,12 +785,14 @@
  "capsem-agent": {
   "build_script": false,
   "dependencies": [
+   "capsem-foundation",
    "capsem-proto",
    "nix",
    "rmp-serde",
    "serde",
    "serde_json",
-   "tokio"
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-app": {
@@ -816,14 +819,18 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "axum",
    "blake3",
    "capsem-foundation",
    "futures",
+   "oci-client",
    "reqwest",
    "serde",
    "serde_json",
+   "sha2",
    "tempfile",
    "tokio",
+   "toml",
    "tracing"
   ]
  },
@@ -869,6 +876,7 @@
    "capsem-foundation",
    "capsem-logger",
    "capsem-proto",
+   "capsem-router",
    "core-foundation-sys",
    "criterion",
    "dispatch2",
@@ -1147,6 +1155,16 @@
    "tempfile",
    "thiserror",
    "tokio"
+  ]
+ },
+ "capsem-router": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-foundation",
+   "capsem-guard",
+   "clap",
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-service": {
@@ -1513,6 +1531,25 @@
    "wasm-bindgen-test"
   ]
  },
+ "const_format": {
+  "build_script": false,
+  "dependencies": [
+   "arrayvec",
+   "const_format_proc_macros",
+   "fastrand",
+   "konst"
+  ]
+ },
+ "const_format_proc_macros": {
+  "build_script": false,
+  "dependencies": [
+   "fastrand",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "unicode-xid"
+  ]
+ },
  "constant_time_eq": {
   "build_script": false,
   "dependencies": [
@@ -1770,6 +1807,7 @@
  "darling_core": {
   "build_script": false,
   "dependencies": [
+   "fnv",
    "ident_case",
    "proc-macro2",
    "quote",
@@ -1834,6 +1872,32 @@
    "rand",
    "serde_core",
    "serde_json"
+  ]
+ },
+ "derive_builder": {
+  "build_script": false,
+  "dependencies": [
+   "derive_builder_macro",
+   "rustversion",
+   "serde",
+   "serde_json",
+   "trybuild"
+  ]
+ },
+ "derive_builder_core": {
+  "build_script": false,
+  "dependencies": [
+   "darling",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "derive_builder_macro": {
+  "build_script": false,
+  "dependencies": [
+   "derive_builder_core",
+   "syn"
   ]
  },
  "derive_more": {
@@ -2497,6 +2561,14 @@
    "wasm-bindgen-test"
   ]
  },
+ "getset": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
  "gio": {
   "build_script": true,
   "dependencies": [
@@ -2741,6 +2813,17 @@
    "wasm-bindgen"
   ]
  },
+ "hmac": {
+  "build_script": false,
+  "dependencies": [
+   "digest",
+   "hex-literal",
+   "md-5",
+   "sha-1",
+   "sha2",
+   "streebog"
+  ]
+ },
  "hmac-sha256": {
   "build_script": false,
   "dependencies": [
@@ -2766,6 +2849,22 @@
    "rand",
    "serde",
    "serde_json"
+  ]
+ },
+ "http-auth": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "digest",
+   "hex",
+   "http",
+   "log",
+   "md-5",
+   "memchr",
+   "pretty_assertions",
+   "rand",
+   "reqwest",
+   "sha2"
   ]
  },
  "http-body": {
@@ -3339,6 +3438,20 @@
    "toml"
   ]
  },
+ "jwt": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "crypto-common",
+   "digest",
+   "doc-comment",
+   "hmac",
+   "openssl",
+   "serde",
+   "serde_json",
+   "sha2"
+  ]
+ },
  "kasuari": {
   "build_script": false,
   "dependencies": [
@@ -3357,6 +3470,19 @@
    "serde",
    "unicode-segmentation"
   ]
+ },
+ "konst": {
+  "build_script": false,
+  "dependencies": [
+   "konst_macro_rules",
+   "konst_proc_macros",
+   "rand",
+   "trybuild"
+  ]
+ },
+ "konst_macro_rules": {
+  "build_script": false,
+  "dependencies": []
  },
  "kqueue": {
   "build_script": false,
@@ -4191,10 +4317,72 @@
    "objc2-security"
   ]
  },
+ "oci-client": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "assert-json-diff",
+   "async-std",
+   "axum",
+   "bytes",
+   "chrono",
+   "clap",
+   "docker_credential",
+   "futures-util",
+   "hmac",
+   "http",
+   "http-auth",
+   "itertools",
+   "jwt",
+   "lazy_static",
+   "oci-spec",
+   "olpc-cjson",
+   "regex",
+   "reqwest",
+   "rstest",
+   "serde",
+   "serde_json",
+   "sha2",
+   "tempfile",
+   "testcontainers",
+   "thiserror",
+   "tokio",
+   "tokio-util",
+   "tracing",
+   "tracing-subscriber",
+   "unicase"
+  ]
+ },
+ "oci-spec": {
+  "build_script": false,
+  "dependencies": [
+   "const_format",
+   "derive_builder",
+   "getset",
+   "quickcheck",
+   "regex",
+   "rstest",
+   "serde",
+   "serde_json",
+   "strum",
+   "strum_macros",
+   "tempfile",
+   "thiserror"
+  ]
+ },
  "oid-registry": {
   "build_script": true,
   "dependencies": [
    "asn1-rs"
+  ]
+ },
+ "olpc-cjson": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "unicode-normalization"
   ]
  },
  "once_cell": {
@@ -7174,6 +7362,10 @@
    "unic-common"
   ]
  },
+ "unicase": {
+  "build_script": false,
+  "dependencies": []
+ },
  "unicode-ident": {
   "build_script": false,
   "dependencies": [
@@ -7183,6 +7375,12 @@
    "roaring",
    "ucd-trie",
    "unicode-xid"
+  ]
+ },
+ "unicode-normalization": {
+  "build_script": false,
+  "dependencies": [
+   "tinyvec"
   ]
  },
  "unicode-segmentation": {

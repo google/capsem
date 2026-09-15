@@ -1,6 +1,8 @@
 use super::dns::emit_dns_security_write_and_rules;
 use super::*;
 
+mod ports;
+
 mod ack;
 
 struct InterruptedThenData {
@@ -71,53 +73,6 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
     assert_ne!(*writer_thread.lock().unwrap(), Some(caller_thread));
 }
 
-// Vsock port classification
-
-#[test]
-fn classify_terminal_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_TERMINAL),
-        VsockPortKind::Terminal
-    );
-}
-
-#[test]
-fn classify_control_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_CONTROL),
-        VsockPortKind::Control
-    );
-}
-
-#[test]
-fn classify_sni_proxy_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_SNI_PROXY),
-        VsockPortKind::SniProxy
-    );
-}
-
-#[test]
-fn classify_exec_port() {
-    assert_eq!(classify_vsock_port(capsem_proto::VSOCK_PORT_EXEC), VsockPortKind::Exec);
-}
-
-#[test]
-fn classify_lifecycle_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_LIFECYCLE),
-        VsockPortKind::Lifecycle
-    );
-}
-
-#[test]
-fn classify_audit_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
-        VsockPortKind::Audit
-    );
-}
-
 #[test]
 fn bounded_frame_reader_returns_one_complete_payload() {
     let payload = b"audit-record";
@@ -157,24 +112,6 @@ fn bounded_frame_reader_returns_none_on_clean_eof() {
     let frame = read_bounded_frame(&mut std::io::Cursor::new(Vec::new())).unwrap();
 
     assert!(frame.is_none());
-}
-
-#[test]
-fn classify_dns_proxy_port() {
-    assert_eq!(
-        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
-        VsockPortKind::DnsProxy
-    );
-}
-
-#[test]
-fn classify_unknown_port() {
-    assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
-}
-
-#[test]
-fn classify_port_zero_unknown() {
-    assert_eq!(classify_vsock_port(0), VsockPortKind::Unknown);
 }
 
 // -----------------------------------------------------------------------
@@ -342,7 +279,7 @@ async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
         .expect("pair collected");
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].port, capsem_proto::VSOCK_PORT_SNI_PROXY);
-    assert_eq!(classify_vsock_port(5003), VsockPortKind::Unknown);
+    assert_eq!(HostVsockService::from_port(5003), None);
 }
 
 #[tokio::test]

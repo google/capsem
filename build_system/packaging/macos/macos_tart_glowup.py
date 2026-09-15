@@ -258,6 +258,7 @@ def run_authenticated_guest(
 def wait_for_guest_ip(
     vm_name: str,
     runner: subprocess.Popen[str],
+    log: Path,
     timeout: int = 300,
 ) -> str:
     deadline = time.monotonic() + timeout
@@ -268,7 +269,7 @@ def wait_for_guest_ip(
         if returncode is not None:
             raise RuntimeError(
                 f"Tart VM runner exited before boot (status {returncode}); "
-                "inspect cache/target/macos-tart-glowup/tart-run.log"
+                f"inspect {log}"
             )
         result = subprocess.run(
             tart_ip_command(vm_name, 5),
@@ -367,11 +368,7 @@ def main() -> int:
         "--image",
         default=os.environ.get("CAPSEM_TART_IMAGE", DEFAULT_IMAGE),
     )
-    parser.add_argument(
-        "--work-dir",
-        type=Path,
-        default=PROJECT_ROOT / "cache" / "target" / "macos-tart-glowup",
-    )
+    parser.add_argument("--work-dir", type=Path, required=True)
     args = parser.parse_args()
 
     validate_host()
@@ -460,7 +457,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             text=True,
         )
-        ip = wait_for_guest_ip(vm_name, runner)
+        ip = wait_for_guest_ip(vm_name, runner, tart_log)
         remote = shlex.join(
             [
                 "bash",
