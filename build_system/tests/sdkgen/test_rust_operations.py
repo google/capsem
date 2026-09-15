@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.sdkgen.operations import Route, read_operations
-from capsem_builder.sdkgen.rust_operations import parameter_name, render_operations, type_name, wire_value
+from capsem_builder.sdkgen.rust_operations import (
+    parameter_name,
+    render_operations,
+    type_name,
+    wire_value,
+)
 from capsem_builder.sdkgen.schema import Schema
 
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
