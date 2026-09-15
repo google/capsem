@@ -8,7 +8,7 @@ fn insert_ephemeral_instance(state: &ServiceState, id: &str) -> PathBuf {
     session_dir
 }
 
-async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json<serde_json::Value>, AppError> {
+async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json<PersistResponse>, AppError> {
     handle_persist(
         State(Arc::clone(state)),
         Path(id.to_string()),
