@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "714433a0a3317cff5fcd760fe560dc9fcdc8daa0f92cf92f82121b19243eaeaa"
-reason = "capsem-api now directly uses the already locked base64 crate to preserve non-UTF-8 command output; dependency versions are unchanged"
+sha256 = "875808e38eabcb5965163b20eb3b648f7a69f630c2843e230f4b8b4467f1b365"
+reason = "bounded MessagePack IPC removes tokio-unix-ipc and adds serde_bytes; syn and quote normalize the protocol schema hash while bincode remains benchmark-only"

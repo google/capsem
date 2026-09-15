@@ -14,7 +14,10 @@ pub enum ServiceToProcess {
     /// Ping the process to check if it's alive and responsive.
     Ping,
     /// Send input bytes to the guest PTY.
-    TerminalInput { data: Vec<u8> },
+    TerminalInput {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     /// Resize the guest PTY.
     TerminalResize { cols: u16, rows: u16 },
     /// Request the process to gracefully shut down the VM.
@@ -22,7 +25,12 @@ pub enum ServiceToProcess {
     /// Execute a command and wait for completion (structured).
     Exec { id: u64, command: String },
     /// Write a file to the guest.
-    WriteFile { id: u64, path: String, data: Vec<u8> },
+    WriteFile {
+        id: u64,
+        path: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     /// Read a file from the guest.
     ReadFile { id: u64, path: String },
     /// Record an explicit file import/export boundary through the process-owned
@@ -31,6 +39,7 @@ pub enum ServiceToProcess {
         id: u64,
         action: FileBoundaryAction,
         path: String,
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
         size: u64,
         mime_type: Option<String>,
@@ -62,13 +71,9 @@ pub enum ServiceToProcess {
     SnapshotStatus { id: u64 },
     /// Call an MCP tool via the aggregator subprocess.
     ///
-    /// `arguments_json` is the JSON-serialized argument object. We send it as
-    /// a `String`, not a `serde_json::Value`, because the IPC transport
-    /// (`tokio-unix-ipc` -> bincode) is not self-describing and bincode
-    /// refuses `serde_json::Value::deserialize` (which calls
-    /// `deserialize_any`). Without this, every `capsem_mcp_call` silently
-    /// dropped the message in capsem-process and the service hit its 60s
-    /// receive timeout.
+    /// `arguments_json` is the JSON-serialized argument object. Keeping the
+    /// MCP boundary as JSON preserves the protocol payload exactly and avoids
+    /// coupling internal IPC types to an MCP library's dynamic value shape.
     McpCallTool {
         id: u64,
         namespaced_name: String,
@@ -140,13 +145,18 @@ pub enum ProcessToService {
     /// Response to Ping.
     Pong,
     /// Output bytes from the guest PTY.
-    TerminalOutput { data: Vec<u8> },
+    TerminalOutput {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     /// State change notification (e.g. Booting -> Running).
     StateChanged { id: String, state: String, trigger: String },
     /// Result of an Exec command.
     ExecResult {
         id: u64,
+        #[serde(with = "serde_bytes")]
         stdout: Vec<u8>,
+        #[serde(with = "serde_bytes")]
         stderr: Vec<u8>,
         exit_code: i32,
         /// The guest wrote more output than the per-exec cap, so `stdout`
@@ -164,6 +174,7 @@ pub enum ProcessToService {
     /// Result of a ReadFile operation.
     ReadFileResult {
         id: u64,
+        #[serde(with = "crate::wire_bytes::option")]
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
@@ -171,6 +182,7 @@ pub enum ProcessToService {
     LogFileBoundaryResult {
         id: u64,
         success: bool,
+        #[serde(with = "crate::wire_bytes::option")]
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
@@ -192,9 +204,7 @@ pub enum ProcessToService {
     },
     /// Response to SnapshotStatus.
     SnapshotStatusResult { id: u64, status: SnapshotStatus },
-    /// Response to McpCallTool. `result_json` is a JSON-serialized
-    /// `serde_json::Value`, wrapped for the same bincode reason as
-    /// `McpCallTool::arguments_json`.
+    /// Response to McpCallTool. `result_json` preserves the MCP JSON value.
     McpCallToolResult {
         id: u64,
         result_json: Option<String>,
@@ -202,10 +212,14 @@ pub enum ProcessToService {
         error: Option<String>,
     },
     /// Warm suspend failed before the durable checkpoint marker was written.
-    /// Kept at the end so existing bincode variant indexes remain stable.
+    /// Named MessagePack variants remain stable independently of source order.
     SuspendFailed { id: String, error: String },
     /// Live merged stdout/stderr for an ExecStream job. Each chunk is at most 8 KiB.
-    ExecOutput { id: u64, data: Vec<u8> },
+    ExecOutput {
+        id: u64,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     PortPublished {
         id: u64,
         host_port: u16,
@@ -330,8 +344,7 @@ pub struct McpToolStatus {
     pub original_name: String,
     pub description: Option<String>,
     pub server_name: String,
-    /// Typed rather than `serde_json::Value`: this crosses bincode IPC, which
-    /// cannot decode a self-describing value.
+    /// Typed so SDK and UI consumers get one stable annotation contract.
     pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
 }
 

@@ -137,10 +137,9 @@ pub(crate) async fn handle_ipc_connection(
         return Ok(());
     };
 
-    // Serialize all IPC writes through a single channel to prevent concurrent
-    // sendmsg() interleaving that corrupts the data stream. tokio_unix_ipc's
-    // Sender::send() writes header + payload as two separate syscalls with no
-    // internal locking, so concurrent use from multiple tasks is unsafe.
+    // Funnel owner output through one bounded queue. The transport also locks
+    // each complete frame, while this queue supplies connection-level
+    // backpressure and one place to stop after a write failure.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
     let mut connection_tasks = tokio::task::JoinSet::new();
     connection_tasks.spawn(async move {
@@ -881,10 +880,9 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp = Arc::clone(&mcp_runtime);
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    // arguments travels as a JSON string because bincode
-                    // (tokio-unix-ipc's wire format) cannot round-trip
-                    // serde_json::Value through its non-self-describing
-                    // deserialize_any. See crates/capsem-proto/src/ipc.rs.
+                    // The MCP boundary remains JSON even though internal IPC
+                    // is MessagePack, so its dynamic result shape stays owned
+                    // by the MCP contract rather than the transport.
                     let arguments: serde_json::Value =
                         serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
                     let request = capsem_proto::mcp_contracts::JsonRpcRequest {

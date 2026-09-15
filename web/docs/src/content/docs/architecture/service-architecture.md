@@ -16,7 +16,7 @@ Seven binaries run on the host machine. They are installed to
 |--------|------|---------------|
 | **capsem** | CLI client | HTTP over UDS to service |
 | **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
-| **capsem-process** | Per-VM process | Spawned by service, bincode over UDS (after a MessagePack Hello) |
+| **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
 | **capsem-mcp-aggregator** | External MCP server connections | Length-prefixed MessagePack frames over stdin/stdout, spawned by capsem-process |
 | **capsem-mcp-builtin** | Built-in HTTP and file/snapshot tools | stdio MCP, spawned by the aggregator |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
@@ -64,7 +64,7 @@ graph TD
 
     SVC["capsem-service (daemon)"]
 
-    SVC -->|"bincode/UDS"| PROC["capsem-process (per-VM)"]
+    SVC -->|"bounded MessagePack/UDS"| PROC["capsem-process (per-VM)"]
 
     PROC -->|"MessagePack frames/stdio"| AGG["capsem-mcp-aggregator"]
     AGG -->|"HTTP/SSE"| EXT["External MCP servers"]
@@ -94,7 +94,7 @@ Each layer uses a different protocol optimized for its role:
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | configured gateway URL (Bearer token auth) |
-| Service -> process | bincode over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
+| Service -> process | 16 MiB bounded, big-endian length-prefixed MessagePack over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest | Binary frames over vsock | Ports 5000, 5001, 5002, 5004, 5005, 5006, 5007 |
 
 ### Vsock port assignments

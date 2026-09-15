@@ -90,11 +90,10 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
     }
 }
 
-/// Service to VM-owner IPC is bincode, which cannot decode a
-/// `serde_json::Value` (no `deserialize_any`). The owner fills tool
-/// annotations, so the typed field must survive the real codec, not only JSON.
+/// The owner fills tool annotations, so the typed field must survive the real
+/// MessagePack codec, not only the public JSON projection.
 #[test]
-fn mcp_tool_status_annotations_roundtrip_bincode() {
+fn mcp_tool_status_annotations_roundtrip_msgpack() {
     let msg = ProcessToService::McpToolsResult {
         id: 21,
         tools: vec![McpToolStatus {
@@ -111,8 +110,8 @@ fn mcp_tool_status_annotations_roundtrip_bincode() {
             }),
         }],
     };
-    let bytes = bincode::serialize(&msg).unwrap();
-    let decoded: ProcessToService = bincode::deserialize(&bytes).expect("annotations decode over bincode");
+    let bytes = rmp_serde::to_vec_named(&msg).unwrap();
+    let decoded: ProcessToService = rmp_serde::from_slice(&bytes).expect("annotations decode over MessagePack");
     let ProcessToService::McpToolsResult { tools, .. } = decoded else {
         panic!("wrong variant");
     };

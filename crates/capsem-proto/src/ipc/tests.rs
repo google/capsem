@@ -4,156 +4,7 @@ use super::*;
 
 mod correlation;
 
-// -----------------------------------------------------------------------
-// Production bincode wire contract
-// -----------------------------------------------------------------------
-
-fn assert_bincode_variant_index<T>(message: &T, expected: u32)
-where
-    T: serde::Serialize + for<'de> serde::Deserialize<'de>,
-{
-    let bytes = bincode::serialize(message).expect("serialize production IPC frame");
-    let actual = u32::from_le_bytes(bytes[..4].try_into().unwrap());
-    assert_eq!(actual, expected, "bincode enum index changed");
-
-    let decoded: T = bincode::deserialize(&bytes).expect("deserialize production IPC frame");
-    assert_eq!(
-        bincode::serialize(&decoded).unwrap(),
-        bytes,
-        "bincode payload did not round-trip exactly"
-    );
-}
-
-#[test]
-fn service_to_process_bincode_indices_and_roundtrips_are_stable() {
-    let messages = vec![
-        ServiceToProcess::Ping,
-        ServiceToProcess::TerminalInput { data: vec![1] },
-        ServiceToProcess::TerminalResize { cols: 80, rows: 24 },
-        ServiceToProcess::Shutdown,
-        ServiceToProcess::Exec {
-            id: 1,
-            command: "true".into(),
-        },
-        ServiceToProcess::WriteFile {
-            id: 2,
-            path: "/tmp/x".into(),
-            data: vec![2],
-        },
-        ServiceToProcess::ReadFile {
-            id: 3,
-            path: "/tmp/x".into(),
-        },
-        ServiceToProcess::LogFileBoundary {
-            id: 4,
-            action: FileBoundaryAction::Import,
-            path: "/tmp/x".into(),
-            data: vec![3],
-            size: 1,
-            mime_type: None,
-        },
-        ServiceToProcess::ReloadConfig,
-        ServiceToProcess::StartTerminalStream,
-        ServiceToProcess::StopTerminalStream,
-        ServiceToProcess::PrepareSnapshot,
-        ServiceToProcess::Unfreeze,
-        ServiceToProcess::Suspend {
-            checkpoint_path: "/tmp/checkpoint".into(),
-        },
-        ServiceToProcess::Resume,
-        ServiceToProcess::McpListServers { id: 5 },
-        ServiceToProcess::McpListTools { id: 6 },
-        ServiceToProcess::McpRefreshTools { id: 7 },
-        ServiceToProcess::SnapshotStatus { id: 8 },
-        ServiceToProcess::McpCallTool {
-            id: 9,
-            namespaced_name: "server__tool".into(),
-            arguments_json: "{}".into(),
-        },
-        ServiceToProcess::ExecStream {
-            id: 10,
-            command: "printf live".into(),
-        },
-    ];
-
-    for (expected, message) in messages.iter().enumerate() {
-        assert_bincode_variant_index(message, expected as u32);
-    }
-}
-
-#[test]
-fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
-    let messages = vec![
-        ProcessToService::Pong,
-        ProcessToService::TerminalOutput { data: vec![1] },
-        ProcessToService::StateChanged {
-            id: "vm".into(),
-            state: "Running".into(),
-            trigger: "booted".into(),
-        },
-        ProcessToService::ExecResult {
-            id: 1,
-            stdout: vec![2],
-            stderr: vec![],
-            exit_code: 0,
-            truncated: false,
-        },
-        ProcessToService::WriteFileResult {
-            id: 2,
-            success: true,
-            error: None,
-        },
-        ProcessToService::ReadFileResult {
-            id: 3,
-            data: Some(vec![3]),
-            error: None,
-        },
-        ProcessToService::LogFileBoundaryResult {
-            id: 4,
-            success: true,
-            data: None,
-            error: None,
-        },
-        ProcessToService::ShutdownRequested { id: "vm".into() },
-        ProcessToService::SuspendRequested { id: "vm".into() },
-        ProcessToService::SnapshotReady { id: "vm".into() },
-        ProcessToService::McpServersResult { id: 5, servers: vec![] },
-        ProcessToService::McpToolsResult { id: 6, tools: vec![] },
-        ProcessToService::McpRefreshResult {
-            id: 7,
-            success: true,
-            error: None,
-        },
-        ProcessToService::SnapshotStatusResult {
-            id: 8,
-            status: SnapshotStatus {
-                total: 0,
-                auto_count: 0,
-                manual_count: 0,
-                manual_available: 0,
-                snapshots: vec![],
-            },
-        },
-        ProcessToService::McpCallToolResult {
-            id: 9,
-            result_json: Some("{}".into()),
-            event_id: None,
-            error: None,
-        },
-        ProcessToService::SuspendFailed {
-            id: "vm".into(),
-            error: "failed".into(),
-        },
-        ProcessToService::ExecOutput {
-            id: 10,
-            data: vec![0, 255, 10],
-        },
-    ];
-
-    for (expected, message) in messages.iter().enumerate() {
-        assert_bincode_variant_index(message, expected as u32);
-    }
-}
+mod wire;
 
 // -----------------------------------------------------------------------
 // Supplemental JSON payload-shape roundtrips
@@ -330,14 +181,14 @@ fn state_changed_roundtrip() {
 }
 
 #[test]
-fn suspend_failed_bincode_roundtrip_preserves_exact_cause() {
+fn suspend_failed_msgpack_roundtrip_preserves_exact_cause() {
     let msg = ProcessToService::SuspendFailed {
         id: "vm-checkpoint".into(),
         error: "VirtioFS inode 41 is not reopenable".into(),
     };
 
-    let bytes = bincode::serialize(&msg).expect("serialize suspend failure");
-    let decoded: ProcessToService = bincode::deserialize(&bytes).expect("deserialize suspend failure");
+    let bytes = rmp_serde::to_vec_named(&msg).expect("serialize suspend failure");
+    let decoded: ProcessToService = rmp_serde::from_slice(&bytes).expect("deserialize suspend failure");
 
     match decoded {
         ProcessToService::SuspendFailed { id, error } => {
@@ -691,19 +542,15 @@ fn mcp_list_tools_roundtrip() {
 }
 
 #[test]
-fn mcp_call_tool_roundtrip_bincode() {
-    // Regression guard: bincode is the real IPC wire format (via
-    // tokio-unix-ipc). When `arguments` was a `serde_json::Value` this
-    // failed with "Bincode does not support deserialize_any". Keeping
-    // the field as a JSON string means the payload is transparent to
-    // bincode and capsem-process actually receives the message.
+fn mcp_call_tool_roundtrip_msgpack() {
+    // The MCP object remains exact JSON inside the MessagePack IPC envelope.
     let msg = ServiceToProcess::McpCallTool {
         id: 30,
         namespaced_name: "github__search".into(),
         arguments_json: serde_json::json!({"q": "rust"}).to_string(),
     };
-    let bytes = bincode::serialize(&msg).unwrap();
-    let msg2: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&msg).unwrap();
+    let msg2: ServiceToProcess = rmp_serde::from_slice(&bytes).unwrap();
     match msg2 {
         ServiceToProcess::McpCallTool {
             id,
@@ -720,15 +567,15 @@ fn mcp_call_tool_roundtrip_bincode() {
 }
 
 #[test]
-fn mcp_call_tool_result_roundtrip_bincode() {
+fn mcp_call_tool_result_roundtrip_msgpack() {
     let msg = ProcessToService::McpCallToolResult {
         id: 30,
         result_json: Some(serde_json::json!({"items": [1, 2]}).to_string()),
         event_id: Some("abcdef123456".to_string()),
         error: None,
     };
-    let bytes = bincode::serialize(&msg).unwrap();
-    let msg2: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&msg).unwrap();
+    let msg2: ProcessToService = rmp_serde::from_slice(&bytes).unwrap();
     match msg2 {
         ProcessToService::McpCallToolResult {
             id,
@@ -851,8 +698,8 @@ fn exec_result_truncation_flag_survives_the_wire() {
         truncated: true,
     };
 
-    let bytes = bincode::serialize(&msg).expect("serialize");
-    let back: ProcessToService = bincode::deserialize(&bytes).expect("deserialize");
+    let bytes = rmp_serde::to_vec_named(&msg).expect("serialize");
+    let back: ProcessToService = rmp_serde::from_slice(&bytes).expect("deserialize");
 
     match back {
         ProcessToService::ExecResult { truncated, stdout, .. } => {
@@ -887,8 +734,8 @@ fn link_attach_roundtrip() {
         prefix: 24,
         generation: 7,
     };
-    let bytes = bincode::serialize(&ask).unwrap();
-    let back: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&ask).unwrap();
+    let back: ServiceToProcess = rmp_serde::from_slice(&bytes).unwrap();
     assert!(matches!(
         back,
         ServiceToProcess::LinkAttach { id: 12, ref token, generation: 7, .. } if token == "00000000000000bb"
@@ -898,8 +745,8 @@ fn link_attach_roundtrip() {
         handoff_socket: "/run/instances/vm-handoff.sock".into(),
         error: None,
     };
-    let bytes = bincode::serialize(&answer).unwrap();
-    let back: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&answer).unwrap();
+    let back: ProcessToService = rmp_serde::from_slice(&bytes).unwrap();
     assert!(matches!(
         back,
         ProcessToService::LinkAttachResult {
@@ -918,8 +765,8 @@ fn container_pull_admission_roundtrips_without_credentials() {
         registry: "registry.example".into(),
         digest: Some("sha256:abcd".into()),
     };
-    let bytes = bincode::serialize(&request).unwrap();
-    let decoded: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&request).unwrap();
+    let decoded: ServiceToProcess = rmp_serde::from_slice(&bytes).unwrap();
     assert!(matches!(
         decoded,
         ServiceToProcess::AdmitContainerPull {
@@ -937,8 +784,8 @@ fn container_pull_admission_roundtrips_without_credentials() {
         error: Some("blocked by policy".into()),
         policy_refused: true,
     };
-    let bytes = bincode::serialize(&response).unwrap();
-    let decoded: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    let bytes = rmp_serde::to_vec_named(&response).unwrap();
+    let decoded: ProcessToService = rmp_serde::from_slice(&bytes).unwrap();
     assert!(matches!(
         decoded,
         ProcessToService::ContainerPullAdmission {
@@ -974,12 +821,12 @@ fn cable_requests_round_trip_with_the_address_the_guest_will_use() {
         },
         ServiceToProcess::UnplugCable { cable: 3 },
     ] {
-        let bytes = bincode::serialize(&message).unwrap();
-        let decoded: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(bincode::serialize(&decoded).unwrap(), bytes, "{message:?}");
+        let bytes = rmp_serde::to_vec_named(&message).unwrap();
+        let decoded: ServiceToProcess = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(rmp_serde::to_vec_named(&decoded).unwrap(), bytes, "{message:?}");
     }
     let reply = ProcessToService::LinkDetachResult { id: 2, error: None };
-    let bytes = bincode::serialize(&reply).unwrap();
-    let decoded: ProcessToService = bincode::deserialize(&bytes).unwrap();
-    assert_eq!(bincode::serialize(&decoded).unwrap(), bytes);
+    let bytes = rmp_serde::to_vec_named(&reply).unwrap();
+    let decoded: ProcessToService = rmp_serde::from_slice(&bytes).unwrap();
+    assert_eq!(rmp_serde::to_vec_named(&decoded).unwrap(), bytes);
 }

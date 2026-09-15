@@ -19,6 +19,7 @@ pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
 pub mod router;
+mod wire_bytes;
 
 pub use handshake::{HandshakeError, Hello};
 
@@ -40,19 +41,21 @@ pub const MAX_BOOT_ENV_VARS: usize = 128;
 /// Maximum number of files allowed during boot handshake.
 pub const MAX_BOOT_FILES: usize = 64;
 
-/// Wire-protocol version for the bincode IPC channel and the vsock
+/// Wire-protocol version for the MessagePack IPC channel and the vsock
 /// control bridge. Bumped on any breaking change to
 /// `{ServiceToProcess, ProcessToService, HostToGuest, GuestToHost}` or
 /// to the framing of either transport.
 ///
-/// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
-/// bincode channel and a typed Hello frame to the vsock control port.
+/// `1` since the Hello handshake (W3) added framing to every typed channel
+/// and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
 /// Version 2 adds router flow keys tied to the owner generation.
 /// Version 4 links VMs to a network switch and admits only TCP by handoff.
 /// Version 5 plugs one cable per network and removes the private TCP handoff.
 /// Version 6 names the namespace a publication connects to.
-pub const PROTOCOL_VERSION: u16 = 6;
+/// Version 7 replaces native-endian unbounded host IPC with bounded,
+/// big-endian length-prefixed MessagePack and binary byte payloads.
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -87,11 +90,10 @@ impl PublicationTarget {
     }
 }
 
-/// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
-/// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
-/// the middle without bumping PROTOCOL_VERSION" -- silent re-numbering of
-/// bincode variants -- which is exactly the bug that motivated this
-/// sprint.
+/// FNV-1a 64 hash of normalized protocol declarations (lib.rs + ipc.rs +
+/// handshake.rs + router.rs). Formatting, documentation and function bodies
+/// do not change it; wire-relevant Rust and serde tokens do. Computed by
+/// `build.rs`.
 pub const SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/schema_hash.txt"));
 
 /// Maximum cumulative file bytes allowed during boot handshake (10MB).
@@ -467,6 +469,7 @@ pub enum HostToGuest {
     FileWrite {
         id: u64,
         path: String,
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
         mode: u32,
     },
@@ -579,6 +582,7 @@ pub struct DnsRequest {
     /// the field decode it as 0 and still speak in lock-step.
     #[serde(default)]
     pub id: u32,
+    #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
     /// "udp" or "tcp" -- the source-side transport, NOT the path used
     /// to reach the upstream nameserver (which is always UDP today).
@@ -601,6 +605,7 @@ pub struct DnsResponse {
     /// The `DnsRequest::id` this answers.
     #[serde(default)]
     pub id: u32,
+    #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
     pub decision: String,
     pub rcode: u16,
@@ -675,7 +680,12 @@ pub enum GuestToHost {
     /// Telemetry: file deleted in guest.
     FileDeleted { path: String },
     /// Response to FileRead.
-    FileContent { id: u64, path: String, data: Vec<u8> },
+    FileContent {
+        id: u64,
+        path: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     /// Acknowledgment of a successful FileWrite or FileDelete.
     FileOpDone { id: u64 },
     /// Error encountered during a file operation or exec.
@@ -751,8 +761,7 @@ fn length_prefixed(payload: Vec<u8>, what: &str) -> Result<Vec<u8>> {
     Ok(frame)
 }
 
-/// Whether `msg` fits one control frame. rmp encodes a `Vec<u8>` as an array
-/// of one- or two-byte integers, so only encoding can answer this exactly.
+/// Whether `msg` fits one control frame, including its typed envelope.
 pub fn host_msg_fits_frame(msg: &HostToGuest) -> bool {
     encode_host_msg(msg).is_ok()
 }

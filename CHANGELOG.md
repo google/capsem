@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Service-to-VM-owner IPC now rejects frames above 16 MiB before allocation
+  and uses explicit big-endian MessagePack framing. Binary IPC, guest control,
+  and DNS payloads use MessagePack byte strings instead of expanded integers.
+
 - Container image pulls are admitted and audited by the VM's effective policy
   before the service opens a registry connection. Rules can match the registry,
   image reference, and pinned digest without exposing registry credentials to
