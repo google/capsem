@@ -6,12 +6,23 @@ or run host commands.
 
 ```python
 from capsem import Hypervisor, VM
-from capsem.models import HostLogSource, TimelineLayer
+from capsem.models import ContainerSpec, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
     network = await hv.networks.create("private")
-    vm = await hv.create("code", name="workspace", vcpu=4, memory="8G", networks=["private"])
+    vm = await hv.create(
+        "code",
+        name="workspace",
+        vcpu=4,
+        memory="8G",
+        networks=["private"],
+        container=ContainerSpec(image="docker.io/library/nginx:alpine", env={"MODE": "preview"}),
+    )
+    container = await vm.container.wait(interval=0.25)
+    exposure = await vm.exposures.create(
+        ExposureRequest(guest_port=80, host_port=0, target=ExposureTarget.CONTAINER)
+    )
     await hv.networks.logs(network.id, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
     print(result.stdout, result.exit_code)
@@ -66,8 +77,14 @@ Obtain fresh credentials and create a new client explicitly; never replay the
 restart call. The acknowledgement does not claim reconnection has completed.
 
 Private networks are available through `hv.networks`; resource mutations use
-immutable IDs, while VM creation accepts existing network names. Snapshot
-creation/restoration, mounts and port exposure remain pending.
+immutable IDs, while VM creation accepts existing network names. A typed
+`ContainerSpec` keeps container arguments/environment separate from VM options;
+registry credentials are transient runtime inputs. `vm.container.status()` and
+`wait()` are read-only, and cancelling a local wait does not delete the VM.
+`vm.exposures` manages policy-checked loopback listeners. Host port zero
+allocates a free port; specify `ExposureTarget.VM` or `CONTAINER` when namespace
+choice matters. Browser preview sessions are not yet in the HTTP contract.
+Snapshot creation/restoration and mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.panics()` and
 `hv.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`

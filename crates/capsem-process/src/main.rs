@@ -24,7 +24,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use job_store::JobStore;
-use mcp_runtime::McpRuntime;
+use mcp_runtime::{GuestExposureTools, McpRuntime};
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -562,13 +562,19 @@ async fn run_async_main_loop(
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.model_endpoints.clone())));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
-    let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
-        aggregator_client.clone(),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::clone(&mcp_inflight),
-        capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
-    ));
+    let mcp_endpoint = Arc::new(
+        capsem_core::net::mitm_proxy::McpEndpointState::new(
+            aggregator_client.clone(),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::clone(&mcp_inflight),
+            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+        )
+        .with_scoped_tools(Arc::new(GuestExposureTools::new(
+            Arc::clone(&job_store.publisher),
+            ctrl_tx.clone(),
+        ))),
+    );
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
         endpoint: Arc::clone(&mcp_endpoint),

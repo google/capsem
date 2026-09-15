@@ -36,11 +36,11 @@ client's secret expansion support for the token:
 stdout is reserved for MCP protocol messages. Startup diagnostics are sanitized
 and written to stderr.
 
-The server exposes typed tools for VM listing and creation, lifecycle actions,
-command execution, file listing and byte-preserving transfers, logs, history,
-timeline, statistics, snapshots, panics, and triage. VM tools take the immutable
-`vm_id` returned by `capsem_list` or `capsem_create`. File content can be passed
-as UTF-8 or base64.
+The server exposes typed tools for VM and OCI-container creation, lifecycle
+actions, container status/wait, exposure lifecycle, command execution, file
+listing and byte-preserving transfers, logs, history, timeline, statistics,
+snapshots, panics, and triage. VM tools take the immutable `vm_id` returned by
+`capsem_list` or `capsem_create`. File content can be passed as UTF-8 or base64.
 
 Network tools create, list, inspect and retire private networks, attach or detach
 VMs by immutable ID, and read cursor-based audit events with VM, connection,
@@ -55,6 +55,13 @@ low-level causes.
 The bearer token belongs only to this host process. Do not pass it to VM or
 guest MCP tools, container environment variables, or workload content. The
 server has no service-socket, database, VM-runtime, or virtualization access.
+
+Guest agents discover a separate `capsem__expose_port` tool through their
+existing framed relay. It requires an explicit `container` or `vm` target and
+accepts only guest/host port values. The per-VM owner supplies trusted identity
+and applies the existing MCP and exposure policy/audit rails; the guest receives
+no gateway credential. This scoped tool never passes through the generic MCP
+aggregator subprocess.
 
 `--timeout-ms` bounds the SDK's HTTP request. Tool parameters named
 `timeout_secs` bound guest execution. Cancellation closes the local request but

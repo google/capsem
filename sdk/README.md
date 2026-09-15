@@ -15,6 +15,8 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | VM inspection | `list`, `log`, `history`, `timeline`, `changes` |
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
+| VM container | `container.status`, `container.wait` |
+| VM exposures | `exposures.create/list/delete` |
 | VM copy | Python/Rust `from_vm` and `to_vm`; TypeScript `fromVm` and `toVm` |
 
 Rust accesses the nested resources as methods, for example
@@ -61,9 +63,16 @@ diagnostics, while `triage` can include one VM's session ledger. Profile MCP
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 
-Snapshot creation/restoration, mounts and port exposure remain deferred. Private
-network operations use authenticated gateway HTTP and immutable network IDs;
-VM creation accepts existing network names through its `networks` option.
+VM creation accepts a typed OCI `container` specification separately from the
+VM environment. `vm.container` reads setup/runtime state and provides a
+cancellable read-only wait. `vm.exposures` creates, lists, and revokes
+policy-checked host-loopback listeners for an explicit VM or container target;
+host port zero asks the owner to allocate a free port. Authenticated browser
+preview sessions are not part of the current gateway contract.
+
+Private network operations use authenticated gateway HTTP and immutable network
+IDs; VM creation accepts existing network names through its `networks` option.
+Snapshot creation/restoration and mounts remain deferred.
 
 The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package
 uses the TypeScript SDK to present these resources to AI agents over stdio. It

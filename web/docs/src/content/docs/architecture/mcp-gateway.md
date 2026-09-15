@@ -20,6 +20,7 @@ graph TB
 
     GUEST_AGENT["Guest AI agent"] -->|stdio| RELAY["capsem-mcp-server"]
     RELAY -->|framed vsock| ENDPOINT["VM-owned MCP endpoint"]
+    ENDPOINT -->|scoped owner tool| OWNER["VM owner Publisher"]
     ENDPOINT -->|policy and telemetry| AGG["capsem-mcp-aggregator"]
     AGG --> BUILTIN["capsem-mcp-builtin"]
     AGG --> EXTERNAL["External MCP servers"]
@@ -99,12 +100,14 @@ Two threads handle the relay:
 
 The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, normalizes the
 frame into the shared `SecurityEvent` rule rail, records protocol evidence, and
-routes allowed requests through the aggregator:
+routes external and builtin requests through the aggregator. Owner-scoped tools
+stay in the per-VM endpoint after the same MCP admission and logging:
 
 ```mermaid
 graph TD
     REQ["tools/call request"] --> PARSE["Extract tool name"]
     PARSE --> CHECK{"Tool category?"}
+    CHECK -->|"capsem__expose_port"| OWNER["Current VM owner Publisher<br/>exposure policy and audit"]
     CHECK -->|"local__fetch_http,<br/>local__grep_http,<br/>local__http_headers"| BUILTIN["capsem-mcp-builtin<br/>(HTTP tools)"]
     CHECK -->|"snapshots_*, file_*,<br/>dir_*"| FILE["capsem-mcp-builtin<br/>(VirtioFS file tools)"]
     CHECK -->|"server__tool<br/>(contains '__')"| EXT["capsem-mcp-aggregator<br/>(isolated subprocess)"]
@@ -115,6 +118,7 @@ graph TD
 
 | Category | Criteria | Handler | Examples |
 |----------|----------|---------|----------|
+| Owner scoped | Reserved `capsem__` tool registered by this VM owner | In-process owner capability; no gateway credential or aggregator handoff | `capsem__expose_port` |
 | Builtin HTTP | `local__fetch_http`, `local__grep_http`, `local__http_headers` | `capsem-mcp-builtin` | `local__fetch_http`, `local__grep_http`, `local__http_headers` |
 | File tools | Name starts with `snapshots_`, `file_`, `dir_` | `capsem-mcp-builtin` (VirtioFS only) | `file_read`, `dir_list`, `snapshots_create` |
 | External | Contains `__` separator (server namespace) | `AggregatorClient` routes to isolated subprocess | `github__list_repos`, `slack__send_message` |

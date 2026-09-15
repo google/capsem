@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Guest agents can publish a VM or container port through the scoped
+  `capsem__expose_port` MCP tool. The existing relay supplies trusted VM
+  identity; the tool accepts no gateway credential and keeps MCP plus exposure
+  policy and audit admission ahead of forwarding.
+
 - `GET /vms/{id}/stream` is one authenticated WebSocket (subprotocol
   `capsem.stream.v1`) for the VM terminal, streaming command execution and
   attached container workloads. Frames carry raw bytes on a channel byte and

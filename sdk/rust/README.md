@@ -5,7 +5,8 @@ explicitly; the SDK does not discover local services or run host commands.
 
 ```rust,no_run
 use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, Result, TriageOptions, VmSelector};
-use capsem_sdk::models::HostLogSource;
+use capsem_sdk::models::{ContainerSpec, ExposureRequest, ExposureTarget, HostLogSource};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 async fn example(url: &str, token: &str) -> Result<()> {
@@ -15,8 +16,18 @@ async fn example(url: &str, token: &str) -> Result<()> {
     let vm = hv.create("code", CreateOptions {
         name: Some("work".into()), vcpu: Some(4), memory: Some("8G".parse()?),
         networks: vec!["private".into()],
+        container: Some(ContainerSpec {
+            image: "docker.io/library/nginx:alpine".into(),
+            args: Vec::new(), env: BTreeMap::from([("MODE".into(), "preview".into())]),
+            registry: None, attach: false,
+        }),
         ..Default::default()
     }).await?;
+    vm.container().wait(Duration::from_millis(250)).await?;
+    let exposure = vm.exposures().create(ExposureRequest {
+        guest_port: 80, host_port: 0, target: ExposureTarget::Container,
+    }).await?;
+    println!("preview workload is on loopback port {}", exposure.host_port);
     hv.networks().logs(&network.id, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout, result.exit_code);
@@ -74,8 +85,14 @@ Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks()` provides typed create/list/inspect/delete, member attach/detach
-and cursor-based audit logs. Explicit snapshot creation/restoration, mounts and
-port exposure remain outside the implemented facade.
+and cursor-based audit logs. VM creation accepts a typed `ContainerSpec`; its
+environment is separate from VM environment and registry credentials are
+transient inputs. `vm.container().status()` and `wait()` only read status, so
+dropping a wait does not delete the VM. `vm.exposures()` creates, lists, and
+revokes policy-checked loopback listeners. Host port zero allocates a free port,
+and `ExposureTarget` selects the VM or container namespace. Authenticated
+browser preview sessions are not yet in the gateway contract. Explicit snapshot
+creation/restoration and mounts remain outside the facade.
 
 `hv.run(command, options)` executes once in a temporary VM. `hv.panics()`,
 `hv.triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.profiles()`

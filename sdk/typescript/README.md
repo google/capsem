@@ -4,13 +4,23 @@ Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
 ```ts
-import {Hypervisor, HostLogSource, VM} from '@capsem/sdk';
+import {ContainerState, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
   const status = await hv.info(); // health, version, profiles and updates
   const network = await hv.networks.create('private');
-  const vm = await hv.create('code', {name: 'work', vcpu: 4, memory: '8G', networks: ['private']});
+  const vm = await hv.create('code', {
+    name: 'work', vcpu: 4, memory: '8G', networks: ['private'],
+    container: {image: 'docker.io/library/nginx:alpine', env: {MODE: 'preview'}},
+  });
+  const container = await vm.container.wait({intervalMs: 250});
+  if (container.state === ContainerState.RUNNING) {
+    const exposure = await vm.exposures.create({
+      guest_port: 80, host_port: 0, target: ExposureTarget.CONTAINER,
+    });
+    console.log(exposure.host_port);
+  }
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   await vm.copy.toVm('/hello.txt', new TextEncoder().encode('hello'));
@@ -66,7 +76,13 @@ Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
-cursor-based audit logs. Snapshot create/restore, mounts and port exposure are pending.
+cursor-based audit logs. VM creation accepts a typed container object; its
+environment is separate from the VM environment and registry credentials are
+transient inputs. `vm.container.status()` and cancellable `wait()` poll read-only
+state. `vm.exposures.create/list/delete` manages policy-checked loopback
+listeners; host port zero allocates a free port and the target chooses the VM or
+container namespace. Browser preview sessions are not yet in the HTTP contract.
+Snapshot create/restore and mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.panics()`, `hv.triage()`
 and `hv.purge()` expose diagnostics and cleanup. `hv.profiles` provides typed
