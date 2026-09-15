@@ -1,6 +1,8 @@
 //! Run against the disposable stopped-workspace Ironbank fixture.
 
-use capsem_sdk::{models::FileChangeKind, Error, Hypervisor, PageOptions, VmSelector};
+use capsem_sdk::{
+    models::FileChangeKind, DiagnosticOptions, Error, Hypervisor, PageOptions, TriageOptions, VmSelector,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,6 +13,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(matches!(denied.list().await, Err(Error::Http { status: 401, .. })));
     let hv = Hypervisor::new(&url, &token)?;
     assert!(!hv.info().await?.gateway_version.is_empty());
+    let profiles = hv.profiles().list().await?;
+    let profile = profiles.profiles.first().expect("fixture profile");
+    assert_eq!(hv.profiles().mcp(&profile.id).info().await?.profile_id, profile.id);
+    hv.panics(DiagnosticOptions {
+        limit: Some(2),
+        ..Default::default()
+    })
+    .await?;
+    hv.triage(TriageOptions {
+        since: Some("1h".into()),
+        limit: Some(2),
+        ..Default::default()
+    })
+    .await?;
     assert!(hv.list().await?.sandboxes.iter().any(|vm| vm.id == id));
     let vm = hv.vm(VmSelector::Name("route-workspace".into()))?;
     assert!(vm
@@ -50,6 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .any(|entry| entry.name == "refused.txt"));
     assert_eq!(hv.vm(VmSelector::Id(id))?.snapshots().status().await?.total, 1);
-    println!("SDK_GATEWAY_ACCEPTANCE_OK");
+    println!("BRAAVOS_SDK_ACCEPTANCE_OK");
     Ok(())
 }

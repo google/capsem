@@ -18,6 +18,11 @@ const hv = new Hypervisor(url, token);
 const vm = new VM(url, token, {name: 'route-workspace'});
 try {
   assert((await hv.info()).gateway_version.length > 0);
+  const profiles = await hv.profiles.list();
+  assert(profiles.profiles.length > 0);
+  assert.equal((await hv.profiles.mcp(profiles.profiles[0].id).info()).profile_id, profiles.profiles[0].id);
+  assert(Array.isArray((await hv.panics({limit: 2})).panics));
+  assert.equal(typeof (await hv.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));
   const files = await vm.list('/');
   assert.equal(vm.id, id);
@@ -40,4 +45,4 @@ try {
 const direct = new VM(url, token, {id});
 try {assert.equal((await direct.snapshots.status()).total, 1);}
 finally {direct.close();}
-process.stdout.write('SDK_GATEWAY_ACCEPTANCE_OK\n');
+process.stdout.write('BRAAVOS_SDK_ACCEPTANCE_OK\n');

@@ -83,7 +83,8 @@ separate SDK coverage components.
 
 These Ironbank tests use disposable services and explicit gateway credentials:
 
-- `test_sdk_gateway.py`: all three SDKs, authentication, name resolution,
+- `test_braavos_sdk.py`: all three SDKs, authentication, profile/MCP and host
+  diagnostic resources, name resolution,
   stopped workspace files, snapshot changes and copy refusal.
 - `test_sdk_live.py`: Python and TypeScript create/exec, exact binary transfer,
   fork isolation, stop/start, pause/resume and deletion on Apple VZ.

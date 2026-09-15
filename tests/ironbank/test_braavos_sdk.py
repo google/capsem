@@ -1,4 +1,4 @@
-"""Use packaged SDKs through real gateway authentication and routes."""
+"""Braavos: use all packaged SDKs through real gateway authentication and routes."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.integration
 @pytest.mark.parametrize("language", ["python", "typescript", "rust"])
-def test_sdk_against_real_gateway_and_stopped_workspace(language: Literal["python", "typescript", "rust"]) -> None:
+def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
+    language: Literal["python", "typescript", "rust"],
+) -> None:
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
     project = ROOT / "sdk" / language
@@ -44,7 +46,7 @@ def test_sdk_against_real_gateway_and_stopped_workspace(language: Literal["pytho
             capture_output=True, text=True, timeout=60, check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "SDK_GATEWAY_ACCEPTANCE_OK" in result.stdout
+        assert "BRAAVOS_SDK_ACCEPTANCE_OK" in result.stdout
     finally:
         gateway.stop()
         service.stop()
