@@ -462,6 +462,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM creation no longer treats the legacy `image` request field as a clone source;
+  callers must use the typed `from` field explicitly.
+
 - Service shutdown drains pending replies before gracefully stopping its gateway,
   with bounded cleanup for stalled requests and unresponsive companion processes.
 

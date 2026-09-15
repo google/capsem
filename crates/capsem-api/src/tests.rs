@@ -316,6 +316,12 @@ fn omitted_resources_remain_profile_owned() {
 }
 
 #[test]
+fn image_is_not_a_clone_source_alias() {
+    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code", "image": "old-img"})).unwrap();
+    assert_eq!(request.from, None);
+}
+
+#[test]
 fn schema_exposes_closed_lifecycle_and_action_values() {
     let state = serde_json::to_value(VmLifecycleState::schema()).unwrap();
     let action = serde_json::to_value(VmAction::schema()).unwrap();
