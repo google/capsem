@@ -8,8 +8,9 @@ endpoints behave correctly under real inputs; that correctness is owned
 by:
 
   tests/capsem-service/    (every HTTP handler against the real service)
-  tests/capsem-mcp/        (every #[tool] in capsem-mcp against a live
-                            capsem-mcp -> capsem-service -> VM chain)
+  mcp/typescript/tests/    (the npm host against typed gateway fixtures)
+  tests/ironbank/test_mcp_profile_ledger.py
+                           (packed npm MCP -> gateway -> service -> VM chain)
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
 

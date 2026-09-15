@@ -33,6 +33,10 @@ class SdkConfig(Strict):
     build_output: str
 
 
+class NodePackageConfig(Strict):
+    project: str
+
+
 class ModulesConfig(Strict):
     build_chain_artifact_tests: tuple[str, ...]
     release_suites: tuple[str, ...]

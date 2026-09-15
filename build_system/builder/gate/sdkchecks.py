@@ -54,7 +54,28 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
                                "--specification", settings.specification, "--typescript-source", settings.source)),
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after)
-    return (*checks, built, generated)
+    mcp = config.mcp_typescript
+    mcp_root = config.path(mcp.project)
+    mcp_phase = plan.phase("fast.mcp.typescript")
+    mcp_tested = mcp_phase.add(
+        step(
+            "tests",
+            Run(["pnpm", "test"], cwd=mcp_root),
+            kind=Kind.UNIT_TEST,
+            speed=Speed.FAST,
+        ),
+        after=after,
+    )
+    mcp_built = mcp_phase.add(
+        step(
+            "build",
+            Run(["pnpm", "run", "build"], cwd=mcp_root),
+            kind=Kind.PACKAGE,
+            speed=Speed.FAST,
+        ),
+        after=after,
+    )
+    return (*checks, built, generated, mcp_tested, mcp_built)
 
 
 def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:

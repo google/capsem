@@ -263,11 +263,11 @@ component_management:
       paths:
         - crates/capsem/src/**
 
-    # MCP server: AI agent tool gateway over stdio JSON-RPC.
+    # npm MCP server: AI agent tool gateway over stdio JSON-RPC.
     - component_id: mcp-server
       name: MCP Server
       paths:
-        - crates/capsem-mcp/src/**
+        - mcp/typescript/src/**
 
     # MCP aggregator binary.
     - component_id: mcp-aggregator

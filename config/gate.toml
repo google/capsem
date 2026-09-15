@@ -885,16 +885,15 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 72
+invalid-argument-type = 68
 invalid-assignment = 6
 invalid-method-override = 1
 invalid-return-type = 4
 no-matching-overload = 6
-not-iterable = 2
-not-subscriptable = 143
-unresolved-attribute = 77
+not-subscriptable = 122
+unresolved-attribute = 71
 unresolved-import = 3
-unsupported-operator = 4
+unsupported-operator = 2
 unused-ignore-comment = 3
 unused-type-ignore-comment = 3
 
@@ -1524,8 +1523,8 @@ log = "cache/target/smoke.log"
 # parallel phase, for the same reason the full gate serializes them.
 [[smoke.groups]]
 name = "mcp"
-paths = ["tests/capsem-mcp/"]
-markers = "mcp"
+paths = ["tests/ironbank/test_mcp_profile_ledger.py"]
+markers = "integration"
 parallel = 0
 
 [[smoke.groups]]
@@ -1542,11 +1541,6 @@ name = "gateway"
 paths = ["tests/capsem-gateway/"]
 markers = "gateway"
 parallel = 0
-
-[[smoke.serial_groups]]
-name = "mcp-serial"
-paths = ["tests/capsem-mcp/test_state_transitions.py"]
-markers = "mcp"
 
 [[smoke.serial_groups]]
 name = "service-serial"
@@ -2224,7 +2218,6 @@ broad_ignores = [
 # Production has one service and one service-scoped save/restore lock. An
 # xdist worker per service does not reproduce that, so these run alone.
 host_snapshot_serial = [
-    "tests/capsem-mcp/test_state_transitions.py",
     "tests/capsem-service/test_svc_resume_paths.py",
     "tests/capsem-service/test_svc_suspend_corruption.py",
     "tests/capsem-service/test_svc_loop_device_after_resume.py",
@@ -2780,6 +2773,14 @@ The prepared runtime builds the host binaries before its first signature. The
 asset phase deliberately rebuilds them after profile materialization may run
 capsem-admin through Cargo and replace workspace outputs, then signs the exact
 post-materialization bytes used by the VM and package lanes.
+"""
+
+[[boundary.repeated_actions]]
+subject = "(in typescript) CI=true pnpm"
+reason = """
+The SDK and npm MCP are distinct package roots that share the basename
+`typescript`; the plan renderer shortens both working directories to that
+basename, so their separate dependency fetch and install actions render alike.
 """
 
 # ---------------------------------------------------------------------------
@@ -3602,3 +3603,6 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/typescript/src"
 tests = "sdk/typescript/tests"
 build_output = "cache/target/sdk/typescript"
+
+[mcp_typescript]
+project = "mcp/typescript"

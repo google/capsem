@@ -141,7 +141,7 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     )
 
     assert roots.installed is True
-    assert roots.binary("capsem-mcp") == bin_dir / "capsem-mcp"
+    assert roots.binary("capsem-service") == bin_dir / "capsem-service"
     assert roots.assets_dir == assets_dir
     assert roots.profiles_dir == profiles_dir
 
@@ -174,11 +174,11 @@ def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
     tmp_path: Path,
 ) -> None:
     bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
-    source_binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-mcp"
+    source_binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-service"
     if not source_binary.is_file():
-        pytest.skip("source MCP binary has not been built")
-    (bin_dir / "capsem-mcp").unlink()
-    (bin_dir / "capsem-mcp").symlink_to(source_binary)
+        pytest.skip("source service binary has not been built")
+    (bin_dir / "capsem-service").unlink()
+    (bin_dir / "capsem-service").symlink_to(source_binary)
 
     with pytest.raises(RuntimeError, match="source-built"):
         service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir, profiles_dir))
@@ -242,14 +242,16 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         "build_system/pyproject.toml",
         "--rootdir",
         ".",
-        "tests/capsem-mcp/test_winterfell_rw.py",
-        "tests/capsem-mcp/test_winterfell_exec.py",
+        "tests/capsem-installed/test_winterfell_gateway.py",
         "-q",
     ]
     child_environment = cast(dict[str, str], captured["env"])
     assert child_environment["CAPSEM_WINTERFELL_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_WINTERFELL_ASSETS_DIR"] == str(assets_dir)
     assert child_environment["CAPSEM_WINTERFELL_PROFILES_DIR"] == str(profiles_dir)
+    assert child_environment["CAPSEM_RELEASE_BIN_DIR"] == str(bin_dir)
+    assert child_environment["CAPSEM_ASSETS_DIR"] == str(assets_dir)
+    assert child_environment["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
     assert captured["cwd"] == PROJECT_ROOT
     report = json.loads(evidence.read_text())
     assert report == {

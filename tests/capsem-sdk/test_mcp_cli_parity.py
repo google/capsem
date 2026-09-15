@@ -25,73 +25,110 @@ CLI_SRC = REPO_ROOT / "crates" / "capsem" / "src" / "main.rs"
 
 MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     # Session lifecycle
-    "capsem_list":      "list",
-    "capsem_create":    "create",
-    "capsem_info":      "info",
-    "capsem_exec":      "exec",
-    "capsem_run":       "run",
-    "capsem_delete":    "delete",
-    "capsem_pause":     "suspend",
-    "capsem_resume":    "resume",
-    "capsem_persist":   "persist",
-    "capsem_purge":     "purge",
-    "capsem_fork":      "fork",
-    "capsem_vm_logs":   "logs",
-    "capsem_status":    "status",
-    "capsem_history":   "history",
-
+    "capsem_list": "list",
+    "capsem_create": "create",
+    "capsem_info": "info",
+    "capsem_exec": "exec",
+    "capsem_run": "run",
+    "capsem_delete": "delete",
+    "capsem_pause": "suspend",
+    "capsem_resume": "resume",
+    "capsem_persist": "persist",
+    "capsem_purge": "purge",
+    "capsem_fork": "fork",
+    "capsem_vm_logs": "logs",
+    "capsem_status": "status",
+    "capsem_history": "history",
     # MCP bridge
     "capsem_mcp_servers": "mcp servers",
-    "capsem_mcp_tools":   "mcp tools",
-    "capsem_mcp_call":    "mcp call",
+    "capsem_mcp_tools": "mcp tools",
+    "capsem_mcp_call": "mcp call",
     "capsem_mcp_refresh": "mcp refresh",
-
     # MCP-only: bridges / AI-caller helpers with no CLI analog
-    "capsem_read_file":       (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
-    "capsem_write_file":      (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
-    "capsem_panics":          (None, "host diagnostic triage tool; no CLI equivalent yet"),
-    "capsem_triage":          (None, "host diagnostic triage summary; no CLI equivalent yet"),
-    "capsem_host_logs":       (None, "host log reader for AI diagnostics; CLI users can inspect log files directly"),
-    "capsem_timeline":        (None, "session timeline query for AI diagnostics; CLI users can inspect session DB directly"),
-    "capsem_list_files":      (None, "structured file inventory for AI callers; CLI uses `capsem cp` or shell"),
-    "capsem_stats":           (None, "structured VM telemetry for AI callers"),
-    "capsem_stats_detail":    (None, "typed VM security and activity ledgers for AI callers"),
-    "capsem_snapshots":       (None, "filesystem snapshot inspection for AI callers"),
+    "capsem_read_file": (
+        None,
+        "file I/O reserved for AI callers; CLI users drop into `capsem shell`",
+    ),
+    "capsem_write_file": (
+        None,
+        "file I/O reserved for AI callers; CLI users drop into `capsem shell`",
+    ),
+    "capsem_panics": (None, "host diagnostic triage tool; no CLI equivalent yet"),
+    "capsem_triage": (None, "host diagnostic triage summary; no CLI equivalent yet"),
+    "capsem_host_logs": (
+        None,
+        "host log reader for AI diagnostics; CLI users can inspect log files directly",
+    ),
+    "capsem_timeline": (
+        None,
+        "session timeline query for AI diagnostics; CLI users can inspect session DB directly",
+    ),
+    "capsem_list_files": (
+        None,
+        "structured file inventory for AI callers; CLI uses `capsem cp` or shell",
+    ),
+    "capsem_stats": (None, "structured VM telemetry for AI callers"),
+    "capsem_stats_detail": (
+        None,
+        "typed VM security and activity ledgers for AI callers",
+    ),
+    "capsem_snapshots": (None, "filesystem snapshot inspection for AI callers"),
     "capsem_snapshot_status": (None, "filesystem snapshot readiness for AI callers"),
-    "capsem_changes":         (None, "filesystem change inspection for AI callers"),
-    "capsem_profiles":        (None, "typed profile catalog discovery for AI callers"),
-    "capsem_mcp_info":        (None, "typed profile MCP readiness for AI callers"),
-    "capsem_mcp_default":     (None, "profile MCP policy inspection for AI callers"),
-    "capsem_network_create":  (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_list":    (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_inspect": (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_delete":  (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_attach":  (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_detach":  (None, "typed private-network control has no CLI command yet"),
-    "capsem_network_logs":    (None, "typed network audit inspection has no CLI command yet"),
-
+    "capsem_changes": (None, "filesystem change inspection for AI callers"),
+    "capsem_profiles": (None, "typed profile catalog discovery for AI callers"),
+    "capsem_mcp_info": (None, "typed profile MCP readiness for AI callers"),
+    "capsem_mcp_default": (None, "profile MCP policy inspection for AI callers"),
+    "capsem_network_create": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_list": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_inspect": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_delete": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_attach": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_detach": (
+        None,
+        "typed private-network control has no CLI command yet",
+    ),
+    "capsem_network_logs": (
+        None,
+        "typed network audit inspection has no CLI command yet",
+    ),
     # Known drift -- possible cleanup candidate
-    "capsem_stop":            (None, "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing."),
-    "capsem_start":           (None, "VM lifecycle action; CLI start controls the host service"),
+    "capsem_stop": (
+        None,
+        "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing.",
+    ),
+    "capsem_start": (None, "VM lifecycle action; CLI start controls the host service"),
 }
 
 # CLI subcommands that legitimately have no MCP tool.
 CLI_ONLY: dict[str, str] = {
-    "shell":        "interactive terminal -- not an MCP concept",
-    "restart":      "reboot a persistent session; no MCP tool yet (drift candidate)",
-
+    "shell": "interactive terminal -- not an MCP concept",
+    "restart": "reboot a persistent session; no MCP tool yet (drift candidate)",
     # Service-level / install-time -- not session-scoped, not AI-callable
-    "update":       "self-updater",
-    "doctor":       "boots a VM and runs capsem-doctor; could be MCP later",
-    "completions":  "shell completions generator",
-    "uninstall":    "system uninstaller",
-    "install":      "registers the LaunchAgent / systemd unit",
-    "start":        "start the background service daemon",
-    "stop":         "stop the background service daemon",
+    "update": "self-updater",
+    "doctor": "boots a VM and runs capsem-doctor; could be MCP later",
+    "completions": "shell completions generator",
+    "uninstall": "system uninstaller",
+    "install": "registers the LaunchAgent / systemd unit",
+    "start": "start the background service daemon",
+    "stop": "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
-    "cp":           "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
-    "version":      "human CLI build metadata; MCP status reports typed gateway state",
-
+    "cp": "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
+    "version": "human CLI build metadata; MCP status reports typed gateway state",
     # MCP sub-namespace: not every entry has a tool
 }
 
@@ -114,7 +151,9 @@ def parse_mcp_tools() -> set[str]:
 
 def _parse_subcommand_variants(src: str, enum_name: str) -> list[str]:
     """Pull variant names (kebab-cased) from a `enum <Name> { ... }` block."""
-    m = re.search(rf"enum {enum_name} \{{(?P<body>.*?)^\}}", src, re.S | re.M)
+    m = re.search(
+        rf"enum {enum_name} \{{(?P<body>.*?)^\}}", src, re.DOTALL | re.MULTILINE
+    )
     assert m, f"could not find `enum {enum_name}` in capsem/src/main.rs"
     body = m.group("body")
     # Strip attributes and doc comments; find CamelCase variant identifiers at
@@ -175,9 +214,9 @@ def test_every_cli_subcommand_is_declared():
     """Every CLI subcommand must map from some MCP tool OR be in CLI_ONLY."""
     actual = parse_cli_subcommands()
 
-    declared_targets = {
-        v for v in MCP_TO_CLI.values() if isinstance(v, str)
-    } | set(CLI_ONLY)
+    declared_targets = {v for v in MCP_TO_CLI.values() if isinstance(v, str)} | set(
+        CLI_ONLY
+    )
 
     missing = actual - declared_targets
     stale = declared_targets - actual

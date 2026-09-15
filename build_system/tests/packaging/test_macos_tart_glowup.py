@@ -766,8 +766,7 @@ def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() ->
     module = _load_script(INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct")
 
     assert module.WINTERFELL_TESTS == (
-        "tests/capsem-mcp/test_winterfell_rw.py",
-        "tests/capsem-mcp/test_winterfell_exec.py",
+        "tests/capsem-installed/test_winterfell_gateway.py",
     )
 
 

@@ -30,7 +30,6 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 SERVICE_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
-MCP_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-mcp"
 
 pytestmark = pytest.mark.e2e
 
