@@ -15,7 +15,9 @@
     "check": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.browser.json",
     "build": "node tools/build.mjs",
     "prepack": "pnpm run build",
-    "test": "vitest run --coverage"
+    "pretest": "pnpm run build",
+    "test": "vitest run --coverage",
+    "test:unit": "vitest run --coverage"
   },
   "dependencies": {"zod": "4.6.1"},
   "devDependencies": {

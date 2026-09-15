@@ -43,12 +43,16 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     root = config.path(settings.project)
     checks = tuple(phase.add(step(
         label, Run(["pnpm", "run", command], cwd=root),
-        kind=Kind.UNIT_TEST if label == "tests" else Kind.LINT, speed=Speed.FAST,
-    ), after=after) for label, command in (("lint", "lint"), ("types", "check"), ("tests", "test")))
+        kind=Kind.LINT, speed=Speed.FAST,
+    ), after=after) for label, command in (("lint", "lint"), ("types", "check")))
     built = phase.add(step(
         "build", Run(["pnpm", "pack", "--pack-destination", str(config.path(settings.build_output))], cwd=root),
         kind=Kind.PACKAGE, speed=Speed.FAST,
     ), after=after)
+    tested = phase.add(step(
+        "tests", Run(["pnpm", "run", "test:unit"], cwd=root),
+        kind=Kind.UNIT_TEST, speed=Speed.FAST,
+    ), after=(built,))
     generated = phase.add(step(
         "generate", Run(uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
                                "--specification", settings.specification, "--typescript-source", settings.source)),
@@ -57,15 +61,6 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp = config.mcp_typescript
     mcp_root = config.path(mcp.project)
     mcp_phase = plan.phase("fast.mcp.typescript")
-    mcp_tested = mcp_phase.add(
-        step(
-            "tests",
-            Run(["pnpm", "test"], cwd=mcp_root),
-            kind=Kind.UNIT_TEST,
-            speed=Speed.FAST,
-        ),
-        after=(built,),
-    )
     mcp_built = mcp_phase.add(
         step(
             "build",
@@ -75,7 +70,16 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         ),
         after=(built,),
     )
-    return (*checks, built, generated, mcp_tested, mcp_built)
+    mcp_tested = mcp_phase.add(
+        step(
+            "tests",
+            Run(["pnpm", "run", "test:unit"], cwd=mcp_root),
+            kind=Kind.UNIT_TEST,
+            speed=Speed.FAST,
+        ),
+        after=(mcp_built,),
+    )
+    return (*checks, built, tested, generated, mcp_built, mcp_tested)
 
 
 def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:

@@ -34,10 +34,8 @@ it('a clean compiled package exposes the facade and typed operation subpaths', (
   const source = fileURLToPath(new URL('../', import.meta.url));
   const fixture = mkdtempSync(join(tmpdir(), 'capsem-sdk-exports-'));
   try {
-    for (const file of ['package.json', 'tsconfig.json', 'tools', 'src']) cpSync(join(source, file), join(fixture, file), {recursive: true});
+    for (const file of ['package.json', 'dist']) cpSync(join(source, file), join(fixture, file), {recursive: true});
     symlinkSync(join(source, 'node_modules'), join(fixture, 'node_modules'), 'dir');
-    expect(existsSync(join(fixture, 'dist'))).toBe(false);
-    execFileSync(process.execPath, [join(fixture, 'tools/build.mjs')], {timeout: 60_000, stdio: 'pipe'});
     writeFileSync(join(fixture, 'consumer.ts'), `
       import {Hypervisor, type HypervisorInfo} from '@capsem/sdk';
       import {getHypervisorInfo} from '@capsem/sdk/operations';

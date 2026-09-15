@@ -29,7 +29,10 @@ describe('packed-package', () => {
     const packageRoot = fileURLToPath(new URL('..', import.meta.url));
     const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-pack-'));
     fixtures.push(fixture);
-    execFileSync('pnpm', ['pack', '--pack-destination', fixture], {cwd: packageRoot, stdio: 'pipe'});
+    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', fixture], {
+      cwd: packageRoot,
+      stdio: 'pipe',
+    });
     const archive = readdirSync(fixture).find(name => name.endsWith('.tgz'));
     if (!archive) throw new Error('pnpm pack did not create a tarball');
     execFileSync('tar', ['-xzf', join(fixture, archive), '-C', fixture]);
