@@ -40,12 +40,15 @@ class Hypervisor(Client):
 
     async def create(self, profile: str, *, name: str = "", vcpu: int | None = None,
                      memory: str | int | None = None, env: dict[str, str] | None = None,
-                     networks: Sequence[str] = ()) -> VM:
+                     networks: Sequence[str] = (),
+                     container: models.ContainerSpec | None = None) -> VM:
         if vcpu is not None and vcpu < 1:
             raise ValueError("vcpu must be positive")
+        container_options = {"container": container} if container is not None else {}
         request = models.ProvisionRequest(
             profile_id=profile, name=name or None, persistent=bool(name),
             cpus=vcpu, ram_mb=_memory_mb(memory), env=env, networks=list(networks),
+            **container_options,
         )
         response = await api.create_vm(self._transport, body=request)
         return VM._bind(self._transport, id=response.id, name=response.name)

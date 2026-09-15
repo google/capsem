@@ -42,8 +42,13 @@ async fn spawn_from(binary: &std::path::Path, args: &[String]) -> Result<Confine
     let sender = Sender::new(parent.try_clone()?)?;
     let mut events = UnixStream::from_std(parent)?;
     let started = tokio::time::timeout(Duration::from_secs(5), async {
-        send_grant(&sender, Grant::Hello).await?;
-        match Event::read(&mut events).await.context("read router startup response")? {
+        send_grant(&sender, Grant::Hello)
+            .await
+            .context("router closed its startup channel before confirming confinement")?;
+        match Event::read(&mut events)
+            .await
+            .context("router closed its startup channel before confirming confinement")?
+        {
             Event::Ready => Ok(()),
             Event::ConfinementFailed => anyhow::bail!("router could not install its sandbox"),
             _ => anyhow::bail!("router did not confirm confinement"),

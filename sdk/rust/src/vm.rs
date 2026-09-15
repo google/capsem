@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::OnceCell;
 
 use crate::client::Client;
-use crate::resources::{Copy, Snapshots, Stats};
+use crate::resources::{Container, Copy, Exposures, Snapshots, Stats};
 use crate::{models, operations as api, Error, Result, VmSelector};
 
 mod queries;
@@ -23,6 +23,14 @@ pub struct VM {
 }
 
 impl VM {
+    pub fn container(&self) -> Container<'_> {
+        Container(self)
+    }
+
+    pub fn exposures(&self) -> Exposures<'_> {
+        Exposures(self)
+    }
+
     pub fn new(url: &str, token: &str, selector: VmSelector) -> Result<Self> {
         Self::bind(Client::new(url, token)?, selector)
     }

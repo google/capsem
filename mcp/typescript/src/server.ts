@@ -1,6 +1,7 @@
 import {Hypervisor} from '@capsem/sdk';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {Config} from './config.js';
+import {registerContainerTools} from './container-tools.js';
 import {registerHostTools} from './host-tools.js';
 import {registerNetworkTools} from './network-tools.js';
 import {registerProfileTools} from './profile-tools.js';
@@ -15,6 +16,7 @@ export function createServer(config: Config): McpServer {
     description: 'Read gateway, profile, update, and service status.',
   }, extra => toolCall(() => hypervisor.info({signal: extra.signal})));
   registerHostTools(server, hypervisor);
+  registerContainerTools(server, hypervisor);
   registerNetworkTools(server, hypervisor);
   registerProfileTools(server, hypervisor);
   return server;

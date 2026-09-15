@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
+import {ExposureTarget, HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
@@ -16,6 +16,7 @@ it('creates bound VM handles with profile defaults and shared lifetime', async (
     expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({
       profile_id: 'code', persistent: true, ram_mb: 8192, cpus: 4, networks: ['team'],
     });
+    expect(JSON.parse(received[0]?.body.toString() ?? '')).not.toHaveProperty('container');
     vm.close();
     await expect(vm.info()).rejects.toThrow('closed');
     const sibling = await hv.create('code');
@@ -147,6 +148,45 @@ it('uses a canonical ID without a name lookup and forwards cancellation', async 
       await expect(vm.exec('true', {signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
       await expect(vm.copy.fromVm('/copy.bin', {signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
       expect(received).toHaveLength(1);
+    } finally {vm.close();}
+  });
+});
+
+it('creates containers and exposes read-only status with cancellable wait', async () => {
+  const state = new FacadeGateway();
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret');
+    const vm = await hv.create('code', {container: {image: 'docker://busybox:latest', args: [], env: {}, attach: false}});
+    try {
+      expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
+        container: {image: 'docker://busybox:latest'},
+      });
+      expect((await vm.container.status()).image).toBe('docker://busybox:latest');
+      await expect(vm.container.wait({intervalMs: 0})).rejects.toThrow('intervalMs');
+      state.containerStates = ['pulling', 'running'];
+      expect((await vm.container.wait({intervalMs: 1})).state).toBe('running');
+      state.containerStates = ['pulling'];
+      const controller = new AbortController();
+      const waiting = vm.container.wait({intervalMs: 1000, signal: controller.signal});
+      setTimeout(() => controller.abort(), 10);
+      await expect(waiting).rejects.toMatchObject({name: 'AbortError'});
+      expect(received.filter(request => request.url.endsWith('/container')).every(request => request.method === 'GET')).toBe(true);
+    } finally {vm.close(); hv.close();}
+  });
+});
+
+it('maps typed exposure lifecycle through VM-scoped routes', async () => {
+  const state = new FacadeGateway();
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const vm = new VM(url, 'secret', {id: 'vm-0'});
+    try {
+      const created = await vm.exposures.create({target: ExposureTarget.CONTAINER, guest_port: 8080, host_port: 0});
+      await vm.exposures.list();
+      await vm.exposures.delete(created.id);
+      expect(received.map(request => [request.method, request.url])).toEqual([
+        ['POST', '/vms/vm-0/exposures'], ['GET', '/vms/vm-0/exposures'],
+        ['DELETE', `/vms/vm-0/exposures/${created.id}`],
+      ]);
     } finally {vm.close();}
   });
 });

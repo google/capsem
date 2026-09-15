@@ -65,6 +65,10 @@ pub async fn gateway() -> Server {
             "/vms/vm-1/snapshots/status" => "getVmSnapshotsStatus",
             "/vms/vm-1/stats/summary" => "getVmStatsSummary",
             "/vms/vm-1/stats/detail" => "getVmStatsDetail",
+            "/vms/vm-1/container" => "getVmContainer",
+            "/vms/vm-1/exposures" if parts.method == "POST" => "createVmExposure",
+            "/vms/vm-1/exposures" => "listVmExposures",
+            "/vms/vm-1/exposures/vm-1" => "deleteVmExposure",
             "/vms/vm-1/files/content" if parts.method == "POST" => "uploadVmFile",
             "/vms/vm-1/files/content" => return Response::new(Body::from(vec![0, 255, 13, 10])),
             _ => {

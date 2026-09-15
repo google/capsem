@@ -1,4 +1,4 @@
-import {HostLogSource, TimelineLayer, type Hypervisor, type VM} from '@capsem/sdk';
+import {HostLogSource, TimelineLayer, type ContainerSpec, type Hypervisor, type VM} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -14,6 +14,16 @@ const logFilters = {
   tail: positiveInt.optional(),
   max_bytes: positiveInt.optional(),
 };
+const registry = z.object({
+  username: z.string().optional(), password: z.string().optional(), ca_pem: z.string().optional(),
+});
+const container = z.object({
+  image: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  registry: registry.optional(),
+  attach: z.boolean().optional(),
+});
 
 function vm(hypervisor: Hypervisor, id: string): VM {
   return hypervisor.vm({id});
@@ -26,6 +36,15 @@ function bytes(content: string, encoding: 'utf8' | 'base64'): Uint8Array {
 function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], undefined>} {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as {
     [K in keyof T]?: Exclude<T[K], undefined>
+  };
+}
+
+function containerSpec(input: z.infer<typeof container>): ContainerSpec {
+  const {image, registry: access, ...options} = input;
+  return {
+    image,
+    ...defined(options),
+    ...(access === undefined ? {} : {registry: defined(access)}),
   };
 }
 
@@ -43,9 +62,13 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       memory: z.union([positiveInt, z.string().regex(/^[1-9][0-9]*[MG]$/i)]).optional(),
       env: z.record(z.string(), z.string()).optional(),
       networks: z.array(z.string().min(1)).optional(),
+      container: container.optional(),
     },
-  }, ({profile, ...options}) => toolCall(async () => {
-    const created = await hypervisor.create(profile, defined(options));
+  }, ({profile, container: workload, ...options}) => toolCall(async () => {
+    const created = await hypervisor.create(profile, {
+      ...defined(options),
+      ...(workload === undefined ? {} : {container: containerSpec(workload)}),
+    });
     return {id: created.id, name: created.name};
   }));
 

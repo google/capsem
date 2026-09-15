@@ -18,6 +18,7 @@ pub struct CreateOptions {
     pub memory: Option<Memory>,
     pub env: Option<HashMap<String, String>>,
     pub networks: Vec<String>,
+    pub container: Option<crate::models::ContainerSpec>,
 }
 
 #[derive(Debug, Clone, Default)]

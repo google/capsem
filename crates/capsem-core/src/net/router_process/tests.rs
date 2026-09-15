@@ -78,9 +78,10 @@ async fn a_router_that_exits_before_confirming_is_refused() {
         .err()
         .expect("a vanished router is refused");
     assert!(
-        format!("{error:#}").contains("read router startup response"),
+        format!("{error:#}").contains("closed its startup channel before confirming confinement"),
         "{error:#}"
     );
+    assert_eq!(probe(stand_in_pid(dir.path())).unwrap(), ProcessState::Gone);
 }
 
 #[tokio::test]

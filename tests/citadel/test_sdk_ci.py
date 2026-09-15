@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RATIONALE = "SDK tests need cached dependencies before the sandbox and measured CI/Codecov ownership."
 PYTHON_PREWARM = (
     "python3 build_system/scripts/ci/run-bounded-command.py "
-    "--timeout-seconds 300 -- uv sync --project sdk/python --frozen"
+    "--timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project"
 )
 
 

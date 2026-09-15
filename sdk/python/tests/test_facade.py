@@ -131,6 +131,44 @@ def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
     asyncio.run(run())
 
 
+def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
+    async def run() -> None:
+        spec = models.ContainerSpec(image="docker://busybox:latest", args=[], env={}, attach=False)
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            vm = await hv.create("code", container=spec)
+            assert json.loads(state.requests[-1][2])["container"]["image"] == spec.image
+            assert (await vm.container.status()).image == spec.image
+            state.container_states = ["pulling", "running"]
+            assert (await vm.container.wait(interval=0.001)).state is models.ContainerState.RUNNING
+            state.container_states = ["pulling"]
+            task = asyncio.create_task(vm.container.wait(interval=0.01))
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
+            with pytest.raises(ValueError, match="interval"):
+                await vm.container.wait(interval=0)
+    asyncio.run(run())
+
+
+def test_exposure_resource_uses_typed_vm_scoped_routes() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
+            created = await vm.exposures.create(models.ExposureRequest(
+                target=models.ExposureTarget.CONTAINER, guest_port=8080, host_port=0,
+            ))
+            assert isinstance(created, models.ExposureInfo)
+            assert isinstance(await vm.exposures.list(), models.ExposureListResponse)
+            assert isinstance(await vm.exposures.delete(created.id), models.VmActionResponse)
+            assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
+                ("POST", "/vms/vm-0/exposures"),
+                ("GET", "/vms/vm-0/exposures"),
+                ("DELETE", f"/vms/vm-0/exposures/{created.id}"),
+            ]
+    asyncio.run(run())
+
+
 def test_http_deadline_bounds_execution_without_replaying_it() -> None:
     async def run() -> None:
         async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:

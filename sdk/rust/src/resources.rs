@@ -1,9 +1,13 @@
 use crate::client::Client;
-use crate::{models, operations as api, NetworkLogOptions, Result, VM};
+use std::time::Duration;
+
+use crate::{models, operations as api, Error, NetworkLogOptions, Result, VM};
 
 pub struct Copy<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
+pub struct Container<'a>(pub(crate) &'a VM);
+pub struct Exposures<'a>(pub(crate) &'a VM);
 pub struct Networks<'a>(pub(crate) &'a Client);
 pub struct Profiles<'a>(pub(crate) &'a Client);
 pub struct ProfileMcp<'a> {
@@ -71,6 +75,72 @@ impl Stats<'_> {
             &self.0.client.transport,
             &api::GetVmStatsDetailParams {
                 id: self.0.resolve().await?,
+            },
+            self.0.client.options,
+        )
+        .await
+    }
+}
+
+impl Container<'_> {
+    pub async fn status(&self) -> Result<models::ContainerStatusResponse> {
+        api::get_vm_container(
+            &self.0.client.transport,
+            &api::GetVmContainerParams {
+                id: self.0.resolve().await?,
+            },
+            self.0.client.options,
+        )
+        .await
+    }
+
+    pub async fn wait(&self, interval: Duration) -> Result<models::ContainerStatusResponse> {
+        if interval.is_zero() {
+            return Err(Error::InvalidInput("container wait interval must be positive"));
+        }
+        loop {
+            let status = self.status().await?;
+            if !matches!(
+                status.state,
+                models::ContainerState::Pulling | models::ContainerState::Staging | models::ContainerState::Starting
+            ) {
+                return Ok(status);
+            }
+            tokio::time::sleep(interval).await;
+        }
+    }
+}
+
+impl Exposures<'_> {
+    pub async fn create(&self, request: models::ExposureRequest) -> Result<models::ExposureInfo> {
+        api::create_vm_exposure(
+            &self.0.client.transport,
+            &api::CreateVmExposureParams {
+                id: self.0.resolve().await?,
+                body: request,
+            },
+            self.0.client.options,
+        )
+        .await
+    }
+
+    pub async fn list(&self) -> Result<models::ExposureListResponse> {
+        api::list_vm_exposures(
+            &self.0.client.transport,
+            &api::ListVmExposuresParams {
+                id: self.0.resolve().await?,
+            },
+            self.0.client.options,
+        )
+        .await
+    }
+
+    pub async fn delete(&self, exposure_id: &str) -> Result<models::VmActionResponse> {
+        api::delete_vm_exposure(
+            &self.0.client.transport,
+            &api::DeleteVmExposureParams {
+                id: self.0.resolve().await?,
+                exposure_id: exposure_id.into(),
             },
             self.0.client.options,
         )

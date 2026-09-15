@@ -61,7 +61,7 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | --- | --- | --- |
 | `capsem_status` | — | Read gateway and service status. |
 | `capsem_list` | — | List VMs and their typed lifecycle state. |
-| `capsem_create` | `profile`, `name?`, `vcpu?`, `memory?`, `env?`, `networks?` | Create a detached VM. A name makes it persistent. |
+| `capsem_create` | `profile`, `name?`, `vcpu?`, `memory?`, `env?`, `networks?`, `container?` | Create a detached VM, optionally with a typed OCI workload. A name makes it persistent. |
 | `capsem_info` | `vm_id` | Read VM identity, resources, network, files, and telemetry. |
 | `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
 | `capsem_run` | `command`, `profile?`, `vcpu?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
@@ -74,6 +74,9 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | `capsem_list_files` | `vm_id`, `path?`, `depth?` | List workspace files. |
 | `capsem_read_file` | `vm_id`, `path`, `encoding?` | Read UTF-8 or base64 file content. |
 | `capsem_write_file` | `vm_id`, `path`, `content`, `encoding?` | Write UTF-8 or base64 bytes. |
+| `capsem_container_status` / `capsem_container_wait` | `vm_id`, `interval_ms?` | Read or wait for service-owned workload state. |
+| `capsem_exposure_create` | `vm_id`, `guest_port`, `target?`, `host_port?` | Open a policy-checked host-loopback listener. |
+| `capsem_exposure_list` / `capsem_exposure_delete` | `vm_id`, `exposure_id?` | Inspect or revoke the VM owner's listeners. |
 
 File transfers use the gateway's existing file API and require a running VM's
 security ledger. Cancelling a local wait or request never deletes a VM.
@@ -119,6 +122,13 @@ Profile MCP calls still travel through the running VM's guest relay, policy
 engine, aggregator, and logger. Listing tools does not create phantom call rows.
 Allowed and denied calls retain trusted VM, trace, server, tool, decision, byte,
 and security-rule correlation in the existing ledgers.
+
+A guest agent also discovers `capsem__expose_port` from its VM-owned endpoint.
+It must select the `container` or `vm` namespace explicitly and may request host
+port zero for allocation. Trusted VM identity comes from the existing relay;
+the schema accepts no VM ID, gateway token, or control socket. MCP admission and
+tool-call logging wrap the request, then the VM owner's existing exposure policy
+and network audit run before any listener can forward traffic.
 
 `capsem_pause` and `capsem_status` are the canonical tool names. The npm server
 does not expose the retired `capsem_suspend`, `capsem_version`, or duplicate

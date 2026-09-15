@@ -9,6 +9,8 @@ from pydantic import StrictStr, TypeAdapter
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._container import Container
+from ._exposures import Exposures
 from ._resources import Copy, Snapshots, Stats
 from ._transport import Transport
 
@@ -27,6 +29,8 @@ class VM(Client):
         self.copy = Copy(self)
         self.snapshots = Snapshots(self)
         self.stats = Stats(self)
+        self.container = Container(self)
+        self.exposures = Exposures(self)
 
     @classmethod
     def _bind(cls, transport: Transport, *, id: str, name: str | None = None) -> VM:

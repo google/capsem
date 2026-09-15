@@ -13,7 +13,7 @@ build-backend = "hatchling.build"
 packages = ["capsem"]
 
 [dependency-groups]
-dev = ["pytest>=9", "pytest-cov>=6", "ruff>=0.15.16", "ty>=0.0.46", "build>=1.2"]
+dev = ["pytest>=9", "pytest-cov>=6", "ruff>=0.15.16", "ty>=0.0.46", "build>=1.2", "hatchling==1.29.0", "editables==0.5"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

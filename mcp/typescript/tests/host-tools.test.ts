@@ -94,6 +94,13 @@ describe('host-tools', () => {
           auto_count: 0, manual_available: 0, manual_count: 0, snapshots: [], total: 0,
         },
         'GET /vms/vm-1/changes': {changes: [], checkpoint: 'cp-1', has_more: false, total: 0},
+        'GET /vms/vm-1/container': {image: 'docker://busybox:latest', state: 'running'},
+        'POST /vms/vm-1/exposures': {id: '49152', host_port: 49152, guest_port: 8080, target: 'container'},
+        'GET /vms/vm-1/exposures': {
+          owner_generation: '7',
+          exposures: [{id: '49152', host_port: 49152, guest_port: 8080, target: 'container'}],
+        },
+        'DELETE /vms/vm-1/exposures/49152': {success: true},
       };
       const fixture = fixtures[`${record.method} ${path}`];
       if (fixture) return json(response, fixture);
@@ -126,6 +133,8 @@ describe('host-tools', () => {
     expect(names).toContain('capsem_pause');
     expect(names).toContain('capsem_host_logs');
     expect(names).toContain('capsem_stats_detail');
+    expect(names).toContain('capsem_container_status');
+    expect(names).toContain('capsem_exposure_create');
     expect(names).not.toContain('capsem_suspend');
     expect(names).not.toContain('capsem_version');
     expect(names).not.toContain('capsem_service_logs');
@@ -154,6 +163,44 @@ describe('host-tools', () => {
       profile_id: 'code', name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
       env: {API_KEY: 'guest-secret'}, networks: ['net-1'],
     });
+  });
+
+  it('creates and inspects containers and manages scoped exposures through SDK resources', async () => {
+    const created = await client.callTool({
+      name: 'capsem_create',
+      arguments: {
+        profile: 'code',
+        container: {
+          image: 'registry.example/app:latest', args: ['serve'], env: {APP_SECRET: 'container-secret'},
+          registry: {username: 'robot', password: 'registry-secret'}, attach: false,
+        },
+      },
+    });
+    expect(structured(created)).toEqual({id: 'vm-1', name: 'demo'});
+    expect(JSON.stringify(created)).not.toContain('container-secret');
+    expect(JSON.stringify(created)).not.toContain('registry-secret');
+    expect(JSON.parse(requests.at(-1)?.body.toString() ?? '').container).toMatchObject({
+      image: 'registry.example/app:latest', args: ['serve'], env: {APP_SECRET: 'container-secret'},
+      registry: {username: 'robot', password: 'registry-secret'}, attach: false,
+    });
+
+    expect(structured(await client.callTool({name: 'capsem_container_status', arguments: {vm_id: 'vm-1'}})))
+      .toEqual({image: 'docker://busybox:latest', state: 'running'});
+    expect(structured(await client.callTool({
+      name: 'capsem_container_wait', arguments: {vm_id: 'vm-1', interval_ms: 1},
+    }))).toEqual({image: 'docker://busybox:latest', state: 'running'});
+    expect(structured(await client.callTool({
+      name: 'capsem_exposure_create', arguments: {vm_id: 'vm-1', target: 'container', guest_port: 8080, host_port: 0},
+    }))).toMatchObject({id: '49152', host_port: 49152});
+    expect(structured(await client.callTool({name: 'capsem_exposure_list', arguments: {vm_id: 'vm-1'}})))
+      .toMatchObject({owner_generation: '7'});
+    expect(structured(await client.callTool({
+      name: 'capsem_exposure_delete', arguments: {vm_id: 'vm-1', exposure_id: '49152'},
+    }))).toEqual({success: true});
+    expect(requests.slice(-5).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
+      'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
+      'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
+    ]);
   });
 
   it('transfers text and binary file content through the SDK byte APIs', async () => {

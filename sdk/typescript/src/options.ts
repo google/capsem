@@ -1,9 +1,10 @@
-import type {HistoryLayerFilter, HostLogSource, TimelineLayer} from './models/index.js';
+import type {ContainerSpec, HistoryLayerFilter, HostLogSource, TimelineLayer} from './models/index.js';
 import type {CallOptions} from './transport.js';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
 export interface CreateOptions extends CallOptions {
   name?: string; vcpu?: number; memory?: string | number; env?: Record<string, string>; networks?: string[];
+  container?: ContainerSpec;
 }
 export interface RunOptions extends CallOptions {
   profile?: string; timeout_secs?: number; vcpu?: number; memory?: string | number; env?: Record<string, string>;

@@ -1,5 +1,5 @@
 import * as api from './operations/index.js';
-import type * as models from './models/index.js';
+import * as models from './models/index.js';
 import type {NetworkLogOptions} from './options.js';
 import type {CallOptions, Transport} from './transport.js';
 
@@ -36,6 +36,45 @@ export class Stats extends Resource {
   async details(options: CallOptions = {}): Promise<models.VmStatsDetailResponse> {
     const {transport, id} = await this.context(options);
     return api.getVmStatsDetail(transport, {id}, options);
+  }
+}
+export class Container extends Resource {
+  async status(options: CallOptions = {}): Promise<models.ContainerStatusResponse> {
+    const {transport, id} = await this.context(options);
+    return api.getVmContainer(transport, {id}, options);
+  }
+  async wait(options: CallOptions & {intervalMs?: number} = {}): Promise<models.ContainerStatusResponse> {
+    const interval = options.intervalMs ?? 100;
+    if (!Number.isInteger(interval) || interval <= 0) throw new TypeError('intervalMs must be a positive integer');
+    for (;;) {
+      const status = await this.status(options);
+      if (![models.ContainerState.PULLING, models.ContainerState.STAGING, models.ContainerState.STARTING]
+        .includes(status.state)) return status;
+      options.signal?.throwIfAborted();
+      await new Promise<void>((resolve, reject) => {
+        const aborted = (): void => {clearTimeout(timer); reject(new DOMException('Container wait cancelled', 'AbortError'));};
+        const timer = setTimeout(() => {
+          options.signal?.removeEventListener('abort', aborted);
+          resolve();
+        }, interval);
+        options.signal?.addEventListener('abort', aborted, {once: true});
+      });
+    }
+  }
+}
+
+export class Exposures extends Resource {
+  async create(request: models.ExposureRequest, options: CallOptions = {}): Promise<models.ExposureInfo> {
+    const {transport, id} = await this.context(options);
+    return api.createVmExposure(transport, {id, body: request}, options);
+  }
+  async list(options: CallOptions = {}): Promise<models.ExposureListResponse> {
+    const {transport, id} = await this.context(options);
+    return api.listVmExposures(transport, {id}, options);
+  }
+  async delete(exposureId: string, options: CallOptions = {}): Promise<models.VmActionResponse> {
+    const {transport, id} = await this.context(options);
+    return api.deleteVmExposure(transport, {id, exposure_id: exposureId}, options);
   }
 }
 

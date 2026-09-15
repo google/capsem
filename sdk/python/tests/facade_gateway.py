@@ -23,6 +23,7 @@ class GatewayState:
     exec_entered: asyncio.Event = field(default_factory=asyncio.Event)
     exec_release: asyncio.Event = field(default_factory=asyncio.Event)
     wait_for_exec: bool = False
+    container_states: list[str] = field(default_factory=lambda: ["running"])
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -51,6 +52,12 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
             state.exec_entered.set()
             if state.wait_for_exec:
                 await state.exec_release.wait()
+        if request.path.endswith("/container"):
+            state_name = state.container_states.pop(0) if len(state.container_states) > 1 else state.container_states[0]
+            return web.json_response(response_model(
+                "ContainerStatusResponse", image="docker://busybox:latest",
+                state=state_name,
+            ))
         if request.path.endswith("/files/content"):
             path = request.query["path"]
             if request.method == "GET":

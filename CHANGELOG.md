@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Guest agents can publish a VM or container port through the scoped
+  `capsem__expose_port` MCP tool. The existing relay supplies trusted VM
+  identity; the tool accepts no gateway credential and keeps MCP plus exposure
+  policy and audit admission ahead of forwarding.
+
 - `GET /vms/{id}/stream` is one authenticated WebSocket (subprotocol
   `capsem.stream.v1`) for the VM terminal, streaming command execution and
   attached container workloads. Frames carry raw bytes on a channel byte and
@@ -38,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
   audit tools through the typed SDK network resource.
 
+- `@capsem/mcp` creates typed OCI workloads, reads or waits for container
+  status, and manages policy-checked VM/container port exposures through the
+  TypeScript SDK and authenticated gateway HTTP.
+
 - `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
   tool names and SDK-aligned parameters, plus redacted machine-readable errors.
 
@@ -51,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python, TypeScript and Rust SDK network resources provide typed create, list,
   inspect, delete, member attach/detach and cursor-based audit operations over
   authenticated gateway HTTP. VM creation accepts existing network names.
+
+- Python, TypeScript and Rust VM resources expose typed container status and
+  cancellable read-only waits, plus scoped exposure creation, listing and
+  revocation through authenticated gateway HTTP.
 
 - SDK detailed statistics expose shared model/MCP interaction objects with typed
   messages, content blocks, calls and results, structured tool JSON, stable ledger
