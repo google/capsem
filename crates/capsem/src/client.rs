@@ -984,7 +984,9 @@ impl UdsClient {
 // ---------------------------------------------------------------------------
 
 mod networks;
+mod stream;
 pub use networks::*;
+pub use stream::StreamEvent;
 
 #[cfg(test)]
 pub(crate) mod tests;

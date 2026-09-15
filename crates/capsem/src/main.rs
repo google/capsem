@@ -1943,8 +1943,7 @@ async fn main() -> Result<()> {
             unreachable!("handled before UdsClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { bundle }) => {
-            use capsem_foundation::ipc_channel::channel_from_std;
-            use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+            use client::StreamEvent;
 
             // Log file: ~/.capsem/run/doctor-latest.log (always overwritten)
             let log_path = run_dir.join("doctor-latest.log");
@@ -1993,95 +1992,50 @@ async fn main() -> Result<()> {
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);
 
-            // The service tells us exactly where the per-VM socket lives. Never
-            // recompute locally -- the service may fall back to /tmp/capsem-<uid>/
-            // {hash} when run_dir is under macOS's /var/folders (long SUN path).
-            let sock_path = match provisioned.uds_path.clone() {
-                Some(path) => path,
-                None => capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id)?,
+            // Attach a terminal through the service, the same stream the web
+            // and TUI terminals use. The service waits for the VM to be ready.
+            let terminal = capsem_api::stream::StreamControl::Start {
+                kind: capsem_api::stream::StreamKind::Terminal,
+                command: None,
             };
-
-            // Poll for the per-VM socket to exist and hand us an open IPC
-            // channel. Uses the shared exponential-backoff helper instead of
-            // a hand-rolled loop.
-            let sock_path_for_poll = sock_path.clone();
-            let poll_ipc = capsem_foundation::poll::poll_until(
-                capsem_foundation::poll::PollOpts::new("vm-ipc-ready", std::time::Duration::from_secs(30)),
-                || {
-                    let sock_path = sock_path_for_poll.clone();
-                    async move {
-                        if !sock_path.exists() {
-                            return None;
-                        }
-                        let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
-                        let std_stream = stream.into_std().ok()?;
-                        let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-                            std_stream,
-                            "capsem-cli",
-                            capsem_foundation::telemetry::current_parent_traceparent(),
-                        )
-                        .await
-                        .ok()?;
-                        channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()
-                    }
-                },
-            );
-
-            let (tx, rx) = tokio::select! {
+            let mut attached = tokio::select! {
                 _ = &mut ctrl_c => {
                     eprintln!("\nInterrupted, cleaning up session...");
                     cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                     std::process::exit(130);
                 }
-                res = poll_ipc => match res {
-                    Ok(chan) => chan,
-                    Err(_) => {
-                        eprintln!("Session did not become ready within 30s");
+                result = client.open_stream(&vm_id, terminal) => match result {
+                    Ok(attached) => attached,
+                    Err(error) => {
+                        eprintln!("Session terminal did not start: {error:#}");
                         cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
                         std::process::exit(1);
                     }
                 },
             };
 
-            // Subscribe to terminal output then type the command
-            // into the shell. This streams output in real-time
-            // (unlike Exec which buffers until completion).
-            capsem_core::try_send!(
-                "cli_doctor_start_stream",
-                tx.send(ServiceToProcess::StartTerminalStream).await
-            );
-
-            // Wait for shell to be ready (boot banner finishes)
-            let mut ready = false;
+            // Wait for the shell prompt (the boot banner finishes first).
             let boot_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-            while !ready {
+            loop {
                 tokio::select! {
                     _ = &mut ctrl_c => {
                         eprintln!("\nInterrupted, cleaning up session...");
                         cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                         std::process::exit(130);
                     }
-                    result = tokio::time::timeout(
-                        std::time::Duration::from_secs(30),
-                        rx.recv(),
-                    ) => {
-                        match result {
-                            Ok(Ok(ProcessToService::TerminalOutput { data })) => {
-                                // Look for the shell prompt (ends with "# ")
-                                let text = String::from_utf8_lossy(&data);
-                                if text.contains("# ") || text.contains("$ ") {
-                                    ready = true;
-                                }
+                    result = tokio::time::timeout_at(boot_deadline, attached.next()) => match result {
+                        Ok(Ok(StreamEvent::Output(data))) => {
+                            let text = String::from_utf8_lossy(&data);
+                            if text.contains("# ") || text.contains("$ ") {
+                                break;
                             }
-                            Ok(Ok(_)) => continue,
-                            Ok(Err(_)) | Err(_) => break,
                         }
-                    }
-                }
-                if tokio::time::Instant::now() >= boot_deadline {
-                    eprintln!("Shell did not become ready within 30s");
-                    cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
-                    std::process::exit(1);
+                        Ok(Ok(StreamEvent::Exit { .. })) | Ok(Err(_)) | Err(_) => {
+                            eprintln!("Shell did not become ready within 30s");
+                            cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
+                            std::process::exit(1);
+                        }
+                    },
                 }
             }
 
@@ -2096,11 +2050,12 @@ async fn main() -> Result<()> {
             } else {
                 ""
             };
-            let cmd: Vec<u8> = format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes();
-            capsem_core::try_send!(
-                "cli_doctor_terminal_input",
-                tx.send(ServiceToProcess::TerminalInput { data: cmd }).await
-            );
+            let cmd = format!("capsem-doctor --durations=10{bundle_arg}\n");
+            if let Err(error) = attached.send_stdin(cmd.as_bytes()).await {
+                eprintln!("Session terminal closed: {error:#}");
+                cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
+                std::process::exit(1);
+            }
 
             // Stream output until we see the sentinel line
             let mut stdout = tokio::io::stdout();
@@ -2113,10 +2068,10 @@ async fn main() -> Result<()> {
                     }
                     result = tokio::time::timeout(
                         std::time::Duration::from_secs(300),
-                        rx.recv(),
+                        attached.next(),
                     ) => {
                         match result {
-                            Ok(Ok(ProcessToService::TerminalOutput { data })) => {
+                            Ok(Ok(StreamEvent::Output(data))) => {
                                 let _ = stdout.write_all(&data).await;
                                 let _ = stdout.flush().await;
                                 if let Some(ref mut f) = log_file {
@@ -2129,9 +2084,12 @@ async fn main() -> Result<()> {
                                     break (1, DoctorSessionCleanup::Failed);
                                 }
                             }
-                            Ok(Ok(_)) => continue,
+                            Ok(Ok(StreamEvent::Exit { .. })) => {
+                                eprintln!("Session terminal ended before the doctor finished");
+                                break (1, DoctorSessionCleanup::Failed);
+                            }
                             Ok(Err(e)) => {
-                                eprintln!("IPC error: {e}");
+                                eprintln!("Session terminal error: {e:#}");
                                 break (1, DoctorSessionCleanup::Failed);
                             }
                             Err(_) => {
@@ -2142,6 +2100,7 @@ async fn main() -> Result<()> {
                     }
                 }
             };
+            drop(attached);
 
             // T4: copy the in-VM bundle out of virtiofs BEFORE delete_vm
             // tears down the session dir. The bundle path inside the
