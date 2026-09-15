@@ -18,7 +18,6 @@ members = [
     "crates/capsem",
     "crates/capsem-bench",
     "crates/capsem-tui",
-    "crates/capsem-mcp",
     "crates/capsem-mcp-aggregator",
     "crates/capsem-mcp-builtin",
     "crates/capsem-mock-server",

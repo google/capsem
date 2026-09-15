@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authenticated gateway OpenAPI export for the initial SDK operations, derived
   from shared Rust request and response contracts.
 
+### Removed
+
+- The duplicate Rust host MCP crate has been retired in favor of `@capsem/mcp`;
+  the Rust guest relay, aggregator, and built-in MCP components remain.
+
 ### Changed
 
 - Python SDK workspace listings treat `/` as the gateway's workspace root.

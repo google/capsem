@@ -988,31 +988,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "capsem-mcp"
-version = "0.6.3"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "capsem-foundation",
- "capsem-logger",
- "capsem-proto",
- "futures",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "percent-encoding",
- "reqwest 0.12.28",
- "rmcp",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "capsem-mcp-aggregator"
 version = "0.6.3"
 dependencies = [
