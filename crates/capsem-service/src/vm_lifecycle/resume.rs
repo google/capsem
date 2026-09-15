@@ -66,7 +66,7 @@ pub(crate) async fn handle_resume(
                             state
                                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                                 .await?;
-                            return provision_response_for_running(&state, cold_id, cold_uds_path).map(Json);
+                            return provision_response_for_running(&state, cold_id).map(Json);
                         }
                         Err(cold_e) => {
                             error!(
@@ -89,7 +89,7 @@ pub(crate) async fn handle_resume(
             state
                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                 .await?;
-            provision_response_for_running(&state, resumed_id, uds_path).map(Json)
+            provision_response_for_running(&state, resumed_id).map(Json)
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");

@@ -94,9 +94,11 @@ fn provision_response_roundtrip() {
         persistent: true,
         can_resume: false,
         available_actions: vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
-        uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
     };
     let json = serde_json::to_string(&r).unwrap();
+    // The VM owner's socket is host-local; the gateway relays this body to
+    // remote clients, so it must never name one.
+    assert!(!json.contains("uds_path") && !json.contains(".sock"), "{json}");
     let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(r2.id, "vm-123");
     assert_eq!(r2.name, "co-work1");
@@ -107,10 +109,6 @@ fn provision_response_roundtrip() {
     assert_eq!(
         r2.available_actions,
         vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
-    );
-    assert_eq!(
-        r2.uds_path.as_deref(),
-        Some(std::path::Path::new("/tmp/r/instances/vm-123.sock"))
     );
 }
 

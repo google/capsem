@@ -13,5 +13,4 @@ export const ProvisionResponseSchema: z.ZodType<ProvisionResponse> = z.object({
   "persistent": z.boolean().exactOptional(),
   "profile_id": z.string(),
   "status": z.lazy(() => VmLifecycleStateSchema),
-  "uds_path": z.string().nullable().exactOptional(),
 });

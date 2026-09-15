@@ -141,6 +141,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- VM create and resume responses no longer carry `uds_path`. It named the
+  VM owner's host-local socket, the gateway relayed it to remote clients, and
+  no client needs it now that containers, exposures and streams are service
+  routes.
+
 - The gateway `/terminal/{id}` WebSocket relay and the per-VM owner terminal
   socket (`instances/<id>-ws.sock`) are gone. Terminals, `capsem doctor` and
   container attach use `GET /vms/{id}/stream`; no client connects to a VM

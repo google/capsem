@@ -11,5 +11,4 @@ export interface ProvisionResponse {
   "persistent"?: boolean;
   "profile_id": string;
   "status": VmLifecycleState;
-  "uds_path"?: string | null;
 }

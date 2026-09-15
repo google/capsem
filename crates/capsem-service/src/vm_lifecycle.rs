@@ -581,11 +581,7 @@ pub(super) async fn handle_delete(
     Ok(Json(api::VmActionResponse { success: true }))
 }
 
-pub(super) fn provision_response_for_running(
-    state: &ServiceState,
-    id: String,
-    uds_path: std::path::PathBuf,
-) -> Result<ProvisionResponse, AppError> {
+pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -> Result<ProvisionResponse, AppError> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&id).ok_or_else(|| {
         AppError(
@@ -602,7 +598,6 @@ pub(super) fn provision_response_for_running(
         persistent: instance.persistent,
         can_resume: false,
         available_actions: status.available_actions(false),
-        uds_path: Some(uds_path),
     };
     drop(instances);
     Ok(response)

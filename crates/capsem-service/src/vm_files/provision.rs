@@ -120,8 +120,8 @@ pub(crate) async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(uds_path)) => {
-            let response = provision_response_for_running(&state, id.clone(), uds_path)?;
+        Ok(Ok(_)) => {
+            let response = provision_response_for_running(&state, id.clone())?;
             network_routes::attach_provisioned(&state, &id, &networks).await?;
             if let Some(spec) = payload.container {
                 container_setup::start(&state, id, spec);

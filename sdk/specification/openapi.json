@@ -5449,13 +5449,6 @@
           },
           "status": {
             "$ref": "#/components/schemas/VmLifecycleState"
-          },
-          "uds_path": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The UDS path the per-VM capsem-process is listening on. Clients MUST\nuse this value rather than recomputing it -- the service may fall back\nto a short hashed path under /tmp/capsem-<uid>/ when the preferred path\nwould exceed SUN_LEN. See capsem_foundation::uds::instance_socket_path."
           }
         }
       },

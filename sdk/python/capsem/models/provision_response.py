@@ -18,4 +18,3 @@ class ProvisionResponse(Model):
     persistent: StrictBool | None = None
     profile_id: StrictStr
     status: VmLifecycleState
-    uds_path: StrictStr | None = None
