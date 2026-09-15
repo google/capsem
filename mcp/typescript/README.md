@@ -5,6 +5,13 @@ It does not discover or start local services and never reads Capsem UDS or VM
 runtime state directly.
 
 ```sh
+npm install --global @capsem/mcp
+```
+
+Node.js is an explicit prerequisite; native Capsem installation does not install
+Node or download this package.
+
+```sh
 capsem-mcp --gateway-url http://127.0.0.1:19222 --token "$CAPSEM_TOKEN" --timeout-ms 30000
 ```
 

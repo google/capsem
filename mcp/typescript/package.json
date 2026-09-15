@@ -12,7 +12,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@capsem/sdk": "link:../../sdk/typescript",
+    "@capsem/sdk": "workspace:0.6.3",
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "4.6.1"
   },

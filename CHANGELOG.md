@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
   tool names and SDK-aligned parameters, plus redacted machine-readable errors.
 
+- The packed `@capsem/mcp` artifact carries a publishable SDK dependency and
+  preserves authenticated stdio discovery, isolation, denial, and cancellation.
+
 - Python, TypeScript and Rust SDK facades expose typed one-shot execution,
   persistence, purge, panic/triage diagnostics, and profile MCP discovery and
   invocation over authenticated gateway HTTP.

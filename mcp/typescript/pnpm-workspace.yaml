@@ -1,5 +1,6 @@
 packages:
   - "."
+  - "../../sdk/typescript"
 
 onlyBuiltDependencies:
   - esbuild

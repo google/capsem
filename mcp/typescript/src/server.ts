@@ -13,7 +13,7 @@ export function createServer(config: Config): McpServer {
   const server = new McpServer({name: 'capsem-mcp', version: '0.6.3'});
   server.registerTool('capsem_status', {
     description: 'Read gateway, profile, update, and service status.',
-  }, () => toolCall(() => hypervisor.info()));
+  }, extra => toolCall(() => hypervisor.info({signal: extra.signal})));
   registerHostTools(server, hypervisor);
   registerNetworkTools(server, hypervisor);
   registerProfileTools(server, hypervisor);
