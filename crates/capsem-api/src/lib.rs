@@ -15,6 +15,7 @@ pub use containers::*;
 mod exposures;
 pub use exposures::*;
 mod lifecycle;
+pub mod stream;
 pub use lifecycle::*;
 mod execution;
 pub use execution::*;
