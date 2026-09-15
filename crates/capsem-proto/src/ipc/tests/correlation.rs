@@ -30,6 +30,15 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             },
             Some(11),
         ),
+        (
+            ServiceToProcess::AdmitContainerPull {
+                id: 12,
+                image: "registry.example/app:1".into(),
+                registry: "registry.example".into(),
+                digest: None,
+            },
+            Some(12),
+        ),
         (ServiceToProcess::Ping, None),
         (ServiceToProcess::ReloadConfig, None),
     ];
@@ -66,6 +75,14 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             None,
         ),
         (ProcessToService::ExecOutput { id: 7, data: vec![1] }, None),
+        (
+            ProcessToService::ContainerPullAdmission {
+                id: 12,
+                error: None,
+                policy_refused: false,
+            },
+            Some(12),
+        ),
         (ProcessToService::Pong, None),
     ];
     for (reply, id) in replies {

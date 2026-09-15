@@ -50,12 +50,52 @@ fn fixture(images: FixtureImages) -> Fixture {
     std::fs::create_dir_all(&workspace).unwrap();
     insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
+    std::fs::write(uds_path.with_extension("ready"), b"1\n").unwrap();
     Fixture {
         state,
         workspace,
         uds_path,
         _dir: dir,
     }
+}
+
+#[tokio::test]
+async fn pull_admission_waits_for_the_vm_owner_readiness_barrier() {
+    let access = Arc::new(Mutex::new(None));
+    let fx = fixture(FixtureImages {
+        access: Arc::clone(&access),
+        ..images()
+    });
+    let ready_path = fx.uds_path.with_extension("ready");
+    std::fs::remove_file(&ready_path).unwrap();
+    let owner = spawn_fake_process(&fx.uds_path, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
+                id: *id,
+                error: Some("blocked after readiness".into()),
+                policy_refused: true,
+            }),
+            other => panic!("pull admission sent an unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+
+    start(&fx.state, "box".into(), spec(None));
+    tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+    assert!(
+        !owner.is_finished(),
+        "admission reached the owner before its ready sentinel"
+    );
+    assert!(
+        access.lock().unwrap().is_none(),
+        "the registry was contacted before owner readiness"
+    );
+
+    std::fs::write(&ready_path, b"1\n").unwrap();
+    let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
+    owner.await.unwrap();
+    assert!(status.error.as_deref().unwrap().contains("blocked after readiness"));
+    assert!(access.lock().unwrap().is_none());
 }
 
 fn images() -> FixtureImages {
@@ -72,6 +112,11 @@ fn owner_accepting_stage_and_launch(
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
     spawn_fake_process(uds_path, expected, |message| {
         let reply = match message {
+            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
+                id: *id,
+                error: None,
+                policy_refused: false,
+            }),
             ServiceToProcess::LogFileBoundary { id, .. } => Some(ProcessToService::LogFileBoundaryResult {
                 id: *id,
                 success: true,
@@ -89,6 +134,61 @@ fn owner_accepting_stage_and_launch(
         };
         Box::pin(async move { reply })
     })
+}
+
+fn owner_admitting_pull(uds_path: &StdPath) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    spawn_fake_process(uds_path, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
+                id: *id,
+                error: None,
+                policy_refused: false,
+            }),
+            other => panic!("pull admission sent an unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    })
+}
+
+#[tokio::test]
+async fn refused_pull_admission_never_calls_the_image_source() {
+    let access = Arc::new(Mutex::new(None));
+    let fx = fixture(FixtureImages {
+        access: Arc::clone(&access),
+        ..images()
+    });
+    let owner = spawn_fake_process(&fx.uds_path, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::AdmitContainerPull {
+                id,
+                image,
+                registry,
+                digest,
+            } => {
+                assert_eq!(image, "registry.example/app:1");
+                assert_eq!(registry, "registry.example");
+                assert!(digest.is_none());
+                Some(ProcessToService::ContainerPullAdmission {
+                    id: *id,
+                    error: Some("blocked by fixture policy".into()),
+                    policy_refused: true,
+                })
+            }
+            other => panic!("pull admission sent an unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    });
+
+    start(&fx.state, "box".into(), spec(None));
+    let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
+    owner.await.unwrap();
+
+    assert!(status.error.as_deref().unwrap().contains("blocked by fixture policy"));
+    assert!(
+        access.lock().unwrap().is_none(),
+        "a refused admission must send zero registry requests"
+    );
+    assert!(!fx.workspace.join(".capsem-image").exists());
 }
 
 async fn wait_for(
@@ -121,8 +221,9 @@ fn spec(registry: Option<RegistryAccess>) -> ContainerSpec {
 #[tokio::test]
 async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached() {
     let fx = fixture(images());
-    // index.json part, transfer.json, options.json, launch.py, then the launch exec.
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 5);
+    // Pull admission, index.json part, transfer.json, options.json, launch.py,
+    // then the launch exec.
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     start(&fx.state, "box".into(), spec(None));
 
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -165,8 +266,10 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
 #[tokio::test]
 async fn failed_pull_reports_failed_and_never_touches_the_vm() {
     let fx = fixture(FixtureImages { fail: true, ..images() });
+    let owner = owner_admitting_pull(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
+    owner.await.unwrap();
     assert!(
         status.error.as_deref().unwrap().contains("registry refused the image"),
         "{status:?}"
@@ -181,7 +284,9 @@ async fn cancel_during_pull_forgets_the_workload_and_a_late_pull_changes_nothing
         gate: Some(Arc::clone(&gate)),
         ..images()
     });
+    let owner = owner_admitting_pull(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
+    owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Pulling).await;
 
     fx.state.containers.cancel("box");
@@ -207,8 +312,10 @@ async fn registry_access_reaches_only_the_image_source_and_never_the_status() {
         password: Some("registry-password".into()),
         ca_pem: None,
     };
+    let owner = owner_admitting_pull(&fx.uds_path);
     start(&fx.state, "box".into(), spec(Some(secret.clone())));
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
+    owner.await.unwrap();
     assert_eq!(access.lock().unwrap().as_ref(), Some(&secret));
     let rendered = serde_json::to_string(&status).unwrap();
     assert!(
@@ -227,7 +334,7 @@ async fn registry_credentials_never_reach_the_owner_or_the_staged_workload() {
         access: Arc::clone(&access),
         ..images()
     });
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 5);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     let secret = RegistryAccess {
         username: Some("robot-user".into()),
         password: Some("registry-password".into()),
@@ -275,8 +382,13 @@ async fn cancel_during_staging_never_launches_the_workload() {
     let state = Arc::clone(&fx.state);
     // The owner cancels the setup while acknowledging the first staged file,
     // the way a delete racing the staging loop would.
-    let owner = spawn_fake_process(&fx.uds_path, 1, move |message| {
+    let owner = spawn_fake_process(&fx.uds_path, 2, move |message| {
         let reply = match message {
+            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
+                id: *id,
+                error: None,
+                policy_refused: false,
+            }),
             ServiceToProcess::LogFileBoundary { id, .. } => {
                 state.containers.cancel("box");
                 Some(ProcessToService::LogFileBoundaryResult {
@@ -320,7 +432,7 @@ async fn container_status_route_reports_no_workload_as_not_found() {
 #[tokio::test]
 async fn container_status_route_reports_running_only_once_the_guest_marks_ready() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 5);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -338,7 +450,7 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_ready(
 #[tokio::test]
 async fn container_status_survives_a_service_restart_through_the_launch_record() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 5);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;

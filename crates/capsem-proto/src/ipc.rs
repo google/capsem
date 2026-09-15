@@ -123,6 +123,15 @@ pub enum ServiceToProcess {
     },
     /// Internal VM-owner request: take a cable down in the guest.
     UnplugCable { cable: u32 },
+    /// Ask the VM owner to apply its effective policy and admit the primary
+    /// audit row before the service opens a registry connection. Credentials
+    /// are deliberately absent.
+    AdmitContainerPull {
+        id: u64,
+        image: String,
+        registry: String,
+        digest: Option<String>,
+    },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -229,6 +238,12 @@ pub enum ProcessToService {
     /// The terminal stream on this connection stopped; no more TerminalOutput
     /// follows. Sent instead of going silent when the client fell behind.
     TerminalStreamEnded { reason: String },
+    /// Result of owner-side policy and primary-audit admission for an OCI pull.
+    ContainerPullAdmission {
+        id: u64,
+        error: Option<String>,
+        policy_refused: bool,
+    },
 }
 
 impl ServiceToProcess {
@@ -252,7 +267,8 @@ impl ServiceToProcess {
             | Self::RevokePort { id, .. }
             | Self::ListPublications { id }
             | Self::LinkAttach { id, .. }
-            | Self::LinkDetach { id, .. } => Some(*id),
+            | Self::LinkDetach { id, .. }
+            | Self::AdmitContainerPull { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -279,7 +295,8 @@ impl ProcessToService {
             | Self::PortRevoked { id, .. }
             | Self::PublicationList { id, .. }
             | Self::LinkAttachResult { id, .. }
-            | Self::LinkDetachResult { id, .. } => Some(*id),
+            | Self::LinkDetachResult { id, .. }
+            | Self::ContainerPullAdmission { id, .. } => Some(*id),
             _ => None,
         }
     }

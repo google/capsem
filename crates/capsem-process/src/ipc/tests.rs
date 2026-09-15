@@ -3,10 +3,12 @@ use std::time::Duration;
 
 use super::*;
 
+mod classification;
 mod publications;
 mod streams;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
+use classification::{classify_ipc_message, IpcAction};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 
@@ -886,6 +888,19 @@ fn classify_log_file_boundary() {
             data: vec![],
             size: 0,
             mime_type: None,
+        }),
+        IpcAction::Job
+    );
+}
+
+#[test]
+fn classify_container_pull_admission() {
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::AdmitContainerPull {
+            id: 1,
+            image: "registry.example/app:1".into(),
+            registry: "registry.example".into(),
+            digest: None,
         }),
         IpcAction::Job
     );

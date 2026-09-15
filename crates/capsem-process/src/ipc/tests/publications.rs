@@ -47,3 +47,41 @@ async fn owner_answers_publication_list_and_revoke_requests() {
         other => panic!("unexpected revoke response: {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn owner_answers_container_pull_admission_requests() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, _ctrl_rx) = Dispatcher::new(temp.path());
+    let (process_stream, service_stream) = tokio::net::UnixStream::pair().unwrap();
+    let _handler = dispatcher.connection(process_stream);
+    let mut service_stream = service_stream.into_std().unwrap();
+    let (service_tx, service_rx) = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_initiator(&mut service_stream, "capsem-service-test", "").unwrap();
+        channel_from_std::<ServiceToProcess, ProcessToService>(service_stream).unwrap()
+    })
+    .await
+    .unwrap();
+
+    service_tx
+        .send(ServiceToProcess::AdmitContainerPull {
+            id: 73,
+            image: "registry.example/app:1".into(),
+            registry: "registry.example".into(),
+            digest: None,
+        })
+        .await
+        .unwrap();
+
+    match service_rx.recv().await.unwrap() {
+        ProcessToService::ContainerPullAdmission {
+            id,
+            error: Some(error),
+            policy_refused,
+        } => {
+            assert_eq!(id, 73);
+            assert!(!policy_refused, "missing owner security is an admission failure");
+            assert!(error.contains("security context missing"), "{error}");
+        }
+        other => panic!("unexpected container pull admission response: {other:?}"),
+    }
+}

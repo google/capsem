@@ -911,6 +911,45 @@ fn link_attach_roundtrip() {
 }
 
 #[test]
+fn container_pull_admission_roundtrips_without_credentials() {
+    let request = ServiceToProcess::AdmitContainerPull {
+        id: 13,
+        image: "registry.example/private/app@sha256:abcd".into(),
+        registry: "registry.example".into(),
+        digest: Some("sha256:abcd".into()),
+    };
+    let bytes = bincode::serialize(&request).unwrap();
+    let decoded: ServiceToProcess = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(
+        decoded,
+        ServiceToProcess::AdmitContainerPull {
+            id: 13,
+            ref image,
+            ref registry,
+            digest: Some(ref digest),
+        } if image == "registry.example/private/app@sha256:abcd"
+            && registry == "registry.example"
+            && digest == "sha256:abcd"
+    ));
+
+    let response = ProcessToService::ContainerPullAdmission {
+        id: 13,
+        error: Some("blocked by policy".into()),
+        policy_refused: true,
+    };
+    let bytes = bincode::serialize(&response).unwrap();
+    let decoded: ProcessToService = bincode::deserialize(&bytes).unwrap();
+    assert!(matches!(
+        decoded,
+        ProcessToService::ContainerPullAdmission {
+            id: 13,
+            policy_refused: true,
+            ref error,
+        } if error.as_deref() == Some("blocked by policy")
+    ));
+}
+
+#[test]
 fn cable_requests_round_trip_with_the_address_the_guest_will_use() {
     let address = std::net::Ipv4Addr::new(10, 128, 5, 9);
     for message in [

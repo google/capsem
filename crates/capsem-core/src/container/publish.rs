@@ -25,7 +25,7 @@ mod companion;
 mod registry;
 mod saved;
 mod security;
-pub use security::{AuditFlow, ExposureRefused};
+pub use security::{AuditFlow, ContainerPullRefused, ExposureRefused};
 
 pub struct Publisher {
     security: Option<Arc<security::Authority>>,

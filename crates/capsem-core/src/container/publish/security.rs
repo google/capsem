@@ -63,6 +63,39 @@ impl Publisher {
                 entry.data.is_some() && entry.lease.as_ref().is_some_and(|lease| !lease.is_cancelled())
             })
     }
+
+    /// Admit a service-owned registry pull before the service constructs a
+    /// registry client. Credentials never enter this owner request or event.
+    pub async fn admit_container_pull(&self, image: String, registry: String, digest: Option<String>) -> Result<()> {
+        let authority = self
+            .security
+            .clone()
+            .context("container pull security context missing")?;
+        let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle)
+            .with_network(NetworkSecurityEvent::ContainerPull {
+                vm: authority.vm.clone(),
+            })
+            .with_container(crate::security_engine::ContainerSecurityEvent {
+                image: image.clone(),
+                registry,
+                digest,
+            });
+        let decision = tokio::time::timeout(Duration::from_secs(2), authority.engine.evaluate_and_record(event))
+            .await
+            .context("container pull audit deadline exceeded")??;
+        match decision.action {
+            SecurityEnforcementAction::Allow => Ok(()),
+            SecurityEnforcementAction::Ask => Err(ContainerPullRefused(format!(
+                "pulling container image {image} needs approval, which container setup cannot ask for"
+            ))
+            .into()),
+            SecurityEnforcementAction::Block => Err(ContainerPullRefused(format!(
+                "pulling container image {image} is blocked by policy{}",
+                decision.reason.map(|reason| format!(": {reason}")).unwrap_or_default()
+            ))
+            .into()),
+        }
+    }
 }
 
 impl Authority {
@@ -133,6 +166,18 @@ impl std::fmt::Display for ExposureRefused {
 }
 
 impl std::error::Error for ExposureRefused {}
+
+/// The VM's effective policy refused a service-owned container image pull.
+#[derive(Debug)]
+pub struct ContainerPullRefused(pub String);
+
+impl std::fmt::Display for ContainerPullRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ContainerPullRefused {}
 
 #[derive(Clone)]
 pub struct AuditFlow {

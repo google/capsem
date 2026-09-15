@@ -15,6 +15,7 @@ use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
+mod container_pull;
 mod exec;
 mod private;
 mod snapshot;
@@ -325,6 +326,9 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     capsem_core::try_send!("publication_result", output.send(response).await);
                 });
+            }
+            message @ ServiceToProcess::AdmitContainerPull { .. } => {
+                container_pull::spawn(&job_store, &ipc_tx_out, message)
             }
             ServiceToProcess::RevokePort { id, host_port } => {
                 let jobs = job_store.clone();
@@ -943,54 +947,6 @@ pub(crate) async fn handle_ipc_connection(
         h.abort();
     }
     Ok(())
-}
-
-/// Maps an IPC ServiceToProcess message to the action category it triggers.
-/// Used for dispatch validation and testing.
-#[cfg(test)]
-fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
-    match msg {
-        ServiceToProcess::StartTerminalStream => IpcAction::StreamSetup,
-        ServiceToProcess::StopTerminalStream => IpcAction::StreamSetup,
-        ServiceToProcess::Ping => IpcAction::HealthCheck,
-        ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
-        ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
-        ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
-        ServiceToProcess::PublishPort { .. }
-        | ServiceToProcess::RevokePort { .. }
-        | ServiceToProcess::ListPublications { .. } => IpcAction::Job,
-        ServiceToProcess::ConnectPort { .. }
-        | ServiceToProcess::AbortPorts { .. }
-        | ServiceToProcess::PlugCable { .. }
-        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
-        ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
-        ServiceToProcess::WriteFile { .. } => IpcAction::Job,
-        ServiceToProcess::ReadFile { .. } => IpcAction::Job,
-        ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,
-        ServiceToProcess::ReloadConfig => IpcAction::Reload,
-        ServiceToProcess::Shutdown => IpcAction::Lifecycle,
-        ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
-        ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
-            IpcAction::Unexpected
-        }
-        ServiceToProcess::McpListServers { .. }
-        | ServiceToProcess::McpListTools { .. }
-        | ServiceToProcess::McpRefreshTools { .. }
-        | ServiceToProcess::McpCallTool { .. }
-        | ServiceToProcess::SnapshotStatus { .. } => IpcAction::Job,
-    }
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq)]
-enum IpcAction {
-    StreamSetup,
-    HealthCheck,
-    Forward,
-    Job,
-    Reload,
-    Lifecycle,
-    Unexpected,
 }
 
 #[cfg(test)]

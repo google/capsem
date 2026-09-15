@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Container image pulls are admitted and audited by the VM's effective policy
+  before the service opens a registry connection. Rules can match the registry,
+  image reference, and pinned digest without exposing registry credentials to
+  the VM owner or session ledger.
+
 ### Fixed
 
 - REST command execution preserves arbitrary stdout and stderr bytes with an

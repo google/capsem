@@ -198,6 +198,9 @@ pub enum NetworkSecurityEvent {
         action: NetworkLifecycleAction,
     },
     Exposure(NetworkExposure),
+    ContainerPull {
+        vm: NetworkVm,
+    },
 }
 
 impl NetworkSecurityEvent {
@@ -233,6 +236,10 @@ impl NetworkSecurityEvent {
                         && exposure.target.admits(exposure.destination.address.port()),
                     "invalid exposure destination",
                 )?;
+            }
+            Self::ContainerPull { vm } => {
+                require(kind == Type::NetworkLifecycle, "container pull context on a flow event")?;
+                validate_vm(vm)?;
             }
             Self::Flow(flow) => {
                 require(!flow.connection_id.is_nil(), "missing connection identity")?;
@@ -293,13 +300,20 @@ impl NetworkSecurityEvent {
         if let Self::Exposure(exposure) = self {
             return exposure_field(exposure, field);
         }
+        if let Self::ContainerPull { vm } = self {
+            return match field {
+                "mode" => Some(borrowed("registry_pull")),
+                "action" => Some(borrowed("pull")),
+                _ => field.strip_prefix("destination.").and_then(|field| vm_field(vm, field)),
+            };
+        }
         let network = match self {
             Self::Lifecycle { network, .. } => Some(network),
             Self::Flow(NetworkFlow {
                 route: NetworkRoute::Private { network },
                 ..
             }) => Some(network),
-            Self::Flow(_) | Self::Exposure(_) => None,
+            Self::Flow(_) | Self::Exposure(_) | Self::ContainerPull { .. } => None,
         };
         if let (Self::Lifecycle { action, .. }, "action") = (self, field) {
             return Some(borrowed(action.as_str()));
@@ -367,6 +381,15 @@ fn endpoint_field<'a>(endpoint: &'a NetworkEndpoint, field: &str) -> Option<Poli
         "generation" => endpoint.vm.as_ref().map(|vm| owned(vm.generation)),
         "ip" => Some(owned(endpoint.address.ip())),
         "port" => Some(owned(endpoint.address.port())),
+        _ => None,
+    }
+}
+
+fn vm_field<'a>(vm: &'a NetworkVm, field: &str) -> Option<PolicySubjectValue<'a>> {
+    match field {
+        "vm_id" => Some(borrowed(&vm.id)),
+        "vm_name" => Some(borrowed(&vm.name)),
+        "generation" => Some(owned(vm.generation)),
         _ => None,
     }
 }

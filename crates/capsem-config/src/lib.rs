@@ -63,6 +63,10 @@ pub fn security_event_type_is_known(value: &str) -> bool {
 
 /// Sorted rule-authoring contract for fields exposed by security events.
 pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
+    "container.digest",
+    "container.image",
+    "container.registry",
+    "container.valid",
     "dns.qname",
     "dns.qtype",
     "dns.valid",

@@ -201,6 +201,34 @@ pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) 
 }
 
 async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: ContainerSpec) -> Result<(), String> {
+    let reference = capsem_assets::oci::image_reference(&spec.image)
+        .map_err(|error| format!("container image expects docker://IMAGE or registry/repository:tag: {error:#}"))?;
+    let admission = ServiceToProcess::AdmitContainerPull {
+        id: state.next_job_id(),
+        image: spec.image.clone(),
+        registry: reference.resolve_registry().to_owned(),
+        digest: reference.digest().map(str::to_owned),
+    };
+    let uds_path = running_uds_path(state, id).map_err(|error| error.1)?;
+    wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
+        .await
+        .map_err(|error| format!("container owner did not become ready: {error}"))?;
+    match send_ipc_command(&uds_path, admission, Some(5)).await? {
+        ProcessToService::ContainerPullAdmission { error: None, .. } => {}
+        ProcessToService::ContainerPullAdmission {
+            error: Some(error),
+            policy_refused,
+            ..
+        } => {
+            let kind = if policy_refused {
+                "policy refused"
+            } else {
+                "security admission failed"
+            };
+            return Err(format!("container pull {kind}: {error}"));
+        }
+        other => return Err(format!("unexpected container pull admission reply: {other:?}")),
+    }
     let parent = state.run_dir.join("container-pulls");
     tokio::task::spawn_blocking({
         let parent = parent.clone();

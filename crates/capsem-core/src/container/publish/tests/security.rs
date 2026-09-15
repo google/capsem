@@ -384,6 +384,59 @@ const BLOCK_REDIS: &str = "[profiles.rules.no_redis]\nname = \"no_redis\"\nactio
 const ASK_REDIS: &str = "[profiles.rules.ask_redis]\nname = \"ask_redis\"\naction = \"ask\"\n\
                          match = 'network.action != \"revoked\" && network.destination.port == \"6379\"'";
 
+const BLOCK_CONTAINER_IMAGE: &str = "[profiles.rules.no_registry_image]\nname = \"no_registry_image\"\n\
+                                     action = \"block\"\n\
+                                     match = 'container.registry == \"registry.example\" && \
+                                     container.image == \"registry.example/private/app:1\"'";
+
+#[tokio::test]
+async fn a_refused_container_pull_is_audited_with_image_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, path) = lifecycle_engine(&dir, BLOCK_CONTAINER_IMAGE);
+    let owner = Publisher::default().with_security("vm-id".into(), "builder".into(), engine.clone());
+
+    let error = owner
+        .admit_container_pull("registry.example/private/app:1".into(), "registry.example".into(), None)
+        .await
+        .expect_err("the image rule must refuse the pull");
+
+    assert!(
+        error.is::<crate::container::publish::ContainerPullRefused>(),
+        "{error:#}"
+    );
+    let rows = lifecycle_rows(&engine, &path).await;
+    assert!(rows.contains("container_pull"), "{rows}");
+    assert!(rows.contains("registry.example/private/app:1"), "{rows}");
+    assert!(rows.contains("registry.example"), "{rows}");
+    let decisions = capsem_logger::DbReader::open(&path)
+        .unwrap()
+        .query_raw_with_params(
+            "SELECT event_json FROM security_decision_events WHERE event_type = 'network.lifecycle'",
+            &[],
+        )
+        .unwrap();
+    assert!(decisions.contains("registry.example/private/app:1"), "{decisions}");
+    assert!(decisions.contains("registry.example"), "{decisions}");
+}
+
+#[tokio::test]
+async fn a_container_pull_whose_audit_cannot_be_admitted_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, _path) = lifecycle_engine(&dir, "");
+    engine.db.shutdown_blocking();
+    let owner = Publisher::default().with_security("vm-id".into(), "builder".into(), engine);
+
+    let error = owner
+        .admit_container_pull("registry.example/app:1".into(), "registry.example".into(), None)
+        .await
+        .expect_err("a closed audit ledger must refuse the pull");
+
+    assert!(
+        !error.is::<crate::container::publish::ContainerPullRefused>(),
+        "audit failure must stay distinct from a policy refusal: {error:#}"
+    );
+}
+
 #[tokio::test]
 async fn a_refused_exposure_is_audited_and_leaves_its_port_unbound() {
     for (rules, refusal) in [(BLOCK_REDIS, "blocked by policy"), (ASK_REDIS, "needs approval")] {
