@@ -985,6 +985,8 @@ jobs:
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
+        env:
+          BASELINE_CHANNEL: ${{ needs.resolve-channel-source.outputs.baseline_channel }}
         run: |
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
@@ -1000,7 +1002,7 @@ jobs:
             echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
             echo "CAPSEM_RELEASE_BIN_DIR=$PWD/cache/target/cargo/debug"
             echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/cache/target/candidate-profile-inputs"
-            printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "${{ needs.resolve-channel-source.outputs.baseline_channel }}"
+            printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "$BASELINE_CHANNEL"
             echo "CAPSEM_RELEASE_TRANSITION=auto"
             echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/cache/target/binary-public-before/profiles/manifest.json"
             echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
