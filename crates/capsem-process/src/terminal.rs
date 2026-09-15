@@ -113,9 +113,7 @@ pub(crate) async fn handle_terminal_socket(
                     if let Some((cols, rows)) = parse_resize_message(t.as_str()) {
                         capsem_core::try_send!(
                             "ws_terminal_resize",
-                            ctrl_tx_c
-                                .send(ServiceToProcess::TerminalResize { cols, rows })
-                                .await
+                            ctrl_tx_c.send(ServiceToProcess::TerminalResize { cols, rows }).await
                         );
                     }
                 }
