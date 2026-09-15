@@ -3,6 +3,7 @@ import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {Config} from './config.js';
 import {registerHostTools} from './host-tools.js';
 import {registerNetworkTools} from './network-tools.js';
+import {registerProfileTools} from './profile-tools.js';
 import {toolCall} from './results.js';
 
 export function createServer(config: Config): McpServer {
@@ -15,5 +16,6 @@ export function createServer(config: Config): McpServer {
   }, () => toolCall(() => hypervisor.info()));
   registerHostTools(server, hypervisor);
   registerNetworkTools(server, hypervisor);
+  registerProfileTools(server, hypervisor);
   return server;
 }

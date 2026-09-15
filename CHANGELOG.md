@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
   audit tools through the typed SDK network resource.
 
+- `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
+  tool names and SDK-aligned parameters, plus redacted machine-readable errors.
+
 - Python, TypeScript and Rust SDK facades expose typed one-shot execution,
   persistence, purge, panic/triage diagnostics, and profile MCP discovery and
   invocation over authenticated gateway HTTP.

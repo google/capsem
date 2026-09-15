@@ -12,11 +12,30 @@ export function success(value: Structured): CallToolResult {
 
 export function failure(error: unknown): CallToolResult {
   let message = 'Gateway request failed';
-  if (error instanceof HttpError) message = `Gateway returned HTTP ${error.status}`;
-  else if (error instanceof NetworkError) message = 'Gateway connection failed';
-  else if (error instanceof TypeError) message = error.message;
-  else if (error instanceof Error && error.name === 'AbortError') message = 'Gateway request cancelled';
-  return {content: [{type: 'text', text: message}], isError: true};
+  let kind = 'internal';
+  let status: number | undefined;
+  if (error instanceof HttpError) {
+    message = `Gateway returned HTTP ${error.status}`;
+    kind = 'http';
+    status = error.status;
+  } else if (error instanceof NetworkError) {
+    message = 'Gateway connection failed';
+    kind = 'network';
+  } else if (error instanceof TypeError) {
+    message = error.message;
+    kind = 'invalid_input';
+  } else if (error instanceof Error && error.name === 'AbortError') {
+    message = 'Gateway request cancelled';
+    kind = 'cancelled';
+  } else if (error instanceof Error && error.name === 'TimeoutError') {
+    message = 'Gateway request deadline exceeded';
+    kind = 'timeout';
+  }
+  return {
+    content: [{type: 'text', text: message}],
+    structuredContent: {error: {kind, ...(status === undefined ? {} : {status})}},
+    isError: true,
+  };
 }
 
 export async function toolCall<T extends object>(operation: () => Promise<T>): Promise<CallToolResult> {

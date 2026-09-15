@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MCP_SRC = REPO_ROOT / "crates" / "capsem-mcp" / "src" / "main.rs"
+MCP_SRC = REPO_ROOT / "mcp" / "typescript" / "src"
 CLI_SRC = REPO_ROOT / "crates" / "capsem" / "src" / "main.rs"
 
 
@@ -31,37 +31,54 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_exec":      "exec",
     "capsem_run":       "run",
     "capsem_delete":    "delete",
-    "capsem_suspend":   "suspend",
+    "capsem_pause":     "suspend",
     "capsem_resume":    "resume",
     "capsem_persist":   "persist",
     "capsem_purge":     "purge",
     "capsem_fork":      "fork",
     "capsem_vm_logs":   "logs",
-    "capsem_version":   "version",
+    "capsem_status":    "status",
+    "capsem_history":   "history",
 
     # MCP bridge
     "capsem_mcp_servers": "mcp servers",
     "capsem_mcp_tools":   "mcp tools",
     "capsem_mcp_call":    "mcp call",
+    "capsem_mcp_refresh": "mcp refresh",
 
     # MCP-only: bridges / AI-caller helpers with no CLI analog
     "capsem_read_file":       (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
     "capsem_write_file":      (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
-    "capsem_service_logs":    (None, "no CLI equivalent yet -- candidate for `capsem service logs`"),
     "capsem_panics":          (None, "host diagnostic triage tool; no CLI equivalent yet"),
     "capsem_triage":          (None, "host diagnostic triage summary; no CLI equivalent yet"),
     "capsem_host_logs":       (None, "host log reader for AI diagnostics; CLI users can inspect log files directly"),
     "capsem_timeline":        (None, "session timeline query for AI diagnostics; CLI users can inspect session DB directly"),
+    "capsem_list_files":      (None, "structured file inventory for AI callers; CLI uses `capsem cp` or shell"),
+    "capsem_stats":           (None, "structured VM telemetry for AI callers"),
+    "capsem_stats_detail":    (None, "typed VM security and activity ledgers for AI callers"),
+    "capsem_snapshots":       (None, "filesystem snapshot inspection for AI callers"),
+    "capsem_snapshot_status": (None, "filesystem snapshot readiness for AI callers"),
+    "capsem_changes":         (None, "filesystem change inspection for AI callers"),
+    "capsem_profiles":        (None, "typed profile catalog discovery for AI callers"),
+    "capsem_mcp_info":        (None, "typed profile MCP readiness for AI callers"),
+    "capsem_mcp_default":     (None, "profile MCP policy inspection for AI callers"),
+    "capsem_network_create":  (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_list":    (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_inspect": (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_delete":  (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_attach":  (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_detach":  (None, "typed private-network control has no CLI command yet"),
+    "capsem_network_logs":    (None, "typed network audit inspection has no CLI command yet"),
 
     # Known drift -- possible cleanup candidate
     "capsem_stop":            (None, "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing."),
+    "capsem_start":           (None, "VM lifecycle action; CLI start controls the host service"),
 }
 
 # CLI subcommands that legitimately have no MCP tool.
 CLI_ONLY: dict[str, str] = {
     "shell":        "interactive terminal -- not an MCP concept",
     "restart":      "reboot a persistent session; no MCP tool yet (drift candidate)",
-    "history":      "host-side command audit view; no MCP tool yet (drift candidate)",
 
     # Service-level / install-time -- not session-scoped, not AI-callable
     "update":       "self-updater",
@@ -69,14 +86,13 @@ CLI_ONLY: dict[str, str] = {
     "completions":  "shell completions generator",
     "uninstall":    "system uninstaller",
     "install":      "registers the LaunchAgent / systemd unit",
-    "status":       "service + asset health; prints a human table",
     "start":        "start the background service daemon",
     "stop":         "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
     "cp":           "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
+    "version":      "human CLI build metadata; MCP status reports typed gateway state",
 
     # MCP sub-namespace: not every entry has a tool
-    "mcp refresh":  "forces tool re-discovery; AI callers re-list directly",
 }
 
 
@@ -84,19 +100,16 @@ CLI_ONLY: dict[str, str] = {
 # Source parsers
 # ---------------------------------------------------------------------------
 
-_MCP_TOOL_RE = re.compile(r"#\[tool\((?P<body>.*?)\)\]", re.S)
-_MCP_TOOL_NAME_RE = re.compile(r'name\s*=\s*"(?P<name>capsem_[a-z_]+)"')
+_MCP_TOOL_RE = re.compile(r"registerTool\(\s*'(?P<name>capsem_[a-z_]+)'")
 
 
 def parse_mcp_tools() -> set[str]:
-    """Extract tool names from #[tool(name = "...")] attributes."""
-    src = MCP_SRC.read_text()
-    names = set()
-    for attr in _MCP_TOOL_RE.finditer(src):
-        name = _MCP_TOOL_NAME_RE.search(attr.group("body"))
-        if name:
-            names.add(name.group("name"))
-    return names
+    """Extract tool names from the npm MCP's TypeScript registrations."""
+    return {
+        match.group("name")
+        for path in MCP_SRC.glob("*.ts")
+        for match in _MCP_TOOL_RE.finditer(path.read_text())
+    }
 
 
 def _parse_subcommand_variants(src: str, enum_name: str) -> list[str]:
@@ -143,7 +156,7 @@ def parse_cli_subcommands() -> set[str]:
 
 
 def test_every_mcp_tool_is_declared():
-    """Every #[tool] in capsem-mcp must be listed in MCP_TO_CLI."""
+    """Every npm MCP tool must be listed in MCP_TO_CLI."""
     actual = parse_mcp_tools()
     declared = set(MCP_TO_CLI)
     missing = actual - declared
