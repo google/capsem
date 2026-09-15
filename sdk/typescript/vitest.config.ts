@@ -3,6 +3,7 @@ import {defineConfig} from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    fileParallelism: false,
     coverage: {
       provider: 'v8', include: ['src/**/*.ts'], exclude: [],
       reporter: ['text', 'lcov'], reportsDirectory: '../../cache/target/coverage/typescript-sdk',
